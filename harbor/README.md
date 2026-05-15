@@ -102,9 +102,6 @@ at container start. Run with `--limit` or `--task-ids` to subset.
 
 ## Known limitations
 
-- **Two tasks omitted (140/142)**: `llm-hybrid-posttraining` (deprecated) and
-  `vla-openvla-pdac-continuous-head` depend on vendor packages that aren't in
-  the standard MLS-Bench fetch list. Their directories aren't shipped here.
 - **No mid-run testing**: agents cannot run eval scripts during their session
   (the scripts live under `tests/` which Harbor only mounts at verify time).
   This is stricter than native MLS-Bench's `WorkspaceTools.test()`.
