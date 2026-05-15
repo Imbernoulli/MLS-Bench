@@ -1,0 +1,54 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "deepmath-3bench-h100",
+      "group": 1,
+      "compute": 2,
+      "mem": 200,
+      "time": "12:00:00",
+      "package": "verl"
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "k1": {
+      "edit_ops": "baselines/k1.edit.py"
+    },
+    "k2": {
+      "edit_ops": "baselines/k2.edit.py"
+    },
+    "k3": {
+      "edit_ops": "baselines/k3.edit.py"
+    },
+    "abs": {
+      "edit_ops": "baselines/abs.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "verl/verl/trainer/ppo/custom_kl_penalty.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 17,
+          "end": 56
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "hidden_metrics": [
+    "amc_*",
+    "gsm8k_reward_mean",
+    "aime2024_*"
+  ]
+}

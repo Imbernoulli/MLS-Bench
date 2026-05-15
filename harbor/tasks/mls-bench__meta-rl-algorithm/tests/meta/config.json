@@ -1,0 +1,91 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/cheetah_vel.sh",
+      "label": "cheetah-vel",
+      "group": 1,
+      "compute": 0.33,
+      "time": "2:30:00",
+      "package": "oyster"
+    },
+    {
+      "cmd": "scripts/sparse_point_robot.sh",
+      "label": "sparse-point-robot",
+      "hidden": true,
+      "group": 1,
+      "compute": 0.33,
+      "time": "0:59:00",
+      "package": "oyster"
+    },
+    {
+      "cmd": "scripts/point_robot.sh",
+      "label": "point-robot",
+      "group": 1,
+      "compute": 0.33,
+      "time": "0:59:00",
+      "package": "oyster"
+    }
+  ],
+  "baselines": {
+    "pearl": {
+      "edit_ops": "edits/pearl.edit.py"
+    },
+    "focal": {
+      "edit_ops": "edits/focal.edit.py"
+    },
+    "varibad": {
+      "edit_ops": "edits/varibad.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "oyster/custom_meta_rl.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 357,
+          "end": 494
+        }
+      ]
+    },
+    {
+      "filename": "oyster/rlkit/torch/networks.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "oyster/rlkit/torch/sac/policies.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "oyster/configs/default.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

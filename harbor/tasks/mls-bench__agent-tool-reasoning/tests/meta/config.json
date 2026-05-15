@@ -1,0 +1,71 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/run_I1_deepseek.sh",
+      "label": "I1-instruction-deepseek",
+      "group": 1,
+      "compute": 0,
+      "time": "6:00:00",
+      "package": "stabletoolbench"
+    },
+    {
+      "cmd": "scripts/run_I1_qwen72b.sh",
+      "label": "I1-instruction-qwen72b",
+      "group": 2,
+      "compute": 0,
+      "time": "6:00:00",
+      "package": "stabletoolbench"
+    },
+    {
+      "cmd": "scripts/run_I1_qwen7b.sh",
+      "label": "I1-instruction-qwen7b",
+      "group": 3,
+      "compute": 0,
+      "time": "6:00:00",
+      "package": "stabletoolbench",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "greedy_chain": {
+      "edit_ops": "edits/greedy_chain.edit.py"
+    },
+    "dfs_ranked": {
+      "edit_ops": "edits/dfs_ranked.edit.py"
+    },
+    "dfsdt": {
+      "edit_ops": "edits/dfsdt.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "stabletoolbench/toolbench/inference/Algorithms/custom_search.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 368,
+          "end": 439
+        }
+      ]
+    },
+    {
+      "filename": "stabletoolbench/toolbench/inference/Tree/Tree.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

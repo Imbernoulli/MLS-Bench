@@ -1,0 +1,12 @@
+{
+  "verl": {
+    "VLLM_USE_V1": "1",
+    "WANDB_MODE": "disabled",
+    "NCCL_DEBUG": "WARN",
+    "HF_HOME": "/tmp/cache/hf",
+    "XDG_CACHE_HOME": "/tmp/cache",
+    "TRITON_CACHE_DIR": "/tmp/cache/triton",
+    "FLASHINFER_WORKSPACE_BASE": "/tmp",
+    "XDG_CONFIG_HOME": "/tmp/config"
+  }
+}

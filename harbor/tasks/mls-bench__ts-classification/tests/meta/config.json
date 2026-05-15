@@ -1,0 +1,169 @@
+{
+  "allow_create": false,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/ethanol.sh",
+      "label": "EthanolConcentration",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "Time-Series-Library"
+    },
+    {
+      "cmd": "scripts/facedetection.sh",
+      "label": "FaceDetection",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "Time-Series-Library"
+    },
+    {
+      "cmd": "scripts/handwriting.sh",
+      "label": "Handwriting",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "hidden": true,
+      "package": "Time-Series-Library"
+    }
+  ],
+  "baselines": {
+    "dlinear": {
+      "cmd": "scripts/dlinear.sh"
+    },
+    "timesnet": {
+      "cmd": "scripts/timesnet.sh"
+    },
+    "patchtst": {
+      "cmd": "scripts/patchtst.sh"
+    }
+  },
+  "files": [
+    {
+      "filename": "Time-Series-Library/models/Custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/models/DLinear.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/models/TimesNet.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/models/PatchTST.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/AutoCorrelation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/Autoformer_EncDec.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/Conv_Blocks.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/Crossformer_EncDec.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/Embed.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/FourierCorrelation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/SelfAttention_Family.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/StandardNorm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Time-Series-Library/layers/Transformer_EncDec.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

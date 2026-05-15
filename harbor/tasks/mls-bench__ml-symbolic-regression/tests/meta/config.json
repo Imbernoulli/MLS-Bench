@@ -1,0 +1,91 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/nguyen7.sh",
+      "label": "nguyen7",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "gplearn"
+    },
+    {
+      "cmd": "scripts/nguyen10.sh",
+      "label": "nguyen10",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "gplearn"
+    },
+    {
+      "cmd": "scripts/koza3.sh",
+      "label": "koza3",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "gplearn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "standard_gp": {
+      "edit_ops": "edits/standard_gp.edit.py"
+    },
+    "parsimony_gp": {
+      "edit_ops": "edits/parsimony_gp.edit.py"
+    },
+    "lexicase_gp": {
+      "edit_ops": "edits/lexicase_gp.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "gplearn/custom_sr.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 228,
+          "end": 306
+        }
+      ]
+    },
+    {
+      "filename": "gplearn/gplearn/genetic.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "gplearn/gplearn/_program.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "gplearn/gplearn/fitness.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

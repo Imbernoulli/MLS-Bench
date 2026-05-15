@@ -1,0 +1,82 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/mini_imagenet.sh",
+      "label": "mini_imagenet",
+      "group": 1,
+      "compute": 0.33,
+      "time": "23:59:59",
+      "package": "easy-few-shot-learning"
+    },
+    {
+      "cmd": "scripts/cifar_fs.sh",
+      "label": "cifar_fs",
+      "group": 1,
+      "compute": 0.33,
+      "time": "23:59:59",
+      "package": "easy-few-shot-learning"
+    },
+    {
+      "cmd": "scripts/cub.sh",
+      "label": "CUB",
+      "hidden": true,
+      "group": 1,
+      "compute": 0.33,
+      "time": "23:59:59",
+      "package": "easy-few-shot-learning"
+    }
+  ],
+  "baselines": {
+    "protonet": {
+      "edit_ops": "edits/protonet.edit.py"
+    },
+    "matchingnet": {
+      "edit_ops": "edits/matchingnet.edit.py"
+    },
+    "relationnet": {
+      "edit_ops": "edits/relationnet.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "easy-few-shot-learning/custom_fewshot.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 225,
+          "end": 286
+        }
+      ]
+    },
+    {
+      "filename": "easy-few-shot-learning/easyfsl/methods/few_shot_classifier.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "easy-few-shot-learning/easyfsl/methods/utils.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

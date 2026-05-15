@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "causal-bnlearn/bench/custom_algorithm.py",
+    "start_line": 8,
+    "end_line": 14,
+    "content": "def run_causal_discovery(X: np.ndarray) -> GeneralGraph:\n    \"\"\"\n    Input:  X of shape (n_samples, n_variables), integer-encoded discrete data\n    Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph\n    \"\"\"\n    from causallearn.search.ScoreBased.GES import ges\n\n    result = ges(\n        X,\n        score_func=\"local_score_BDeu\",\n        parameters={\"sample_prior\": 1.0, \"structure_prior\": 1.0},\n    )\n    return result[\"G\"]\n"
+  }
+]

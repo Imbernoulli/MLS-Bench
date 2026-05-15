@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 191,
+    "end_line": 201,
+    "content": "def get_lr(it, warmup_iters, lr_decay_iters, learning_rate, min_lr):\n    \"\"\"WSD with inverse-sqrt decay and extended warmup.\"\"\"\n    import math\n    # Extended warmup: 6% of training\n    effective_warmup = max(warmup_iters, int(lr_decay_iters * 0.06))\n    if it < effective_warmup:\n        return learning_rate * (it + 1) / (effective_warmup + 1)\n    # Decay phase: last 20% uses inverse-sqrt cooldown\n    decay_start = int(lr_decay_iters * 0.8)\n    if it >= decay_start:\n        decay_len = lr_decay_iters - decay_start\n        t = (it - decay_start) / decay_len\n        # Inverse-sqrt decay: gentler than linear, reaches min_lr at t=1\n        coeff = (1.0 / math.sqrt(1.0 + 9.0 * t) - 1.0 / math.sqrt(10.0)) / (1.0 - 1.0 / math.sqrt(10.0))\n        return min_lr + (learning_rate - min_lr) * coeff\n    # Stable phase\n    return learning_rate\n"
+  }
+]

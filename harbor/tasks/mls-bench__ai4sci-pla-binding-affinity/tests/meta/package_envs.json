@@ -1,0 +1,6 @@
+{
+  "EHIGN_PLA": {
+    "PYTHONPATH": "/workspace/EHIGN_PLA:${PYTHONPATH}",
+    "DATA_DIR": "/data"
+  }
+}

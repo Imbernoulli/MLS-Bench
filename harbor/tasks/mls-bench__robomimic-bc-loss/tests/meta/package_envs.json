@@ -1,0 +1,7 @@
+{
+  "robomimic": {
+    "MUJOCO_GL": "osmesa",
+    "PYTHONPATH": "/workspace/robomimic:${PYTHONPATH}",
+    "DATASET_ROOT": "/data/datasets"
+  }
+}

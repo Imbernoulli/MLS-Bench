@@ -1,0 +1,33 @@
+schema_version = "1.1"
+
+[task]
+name = "mls-bench/rl-offline-adroit"
+description = "MLS-Bench: rl-offline-adroit"
+authors = [{ name = "MLS-Bench authors", email = "bohan22@stanford.edu" }]
+keywords = ["ml-research", "reinforcement-learning"]
+
+[metadata]
+difficulty = "hard"
+category = "ml-research"
+difficulty_explanation = "MLS-Bench algorithmic-research task. See instruction.md for editable surface, eval scripts, and scoring contract."
+mls_bench_task_id = "rl-offline-adroit"
+mls_bench_package = "CORL"
+
+[agent]
+timeout_sec = 14400
+
+[verifier]
+timeout_sec = 45360
+
+[environment]
+# Build the per-task image from environment/Dockerfile (which FROMs the
+# per-package harbor base). Setting docker_image here would make Harbor skip
+# the Dockerfile (see harbor/environments/docker/docker.py:466), which would
+# also skip the per-task mid_edit scaffolding the Dockerfile applies.
+os = "linux"
+build_timeout_sec = 1800
+cpus = 4
+memory_mb = 16384
+storage_mb = 61440
+gpus = 1
+allow_internet = true

@@ -1,0 +1,76 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/zdt1.sh",
+      "label": "zdt1",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "deap"
+    },
+    {
+      "cmd": "scripts/zdt3.sh",
+      "label": "zdt3",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "deap"
+    },
+    {
+      "cmd": "scripts/dtlz2.sh",
+      "label": "dtlz2",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "deap"
+    },
+    {
+      "cmd": "scripts/dtlz1.sh",
+      "label": "dtlz1",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "deap",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "nsga2": {
+      "edit_ops": "edits/nsga2.edit.py"
+    },
+    "moead": {
+      "edit_ops": "edits/moead.edit.py"
+    },
+    "spea2": {
+      "edit_ops": "edits/spea2.edit.py"
+    },
+    "nsga3": {
+      "edit_ops": "edits/nsga3.edit.py"
+    },
+    "rvea": {
+      "edit_ops": "edits/rvea.edit.py"
+    },
+    "agemoea": {
+      "edit_ops": "edits/agemoea.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "deap/custom_moea.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 297,
+          "end": 441
+        }
+      ]
+    }
+  ]
+}

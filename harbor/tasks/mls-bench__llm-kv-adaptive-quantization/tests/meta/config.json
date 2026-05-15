@@ -1,0 +1,90 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/longbench_hotpotqa.sh",
+      "label": "longbench-hotpotqa",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "transformers-kv-lab"
+    },
+    {
+      "cmd": "scripts/longbench_passage_retrieval.sh",
+      "label": "longbench-passage-retrieval",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "transformers-kv-lab"
+    },
+    {
+      "cmd": "scripts/longbench_repobench.sh",
+      "label": "longbench-repobench",
+      "group": 1,
+      "compute": 1.0,
+      "time": "03:00:00",
+      "package": "transformers-kv-lab"
+    },
+    {
+      "cmd": "scripts/needlebench_niah.sh",
+      "label": "needlebench-niah",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "transformers-kv-lab"
+    },
+    {
+      "cmd": "scripts/gsm8k.sh",
+      "label": "gsm8k",
+      "group": 1,
+      "compute": 1.0,
+      "time": "09:00:00",
+      "package": "transformers-kv-lab",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "kivi_overlap_4bit": {
+      "edit_ops": "edits/kivi_overlap_4bit.edit.py"
+    },
+    "kvtuner4_pertoken_qwen25_3b": {
+      "edit_ops": "edits/kvtuner4_pertoken_qwen25_3b.edit.py"
+    },
+    "kvtuner4_kivi_qwen25_3b": {
+      "edit_ops": "edits/kvtuner4_kivi_qwen25_3b.edit.py"
+    },
+    "squat_subspace_4bit": {
+      "edit_ops": "edits/squat_subspace_4bit.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "transformers-kv-lab/custom_quant_eval.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 41,
+          "end": 172
+        }
+      ]
+    },
+    {
+      "filename": "transformers-kv-lab/src/transformers/cache_utils.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

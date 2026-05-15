@@ -1,0 +1,75 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet20_cifar10_badnets.sh",
+      "label": "resnet20-cifar10-badnets",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:30:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg16bn_cifar100_blend.sh",
+      "label": "vgg16bn-cifar100-blend",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:30:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/mobilenetv2_fmnist_badnets.sh",
+      "label": "mobilenetv2-fmnist-badnets",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:30:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "confidence_filter": {
+      "edit_ops": "edits/confidence_filter.edit.py"
+    },
+    "spectral_signature": {
+      "edit_ops": "edits/spectral_signature.edit.py"
+    },
+    "activation_clustering": {
+      "edit_ops": "edits/activation_clustering.edit.py"
+    },
+    "zscore_outlier": {
+      "edit_ops": "edits/zscore_outlier.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/bench/backdoor/custom_backdoor_defense.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "pytorch-vision/bench/backdoor/run_backdoor_defense.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

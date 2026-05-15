@@ -1,0 +1,74 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train_hopper.sh",
+      "label": "train_hopper",
+      "group": 1,
+      "compute": 1,
+      "time": "18:00:00",
+      "package": "CleanDiffuser"
+    },
+    {
+      "cmd": "scripts/train_walker2d.sh",
+      "label": "train_walker2d",
+      "group": 2,
+      "compute": 1,
+      "time": "8:00:00",
+      "package": "CleanDiffuser"
+    },
+    {
+      "cmd": "scripts/train_halfcheetah.sh",
+      "label": "train_halfcheetah",
+      "hidden": true,
+      "group": 3,
+      "compute": 1,
+      "time": "8:00:00",
+      "package": "CleanDiffuser"
+    }
+  ],
+  "baselines": {
+    "default": {},
+    "ddim": {
+      "edit_ops": "edits/ddim.edit.py"
+    },
+    "dpm_solver": {
+      "edit_ops": "edits/dpm_solver.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "CleanDiffuser/pipelines/custom_sampling_method.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "CleanDiffuser/configs/custom/mujoco/mujoco.yaml",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 15,
+          "end": 15
+        },
+        {
+          "start": 17,
+          "end": 17
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

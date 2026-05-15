@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/eval.sh",
+      "label": "n32-k8",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:59:00",
+      "package": "pytorch-examples"
+    },
+    {
+      "cmd": "scripts/eval_n50_k8.sh",
+      "label": "n50-k8",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:59:00",
+      "package": "pytorch-examples"
+    },
+    {
+      "cmd": "scripts/eval_n64_k8.sh",
+      "label": "n64-k8",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:59:00",
+      "package": "pytorch-examples",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "default": {
+      "edit_ops": "edits/default.edit.py"
+    },
+    "multi_epoch": {
+      "edit_ops": "edits/multi_epoch.edit.py"
+    },
+    "nowd": {
+      "edit_ops": "edits/nowd.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-examples/optimization_parity/custom_strategy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 220,
+          "end": 255
+        }
+      ]
+    }
+  ]
+}

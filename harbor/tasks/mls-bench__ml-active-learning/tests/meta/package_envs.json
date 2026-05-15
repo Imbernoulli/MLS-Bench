@@ -1,0 +1,6 @@
+{
+  "badge": {
+    "PYTHONPATH": "/workspace/badge:${PYTHONPATH}",
+    "BADGE_DATA_DIR": "/workspace/badge/oml"
+  }
+}

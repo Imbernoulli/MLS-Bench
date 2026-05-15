@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/logistic.sh",
+      "label": "logistic",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "opt-vr-bench"
+    },
+    {
+      "cmd": "scripts/mlp.sh",
+      "label": "mlp",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "opt-vr-bench"
+    },
+    {
+      "cmd": "scripts/conditioned.sh",
+      "label": "conditioned",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "opt-vr-bench",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "svrg": {
+      "edit_ops": "edits/svrg.edit.py"
+    },
+    "storm": {
+      "edit_ops": "edits/storm.edit.py"
+    },
+    "storm_plus": {
+      "edit_ops": "edits/storm_plus.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "opt-vr-bench/custom_vr.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 286,
+          "end": 370
+        }
+      ]
+    }
+  ]
+}

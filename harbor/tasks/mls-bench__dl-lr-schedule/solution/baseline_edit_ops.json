@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_schedule.py",
+    "start_line": 246,
+    "end_line": 269,
+    "content": "def get_lr(epoch, total_epochs, base_lr, config):\n    \"\"\"Linear warmup (5 epochs) then cosine decay to 0.\n\n    Epochs 0-4: linearly ramp from base_lr/5 to base_lr.\n    Epochs 5+: cosine anneal from base_lr to 0.\n    \"\"\"\n    warmup = 5\n    if epoch < warmup:\n        return base_lr * (epoch + 1) / warmup\n    progress = (epoch - warmup) / (total_epochs - warmup)\n    return base_lr * 0.5 * (1 + math.cos(math.pi * progress))\n"
+  }
+]

@@ -1,0 +1,63 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "mid_edit": "edits/mid_edit.py",
+  "test_cmds": [
+    {
+      "cmd": "scripts/train_small.sh",
+      "label": "train_small",
+      "group": 1,
+      "compute": 8.0,
+      "time": "1:00:00",
+      "package": "diffusers-main"
+    },
+    {
+      "cmd": "scripts/train_medium.sh",
+      "label": "train_medium",
+      "group": 2,
+      "compute": 8.0,
+      "time": "2:00:00",
+      "package": "diffusers-main"
+    },
+    {
+      "cmd": "scripts/train_large.sh",
+      "label": "train_large",
+      "group": 3,
+      "compute": 8.0,
+      "time": "4:00:00",
+      "package": "diffusers-main",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "l2-kl": {
+      "edit_ops": "edits/l2_kl.edit.py"
+    },
+    "perceptual": {
+      "edit_ops": "edits/perceptual.edit.py"
+    },
+    "vqgan": {
+      "edit_ops": "edits/vqgan.edit.py"
+    }
+  },
+  "seeds": [
+    42
+  ],
+  "files": [
+    {
+      "filename": "diffusers-main/custom_train.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 32,
+          "end": 76
+        }
+      ]
+    }
+  ]
+}

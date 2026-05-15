@@ -1,0 +1,57 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "tool_hang_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "can_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "square_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "nll_entropy": {
+      "edit_ops": "edits/nll_entropy.edit.py"
+    },
+    "weighted_nll": {
+      "edit_ops": "edits/weighted_nll.edit.py"
+    },
+    "default": {}
+  },
+  "files": [
+    {
+      "filename": "robomimic/custom_bc_loss.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 20,
+          "end": 41
+        }
+      ]
+    }
+  ]
+}

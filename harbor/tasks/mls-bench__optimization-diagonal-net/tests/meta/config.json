@@ -1,0 +1,82 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/d200_k5_s01.sh",
+      "label": "d200_k5_s01",
+      "group": 1,
+      "compute": 1.0,
+      "time": "04:00:00",
+      "package": "RAIN"
+    },
+    {
+      "cmd": "scripts/d500_k10_s01.sh",
+      "label": "d500_k10_s01",
+      "group": 1,
+      "compute": 1.0,
+      "time": "04:00:00",
+      "package": "RAIN"
+    },
+    {
+      "cmd": "scripts/d500_k10_s02.sh",
+      "label": "d500_k10_s02",
+      "group": 1,
+      "compute": 1.0,
+      "time": "04:00:00",
+      "package": "RAIN"
+    },
+    {
+      "cmd": "scripts/d10000_k50.sh",
+      "label": "d10000_k50",
+      "group": 2,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "package": "RAIN",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "sgd": {
+      "edit_ops": "edits/sgd.edit.py"
+    },
+    "adagrad": {
+      "edit_ops": "edits/adagrad.edit.py"
+    },
+    "adam": {
+      "edit_ops": "edits/adam.edit.py"
+    },
+    "adam2": {
+      "edit_ops": "edits/adam2.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "RAIN/opt_diagonal_net/custom_optimizer.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 23,
+          "end": 90
+        }
+      ]
+    },
+    {
+      "filename": "RAIN/opt_diagonal_net/fixed_benchmark.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

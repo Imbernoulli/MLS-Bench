@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/mnist.sh",
+      "label": "mnist",
+      "group": 1,
+      "compute": 0.5,
+      "time": "0:59:00",
+      "package": "opacus"
+    },
+    {
+      "cmd": "scripts/fmnist.sh",
+      "label": "fmnist",
+      "group": 1,
+      "compute": 0.5,
+      "time": "0:59:00",
+      "package": "opacus"
+    },
+    {
+      "cmd": "scripts/cifar10.sh",
+      "label": "cifar10",
+      "group": 2,
+      "compute": 1.0,
+      "time": "0:59:00",
+      "package": "opacus",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "standard_dpsgd": {
+      "edit_ops": "edits/standard_dpsgd.edit.py"
+    },
+    "automatic_clipping": {
+      "edit_ops": "edits/automatic_clipping.edit.py"
+    },
+    "adaptive_clipping": {
+      "edit_ops": "edits/adaptive_clipping.edit.py"
+    },
+    "noise_decay": {
+      "edit_ops": "edits/noise_decay.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "opacus/custom_dpsgd.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 152,
+          "end": 233
+        }
+      ]
+    }
+  ]
+}

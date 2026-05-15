@@ -1,0 +1,58 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/breast_cancer.sh",
+      "label": "breast_cancer",
+      "group": 1,
+      "compute": 0.0,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/diabetes.sh",
+      "label": "diabetes",
+      "group": 1,
+      "compute": 0.0,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/california_housing.sh",
+      "label": "california_housing",
+      "group": 1,
+      "compute": 0.0,
+      "time": "00:30:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "adaboost": {
+      "edit_ops": "edits/adaboost.edit.py"
+    },
+    "gradient_boosting": {
+      "edit_ops": "edits/gradient_boosting.edit.py"
+    },
+    "xgboost_style": {
+      "edit_ops": "edits/xgboost_style.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_boosting.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 147,
+          "end": 256
+        }
+      ]
+    }
+  ]
+}

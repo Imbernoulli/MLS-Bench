@@ -1,0 +1,93 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/z500_3day.sh",
+      "label": "z500-3day",
+      "group": 1,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "package": "ClimaX"
+    },
+    {
+      "cmd": "scripts/t850_5day.sh",
+      "label": "t850-5day",
+      "group": 1,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "package": "ClimaX"
+    },
+    {
+      "cmd": "scripts/wind10m_7day.sh",
+      "label": "wind10m-7day",
+      "group": 1,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "package": "ClimaX",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "cross_attention": {
+      "edit_ops": "edits/cross_attention.edit.py"
+    },
+    "mean_pooling": {
+      "edit_ops": "edits/mean_pooling.edit.py"
+    },
+    "learned_weighted_sum": {
+      "edit_ops": "edits/learned_weighted_sum.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ClimaX/custom_forecast.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 310,
+          "end": 351
+        },
+        {
+          "start": 636,
+          "end": 638
+        }
+      ]
+    },
+    {
+      "filename": "ClimaX/src/climax/arch.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "ClimaX/src/climax/parallelpatchembed.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "ClimaX/src/climax/utils/metrics.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

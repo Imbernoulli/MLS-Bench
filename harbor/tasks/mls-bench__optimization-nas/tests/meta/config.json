@@ -1,0 +1,66 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/cifar10.sh",
+      "label": "CIFAR-10",
+      "group": 1,
+      "compute": 0.01,
+      "time": "00:30:00",
+      "package": "naslib"
+    },
+    {
+      "cmd": "scripts/cifar100.sh",
+      "label": "CIFAR-100",
+      "group": 1,
+      "compute": 0.01,
+      "time": "00:30:00",
+      "package": "naslib"
+    },
+    {
+      "cmd": "scripts/imagenet16.sh",
+      "label": "ImageNet16-120",
+      "group": 1,
+      "compute": 0.01,
+      "time": "00:30:00",
+      "package": "naslib",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "random_search": {
+      "edit_ops": "edits/random_search.edit.py"
+    },
+    "rea": {
+      "edit_ops": "edits/rea.edit.py"
+    },
+    "bananas": {
+      "edit_ops": "edits/bananas.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "naslib/custom_nas_search.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 163,
+          "end": 234
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    0,
+    1,
+    2,
+    3,
+    4
+  ]
+}

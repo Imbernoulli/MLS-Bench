@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_weighting.py",
+    "start_line": 164,
+    "end_line": 195,
+    "content": "def compute_class_weights(class_counts, num_classes, config):\n    \"\"\"Balanced Softmax-inspired log-prior weighting (Ren et al., NeurIPS 2020).\n\n    Balanced Softmax adjusts logits by subtracting log(pi_c). In this task's\n    class-weighting interface, we use weights derived from the log-frequency gap:\n    weight[c] = 1 + alpha * (log(n_max) - log(n_c)), alpha chosen so that\n    the max/min weight ratio is moderate (~5:1).\n    This provides a log-scale reweighting that is gentler than inverse\n    frequency but still informed by class prior.\n    \"\"\"\n    log_counts = torch.log(class_counts.float())\n    log_max = log_counts.max()\n    # Log-gap weights: classes further from max count get higher weight\n    gap = log_max - log_counts  # 0 for most frequent, log(ratio) for rarest\n    # Scale so the rarest class gets weight ~5x the most frequent\n    max_gap = gap.max()\n    if max_gap > 0:\n        weights = 1.0 + 4.0 * (gap / max_gap)\n    else:\n        weights = torch.ones(num_classes)\n    # Normalize so weights sum to num_classes\n    weights = weights / weights.sum() * num_classes\n    return weights\n"
+  }
+]

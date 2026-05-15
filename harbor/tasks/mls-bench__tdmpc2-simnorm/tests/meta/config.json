@@ -1,0 +1,107 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/walker_walk.sh",
+      "label": "walker-walk",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "tdmpc2"
+    },
+    {
+      "cmd": "scripts/cheetah_run.sh",
+      "label": "cheetah-run",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "tdmpc2"
+    },
+    {
+      "cmd": "scripts/cartpole_swingup.sh",
+      "label": "cartpole-swingup",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "tdmpc2",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "simnorm": {
+      "edit_ops": "edits/simnorm.edit.py"
+    },
+    "l2norm": {
+      "edit_ops": "edits/l2norm.edit.py"
+    },
+    "rmsnorm": {
+      "edit_ops": "edits/rmsnorm.edit.py"
+    },
+    "identity": {
+      "edit_ops": "edits/identity.edit.py"
+    }
+  },
+  "leaderboard": {
+    "simnorm": {
+      "episode_reward_walker_walk": 977.21,
+      "episode_reward_cheetah_run": 888.94,
+      "episode_reward_cartpole_swingup": 881.52
+    },
+    "l2norm": {
+      "episode_reward_walker_walk": 976.33,
+      "episode_reward_cheetah_run": 813.49,
+      "episode_reward_cartpole_swingup": 878.99
+    },
+    "identity": {
+      "episode_reward_walker_walk": 976.68,
+      "episode_reward_cheetah_run": 763.45,
+      "episode_reward_cartpole_swingup": 873.12
+    },
+    "rmsnorm": {
+      "episode_reward_walker_walk": 976.92,
+      "episode_reward_cheetah_run": 680.96,
+      "episode_reward_cartpole_swingup": 873.39
+    }
+  },
+  "files": [
+    {
+      "filename": "tdmpc2/tdmpc2/common/custom_simnorm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 16,
+          "end": 43
+        }
+      ]
+    },
+    {
+      "filename": "tdmpc2/tdmpc2/common/layers.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "tdmpc2/tdmpc2/common/world_model.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

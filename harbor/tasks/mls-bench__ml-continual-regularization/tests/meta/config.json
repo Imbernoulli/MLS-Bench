@@ -1,0 +1,111 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "split-mnist",
+      "group": 1,
+      "compute": 1,
+      "time": "1:00:00",
+      "package": "continual-learning"
+    },
+    {
+      "cmd": "scripts/train_perm.sh",
+      "label": "perm-mnist",
+      "group": 2,
+      "compute": 1,
+      "time": "1:00:00",
+      "package": "continual-learning"
+    },
+    {
+      "cmd": "scripts/train_cifar.sh",
+      "label": "split-cifar100",
+      "group": 3,
+      "compute": 1,
+      "time": "2:00:00",
+      "package": "continual-learning",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "ewc": {
+      "edit_ops": "edits/ewc.edit.py"
+    },
+    "si": {
+      "edit_ops": "edits/si.edit.py"
+    },
+    "online_ewc": {
+      "edit_ops": "edits/online_ewc.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "continual-learning/custom_regularization.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 25,
+          "end": 115
+        },
+        {
+          "start": 117,
+          "end": 119
+        }
+      ]
+    },
+    {
+      "filename": "continual-learning/models/cl/continual_learner.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "continual-learning/models/classifier.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "continual-learning/train/train_task_based.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "continual-learning/main.py",
+      "read": [
+        {
+          "start": 210,
+          "end": 260
+        }
+      ]
+    },
+    {
+      "filename": "continual-learning/eval/evaluate.py",
+      "read": [
+        {
+          "start": 14,
+          "end": 75
+        }
+      ]
+    }
+  ]
+}
