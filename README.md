@@ -227,7 +227,7 @@ dataset so any Harbor-supported agent (`claude-code`, `codex`, `openhands`,
 repository's own runner:
 
 ```bash
-PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-1
+PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
 ```
 
 The pre-rendered dataset, GPU-capable environment plugin, and reference

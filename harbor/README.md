@@ -23,7 +23,7 @@ PYTHONPATH=. harbor run -c run.yaml
 Replace the agent with a real one by editing `run.yaml` or via CLI:
 
 ```bash
-PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-1
+PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
 PYTHONPATH=. harbor run -c run.yaml -a codex       -m openai/gpt-5
 ```
 

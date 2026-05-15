@@ -1,7 +1,7 @@
 # Reference Harbor config for MLS-Bench.
 #
 # Usage:
-#   PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-1
+#   PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
 #
 # `PYTHONPATH=.` is needed only because `harbor_env.py` (the GPU-enabled
 # DockerEnvironment subclass) lives next to this file rather than being
@@ -32,7 +32,7 @@ agents:
 # Uncomment to run a real agent:
 # agents:
 #   - name: claude-code
-#     model_name: anthropic/claude-opus-4-1
+#     model_name: anthropic/claude-opus-4-7
 # agents:
 #   - name: codex
 #     model_name: openai/gpt-5
