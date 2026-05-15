@@ -219,6 +219,22 @@ download of `sif/<Pkg>.sif`, which can be faster in networks where Docker
 registries are slow. Select the source with `--sif-source {docker,hf,auto}`
 on `mlsbench build`.
 
+## Running under Harbor
+
+MLS-Bench's 140 tasks are also available as a [Harbor](https://github.com/harbor-framework/harbor)
+dataset so any Harbor-supported agent (`claude-code`, `codex`, `openhands`,
+`terminus-2`, …) can be evaluated on the suite without going through this
+repository's own runner:
+
+```bash
+PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-1
+```
+
+The pre-rendered dataset, GPU-capable environment plugin, and reference
+Harbor config live under [`harbor/`](harbor/). See
+[`harbor/README.md`](harbor/README.md) for usage details and the
+self-contained per-task layout.
+
 ## Repository Map
 
 ```text
@@ -230,6 +246,7 @@ vendor/data_scripts/           Dataset and model-cache preparation scripts
 configs/react.yaml             Runtime and provider configuration
 configs/openevolve.yaml        OpenEvolve defaults
 configs/discover.yaml          Discover defaults
+harbor/                        Pre-rendered Harbor dataset (140 tasks) + run config
 ```
 
 Fetched upstream repositories, built images, downloaded datasets, run workspaces, logs, and scheduler state are intentionally not versioned.

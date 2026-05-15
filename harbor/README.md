@@ -100,15 +100,6 @@ environment refuses it.
 If your host has fewer GPUs than the task requests, Harbor will fail the task
 at container start. Run with `--limit` or `--task-ids` to subset.
 
-## Known limitations
-
-- **No mid-run testing**: agents cannot run eval scripts during their session
-  (the scripts live under `tests/` which Harbor only mounts at verify time).
-  This is stricter than native MLS-Bench's `WorkspaceTools.test()`.
-- **Hidden tests are label-visible**: `instruction.md` lists every test_cmd's
-  label (matching native MLS-Bench's default `hide_hidden=false`); only the
-  script *contents* stay private.
-
 ## License
 
 MLS-Bench tasks: see the upstream MLS-Bench repository for license. Harbor:
