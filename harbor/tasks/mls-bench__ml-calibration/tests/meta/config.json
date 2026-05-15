@@ -1,0 +1,67 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/rf_mnist.sh",
+      "label": "rf-mnist",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/mlp_fashion_mnist.sh",
+      "label": "mlp-fashion_mnist",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/gbm_madelon.sh",
+      "label": "gbm-madelon",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:20:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/svm_breast_cancer.sh",
+      "label": "svm-breast_cancer",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:10:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "platt_scaling": {
+      "edit_ops": "edits/platt_scaling.edit.py"
+    },
+    "temperature_scaling": {
+      "edit_ops": "edits/temperature_scaling.edit.py"
+    },
+    "isotonic_regression": {
+      "edit_ops": "edits/isotonic_regression.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_calibration.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 45,
+          "end": 102
+        }
+      ]
+    }
+  ]
+}

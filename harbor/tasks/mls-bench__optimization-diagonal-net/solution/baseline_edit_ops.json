@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "RAIN/opt_diagonal_net/custom_optimizer.py",
+    "start_line": 23,
+    "end_line": 90,
+    "content": "def get_hyperparameters(\n    dim: int,\n    sparsity: int,\n    delta: float,\n) -> dict[str, Any]:\n    \"\"\"Adam (no bias correction) hyperparameters: lr=0.1, beta2=0.95.\"\"\"\n    return {\"lr\": 0.1, \"beta1\": 0.9, \"beta2\": 0.95, \"eps\": 1e-6}\n\n\ndef init_state(\n    u: torch.Tensor,\n    v: torch.Tensor,\n    hyperparameters: dict[str, Any],\n) -> dict[str, Any]:\n    \"\"\"Adam state: first and second moment estimates.\"\"\"\n    d = u.shape[0]\n    return {\n        \"t\": 0,\n        \"m_u\": torch.zeros(d, dtype=torch.float64),\n        \"s_u\": torch.zeros(d, dtype=torch.float64),\n        \"m_v\": torch.zeros(d, dtype=torch.float64),\n        \"s_v\": torch.zeros(d, dtype=torch.float64),\n    }\n\n\ndef step(\n    u: torch.Tensor,\n    v: torch.Tensor,\n    grad_u: torch.Tensor,\n    grad_v: torch.Tensor,\n    state: dict[str, Any],\n    hyperparameters: dict[str, Any],\n) -> tuple[torch.Tensor, torch.Tensor, dict[str, Any]]:\n    \"\"\"Adam update step WITHOUT bias correction.\"\"\"\n    lr = float(hyperparameters[\"lr\"])\n    beta1 = float(hyperparameters[\"beta1\"])\n    beta2 = float(hyperparameters[\"beta2\"])\n    eps = float(hyperparameters[\"eps\"])\n    t = state[\"t\"] + 1\n    m_u = beta1 * state[\"m_u\"] + (1.0 - beta1) * grad_u\n    s_u = beta2 * state[\"s_u\"] + (1.0 - beta2) * grad_u * grad_u\n    u_new = u - lr * m_u / (torch.sqrt(s_u) + eps)\n    m_v = beta1 * state[\"m_v\"] + (1.0 - beta1) * grad_v\n    s_v = beta2 * state[\"s_v\"] + (1.0 - beta2) * grad_v * grad_v\n    v_new = v - lr * m_v / (torch.sqrt(s_v) + eps)\n    return u_new, v_new, {\"t\": t, \"m_u\": m_u, \"s_u\": s_u, \"m_v\": m_v, \"s_v\": s_v}\n"
+  }
+]

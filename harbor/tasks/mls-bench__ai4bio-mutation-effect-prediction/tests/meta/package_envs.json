@@ -1,0 +1,5 @@
+{
+  "ProteinGym": {
+    "PYTHONPATH": "/workspace/ProteinGym:${PYTHONPATH}"
+  }
+}

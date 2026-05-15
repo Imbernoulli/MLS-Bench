@@ -1,0 +1,65 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/test2013.sh",
+      "label": "PDBbind2013",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "EHIGN_PLA"
+    },
+    {
+      "cmd": "scripts/test2016.sh",
+      "label": "PDBbind2016",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "EHIGN_PLA"
+    },
+    {
+      "cmd": "scripts/test2019.sh",
+      "label": "PDBbind2019",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "EHIGN_PLA",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "ehign": {
+      "edit_ops": "edits/ehign.edit.py"
+    },
+    "gign": {
+      "edit_ops": "edits/gign.edit.py"
+    },
+    "schnet": {
+      "edit_ops": "edits/schnet.edit.py"
+    },
+    "egnn": {
+      "edit_ops": "edits/egnn.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "EHIGN_PLA/custom_pla.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 101,
+          "end": 191
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

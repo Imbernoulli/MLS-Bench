@@ -1,0 +1,65 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/ec_reaction.sh",
+      "label": "EC",
+      "group": 1,
+      "compute": 1.0,
+      "time": "10:00:00",
+      "package": "ProteinWorkshop"
+    },
+    {
+      "cmd": "scripts/go_bp.sh",
+      "label": "GO-BP",
+      "group": 1,
+      "compute": 1.0,
+      "time": "05:00:00",
+      "package": "ProteinWorkshop"
+    },
+    {
+      "cmd": "scripts/fold_fold.sh",
+      "label": "Fold",
+      "group": 1,
+      "compute": 1.0,
+      "time": "09:00:00",
+      "package": "ProteinWorkshop",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "schnet": {
+      "edit_ops": "edits/schnet.edit.py"
+    },
+    "egnn": {
+      "edit_ops": "edits/egnn.edit.py"
+    },
+    "gearnet": {
+      "edit_ops": "edits/gearnet.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ProteinWorkshop/custom_protein_encoder.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 125,
+          "end": 252
+        },
+        {
+          "start": 706,
+          "end": 708
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

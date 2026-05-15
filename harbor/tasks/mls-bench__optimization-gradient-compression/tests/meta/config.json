@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet20_cifar10.sh",
+      "label": "resnet20-cifar10",
+      "group": 1,
+      "compute": 0.33,
+      "time": "04:00:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg11_cifar100.sh",
+      "label": "vgg11-cifar100",
+      "group": 1,
+      "compute": 0.5,
+      "time": "06:00:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/resnet56_cifar10.sh",
+      "label": "resnet56-cifar10",
+      "group": 1,
+      "compute": 0.33,
+      "time": "05:00:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "topk_ef": {
+      "edit_ops": "edits/topk_ef.edit.py"
+    },
+    "qsgd": {
+      "edit_ops": "edits/qsgd.edit.py"
+    },
+    "signsgd": {
+      "edit_ops": "edits/signsgd.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/custom_compressor.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 182,
+          "end": 232
+        }
+      ]
+    }
+  ]
+}

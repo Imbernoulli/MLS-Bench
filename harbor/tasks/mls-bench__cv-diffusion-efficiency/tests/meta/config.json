@@ -1,0 +1,78 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/eval_sd15.sh",
+      "label": "sd15",
+      "group": 1,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "package": "CFGpp-main"
+    },
+    {
+      "cmd": "scripts/eval_sd20.sh",
+      "label": "sd20",
+      "group": 2,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "package": "CFGpp-main"
+    },
+    {
+      "cmd": "scripts/eval_sdxl.sh",
+      "label": "sdxl",
+      "group": 2,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "package": "CFGpp-main",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "mid_edit": "edits/mid_edit.py",
+  "baselines": {
+    "ddim": {
+      "edit_ops": "edits/ddim.edit.py"
+    },
+    "dpm3m_sde": {
+      "edit_ops": "edits/dpm3m_sde.edit.py"
+    },
+    "dpm2s": {
+      "edit_ops": "edits/dpm2s.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "CFGpp-main/latent_diffusion.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 621,
+          "end": 679
+        }
+      ]
+    },
+    {
+      "filename": "CFGpp-main/latent_sdxl.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 713,
+          "end": 755
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

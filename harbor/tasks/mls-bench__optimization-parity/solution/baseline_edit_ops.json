@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-examples/optimization_parity/custom_strategy.py",
+    "start_line": 220,
+    "end_line": 255,
+    "content": "def init_model(model: nn.Sequential, config: TaskConfig) -> None:\n    \"\"\"Initialize the fixed two-layer MLP without using the hidden secret.\"\"\"\n    for layer in model:\n        if isinstance(layer, nn.Linear):\n            gain = nn.init.calculate_gain(\"relu\") if layer is model[0] else 1.0\n            nn.init.xavier_uniform_(layer.weight, gain=gain)\n            nn.init.zeros_(layer.bias)\n\n\ndef make_dataset(\n    secret: tuple[int, ...],\n    config: TaskConfig,\n    seed: int,\n) -> tuple[torch.Tensor, torch.Tensor]:\n    \"\"\"Return a maximal random dataset to induce one-pass training.\"\"\"\n    generator = torch.Generator().manual_seed(seed)\n    num_examples = config.max_train_examples\n    x = torch.randint(\n        low=0,\n        high=2,\n        size=(num_examples, config.n_features),\n        generator=generator,\n        dtype=torch.int64,\n    ).to(torch.float32)\n    y = parity_labels(x, secret)\n    return x, y\n\n\ndef get_optimizer_config(config: TaskConfig) -> dict[str, float]:\n    \"\"\"Return AdamW hyperparameters with no weight decay.\"\"\"\n    return {\n        \"lr\": 1e-3,\n        \"wd\": 0.0,\n        \"beta1\": 0.9,\n        \"beta2\": 0.999,\n    }\n"
+  }
+]

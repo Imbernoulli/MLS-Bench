@@ -1,0 +1,83 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet18.sh",
+      "label": "resnet18",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "eb_jepa"
+    },
+    {
+      "cmd": "scripts/resnet34.sh",
+      "label": "resnet34",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "eb_jepa"
+    },
+    {
+      "cmd": "scripts/resnet50.sh",
+      "label": "resnet50",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "eb_jepa",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "naive": {
+      "edit_ops": "edits/naive.edit.py"
+    },
+    "vicreg": {
+      "edit_ops": "edits/vicreg.edit.py"
+    },
+    "sigreg": {
+      "edit_ops": "edits/sigreg.edit.py"
+    },
+    "barlow_twins": {
+      "edit_ops": "edits/barlow_twins.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "eb_jepa/custom_regularizer.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 33,
+          "end": 58
+        }
+      ]
+    },
+    {
+      "filename": "eb_jepa/losses.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "eb_jepa/jepa.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

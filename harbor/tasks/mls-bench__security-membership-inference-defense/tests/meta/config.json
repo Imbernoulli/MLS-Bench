@@ -1,0 +1,75 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet20_cifar10.sh",
+      "label": "resnet20-cifar10",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg16bn_cifar100.sh",
+      "label": "vgg16bn-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/mobilenetv2_fmnist.sh",
+      "label": "mobilenetv2-fmnist",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "erm": {
+      "edit_ops": "edits/erm.edit.py"
+    },
+    "label_smoothing": {
+      "edit_ops": "edits/label_smoothing.edit.py"
+    },
+    "confidence_penalty": {
+      "edit_ops": "edits/confidence_penalty.edit.py"
+    },
+    "relaxloss": {
+      "edit_ops": "edits/relaxloss.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/custom_membership_defense.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "pytorch-vision/run_membership_defense.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

@@ -1,0 +1,5 @@
+{
+  "deap": {
+    "PYTHONPATH": "/workspace:${PYTHONPATH}"
+  }
+}

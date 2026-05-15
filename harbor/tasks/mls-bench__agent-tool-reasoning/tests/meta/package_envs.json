@@ -1,0 +1,7 @@
+{
+  "stabletoolbench": {
+    "SERVICE_URL": "http://localhost:18080/virtual",
+    "PYTHONPATH": "./:/workspace/stabletoolbench/toolbench/inference",
+    "TOOL_SERVER_DATA_DIR": "/data/stabletoolbench/server_data"
+  }
+}

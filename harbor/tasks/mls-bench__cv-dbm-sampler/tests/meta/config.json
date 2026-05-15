@@ -1,0 +1,74 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/run_e2h.sh",
+      "label": "edges2handbags",
+      "group": 1,
+      "compute": 4.0,
+      "time": "4:00:00",
+      "package": "dbim-codebase"
+    },
+    {
+      "cmd": "scripts/run_Imagenet.sh",
+      "label": "Imagenet",
+      "group": 1,
+      "compute": 4.0,
+      "time": "4:00:00",
+      "package": "dbim-codebase"
+    },
+    {
+      "cmd": "scripts/run_DIODE.sh",
+      "label": "DIODE",
+      "group": 1,
+      "compute": 4.0,
+      "time": "4:00:00",
+      "package": "dbim-codebase"
+    },
+    {
+      "cmd": "scripts/run_DIODE_50nfe.sh",
+      "label": "DIODE_50nfe",
+      "group": 1,
+      "compute": 4.0,
+      "time": "4:00:00",
+      "package": "dbim-codebase",
+      "agent_skip": true
+    }
+  ],
+  "baselines": {
+    "dbim": {
+      "edit_ops": "edits/dbim_edit.py"
+    },
+    "dbim_high_order": {
+      "edit_ops": "edits/dbim_high_order_edit.py"
+    },
+    "ddbm": {
+      "edit_ops": "edits/ddbm_edit.py"
+    },
+    "ecsi": {
+      "edit_ops": "edits/ecsi_edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "dbim-codebase/ddbm/karras_diffusion.py",
+      "_comment": "Only show the editable template (sample_dbim, L448-470). All other hint code is hidden; agent learns allowed APIs only from the baseline variants (dbim/dbim_high_order/ddbm/ecsi).",
+      "read": [
+        {
+          "start": 448,
+          "end": 470
+        }
+      ],
+      "edit": [
+        {
+          "start": 459,
+          "end": 470
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

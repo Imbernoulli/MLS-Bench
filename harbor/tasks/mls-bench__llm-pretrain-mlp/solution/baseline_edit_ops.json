@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 72,
+    "end_line": 86,
+    "content": "class MLP(nn.Module):\n    def __init__(self, config):\n        super().__init__()\n        self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)\n        self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)\n        self.dropout = nn.Dropout(config.dropout)\n\n    def forward(self, x):\n        x = self.c_fc(x)\n        x = F.relu(x).square()  # ReLU\u00b2\n        x = self.c_proj(x)\n        x = self.dropout(x)\n        return x\n"
+  }
+]

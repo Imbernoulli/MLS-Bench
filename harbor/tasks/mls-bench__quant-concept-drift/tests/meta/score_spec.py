@@ -1,0 +1,124 @@
+"""Score spec for quant-concept-drift."""
+from mlsbench.scoring.dsl import *
+
+# ic, icir, rank_ic, rank_icir: higher better, unbounded -> sigmoid
+# annualized_return: higher better, unbounded -> sigmoid
+# max_drawdown: higher better when reported as negative drawdown, because closer to 0 is better -> sigmoid
+# information_ratio: higher better (like Sharpe ratio), unbounded -> sigmoid
+
+# csi300_shifted setting
+term("ic_csi300_shifted",
+    col("ic_csi300_shifted").higher().id()
+    .sigmoid())
+
+term("icir_csi300_shifted",
+    col("icir_csi300_shifted").higher().id()
+    .sigmoid())
+
+term("rank_ic_csi300_shifted",
+    col("rank_ic_csi300_shifted").higher().id()
+    .sigmoid())
+
+term("rank_icir_csi300_shifted",
+    col("rank_icir_csi300_shifted").higher().id()
+    .sigmoid())
+
+term("annualized_return_csi300_shifted",
+    col("annualized_return_csi300_shifted").higher().id()
+    .sigmoid())
+
+term("max_drawdown_csi300_shifted",
+    col("max_drawdown_csi300_shifted").higher().id()
+    .sigmoid())
+
+term("information_ratio_csi300_shifted",
+    col("information_ratio_csi300_shifted").higher().id()
+    .sigmoid())
+
+# csi300_recent setting
+term("ic_csi300_recent",
+    col("ic_csi300_recent").higher().id()
+    .sigmoid())
+
+term("icir_csi300_recent",
+    col("icir_csi300_recent").higher().id()
+    .sigmoid())
+
+term("rank_ic_csi300_recent",
+    col("rank_ic_csi300_recent").higher().id()
+    .sigmoid())
+
+term("rank_icir_csi300_recent",
+    col("rank_icir_csi300_recent").higher().id()
+    .sigmoid())
+
+term("annualized_return_csi300_recent",
+    col("annualized_return_csi300_recent").higher().id()
+    .sigmoid())
+
+term("max_drawdown_csi300_recent",
+    col("max_drawdown_csi300_recent").higher().id()
+    .sigmoid())
+
+term("information_ratio_csi300_recent",
+    col("information_ratio_csi300_recent").higher().id()
+    .sigmoid())
+
+# csi300 setting
+term("ic_csi300",
+    col("ic_csi300").higher().id()
+    .sigmoid())
+
+term("icir_csi300",
+    col("icir_csi300").higher().id()
+    .sigmoid())
+
+term("rank_ic_csi300",
+    col("rank_ic_csi300").higher().id()
+    .sigmoid())
+
+term("rank_icir_csi300",
+    col("rank_icir_csi300").higher().id()
+    .sigmoid())
+
+term("annualized_return_csi300",
+    col("annualized_return_csi300").higher().id()
+    .sigmoid())
+
+term("max_drawdown_csi300",
+    col("max_drawdown_csi300").higher().id()
+    .sigmoid())
+
+term("information_ratio_csi300",
+    col("information_ratio_csi300").higher().id()
+    .sigmoid())
+
+setting("csi300_shifted", weighted_mean(
+    ("ic_csi300_shifted", 1.0),
+    ("icir_csi300_shifted", 1.0),
+    ("rank_ic_csi300_shifted", 1.0),
+    ("rank_icir_csi300_shifted", 1.0),
+    ("annualized_return_csi300_shifted", 1.0),
+    ("max_drawdown_csi300_shifted", 1.0),
+    ("information_ratio_csi300_shifted", 1.0),
+))
+setting("csi300_recent", weighted_mean(
+    ("ic_csi300_recent", 1.0),
+    ("icir_csi300_recent", 1.0),
+    ("rank_ic_csi300_recent", 1.0),
+    ("rank_icir_csi300_recent", 1.0),
+    ("annualized_return_csi300_recent", 1.0),
+    ("max_drawdown_csi300_recent", 1.0),
+    ("information_ratio_csi300_recent", 1.0),
+))
+setting("csi300", weighted_mean(
+    ("ic_csi300", 1.0),
+    ("icir_csi300", 1.0),
+    ("rank_ic_csi300", 1.0),
+    ("rank_icir_csi300", 1.0),
+    ("annualized_return_csi300", 1.0),
+    ("max_drawdown_csi300", 1.0),
+    ("information_ratio_csi300", 1.0),
+))
+
+task(gmean("csi300_shifted", "csi300_recent", "csi300"))

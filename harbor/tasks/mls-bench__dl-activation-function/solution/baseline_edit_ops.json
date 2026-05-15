@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_activation.py",
+    "start_line": 32,
+    "end_line": 49,
+    "content": "class CustomActivation(nn.Module):\n    \"\"\"GELU activation function.\n\n    GELU(x) = x * Phi(x) where Phi is the Gaussian CDF.\n    Smooth, non-monotonic, allows small negative values.\n    \"\"\"\n\n    def __init__(self):\n        super().__init__()\n\n    def forward(self, x):\n        return F.gelu(x)\n"
+  }
+]

@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "scikit-learn/custom_anomaly.py",
+    "start_line": 160,
+    "end_line": 212,
+    "content": "class CustomAnomalyDetector:\n    \"\"\"Isolation Forest anomaly detector.\n\n    Ensemble of random isolation trees. Anomaly score is based on the\n    average path length to isolate each sample.\n    \"\"\"\n\n    def __init__(self):\n        from pyod.models.iforest import IForest\n\n        self.model = IForest(\n            n_estimators=100,\n            max_samples=\"auto\",\n            contamination=0.1,\n            random_state=SEED,\n        )\n\n    def fit(self, X):\n        self.model.fit(X)\n        return self\n\n    def decision_function(self, X):\n        return self.model.decision_function(X)\n\n"
+  }
+]

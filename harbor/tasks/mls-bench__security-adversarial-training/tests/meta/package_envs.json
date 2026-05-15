@@ -1,0 +1,6 @@
+{
+  "torchattacks": {
+    "HOME": "/root",
+    "TORCH_HOME": "/data/torch_cache"
+  }
+}

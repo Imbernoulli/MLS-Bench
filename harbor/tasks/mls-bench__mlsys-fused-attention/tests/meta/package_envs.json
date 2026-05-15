@@ -1,0 +1,6 @@
+{
+  "flash-attention": {
+    "PYTHONPATH": "/workspace:${PYTHONPATH}",
+    "TRITON_CACHE_DIR": "/tmp/triton_cache"
+  }
+}

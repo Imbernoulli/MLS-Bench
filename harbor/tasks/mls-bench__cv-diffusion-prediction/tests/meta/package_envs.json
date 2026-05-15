@@ -1,0 +1,7 @@
+{
+  "diffusers-main": {
+    "DATA_DIR": "/data/cifar10",
+    "OUTPUT_DIR": "/tmp/output",
+    "TORCH_HOME": "/data/pretrained"
+  }
+}

@@ -1,0 +1,51 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "deepmath-3bench-h100",
+      "group": 1,
+      "compute": 2,
+      "mem": 200,
+      "time": "12:00:00",
+      "package": "verl"
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "grpo": {
+      "edit_ops": "baselines/grpo.edit.py"
+    },
+    "dr_grpo": {
+      "edit_ops": "baselines/dr_grpo.edit.py"
+    },
+    "reinforce_plus_plus_baseline": {
+      "edit_ops": "baselines/reinforce_plus_plus_baseline.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "verl/verl/trainer/ppo/custom_advantage.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 17,
+          "end": 72
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "hidden_metrics": [
+    "amc_*",
+    "gsm8k_reward_mean",
+    "aime2024_*"
+  ]
+}

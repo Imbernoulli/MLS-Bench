@@ -1,0 +1,65 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/qat_eval_int4_g128.sh",
+      "label": "qat-1b-int4",
+      "group": 1,
+      "compute": 1.0,
+      "time": "01:15:00",
+      "package": "llm-qat-runtime"
+    },
+    {
+      "cmd": "scripts/qat_eval_int3_g128.sh",
+      "label": "qat-1b-int3",
+      "group": 2,
+      "compute": 1.0,
+      "time": "01:15:00",
+      "package": "llm-qat-runtime"
+    },
+    {
+      "cmd": "scripts/qat_eval_int2_g128.sh",
+      "label": "qat-1b-int2",
+      "group": 3,
+      "compute": 1.0,
+      "time": "01:15:00",
+      "package": "llm-qat-runtime",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "no_qat": {
+      "edit_ops": "edits/no_qat.edit.py"
+    },
+    "ste": {
+      "edit_ops": "edits/ste.edit.py"
+    },
+    "lsq": {
+      "edit_ops": "edits/lsq.edit.py"
+    },
+    "finetune_then_ptq": {
+      "edit_ops": "edits/finetune_then_ptq.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "llm-qat-runtime/custom_qat.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 33,
+          "end": 176
+        }
+      ]
+    }
+  ]
+}

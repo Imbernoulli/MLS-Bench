@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "alphaflow-main/custom_train_perceptual.py",
+    "start_line": 384,
+    "end_line": 401,
+    "content": "            # MSE on velocity\n            err = pred_mean_vel - mean_vel_target\n            loss_mse_unscaled = (err ** 2).flatten(1).mean(1)\n\n            # Auxiliary perceptual losses on denoised image (mask t<=0.1 edge case)\n            x_denoised = x_t - t * pred_mean_vel\n            t_flat = t.view(B)\n            mask = (t_flat > 0.1)\n            perceptual_w = ((1.0 - t_flat) ** 2) * mask.float()\n\n            loss_lpips = torch.zeros(B, device=device)\n            loss_grad = torch.zeros(B, device=device)\n            loss_multi = torch.zeros(B, device=device)\n            loss_spec = torch.zeros(B, device=device)\n            if mask.any():\n                xd = x_denoised[mask].clamp(-1, 1).float()\n                xc = x[mask].clamp(-1, 1).float()\n                loss_lpips[mask] = lpips_fn(xd, xc).view(-1).float()\n                loss_grad[mask] = compute_gradient_loss(xd, xc).float()\n                loss_multi[mask] = compute_multiscale_loss(xd, xc).float()\n                # FFT magnitude L1: per-channel rfft2, abs, L1 of difference\n                fd = torch.fft.rfft2(xd, dim=(-2, -1)).abs()\n                fc = torch.fft.rfft2(xc, dim=(-2, -1)).abs()\n                loss_spec[mask] = (fd - fc).abs().mean(dim=(1, 2, 3)).float()\n\n            loss_total = (\n                loss_mse_unscaled\n                + perceptual_w * (\n                    0.5 * loss_lpips\n                    + 0.3 * loss_grad\n                    + 0.2 * loss_multi\n                    + 0.2 * loss_spec\n                )\n            )\n            loss = loss_total.mean()\n"
+  }
+]

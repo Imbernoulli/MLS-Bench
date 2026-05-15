@@ -1,0 +1,64 @@
+{
+  "allow_create": false,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/cartpole.sh",
+      "label": "cartpole-v1",
+      "group": 1,
+      "compute": 0.33,
+      "time": "02:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/lunarlander.sh",
+      "label": "lunarlander-v2",
+      "group": 1,
+      "compute": 0.33,
+      "time": "02:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/acrobot.sh",
+      "label": "acrobot-v1",
+      "group": 1,
+      "compute": 0.33,
+      "time": "02:00:00",
+      "package": "cleanrl",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "qr_dqn": {
+      "edit_ops": "edits/qr_dqn.edit.py"
+    },
+    "dueling_dqn": {
+      "edit_ops": "edits/dueling_dqn.edit.py"
+    },
+    "c51": {
+      "edit_ops": "edits/c51.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "cleanrl/cleanrl/custom_value_discrete.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 174,
+          "end": 242
+        }
+      ]
+    }
+  ]
+}

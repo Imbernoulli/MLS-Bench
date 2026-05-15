@@ -1,0 +1,151 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "train",
+      "group": 1,
+      "compute": 1.0,
+      "time": "24:00:00",
+      "package": "humanoid-gym"
+    },
+    {
+      "cmd": "scripts/eval_diverse.sh",
+      "label": "diverse-commands",
+      "group": 2,
+      "compute": 0.3,
+      "time": "2:00:00",
+      "package": "humanoid-gym"
+    },
+    {
+      "cmd": "scripts/eval_forward.sh",
+      "label": "forward-only",
+      "group": 2,
+      "compute": 0.3,
+      "time": "2:00:00",
+      "package": "humanoid-gym"
+    },
+    {
+      "cmd": "scripts/eval_highspeed.sh",
+      "label": "high-speed",
+      "group": 2,
+      "compute": 0.3,
+      "time": "2:00:00",
+      "package": "humanoid-gym",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "default": {
+      "edit_ops": "edits/default.edit.py"
+    },
+    "ppo_adaptive_kl": {
+      "edit_ops": "edits/ppo_adaptive_kl.edit.py"
+    },
+    "ppo_layernorm": {
+      "edit_ops": "edits/ppo_layernorm.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "humanoid-gym/humanoid/algo/ppo/actor_critic_custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 36,
+          "end": 128
+        }
+      ]
+    },
+    {
+      "filename": "humanoid-gym/humanoid/algo/ppo/ppo_custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 39,
+          "end": 185
+        }
+      ]
+    },
+    {
+      "filename": "humanoid-gym/humanoid/algo/ppo/rollout_storage_custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 34,
+          "end": 182
+        }
+      ]
+    },
+    {
+      "filename": "humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 29,
+          "end": 34
+        }
+      ]
+    },
+    {
+      "filename": "humanoid-gym/humanoid/envs/custom/humanoid_config.py",
+      "read": [
+        {
+          "start": 162,
+          "end": 172
+        },
+        {
+          "start": 239,
+          "end": 251
+        }
+      ]
+    },
+    {
+      "filename": "humanoid-gym/humanoid/algo/ppo/actor_critic.py",
+      "read": [
+        {
+          "start": 36,
+          "end": 128
+        }
+      ]
+    },
+    {
+      "filename": "humanoid-gym/humanoid/algo/ppo/ppo.py",
+      "read": [
+        {
+          "start": 39,
+          "end": 185
+        }
+      ]
+    },
+    {
+      "filename": "humanoid-gym/humanoid/algo/ppo/rollout_storage.py",
+      "read": [
+        {
+          "start": 32,
+          "end": 182
+        }
+      ]
+    }
+  ]
+}

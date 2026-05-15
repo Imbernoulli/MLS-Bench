@@ -1,0 +1,5 @@
+{
+  "pytorch-vision/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "pytorch-vision/custom_membership_defense.py": "a5a67f7c50bc7067458c26f5865634b5efe23cea3db415cf202b4d7bc33b43ea",
+  "pytorch-vision/run_membership_defense.py": "46e76a29ee2cc148613172a4e3ad7cfebf59c79a1c99d0acf46f0ddfb3eeaa58"
+}

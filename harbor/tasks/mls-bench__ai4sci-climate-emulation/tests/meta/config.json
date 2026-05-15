@@ -1,0 +1,75 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/short.sh",
+      "label": "short-30ep",
+      "group": 1,
+      "compute": 0.33,
+      "time": "02:00:00",
+      "package": "ClimSim"
+    },
+    {
+      "cmd": "scripts/medium.sh",
+      "label": "medium-100ep",
+      "group": 1,
+      "compute": 0.33,
+      "time": "03:00:00",
+      "package": "ClimSim"
+    },
+    {
+      "cmd": "scripts/long.sh",
+      "label": "long-200ep",
+      "group": 1,
+      "compute": 0.33,
+      "time": "06:00:00",
+      "package": "ClimSim",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "cnn": {
+      "edit_ops": "edits/cnn.edit.py"
+    },
+    "ed": {
+      "edit_ops": "edits/ed.edit.py"
+    },
+    "unet": {
+      "edit_ops": "edits/unet.edit.py"
+    },
+    "hsr": {
+      "edit_ops": "edits/hsr.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ClimSim/custom_emulator.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 86,
+          "end": 118
+        },
+        {
+          "start": 173,
+          "end": 175
+        }
+      ]
+    },
+    {
+      "filename": "ClimSim/climsim_utils/data_utils.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

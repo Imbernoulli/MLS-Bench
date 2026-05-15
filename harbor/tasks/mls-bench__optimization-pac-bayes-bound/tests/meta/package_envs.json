@@ -1,0 +1,6 @@
+{
+  "PBB": {
+    "PYTHONPATH": "/workspace/PBB:/workspace:${PYTHONPATH}",
+    "DATA_DIR": "/workspace/data"
+  }
+}

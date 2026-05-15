@@ -1,0 +1,89 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/metr_la.sh",
+      "label": "METR-LA",
+      "group": 1,
+      "compute": 0.11,
+      "time": "23:59:59",
+      "package": "BasicTS"
+    },
+    {
+      "cmd": "scripts/pems_bay.sh",
+      "label": "PEMS-BAY",
+      "group": 1,
+      "compute": 0.11,
+      "time": "23:59:59",
+      "package": "BasicTS"
+    },
+    {
+      "cmd": "scripts/pems04.sh",
+      "label": "PEMS04",
+      "group": 1,
+      "compute": 0.11,
+      "time": "23:59:59",
+      "package": "BasicTS",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "dlinear": {
+      "edit_ops": "edits/dlinear.edit.py"
+    },
+    "stemgnn": {
+      "edit_ops": "edits/stemgnn.edit.py"
+    },
+    "itransformer": {
+      "edit_ops": "edits/itransformer.edit.py"
+    },
+    "timesnet": {
+      "edit_ops": "edits/timesnet.edit.py"
+    },
+    "softs": {
+      "edit_ops": "edits/softs.edit.py"
+    },
+    "timemixer": {
+      "edit_ops": "edits/timemixer.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "BasicTS/custom_model.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 1,
+          "end": 75
+        }
+      ]
+    },
+    {
+      "filename": "BasicTS/src/basicts/modules/mlps.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "BasicTS/src/basicts/modules/embed/__init__.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

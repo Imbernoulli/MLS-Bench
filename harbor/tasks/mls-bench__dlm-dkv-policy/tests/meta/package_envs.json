@@ -1,0 +1,14 @@
+{
+  "dLLM-cache": {
+    "PYTHONPATH": "/workspace/dLLM-cache:${PYTHONPATH}",
+    "HF_HOME": "/data/huggingface",
+    "TRANSFORMERS_CACHE": "/data/huggingface/transformers",
+    "HF_DATASETS_CACHE": "/data/huggingface/datasets",
+    "TORCH_HOME": "/data/huggingface/torch",
+    "XDG_CACHE_HOME": "/data/huggingface",
+    "LLADA_MODEL_DIR": "/data/LLaDA-8B-Instruct",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_DATASETS_OFFLINE": "1"
+  }
+}

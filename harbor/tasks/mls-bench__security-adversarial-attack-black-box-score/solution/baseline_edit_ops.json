@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "torchattacks/bench/custom_attack.py",
+    "start_line": 7,
+    "end_line": 56,
+    "content": "def run_attack(\n    model: nn.Module,\n    images: torch.Tensor,\n    labels: torch.Tensor,\n    eps: float,\n    n_queries: int,\n    device: torch.device,\n    n_classes: int,\n) -> torch.Tensor:\n    import sys\n    import os\n    sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), \"..\")))\n    import torchattacks\n\n    _ = (device, n_classes)\n    model.eval()\n\n    attack = torchattacks.Square(\n        model=model,\n        norm=\"Linf\",\n        eps=eps,\n        n_queries=max(1, int(n_queries)),\n        n_restarts=1,\n        p_init=0.8,\n        seed=int(os.environ.get(\"SEED\", \"42\")),\n        verbose=False,\n        loss=\"margin\",\n        resc_schedule=True,\n    )\n    adv_images = attack(images, labels)\n    delta = torch.clamp(adv_images - images, min=-eps, max=eps)\n    return torch.clamp(images + delta, 0.0, 1.0).detach()\n"
+  }
+]

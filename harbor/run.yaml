@@ -1,0 +1,43 @@
+# Reference Harbor config for MLS-Bench.
+#
+# Usage:
+#   PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-1
+#
+# `PYTHONPATH=.` is needed only because `harbor_env.py` (the GPU-enabled
+# DockerEnvironment subclass) lives next to this file rather than being
+# installed as a package. Drop the env var if you switch `environment.type`
+# to plain `docker` and run only CPU tasks.
+
+jobs_dir: jobs
+n_attempts: 1
+timeout_multiplier: 1.0
+n_concurrent_trials: 4
+quiet: false
+
+environment:
+  # Subclass of Harbor's `docker` environment that advertises GPU capability
+  # so MLS-Bench tasks with `gpus > 0` are not rejected. Each such task
+  # ships its own `environment/docker-compose.yaml` reserving the actual
+  # nvidia devices via standard `deploy.resources.reservations.devices`.
+  # If you don't need GPU, replace this whole block with `type: docker`.
+  import_path: harbor_env:DockerGPUEnvironment
+  force_build: true
+  delete: true
+
+# Default agent for a smoke run — replays the strongest per-task baseline.
+# Swap in any Harbor agent (claude-code, codex, openhands, terminus-2, …).
+agents:
+  - name: oracle
+
+# Uncomment to run a real agent:
+# agents:
+#   - name: claude-code
+#     model_name: anthropic/claude-opus-4-1
+# agents:
+#   - name: codex
+#     model_name: openai/gpt-5
+# agents:
+#   - name: terminus-2
+
+datasets:
+  - path: tasks

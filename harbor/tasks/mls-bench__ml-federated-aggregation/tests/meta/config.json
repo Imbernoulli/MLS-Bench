@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/cifar10.sh",
+      "label": "cifar10",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "flower"
+    },
+    {
+      "cmd": "scripts/femnist.sh",
+      "label": "femnist",
+      "group": 1,
+      "compute": 1.0,
+      "time": "04:00:00",
+      "package": "flower"
+    },
+    {
+      "cmd": "scripts/shakespeare.sh",
+      "label": "shakespeare",
+      "group": 1,
+      "compute": 1.0,
+      "time": "6:00:00",
+      "package": "flower",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "fedavg": {
+      "edit_ops": "edits/fedavg.edit.py"
+    },
+    "fedprox": {
+      "edit_ops": "edits/fedprox.edit.py"
+    },
+    "scaffold": {
+      "edit_ops": "edits/scaffold.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "flower/custom_fl_aggregation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 340,
+          "end": 420
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,73 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/cardio.sh",
+      "label": "cardio",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/thyroid.sh",
+      "label": "thyroid",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/satellite.sh",
+      "label": "satellite",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/shuttle.sh",
+      "label": "shuttle",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "isolation_forest": {
+      "edit_ops": "edits/isolation_forest.edit.py"
+    },
+    "lof": {
+      "edit_ops": "edits/lof.edit.py"
+    },
+    "ocsvm": {
+      "edit_ops": "edits/ocsvm.edit.py"
+    },
+    "ecod": {
+      "edit_ops": "edits/ecod.edit.py"
+    },
+    "copod": {
+      "edit_ops": "edits/copod.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_anomaly.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 160,
+          "end": 212
+        }
+      ]
+    }
+  ]
+}

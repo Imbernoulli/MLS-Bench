@@ -1,0 +1,8 @@
+{
+  "chatdev-macnet": {
+    "OPENAI_API_KEY": "",
+    "OPENROUTER_API_KEY": "",
+    "BASE_URL": "",
+    "HUMANEVAL_PATH": "/opt/chatdev-macnet-data/HumanEval.jsonl"
+  }
+}

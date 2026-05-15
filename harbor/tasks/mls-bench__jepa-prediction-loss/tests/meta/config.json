@@ -1,0 +1,80 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/small.sh",
+      "label": "small",
+      "group": 1,
+      "compute": 1.0,
+      "time": "3:30:00",
+      "package": "eb_jepa"
+    },
+    {
+      "cmd": "scripts/base.sh",
+      "label": "base",
+      "group": 1,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "package": "eb_jepa"
+    },
+    {
+      "cmd": "scripts/large.sh",
+      "label": "large",
+      "group": 1,
+      "compute": 1.0,
+      "time": "8:00:00",
+      "package": "eb_jepa",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "mse": {
+      "edit_ops": "edits/mse.edit.py"
+    },
+    "smooth_l1": {
+      "edit_ops": "edits/smooth_l1.edit.py"
+    },
+    "cosine": {
+      "edit_ops": "edits/cosine.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "eb_jepa/custom_prediction_loss.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 36,
+          "end": 54
+        }
+      ]
+    },
+    {
+      "filename": "eb_jepa/losses.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "eb_jepa/jepa.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}
