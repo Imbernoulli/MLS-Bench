@@ -1,4 +1,8 @@
 # MLS-Bench: {{ task_id }}
+{% if mangrove %}
+
+> **Time Limit**: You have **{{ agent_timeout_sec // 60 }} minutes** to complete this task. Plan your approach carefully and focus on the most impactful changes first.
+{% endif %}
 
 {{ task_description }}
 

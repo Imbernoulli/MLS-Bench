@@ -45,6 +45,9 @@ def main(argv: list[str] | None = None) -> int:
                         "if omitted.")
     p.add_argument("--continue-on-error", action="store_true",
                    help="Skip tasks that fail to render instead of aborting.")
+    p.add_argument("--mangrove", action="store_true",
+                   help="Render for the Mangrove platform with B300 GPU types, "
+                        "10-min agent timeout, and no internet.")
     args = p.parse_args(argv)
 
     adapter = MlsBenchAdapter(
@@ -54,6 +57,7 @@ def main(argv: list[str] | None = None) -> int:
         task_ids=_parse_task_ids(args.task_ids),
         mls_bench_root=args.mls_bench_root,
         continue_on_error=args.continue_on_error,
+        mangrove=args.mangrove,
     )
     try:
         result = adapter.run()

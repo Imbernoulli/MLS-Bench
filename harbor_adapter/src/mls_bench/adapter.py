@@ -153,6 +153,7 @@ class MlsBenchAdapter:
         task_ids: list[str] | None = None,
         mls_bench_root: Path | None = None,
         continue_on_error: bool = False,
+        mangrove: bool = False,
     ):
         self.output_dir = output_dir
         self.limit = limit
@@ -160,6 +161,7 @@ class MlsBenchAdapter:
         self.task_ids = task_ids
         self.mls_bench_root = mls_bench_root
         self.continue_on_error = continue_on_error
+        self.mangrove = mangrove
 
     def _wanted_task_ids(self, mb: MlsBenchRoot) -> list[str]:
         wanted = list(self.task_ids) if self.task_ids else mb.list_tasks()
@@ -178,7 +180,7 @@ class MlsBenchAdapter:
         for task_id in wanted:
             try:
                 ctx = build_task_context(mb, task_id)
-                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite)
+                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite, mangrove=self.mangrove)
                 print(f"[ok] {task_id} -> {out}")
                 ok += 1
                 task_dirs.append(out)
@@ -697,6 +699,8 @@ PREBUILT_DOCKER = "bohanlyu2022/mlsbench-{pkg}:latest"
 # pristine package source, mlsbench src, and any data deps. See
 # harbor_adapter/scripts/build_base_image.py.
 HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
+# Internal registry mirror for Mangrove (K8s can't reach Docker Hub directly).
+HARBOR_BASE_DOCKER_INTERNAL = "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 
 
 def _harbor_safe_name(task_id: str) -> str:
@@ -787,6 +791,69 @@ def _resources(pkg_config: dict, config: dict) -> dict:
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
+def _mangrove_resources(pkg_config: dict, config: dict) -> dict:
+    """Compute B300-targeted resource allocation for Mangrove.
+
+    A B200-MIG-1g.23gb slice ≈ 1/3–1/2 H100.  Each MIG slice can only run
+    one experiment at a time (no time-sharing like H100), so the number of
+    MIG slices equals the number of parallel experiments in the peak group.
+
+    For tasks where individual cmds need ≥ 2 H100s, we use full B300 cards
+    instead: compute 2 → 1 B200, compute 4 → 2 B200, compute ≥ 8 → 2 B200.
+    """
+    test_cmds = list(config.get("test_cmds", []) or [])
+    max_compute = max((_test_cmd_compute(tc) for tc in test_cmds), default=0.0)
+
+    # Explicit use_cuda=False → no GPU regardless of compute values.
+    if config.get("use_cuda") is False or pkg_config.get("use_cuda") is False:
+        return dict(
+            cpus=4, memory_mb=8 * 1024, storage_mb=30 * 1024,
+            gpus=0, gpu_types=[], batch_size_multiplier=1,
+        )
+
+    # Check if all compute values are explicitly 0 (CPU-only tasks).
+    all_zero = all(
+        float(tc.get("compute", 0) or 0) <= 0
+        for tc in test_cmds
+    ) if test_cmds else True
+    use_cuda = bool(config.get("use_cuda")) or bool(pkg_config.get("use_cuda"))
+
+    if all_zero and not use_cuda:
+        return dict(
+            cpus=4, memory_mb=8 * 1024, storage_mb=30 * 1024,
+            gpus=0, gpu_types=[], batch_size_multiplier=1,
+        )
+
+    # Tasks where individual cmds need ≥ 2 H100s use full B300 cards.
+    if max_compute >= 2.0:
+        if max_compute <= 2.0:
+            gpus = 1
+        elif max_compute <= 4.0:
+            gpus = 2
+        else:
+            gpus = 2  # cap at 2 full B300
+        return dict(
+            cpus=4, memory_mb=32 * 1024, storage_mb=60 * 1024,
+            gpus=gpus, gpu_types=["B200"], batch_size_multiplier=2,
+        )
+
+    # All cmds have compute ≤ 1.0 → use MIG slices.
+    # Each MIG slice runs exactly one experiment, so count the peak number
+    # of parallel experiments (cmds × seeds) within any single group.
+    n_seeds = _seed_count(config)
+    peak_experiments = 0
+    for entries in _group_test_cmds(test_cmds).values():
+        # Every (cmd, seed) pair is one experiment needing one MIG slice.
+        peak_experiments = max(peak_experiments, len(entries) * n_seeds)
+
+    gpus = max(1, peak_experiments) if (peak_experiments or use_cuda) else 0
+
+    return dict(
+        cpus=4, memory_mb=32 * 1024, storage_mb=40 * 1024,
+        gpus=gpus, gpu_types=["B200-MIG-1g.23gb"], batch_size_multiplier=1,
+    )
+
+
 def _editable_files_view(config: dict) -> list[dict]:
     out = []
     for f in config.get("files", []):
@@ -829,8 +896,12 @@ def render_task(
     ctx: TaskContext,
     out_root: Path,
     overwrite: bool = False,
+    mangrove: bool = False,
 ) -> Path:
-    out_dir = out_root / _harbor_safe_name(ctx.task_id)
+    if mangrove:
+        out_dir = out_root / ctx.task_id
+    else:
+        out_dir = out_root / _harbor_safe_name(ctx.task_id)
     if out_dir.exists():
         if not overwrite:
             return out_dir
@@ -840,26 +911,54 @@ def render_task(
     task_dir = mb.tasks_dir / ctx.task_id
 
     pkg_workdir = ctx.pkg_config.get("workdir", "/workspace")
-    res = _resources(ctx.pkg_config, ctx.config)
+    if mangrove:
+        res = _mangrove_resources(ctx.pkg_config, ctx.config)
+    else:
+        res = _resources(ctx.pkg_config, ctx.config)
     effective_config = _config_with_shifted_edit_ranges(mb, ctx)
 
     visible_test_cmds = list(effective_config.get("test_cmds", []))
     baseline_sections, baseline_warnings = _baseline_sections(mb, ctx, config=effective_config)
     read_sections, read_warnings = _read_sections(mb, ctx, config=effective_config)
 
+    # Mangrove overrides: 10-min agent timeout, no internet, GPU types.
+    agent_timeout = 1800 if mangrove else _agent_timeout_sec(ctx.config)
+    allow_internet = False if mangrove else True
+    gpu_types = res.get("gpu_types", []) if mangrove else []
+    batch_size_multiplier = res.get("batch_size_multiplier", 1) if mangrove else 1
+
+    # Determine if torch upgrade is safe for this base image.
+    # Block only images with genuinely old CUDA (<12.0) or special runtimes.
+    # Images like pytorch/pytorch:2.1.2-cuda12.1 are safe — pip torch wheels
+    # bundle their own CUDA runtime and the B200 host driver supports 12.8.
+    _TORCH_UPGRADE_BLOCKLIST = [
+        "nvidia/cuda:11.",          # Old CUDA 11.x containers
+        "nvcr.io/nvidia/pytorch:22",  # NGC 22.x (old CUDA)
+        "verlai/",                  # verl has custom torch management
+    ]
+    pkg_base = ctx.pkg_config.get("base_image", "")
+    torch_upgrade = mangrove and not any(bl in pkg_base for bl in _TORCH_UPGRADE_BLOCKLIST)
+
     template_ctx = {
         "task_id": ctx.task_id,
         "task_description": ctx.task_description,
         "package": ctx.package,
         "workdir": pkg_workdir,
-        "base_image": HARBOR_BASE_DOCKER.format(pkg=ctx.package.lower()),
-        "agent_timeout_sec": _agent_timeout_sec(ctx.config),
-        "verifier_timeout_sec": _verifier_timeout_sec(ctx.config),
-        "build_timeout_sec": 1800,
+        "base_image": (HARBOR_BASE_DOCKER_INTERNAL if mangrove else HARBOR_BASE_DOCKER).format(pkg=ctx.package.lower()),
+        "pkg_base_image": ctx.pkg_config.get("base_image", "python:3.11"),
+        "pkg_install_cmds": ctx.pkg_config.get("install_cmds") or [],
+        "agent_timeout_sec": agent_timeout,
+        "verifier_timeout_sec": _verifier_timeout_sec(ctx.config) * (3 if mangrove else 1),
+        "build_timeout_sec": 3600,
         "cpus": res["cpus"],
         "memory_mb": res["memory_mb"],
         "storage_mb": res["storage_mb"],
         "gpus": res["gpus"],
+        "gpu_types": gpu_types,
+        "allow_internet": allow_internet,
+        "mangrove": mangrove,
+        "torch_upgrade": torch_upgrade,
+        "batch_size_multiplier": batch_size_multiplier,
         "difficulty": ctx.config.get("difficulty", "hard"),
         "category": "ml-research",
         "tags": _domain_tags(ctx.task_id),
@@ -946,6 +1045,7 @@ def render_task(
         mb, ctx, tests_dir, task_dir,
         scaffold_dir=env_dir / "_scaffold",
         config=effective_config,
+        skip_pristine=mangrove,
     )
 
     return out_dir
@@ -1268,6 +1368,7 @@ def _stage_verifier_assets(
     *,
     scaffold_dir: Path,
     config: dict | None = None,
+    skip_pristine: bool = False,
 ) -> None:
     """Stage the per-task verifier-only files under tests/.
 
@@ -1294,17 +1395,29 @@ def _stage_verifier_assets(
         src = task_dir / fname
         if src.exists():
             shutil.copy2(src, meta / fname)
+    cfg_to_write = config if config is not None else ctx.config
+    if skip_pristine:  # mangrove mode: 3x per-cmd time (MIG slower than H100)
+        import copy as _copy
+        cfg_to_write = _copy.deepcopy(cfg_to_write)
+        for tc in cfg_to_write.get("test_cmds", []):
+            raw = tc.get("time")
+            if raw:
+                secs = _parse_time(raw) * 3
+                tc["time"] = f"{secs // 3600}:{(secs % 3600) // 60:02d}:{secs % 60:02d}"
     (meta / "config.json").write_text(
-        json.dumps(config if config is not None else ctx.config, indent=2) + "\n"
+        json.dumps(cfg_to_write, indent=2) + "\n"
     )
     if (task_dir / "budget_check.py").exists():
         shutil.copy2(task_dir / "budget_check.py", meta / "budget_check.py")
     (meta / "task_id").write_text(ctx.task_id + "\n")
     (meta / "package").write_text(ctx.package + "\n")
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
-    (meta / "gpu_count").write_text(
-        str(_resources(ctx.pkg_config, config if config is not None else ctx.config)["gpus"]) + "\n"
-    )
+    cfg = config if config is not None else ctx.config
+    if skip_pristine:
+        res_for_gpu = _mangrove_resources(ctx.pkg_config, cfg)
+    else:
+        res_for_gpu = _resources(ctx.pkg_config, cfg)
+    (meta / "gpu_count").write_text(str(res_for_gpu["gpus"]) + "\n")
     package_envs: dict[str, dict] = {}
     for tc in ctx.config.get("test_cmds", []):
         pkg = tc.get("package")
@@ -1344,10 +1457,11 @@ def _stage_verifier_assets(
     # agent runs as root and could overwrite an image-baked baseline. Lives
     # under tests/meta/pristine/ + tests/meta/pristine_manifest.json so
     # Harbor uploads it only at verify time. See score_task.py::cmd_guard.
-    _stage_pristine_assets(
-        mb, ctx, meta, scaffold_dir=scaffold_dir,
-        config=config if config is not None else ctx.config,
-    )
+    if not skip_pristine:
+        _stage_pristine_assets(
+            mb, ctx, meta, scaffold_dir=scaffold_dir,
+            config=config if config is not None else ctx.config,
+        )
 
 
 def _stage_pristine_assets(

@@ -65,6 +65,8 @@ export MLSBENCH_VERIFIER_PYTHON="${PYTHON_BIN}"
 set -uo pipefail
 
 mkdir -p /logs/verifier
+# Pre-write reward so Mangrove always finds a file even if we get killed.
+echo "0" > /logs/verifier/reward.txt
 
 TASK_ID="$(cat /tests/meta/task_id 2>/dev/null || echo unknown)"
 PKG_NAME="$(cat /tests/meta/package 2>/dev/null || echo unknown)"
@@ -82,22 +84,28 @@ trap 'rm -rf "${PRIVATE_ROOT}"' EXIT
 # Step 1: edit-range diff guard. The pristine baseline is the
 # per-task-rendered tree under tests/meta/pristine/ (mounted only at verify
 # time), so the agent had no opportunity to tamper with it.
-"${PYTHON_BIN}" -I "${PRIVATE_ROOT}/score_task.py" guard \
-    --task-meta "${PRIVATE_META}" \
-    --pristine "${PRIVATE_META}/pristine" \
-    --workspace "${WORKDIR}" \
-    --violation-out /logs/verifier/violation.txt
-guard_rc=$?
+# Skip guard when pristine_manifest.json is absent (Mangrove mode without
+# vendor source — the guard cannot run without the pristine baseline).
+if [ -f "${PRIVATE_META}/pristine_manifest.json" ]; then
+    "${PYTHON_BIN}" -I "${PRIVATE_ROOT}/score_task.py" guard \
+        --task-meta "${PRIVATE_META}" \
+        --pristine "${PRIVATE_META}/pristine" \
+        --workspace "${WORKDIR}" \
+        --violation-out /logs/verifier/violation.txt
+    guard_rc=$?
 
-if [ "${guard_rc}" -eq 10 ]; then
-    echo "0" > /logs/verifier/reward.txt
-    echo "edit-range violation — see /logs/verifier/violation.txt" >&2
-    exit 0
-fi
-if [ "${guard_rc}" -ne 0 ]; then
-    echo "0" > /logs/verifier/reward.txt
-    echo "guard script failed unexpectedly (rc=${guard_rc})" >&2
-    exit 0
+    if [ "${guard_rc}" -eq 10 ]; then
+        echo "0" > /logs/verifier/reward.txt
+        echo "edit-range violation — see /logs/verifier/violation.txt" >&2
+        exit 0
+    fi
+    if [ "${guard_rc}" -ne 0 ]; then
+        echo "0" > /logs/verifier/reward.txt
+        echo "guard script failed unexpectedly (rc=${guard_rc})" >&2
+        exit 0
+    fi
+else
+    echo "pristine_manifest.json absent — skipping edit-range guard" >&2
 fi
 
 # Step 2: run every eval script (visible + hidden), with cwd = the package root

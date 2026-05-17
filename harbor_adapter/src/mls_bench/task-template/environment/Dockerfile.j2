@@ -14,6 +14,15 @@
 # the agent runs as root and could otherwise tamper with an image-baked
 # reference before verification.
 FROM {{ base_image }}
+{% if mangrove and gpus > 0 and torch_upgrade -%}
+# Upgrade PyTorch for B200/B300 Blackwell (sm_100) support. [v4]
+RUN pip install --no-cache-dir torch==2.7.0 torchvision --index-url https://download.pytorch.org/whl/cu128 && \
+    python -c "import torch; print(f'torch={torch.__version__}, cuda={torch.version.cuda}')"
+{%- endif %}
+{% if batch_size_multiplier is defined and batch_size_multiplier > 1 -%}
+# B300 batch size scaling: fewer GPUs with more memory, so double per-GPU batch.
+ENV BATCH_SIZE_MULTIPLIER={{ batch_size_multiplier }}
+{%- endif %}
 
 {% if scaffold_files -%}
 COPY _scaffold/ {{ workdir }}/
