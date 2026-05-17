@@ -15,7 +15,7 @@
 # reference before verification.
 FROM {{ base_image }}
 {% if mangrove and gpus > 0 and torch_upgrade -%}
-# Upgrade PyTorch for B200/B300 Blackwell (sm_100) support. [v4]
+# Upgrade PyTorch for B200/B300 Blackwell (sm_100) support. [v6]
 RUN pip install --no-cache-dir torch==2.7.0 torchvision --index-url https://download.pytorch.org/whl/cu128 && \
     python -c "import torch; print(f'torch={torch.__version__}, cuda={torch.version.cuda}')"
 {%- endif %}

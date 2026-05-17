@@ -927,17 +927,10 @@ def render_task(
     gpu_types = res.get("gpu_types", []) if mangrove else []
     batch_size_multiplier = res.get("batch_size_multiplier", 1) if mangrove else 1
 
-    # Determine if torch upgrade is safe for this base image.
-    # Block only images with genuinely old CUDA (<12.0) or special runtimes.
-    # Images like pytorch/pytorch:2.1.2-cuda12.1 are safe — pip torch wheels
-    # bundle their own CUDA runtime and the B200 host driver supports 12.8.
-    _TORCH_UPGRADE_BLOCKLIST = [
-        "nvidia/cuda:11.",          # Old CUDA 11.x containers
-        "nvcr.io/nvidia/pytorch:22",  # NGC 22.x (old CUDA)
-        "verlai/",                  # verl has custom torch management
-    ]
-    pkg_base = ctx.pkg_config.get("base_image", "")
-    torch_upgrade = mangrove and not any(bl in pkg_base for bl in _TORCH_UPGRADE_BLOCKLIST)
+    # Always upgrade torch for Mangrove (B200/B300 sm_100 support).
+    # pip torch wheels bundle their own CUDA runtime, so this works
+    # regardless of the base image's system CUDA version.
+    torch_upgrade = mangrove
 
     template_ctx = {
         "task_id": ctx.task_id,
