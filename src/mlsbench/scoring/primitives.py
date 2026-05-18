@@ -53,7 +53,10 @@ def bounded_power(x: float, floor: float, bound: float, gamma: float) -> float:
         # Inverted spec convention: bound is a hard sanity floor (worse side),
         # floor anchors the baseline reference.
         r = (x - bound) / (floor - bound)
-    r = max(0.0, min(1.0, r))
+    # Cap r at 0.95 to prevent degenerate score=1.0 when x reaches the bound.
+    # When ref==bound, solve_gamma uses r_ref=0.95 → gamma ≈ 13.5, and
+    # bounded_power(ref) = 0.95^13.5 ≈ 0.5 (the intended reference score).
+    r = max(0.0, min(0.95, r))
     return r ** gamma
 
 
@@ -69,9 +72,10 @@ def solve_gamma(floor: float, bound: float, ref: float, ref_score: float) -> flo
         r_ref = (ref - floor) / (bound - floor)
     else:
         r_ref = (ref - bound) / (floor - bound)
-    r_ref = max(0.0, min(1.0, r_ref))
-    # Degenerate: ref at floor or at bound
-    if r_ref <= 0.0 or r_ref >= 1.0:
+    # Cap at 0.95 (matching bounded_power) to prevent degenerate gamma
+    # when ref==bound. This ensures bounded_power(ref) ≈ ref_score.
+    r_ref = max(0.0, min(0.95, r_ref))
+    if r_ref <= 0.0:
         warnings.warn(
             f"solve_gamma: r(ref)={r_ref:.4f} is degenerate (ref={ref}, "
             f"floor={floor}, bound={bound}). Falling back to gamma=1.",
