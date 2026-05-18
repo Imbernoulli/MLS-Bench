@@ -1,0 +1,65 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/eval.sh",
+      "label": "default-noise",
+      "group": 1,
+      "compute": 1.0,
+      "time": "01:00:00",
+      "package": "RAIN"
+    },
+    {
+      "cmd": "scripts/eval_low_noise.sh",
+      "label": "low-noise",
+      "group": 1,
+      "compute": 1.0,
+      "time": "01:00:00",
+      "package": "RAIN"
+    },
+    {
+      "cmd": "scripts/eval_high_noise.sh",
+      "label": "high-noise",
+      "group": 1,
+      "compute": 1.0,
+      "time": "01:00:00",
+      "package": "RAIN",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "seg": {
+      "edit_ops": "edits/seg.edit.py"
+    },
+    "r_seg": {
+      "edit_ops": "edits/r_seg.edit.py"
+    },
+    "seag": {
+      "edit_ops": "edits/seag.edit.py"
+    },
+    "rain": {
+      "edit_ops": "edits/rain.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "RAIN/optimization_convex_concave/custom_strategy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 24,
+          "end": 75
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

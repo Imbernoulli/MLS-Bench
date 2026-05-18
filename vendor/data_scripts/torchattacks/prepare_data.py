@@ -40,11 +40,50 @@ def main() -> None:
     finally:
         torch.hub.set_dir(old_hub)
 
+    # RobustBench L2-robust CIFAR-10 checkpoints for the
+    # security-adversarial-attack-sparse-l0 task (Sparse-RS canonical L0
+    # setting: k=24, untargeted, robust targets). The vendored RobustBench
+    # download_gdrive cannot pass Google Drive's large-file confirm token,
+    # so fetch with gdown here (host has network; compute nodes do not).
+    rb_dir = root / "robustbench_models" / "cifar10" / "L2"
+    rb_dir.mkdir(parents=True, exist_ok=True)
+    rb_models = [
+        "Rebuffi2021Fixing_R18_cutmix_ddpm",
+        "Augustin2020Adversarial",
+        "Engstrom2019Robustness",
+    ]
+    ta_src = Path(__file__).resolve().parents[2] / "external_packages" / "torchattacks"
+    sys.path.insert(0, str(ta_src))
+    from robustbench.model_zoo.cifar10 import cifar_10_models
+    from robustbench.model_zoo.enums import ThreatModel
+
+    try:
+        import gdown
+    except ImportError:
+        import subprocess
+        subprocess.run([sys.executable, "-m", "pip", "install", "-q", "gdown"], check=True)
+        import gdown
+
+    l2_zoo = cifar_10_models[ThreatModel.L2]
+    for name in rb_models:
+        out = rb_dir / f"{name}.pt"
+        # Re-download if missing or a stale HTML interstitial (< 1 MB).
+        if out.exists() and out.stat().st_size > 1_000_000:
+            continue
+        gid = l2_zoo[name]["gdrive_id"]
+        gdown.download(id=gid, output=str(out), quiet=True)
+        if out.stat().st_size < 1_000_000:
+            print(f"RobustBench checkpoint {name} download failed "
+                  f"(size={out.stat().st_size}B, likely an HTML page)",
+                  file=sys.stderr)
+            sys.exit(1)
+
     checks = [
         root / "cifar10" / "cifar-10-batches-py",
         root / "cifar100" / "cifar-100-python",
         root / "mnist" / "MNIST",
         cache / "hub" / "checkpoints",
+        *[rb_dir / f"{n}.pt" for n in rb_models],
     ]
     missing = [str(p) for p in checks if not p.exists()]
     if missing:

@@ -44,6 +44,10 @@ Computed on the directed edge set (skeleton + direction must both be correct):
 - `directlingam`: DirectLiNGAM. Shimizu et al., "DirectLiNGAM: A Direct Method
   for Learning a Linear Non-Gaussian Structural Equation Model," JMLR 12, 2011
   (arXiv:1101.2489).
+- `notears`: NOTEARS. Zheng, Aragam, Ravikumar & Xing, "DAGs with NO TEARS:
+  Continuous Optimization for Structure Learning," NeurIPS 2018
+  (arXiv:1803.01422). Continuous score-based DAG learning via a smooth
+  acyclicity constraint.
 
 The scientific contribution should be a modular method for exploiting
 non-Gaussian observational structure, such as independent component ideas,

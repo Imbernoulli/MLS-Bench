@@ -47,7 +47,7 @@ MAE, RMSE, MAPE — all lower is better, computed in original scale after invers
 
 ## Reference Implementations (read-only)
 Six reference models live in `basicts/models/` and serve as context:
-- **STID** — Shao et al., "Spatial-Temporal Identity: A Simple yet Effective Baseline for Multivariate Time Series Forecasting", CIKM 2022 (arXiv 2208.05233). MLP-based with spatial and temporal identity embeddings. Source: https://github.com/GestaltCogTeam/STID.
+- **SOFTS** — Han et al., "SOFTS: Efficient Multivariate Time Series Forecasting with Series-Core Fusion", NeurIPS 2024. Inverted architecture (variates as tokens) with a STar Aggregate-Redistribute (STAR) module for O(N) cross-variate fusion instead of self-attention. Source: https://github.com/Secilia-Cxy/SOFTS.
 - **DLinear** — Zeng et al., "Are Transformers Effective for Time Series Forecasting?", AAAI 2023 (arXiv 2205.13504). Decomposition into trend (moving-average kernel) + seasonal, each projected by a linear layer. Source: https://github.com/cure-lab/LTSF-Linear.
 - **StemGNN** — Cao et al., "Spectral Temporal Graph Neural Network for Multivariate Time-series Forecasting", NeurIPS 2020 (arXiv 2103.07719). Graph Fourier transform + DFT for joint spatial-spectral modeling. Source: https://github.com/microsoft/StemGNN.
 - **iTransformer** — Liu et al., "iTransformer: Inverted Transformers Are Effective for Time Series Forecasting", ICLR 2024 (arXiv 2310.06625). Treats variates as tokens; attention across variables, FFN within each variate token. Source: https://github.com/thuml/iTransformer.

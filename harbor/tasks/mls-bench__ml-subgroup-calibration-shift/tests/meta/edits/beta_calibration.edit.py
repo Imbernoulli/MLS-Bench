@@ -1,0 +1,15 @@
+"""Beta calibration baseline for subgroup calibration."""
+
+from pathlib import Path
+
+_FILE = "scikit-learn/custom_subgroup_calibration.py"
+
+OPS = [
+    {
+        "op": "replace",
+        "file": _FILE,
+        "start_line": 200,
+        "end_line": 219,
+        "content": """class CalibrationMethod:\n    \"\"\"Beta calibration via logistic regression on transformed probabilities.\"\"\"\n\n    def __init__(self):\n        self.eps = 1e-6\n        self.model_ = LogisticRegression(max_iter=2000, solver=\"lbfgs\")\n\n    def _featurize(self, probs):\n        probs = np.asarray(probs).reshape(-1)\n        p = np.clip(probs, self.eps, 1.0 - self.eps)\n        return np.column_stack([np.log(p), np.log1p(-p)])\n\n    def fit(self, probs, labels, groups=None):\n        X = self._featurize(probs)\n        labels = np.asarray(labels).reshape(-1).astype(int)\n        self.model_.fit(X, labels)\n        return self\n\n    def predict_proba(self, probs, groups=None):\n        X = self._featurize(probs)\n        return np.clip(self.model_.predict_proba(X)[:, 1], self.eps, 1.0 - self.eps)\n""",
+    }
+]

@@ -1,0 +1,57 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "tool_hang_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "can_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "square_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "quantile_regression": {
+      "edit_ops": "edits/quantile_regression.edit.py"
+    },
+    "huber_pinball": {
+      "edit_ops": "edits/huber_pinball.edit.py"
+    },
+    "default": {}
+  },
+  "files": [
+    {
+      "filename": "robomimic/custom_iql_vf.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 21,
+          "end": 38
+        }
+      ]
+    }
+  ]
+}

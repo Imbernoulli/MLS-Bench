@@ -110,3 +110,22 @@ score is the geometric mean across the four configs. All three
 balance/locality metrics are required: a flat scheme that scatters
 replicas to maximize per-GPU balance will lose `locality`; a method that
 co-locates replicas without addressing skew will lose `balance`.
+
+## Reference baselines
+
+### greedy
+Greedy bin-packing using Python for-loops: the original EPLB reference
+algorithm. Correct hierarchical placement but slow due to sequential
+Python iteration.
+
+### zigzag
+Vectorized zigzag (snake) pattern (Cheng et al., 2025): items sorted by
+weight are assigned to packs in alternating order (0,1,…,P-1,P-1,…,0),
+interleaving heavy and light items. All three stages use this zigzag
+tensor pattern; replication remains sequential. ~20 ms on medium configs.
+
+### flat_zigzag
+Flat (non-hierarchical) zigzag: skips the group-to-node Stage 1 entirely
+and does a single global zigzag assignment of all replicas to all GPUs
+directly. Faster than the hierarchical approach but may lose `locality`
+in multi-node settings because it ignores inter-node topology.

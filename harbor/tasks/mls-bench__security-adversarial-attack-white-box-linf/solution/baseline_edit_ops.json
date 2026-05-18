@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "torchattacks/bench/custom_attack.py",
+    "start_line": 7,
+    "end_line": 22,
+    "content": "def run_attack(\n    model: nn.Module,\n    images: torch.Tensor,\n    labels: torch.Tensor,\n    eps: float,\n    device: torch.device,\n    n_classes: int,\n) -> torch.Tensor:\n    import os\n    import torchattacks\n\n    _ = device\n    model.eval()\n    attack = torchattacks.AutoAttack(\n        model,\n        norm=\"Linf\",\n        eps=eps,\n        version=\"standard\",\n        n_classes=n_classes,\n        seed=int(os.environ.get(\"SEED\", \"42\")),\n        verbose=False,\n    )\n    return attack(images, labels)\n"
+  }
+]

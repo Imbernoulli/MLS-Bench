@@ -16,7 +16,9 @@ ensemble pessimism — trade off in-distribution exploitation against
 out-of-distribution caution.
 
 Reference baselines spanning the design space:
-- **BC** — supervised behavior cloning on the dataset.
+- **ReBRAC** — Tarasov et al., "Revisiting the Minimalist Approach to
+  Offline Reinforcement Learning" (arXiv:2305.09836, NeurIPS 2023).
+  Decoupled actor and critic BC penalties on top of TD3+BC.
 - **TD3+BC** — Fujimoto and Gu, "A Minimalist Approach to Offline
   Reinforcement Learning" (arXiv:2106.06860, NeurIPS 2021). TD3
   augmented with a normalized BC term in the actor loss with default
@@ -25,17 +27,6 @@ Reference baselines spanning the design space:
   Implicit Q-Learning" (arXiv:2110.06169, ICLR 2022). Expectile
   regression with default `tau = 0.7` and advantage-weighted policy
   extraction temperature `beta = 3.0` for D4RL MuJoCo.
-- **CQL** — Kumar et al., "Conservative Q-Learning for Offline
-  Reinforcement Learning" (arXiv:2006.04779, NeurIPS 2020). Adds a
-  conservative penalty that lower-bounds Q-values for OOD actions.
-- **ReBRAC** — Tarasov et al., "Revisiting the Minimalist Approach to
-  Offline Reinforcement Learning" (arXiv:2305.09836, NeurIPS 2023).
-  Decoupled actor and critic BC penalties on top of TD3+BC.
-- **SAC-N / EDAC** — An et al., "Uncertainty-Based Offline Reinforcement
-  Learning with Diversified Q-Ensemble" (arXiv:2110.01548, NeurIPS
-  2021). SAC with a large Q-ensemble (`N` critics, paper default
-  `N = 10` for MuJoCo `medium-v2`); EDAC additionally penalizes Q-value
-  gradient alignment across the ensemble.
 
 ## Constraints
 - **Network dimensions are fixed at 256.** All MLP hidden layers must

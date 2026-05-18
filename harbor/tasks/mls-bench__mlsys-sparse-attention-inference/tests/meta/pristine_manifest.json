@@ -1,0 +1,6 @@
+{
+  "sparse-attn-eval/__init__.py": "73cde2594c0df78c01dfb2a7f51ca2c24c6095bdf0e1721742f992109774a395",
+  "sparse-attn-eval/custom_sparse_attn.py": "f01d41bd3713bf7cb3eeb212a069a893983a205c489931bc5067dd502b59ac60",
+  "sparse-attn-eval/harness.py": "35ea48ef3e658ac926e93af74e219c830b1fb44b4d393f7f6104c3f2fece0231",
+  "sparse-attn-eval/run_llm.py": "fb27275097d1e5efd3be3ee696e8be5169a30f82a6874bcd5b83b9ff57c6d9a4"
+}

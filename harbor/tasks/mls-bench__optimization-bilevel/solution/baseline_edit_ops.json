@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "penalized-bilevel-gradient-descent/mlsbench/custom_strategy.py",
+    "start_line": 227,
+    "end_line": 262,
+    "content": "TOY_HPARAMS = {\n    \"gams\": (10.0,),\n    \"alpha0\": 0.1,\n}\n\n\nHYPERCLEAN_HPARAMS = {\n    \"linear\": {\n        \"lrx\": 0.1,\n        \"lry\": 0.1,\n        \"lr_inner\": 0.01,\n        \"gamma_init\": 0.0,\n        \"gamma_max\": 0.2,\n        \"gamma_argmax_step\": 30_000,\n        \"outer_itr\": 40_000,\n        \"inner_itr\": 1,\n        \"reg\": 0.0,\n        \"eval_interval\": 10,\n    },\n    \"mlp\": {\n        \"lrx\": 0.1,\n        \"lry\": 0.01,\n        \"lr_inner\": 0.01,\n        \"gamma_init\": 0.0,\n        \"gamma_max\": 0.1,\n        \"gamma_argmax_step\": 10_000,\n        \"outer_itr\": 80_000,\n        \"inner_itr\": 1,\n        \"reg\": 0.0,\n        \"eval_interval\": 10,\n    },\n}\n\n\ndef algorithm(state: dict, hparams: dict, grad_fns: dict) -> dict:\n    return run_v_pbgd(state, hparams, grad_fns)\n"
+  }
+]

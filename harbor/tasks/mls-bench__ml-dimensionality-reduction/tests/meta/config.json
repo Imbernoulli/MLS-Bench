@@ -1,0 +1,68 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/mnist.sh",
+      "label": "mnist",
+      "group": 1,
+      "compute": 0.33,
+      "time": "1:00:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/fashion_mnist.sh",
+      "label": "fashion_mnist",
+      "group": 1,
+      "compute": 0.33,
+      "time": "1:00:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/newsgroups.sh",
+      "label": "newsgroups",
+      "group": 1,
+      "compute": 0.33,
+      "time": "1:00:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "pca": {
+      "edit_ops": "edits/pca.edit.py"
+    },
+    "tsne": {
+      "edit_ops": "edits/tsne.edit.py"
+    },
+    "umap": {
+      "edit_ops": "edits/umap.edit.py"
+    },
+    "trimap": {
+      "edit_ops": "edits/trimap.edit.py"
+    },
+    "pacmap": {
+      "edit_ops": "edits/pacmap.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/bench/custom_dimred.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 15,
+          "end": 59
+        }
+      ]
+    }
+  ]
+}

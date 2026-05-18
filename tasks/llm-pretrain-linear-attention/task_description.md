@@ -34,8 +34,6 @@ Two editable regions in `nanoGPT/custom_pretrain.py`:
 ## Reference baselines
 - `gla` — Gated Linear Attention.
 - `retnet` — Retentive Network / MultiScaleRetention.
-- `mamba` — Mamba selective state-space.
-- `rwkv6` — RWKV-6 / Finch.
 - `deltanet` — DeltaNet (delta-rule linear attention).
 
 ## Fixed Pipeline

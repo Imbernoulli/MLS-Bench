@@ -1,0 +1,61 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/cora.sh",
+      "label": "Cora",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric"
+    },
+    {
+      "cmd": "scripts/citeseer.sh",
+      "label": "CiteSeer",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric"
+    },
+    {
+      "cmd": "scripts/pubmed.sh",
+      "label": "PubMed",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "gcn": {
+      "edit_ops": "edits/gcn.edit.py"
+    },
+    "gat": {
+      "edit_ops": "edits/gat.edit.py"
+    },
+    "graphsage": {
+      "edit_ops": "edits/graphsage.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-geometric/custom_nodecls.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 48,
+          "end": 157
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

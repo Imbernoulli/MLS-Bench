@@ -29,11 +29,10 @@ Reference baselines spanning the design space:
 - **SPOT** — Wu et al., "Supported Policy Optimization for Offline
   Reinforcement Learning" (arXiv:2202.06239, NeurIPS 2022). VAE-based
   density support constraint that supports online fine-tuning.
-- **Cal-QL** — Nakamoto et al., "Cal-QL: Calibrated Offline RL
-  Pre-Training for Efficient Online Fine-Tuning" (arXiv:2303.05479,
-  NeurIPS 2023). Calibrated CQL pretraining whose Q-values are
-  lower-bounded by the reference behavior-policy value, then standard
-  online updates.
+- **IQL** — Kostrikov et al., "Offline Reinforcement Learning with
+  Implicit Q-Learning" (arXiv:2110.06169, ICLR 2022). Expectile
+  regression pretraining with advantage-weighted policy extraction,
+  providing a stable offline initialization for online fine-tuning.
 
 ## Constraints
 - **Network dimensions are fixed at 256.** All MLP hidden layers must

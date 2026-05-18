@@ -1,0 +1,63 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "mid_edit": "edits/mid_edit.py",
+  "test_cmds": [
+    {
+      "cmd": "scripts/train_small.sh",
+      "label": "train_small",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:30:00",
+      "package": "diffusers-main"
+    },
+    {
+      "cmd": "scripts/train_medium.sh",
+      "label": "train_medium",
+      "group": 2,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "package": "diffusers-main"
+    },
+    {
+      "cmd": "scripts/train_large.sh",
+      "label": "train_large",
+      "group": 3,
+      "compute": 1.0,
+      "time": "10:00:00",
+      "package": "diffusers-main",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "concat-film": {
+      "edit_ops": "edits/concat_film.edit.py"
+    },
+    "cross-attn": {
+      "edit_ops": "edits/cross_attn.edit.py"
+    },
+    "adanorm": {
+      "edit_ops": "edits/adanorm.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "diffusers-main/custom_train.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 195,
+          "end": 227
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

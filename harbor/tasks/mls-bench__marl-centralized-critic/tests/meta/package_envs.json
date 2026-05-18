@@ -1,0 +1,6 @@
+{
+  "epymarl": {
+    "PYTHONPATH": "/workspace/epymarl/src:${PYTHONPATH}",
+    "WANDB_MODE": "disabled"
+  }
+}

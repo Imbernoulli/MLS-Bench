@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "eb_jepa/custom_prediction_loss.py",
+    "start_line": 36,
+    "end_line": 54,
+    "content": "class CustomPredictionLoss(nn.Module):\n    \"\"\"Smooth L1 prediction loss for temporal JEPA.\"\"\"\n\n    def __init__(self):\n        super().__init__()\n\n    def forward(self, state, predicted):\n        return F.smooth_l1_loss(state, predicted)\n"
+  }
+]

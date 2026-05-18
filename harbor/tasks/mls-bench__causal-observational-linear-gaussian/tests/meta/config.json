@@ -1,0 +1,106 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/eval_er10.sh",
+      "label": "ER10",
+      "group": 1,
+      "compute": 0.25,
+      "time": "0:30:00",
+      "package": "causal-learn"
+    },
+    {
+      "cmd": "scripts/eval_er20.sh",
+      "label": "ER20",
+      "group": 1,
+      "compute": 0.25,
+      "time": "1:00:00",
+      "package": "causal-learn"
+    },
+    {
+      "cmd": "scripts/eval_sf50.sh",
+      "label": "SF50",
+      "group": 1,
+      "compute": 0.25,
+      "time": "1:30:00",
+      "package": "causal-learn"
+    },
+    {
+      "cmd": "scripts/eval_sf50_hard.sh",
+      "label": "SF50-Hard",
+      "group": 1,
+      "compute": 0.25,
+      "time": "0:30:00",
+      "package": "causal-learn"
+    },
+    {
+      "cmd": "scripts/eval_er20_noisy.sh",
+      "label": "ER20-Noisy",
+      "group": 1,
+      "compute": 0.25,
+      "time": "1:00:00",
+      "package": "causal-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "pc": {
+      "edit_ops": "edits/pc.edit.py"
+    },
+    "grasp": {
+      "edit_ops": "edits/grasp.edit.py"
+    },
+    "boss": {
+      "edit_ops": "edits/boss.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "causal-learn/bench/custom_algorithm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 3,
+          "end": 14
+        }
+      ]
+    },
+    {
+      "filename": "causal-learn/bench/run_eval.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "causal-learn/bench/data_gen.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "causal-learn/bench/metrics.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

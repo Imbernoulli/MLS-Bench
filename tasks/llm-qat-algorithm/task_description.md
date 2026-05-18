@@ -160,3 +160,24 @@ numbers are not directly comparable to ours. The intended internal
 comparison is QAT-method vs `finetune_then_ptq`: a method that beats
 `finetune_then_ptq` is showing real QAT signal, beyond the in-domain
 finetune effect.
+
+## Reference baselines
+
+### no_qat
+Round-to-nearest (RTN) post-training quantization with no fine-tuning —
+the pure PTQ lower bound.
+
+### ste
+Straight-Through Estimator (Bengio et al., 2013): fake-quantize in the
+forward pass, pass the gradient through unchanged (identity) in the
+backward pass. The canonical minimal QAT gradient estimator.
+
+### lsq
+Learned Step-Size Quantization (Esser et al., ICLR 2020, arXiv:1902.08153):
+learnable per-group quantization scales trained jointly with the weights,
+giving a tighter quantization grid than STE.
+
+### finetune_then_ptq
+Full-precision fine-tune on WikiText-2 (same schedule as QAT methods)
+followed by RTN quantization. Isolates the in-domain fine-tune signal
+from the QAT signal; a valid QAT method must outperform this baseline.

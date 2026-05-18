@@ -3,6 +3,7 @@
   "install_cmds": [
     "pip install .",
     "pip install torchvision",
+    "pip install 'setuptools<81' gdown",
     "python -c \"import torchvision; torchvision.datasets.CIFAR10('/data/cifar10', train=True, download=True); torchvision.datasets.CIFAR10('/data/cifar10', train=False, download=True)\"",
     "python -c \"import torchvision; torchvision.datasets.CIFAR100('/data/cifar100', train=True, download=True); torchvision.datasets.CIFAR100('/data/cifar100', train=False, download=True)\"",
     "python -c \"import torchvision; torchvision.datasets.MNIST('/data/mnist', train=True, download=True); torchvision.datasets.MNIST('/data/mnist', train=False, download=True)\"",
@@ -19,7 +20,7 @@
       "host_path": "{data_root}/torchattacks",
       "container_path": "/data",
       "prepare": "vendor/data_scripts/torchattacks/prepare_data.py",
-      "description": "CIFAR-10, CIFAR-100, MNIST, and pretrained CIFAR model cache for torchattacks tasks"
+      "description": "CIFAR-10, CIFAR-100, MNIST, pretrained chenyaofo CIFAR cache, and RobustBench L2-robust CIFAR-10 checkpoints for torchattacks tasks"
     }
   ],
   "use_cuda": true,

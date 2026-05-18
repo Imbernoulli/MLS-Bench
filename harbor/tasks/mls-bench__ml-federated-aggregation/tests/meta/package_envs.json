@@ -1,0 +1,6 @@
+{
+  "flower": {
+    "DATA_DIR": "/data",
+    "PYTHONPATH": "/workspace/flower:${PYTHONPATH}"
+  }
+}

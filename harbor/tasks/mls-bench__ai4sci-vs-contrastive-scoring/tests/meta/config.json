@@ -1,0 +1,96 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "train",
+      "group": 1,
+      "compute": 1.0,
+      "time": "12:00:00",
+      "package": "HypSeek"
+    },
+    {
+      "cmd": "scripts/dude.sh",
+      "label": "dude",
+      "group": 2,
+      "compute": 1.0,
+      "time": "01:00:00",
+      "package": "HypSeek"
+    },
+    {
+      "cmd": "scripts/lit_pcba.sh",
+      "label": "lit-pcba",
+      "group": 2,
+      "compute": 1.0,
+      "time": "01:00:00",
+      "package": "HypSeek",
+      "hidden": true
+    },
+    {
+      "cmd": "scripts/dekois.sh",
+      "label": "dekois",
+      "group": 2,
+      "compute": 1.0,
+      "time": "01:00:00",
+      "package": "HypSeek"
+    }
+  ],
+  "baselines": {
+    "vanilla_clip": {
+      "edit_ops": "edits/vanilla_clip.edit.py"
+    },
+    "hcc": {
+      "edit_ops": "edits/hcc.edit.py"
+    },
+    "hcc_hyp_cone": {
+      "edit_ops": "edits/hcc_hyp_cone.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "HypSeek/unimol/custom_scoring.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "HypSeek/unimol/models/custom_vs_model.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "HypSeek/unimol/losses/custom_vs_loss.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "HypSeek/unimol/losses/lorentz.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

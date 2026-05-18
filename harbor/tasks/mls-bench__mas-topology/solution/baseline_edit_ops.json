@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "chatdev-macnet/custom_topology.py",
+    "start_line": 34,
+    "end_line": 40,
+    "content": "    # Star topology: hub-and-spoke\n    # Node 0 broadcasts to all other nodes in parallel.\n    # Good for generating diverse solutions simultaneously.\n    edges = []\n    for i in range(1, node_num):\n        edges.append((0, i))\n    return edges\n"
+  }
+]

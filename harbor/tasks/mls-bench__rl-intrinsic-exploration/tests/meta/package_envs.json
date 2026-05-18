@@ -1,0 +1,6 @@
+{
+  "cleanrl": {
+    "MUJOCO_GL": "osmesa",
+    "PYOPENGL_PLATFORM": "osmesa"
+  }
+}

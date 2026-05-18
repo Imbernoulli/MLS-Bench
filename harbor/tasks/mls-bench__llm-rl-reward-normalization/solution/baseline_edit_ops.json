@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "verl/verl/trainer/ppo/custom_reward_normalization.py",
+    "start_line": 17,
+    "end_line": 72,
+    "content": "# =====================================================================\n\n\ndef normalize_rewards(\n    token_level_scores,\n    response_mask,\n    index=None,\n    epsilon: float = 1e-6,\n    config=None,\n    **kwargs,\n):\n    \"\"\"batch_std: subtract batch mean, divide by batch std + eps.\"\"\"\n    with torch.no_grad():\n        bsz, seq_len = token_level_scores.shape\n        scores = token_level_scores.sum(dim=-1)  # (bs,)\n\n        if bsz <= 1:\n            # Degenerate case \u2014 no normalization possible.\n            mean = torch.tensor(0.0, device=scores.device)\n            std = torch.tensor(1.0, device=scores.device)\n        else:\n            mean = scores.mean()\n            std = scores.std(unbiased=False)\n\n        scores = (scores - mean) / (std + epsilon)\n\n        out = torch.zeros_like(token_level_scores)\n        last_idx = response_mask.long().sum(dim=-1) - 1  # (bs,)\n        last_idx = last_idx.clamp(min=0)\n        out[torch.arange(bsz, device=out.device), last_idx] = scores\n        return out * response_mask\n"
+  }
+]

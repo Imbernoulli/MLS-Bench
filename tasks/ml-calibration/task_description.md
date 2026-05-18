@@ -10,8 +10,6 @@ Reference baselines:
 - **Platt scaling** — Platt, 1999. Fit a sigmoid `1 / (1 + exp(a*x + b))` on classifier scores via maximum likelihood. Designed for SVM margins.
 - **Isotonic regression** — Zadrozny & Elkan, 2002. Non-parametric monotonic mapping; can overfit on small calibration sets.
 - **Temperature scaling** — Guo, Pleiss, Sun, Weinberger, ICML 2017 ([arXiv:1706.04599](https://arxiv.org/abs/1706.04599)). Single scalar temperature `T` divides logits before softmax; fit by minimizing NLL on calibration set. Preserves accuracy (argmax invariant).
-- **Beta calibration** — Kull, Silva Filho, Flach, AISTATS 2017 ([proceedings](https://proceedings.mlr.press/v54/kull17a.html)). Three-parameter family modeling score distributions as beta distributions; subsumes sigmoids, inverse sigmoids, and identity.
-- **Histogram binning** — Zadrozny & Elkan, 2001. Piecewise-constant mapping based on equal-mass or equal-width bins.
 
 ## Implementation Contract
 Implement `CalibrationMethod` in `custom_calibration.py`:

@@ -1,0 +1,67 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/xgboost.sh",
+      "label": "xgboost",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/svm.sh",
+      "label": "svm",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/nn.sh",
+      "label": "nn",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "random_search": {
+      "edit_ops": "edits/random_search.edit.py"
+    },
+    "tpe": {
+      "edit_ops": "edits/tpe.edit.py"
+    },
+    "hyperband": {
+      "edit_ops": "edits/hyperband.edit.py"
+    },
+    "dehb": {
+      "edit_ops": "edits/dehb.edit.py"
+    },
+    "bohb": {
+      "edit_ops": "edits/bohb.edit.py"
+    },
+    "optuna_cma": {
+      "edit_ops": "edits/optuna_cma.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_hpo.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 255,
+          "end": 326
+        }
+      ]
+    }
+  ]
+}

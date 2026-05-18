@@ -1,0 +1,71 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "mid_edit": "edits/mid_edit.py",
+  "test_cmds": [
+    {
+      "cmd": "scripts/train_small.sh",
+      "label": "train_small",
+      "group": 1,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "package": "alphaflow-main"
+    },
+    {
+      "cmd": "scripts/train_medium.sh",
+      "label": "train_medium",
+      "group": 2,
+      "compute": 1.0,
+      "time": "6:00:00",
+      "package": "alphaflow-main"
+    },
+    {
+      "cmd": "scripts/train_large.sh",
+      "label": "train_large",
+      "group": 3,
+      "compute": 1.0,
+      "time": "8:00:00",
+      "package": "alphaflow-main"
+    }
+  ],
+  "baselines": {
+    "mse_base": {
+      "edit_ops": "edits/mse_base.edit.py"
+    },
+    "lpips_grad": {
+      "edit_ops": "edits/lpips_grad.edit.py"
+    },
+    "lpips_spectral": {
+      "edit_ops": "edits/lpips_spectral.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "alphaflow-main/custom_train_perceptual.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 384,
+          "end": 401
+        }
+      ]
+    },
+    {
+      "filename": "alphaflow-main/perceptual_utils.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

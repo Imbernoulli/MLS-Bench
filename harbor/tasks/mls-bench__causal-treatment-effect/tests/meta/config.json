@@ -1,0 +1,69 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/ihdp_synth.sh",
+      "label": "ihdp_synth",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/jobs_synth.sh",
+      "label": "jobs_synth",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/acic_synth.sh",
+      "label": "acic_synth",
+      "hidden": true,
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "scikit-learn"
+    }
+  ],
+  "baselines": {
+    "s_learner": {
+      "edit_ops": "edits/s_learner.edit.py"
+    },
+    "t_learner": {
+      "edit_ops": "edits/t_learner.edit.py"
+    },
+    "ipw": {
+      "edit_ops": "edits/ipw.edit.py"
+    },
+    "causal_forest": {
+      "edit_ops": "edits/causal_forest.edit.py"
+    },
+    "dr_learner": {
+      "edit_ops": "edits/dr_learner.edit.py"
+    },
+    "r_learner": {
+      "edit_ops": "edits/r_learner.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_cate.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 344,
+          "end": 416
+        }
+      ]
+    }
+  ]
+}

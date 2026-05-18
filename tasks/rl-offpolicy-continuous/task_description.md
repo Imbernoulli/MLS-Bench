@@ -29,15 +29,6 @@ Reference baselines spanning the design space:
   Entropy Deep Reinforcement Learning with a Stochastic Actor"
   (arXiv:1801.01290, ICML 2018). Stochastic actor with maximum-entropy
   objective and twin-Q targets.
-- **TQC** — Kuznetsov et al., "Controlling Overestimation Bias with
-  Truncated Mixture of Continuous Distributional Quantile Critics"
-  (arXiv:2005.04269, ICML 2020). Distributional critic with truncation
-  of the top quantiles for overestimation control.
-- **CrossQ** — Bhatt et al., "CrossQ: Batch Normalization in Deep
-  Reinforcement Learning for Greater Sample Efficiency and Simplicity"
-  (arXiv:1902.05605, ICLR 2024). Removes target networks and uses Batch
-  Renormalization across `(s,a)` and `(s',a')` for stable Q updates at
-  UTD = 1.
 
 ## Constraints
 - Network architecture dimensions are FIXED and cannot be modified.

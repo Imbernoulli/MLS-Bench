@@ -1,0 +1,87 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/eval_er30.sh",
+      "label": "ER30",
+      "group": 1,
+      "compute": 0.25,
+      "time": "2:00:00",
+      "package": "causal-learn"
+    },
+    {
+      "cmd": "scripts/eval_er50.sh",
+      "label": "ER50",
+      "group": 1,
+      "compute": 0.25,
+      "time": "2:00:00",
+      "package": "causal-learn"
+    },
+    {
+      "cmd": "scripts/eval_sf100.sh",
+      "label": "SF100",
+      "hidden": true,
+      "group": 1,
+      "compute": 0.25,
+      "time": "3:00:00",
+      "package": "causal-learn"
+    }
+  ],
+  "baselines": {
+    "icalingam": {
+      "edit_ops": "edits/icalingam.edit.py"
+    },
+    "directlingam": {
+      "edit_ops": "edits/directlingam.edit.py"
+    },
+    "notears": {
+      "edit_ops": "edits/notears.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "causal-learn/bench/custom_algorithm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 3,
+          "end": 14
+        }
+      ]
+    },
+    {
+      "filename": "causal-learn/bench/run_eval.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "causal-learn/bench/data_gen.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "causal-learn/bench/metrics.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

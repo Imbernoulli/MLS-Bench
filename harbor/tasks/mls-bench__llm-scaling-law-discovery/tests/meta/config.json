@@ -1,0 +1,95 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/sld_vocab.sh",
+      "label": "sld-vocab",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:15:00",
+      "package": "scaling-law-lab"
+    },
+    {
+      "cmd": "scripts/sld_lrbsz.sh",
+      "label": "sld-lrbsz",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:15:00",
+      "package": "scaling-law-lab",
+      "hidden": true
+    },
+    {
+      "cmd": "scripts/sld_dataconstrained.sh",
+      "label": "sld-dataconstrained",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:15:00",
+      "package": "scaling-law-lab"
+    }
+  ],
+  "baselines": {
+    "human_exact": {
+      "edit_ops": "edits/human_exact.edit.py"
+    },
+    "sldagent_style": {
+      "edit_ops": "edits/sldagent_style.edit.py"
+    },
+    "kernel_ridge": {
+      "edit_ops": "edits/kernel_ridge.edit.py"
+    },
+    "xgboost": {
+      "edit_ops": "edits/xgboost.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scaling-law-lab/custom_scaling_law.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 183,
+          "end": 211
+        }
+      ]
+    },
+    {
+      "filename": "scaling-law-lab/observed_trials/sld_vocab_train.jsonl",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "scaling-law-lab/observed_trials/sld_lrbsz_train.jsonl",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "scaling-law-lab/observed_trials/sld_dataconstrained_train.jsonl",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    }
+  ]
+}

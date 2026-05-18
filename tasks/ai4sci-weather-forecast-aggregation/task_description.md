@@ -51,3 +51,8 @@ The model is fine-tuned from pretrained ClimaX weights on ERA5 reanalysis data a
 - **wind10m-7day**: 10 m wind speed, 7-day lead time.
 
 Metric: Latitude-weighted RMSE (lower is better). The metric accounts for the convergence of meridians at the poles by weighting errors by the cosine of latitude.
+
+## Reference Baselines
+- **cross_attention**: ClimaX default aggregation. A learnable query token attends to all V variable tokens at each spatial location via multi-head cross-attention, producing one token per location.
+- **mean_pooling**: Simple uniform mean across all V variable tokens at each spatial location. No additional learnable parameters; serves as a parameter-free lower bound.
+- **learned_weighted_sum**: Learnable per-variable scalar weights normalized via softmax, then used to compute a weighted sum across variable tokens. More expressive than mean pooling but much simpler than cross-attention.

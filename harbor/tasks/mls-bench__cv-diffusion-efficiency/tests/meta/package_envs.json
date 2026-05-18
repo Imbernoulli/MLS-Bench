@@ -1,0 +1,15 @@
+{
+  "CFGpp-main": {
+    "HF_HOME": "/data/huggingface",
+    "TRANSFORMERS_CACHE": "/data/huggingface/transformers",
+    "HF_DATASETS_CACHE": "/data/huggingface/datasets",
+    "TORCH_HOME": "/data/huggingface/torch",
+    "XDG_CACHE_HOME": "/data/huggingface",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "CONDA_DEFAULT_ENV": "cfgpp",
+    "PATH": "/opt/conda/envs/cfgpp/bin:/opt/conda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "TMPDIR": "/data/huggingface/pip_tmp",
+    "PIP_CACHE_DIR": "/data/huggingface/pip_cache"
+  }
+}

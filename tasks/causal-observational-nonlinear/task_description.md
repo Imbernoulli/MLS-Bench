@@ -52,6 +52,10 @@ Computed on the directed edge set (skeleton + direction must both be correct):
   default uses a one-hidden-layer MLP with sigmoid activation as in the paper.
 - `directlingam`: Linear reference baseline. Shimizu et al., JMLR 12, 2011
   (arXiv:1101.2489).
+- `grandag`: GraN-DAG. Lachapelle, Brouillard, Deleu & Lacoste-Julien,
+  "Gradient-Based Neural DAG Learning," ICLR 2020 (arXiv:1906.02226).
+  Gradient-based DAG learning using neural conditional densities with an
+  augmented-Lagrangian acyclicity constraint.
 
 Suitable contributions include nonlinear independence tests, additive-noise
 scoring, differentiable DAG learning, hybrid ordering methods, or other

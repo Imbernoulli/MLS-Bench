@@ -16,8 +16,10 @@ data support, while pure behavior cloning is limited by the small
 dataset.
 
 Reference baselines spanning the design space:
-- **BC-10%** — behavior cloning on the top 10% of trajectories by
-  return.
+- **IQL** — Kostrikov et al., "Offline Reinforcement Learning with
+  Implicit Q-Learning" (arXiv:2110.06169, ICLR 2022). Expectile
+  regression with advantage-weighted policy extraction; well-suited to
+  narrow data support without requiring OOD action queries.
 - **AWAC** — Nair et al., "AWAC: Accelerating Online Reinforcement
   Learning with Offline Datasets" (arXiv:2006.09359). Advantage-weighted
   actor-critic with implicit policy constraint (default temperature

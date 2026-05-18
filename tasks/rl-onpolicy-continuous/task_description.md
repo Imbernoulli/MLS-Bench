@@ -21,13 +21,6 @@ Reference baselines spanning the design space:
   Algorithms" (arXiv:1707.06347). Clipped surrogate with default clip
   range `epsilon = 0.2` and GAE `lambda = 0.95`.
 - **PPO-Penalty** — KL-penalty variant from the same paper.
-- **RPO** — Rahman and Xue, "Robust Policy Optimization in Deep
-  Reinforcement Learning" (arXiv:2212.07536). Adds a perturbation to
-  the Gaussian policy mean to maintain higher entropy throughout
-  training.
-- **A2C** — synchronous variant of A3C (Mnih et al., "Asynchronous
-  Methods for Deep Reinforcement Learning", arXiv:1602.01783, ICML
-  2016): on-policy advantage actor-critic with no clipping.
 - **AWR** — Peng et al., "Advantage-Weighted Regression: Simple and
   Scalable Off-Policy Reinforcement Learning" (arXiv:1910.00177).
   Advantage-weighted supervised policy update with default temperature

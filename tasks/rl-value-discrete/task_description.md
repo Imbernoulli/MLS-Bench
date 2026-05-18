@@ -14,22 +14,16 @@ bootstrapped targets, unstable value learning, exploration scheduling,
 and representing uncertainty or full return distributions.
 
 Reference baselines spanning the design space:
-- **DQN** — Mnih et al., "Human-level control through deep
-  reinforcement learning" (Nature 518, 2015). Q-network trained with
-  experience replay and a periodically-updated target network.
-- **Double DQN** — van Hasselt, Guez and Silver, "Deep Reinforcement
-  Learning with Double Q-learning" (arXiv:1509.06461, AAAI 2016).
-  Decouples action selection from action evaluation in the TD target.
+- **QR-DQN** — Dabney et al., "Distributional Reinforcement Learning
+  with Quantile Regression" (arXiv:1710.10044, AAAI 2018).
+  Quantile-regression distributional critic with default 200 quantiles
+  trained with the Huber quantile loss.
 - **Dueling DQN** — Wang et al., "Dueling Network Architectures for
   Deep Reinforcement Learning" (arXiv:1511.06581, ICML 2016). Splits
   the head into state value and action advantage streams.
 - **C51** — Bellemare, Dabney and Munos, "A Distributional Perspective
   on Reinforcement Learning" (arXiv:1707.06887, ICML 2017). Categorical
   distributional critic with default 51 atoms over `[-10, 10]`.
-- **QR-DQN** — Dabney et al., "Distributional Reinforcement Learning
-  with Quantile Regression" (arXiv:1710.10044, AAAI 2018).
-  Quantile-regression distributional critic with default 200 quantiles
-  trained with the Huber quantile loss.
 
 ## Constraints
 - Network architecture dimensions are FIXED and cannot be modified.

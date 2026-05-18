@@ -1,0 +1,8 @@
+{
+  "alphaflow-main": {
+    "PYTHONPATH": "/workspace/alphaflow-main/src:${PYTHONPATH}",
+    "DATA_DIR": "/data/cifar10",
+    "OUTPUT_DIR": "/tmp/output",
+    "TORCH_HOME": "/data/torch_cache"
+  }
+}

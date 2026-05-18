@@ -1,0 +1,5 @@
+#!/bin/bash
+N_LAYER=12 N_HEAD=12 N_EMBD=768 \
+MAX_ITERS=4730 EVAL_INTERVAL=1000 \
+BATCH_SIZE=64 GRAD_ACCUM=8 \
+python custom_pretrain.py

@@ -13,7 +13,7 @@ Implement a stronger sparse attack in `bench/custom_attack.py`. The method shoul
 
 - Threat model: full model access for custom attack implementation (gradients permitted).
 - Norm constraint: number of modified spatial pixels is bounded.
-- Budget: `L0(x_adv, x) <= pixels`, where `pixels = 10`. A pixel is counted as modified if any of its channels changes.
+- Budget: `L0(x_adv, x) <= pixels`, where `pixels = 24` (the canonical Sparse-RS CIFAR-10 L0 budget, Croce et al., AAAI 2022). A pixel is counted as modified if any of its channels changes.
 
 ## Editable Interface
 You must implement:
@@ -24,15 +24,15 @@ Inputs:
 - `images`: tensor of shape `(N, C, H, W)`, values in `[0, 1]`.
 - `labels`: tensor of shape `(N,)`.
 - `pixels`: maximum number of modified spatial pixels per sample.
-- `n_classes`: 10 for CIFAR-10, 100 for CIFAR-100.
+- `n_classes`: 10 (CIFAR-10).
 
 Output:
 - `adv_images`: same shape as `images`, also in `[0, 1]`.
 
 ## Evaluation Protocol
 Each evaluation script:
-1. Loads one pretrained model.
-2. Collects up to 1000 samples that are initially classified correctly.
+1. Loads one adversarially-robust pretrained model.
+2. Collects up to 150 samples that are initially classified correctly.
 3. Runs your `run_attack`.
 4. Checks `L0` validity (`<= pixels` modified spatial pixels) and `[0, 1]` range.
 5. Reports `clean_acc`, `robust_acc`, and `asr = 1 - robust_acc`.
@@ -42,7 +42,14 @@ Important:
 - Invalid adversarial outputs (shape mismatch, non-finite values, or violated budget) are treated as failure.
 
 ## Evaluation Scenarios
-Each scenario is a (model, dataset) pair drawn from {ResNet20, VGG11-BN, MobileNetV2} x {CIFAR-10, CIFAR-100}, using publicly available pretrained checkpoints.
+Three CIFAR-10 settings, each an adversarially-robust target model from the
+RobustBench L2 model zoo (this is the canonical Sparse-RS L0 threat model,
+Croce et al., AAAI 2022, Table 2 / App. A.5 — on standard undefended models
+a strong L0 attack trivially saturates):
+
+- `Rebuffi-R18-L2`: l2-AT PreActResNet-18 (Rebuffi et al., 2021) — the exact model the Sparse-RS paper evaluates L0 against.
+- `Augustin-L2`: l2-robust model (Augustin et al., 2020).
+- `Engstrom-L2`: l2-robust model (Engstrom et al., 2019).
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; reference implementations are in `torchattacks`:

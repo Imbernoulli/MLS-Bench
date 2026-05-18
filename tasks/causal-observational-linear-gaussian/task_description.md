@@ -47,8 +47,6 @@ hyperparameters are the ones recommended in the cited papers.
 
 - `pc`: Peter-Clark algorithm. Constraint-based. Spirtes, Glymour & Scheines,
   *Causation, Prediction, and Search* (MIT Press, 2nd ed., 2000).
-- `ges`: Greedy Equivalence Search. Score-based. Chickering, "Optimal Structure
-  Identification With Greedy Search," JMLR 3, 2002.
 - `grasp`: Greedy Relaxations of the Sparsest Permutation. Lam, Andrews &
   Ramsey, UAI 2022 (arXiv:2206.05421).
 - `boss`: Best Order Score Search. Andrews et al., NeurIPS 2023

@@ -54,8 +54,9 @@ Task score is the geometric mean of the three env scores. **Submitting at lower 
 
 ## Baselines
 
-### ddpm
-DDPM sampling with 100 steps — standard but slow.
+### default
+DDPM sampling with 100 steps — standard but slow. This is the unmodified
+template baseline (registered as `default` in the config).
 
 ### ddim
 DDIM sampling with 20 steps — faster deterministic sampling.

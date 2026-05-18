@@ -1,0 +1,86 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/gpt_345m.sh",
+      "label": "gpt-345m",
+      "group": 1,
+      "compute": 4.0,
+      "time": "12:00:00",
+      "package": "nanoGPT"
+    },
+    {
+      "cmd": "scripts/lm_eval_345m.sh",
+      "label": "lm-eval-345m",
+      "group": 2,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "lm-evaluation-harness",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "vanilla": {
+      "edit_ops": "edits/vanilla.edit.py"
+    },
+    "prores": {
+      "edit_ops": "edits/prores.edit.py"
+    },
+    "learned_scaling": {
+      "edit_ops": "edits/learned_scaling.edit.py"
+    },
+    "full_attnres": {
+      "edit_ops": "edits/full_attnres.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "nanoGPT/custom_pretrain.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 88,
+          "end": 99
+        },
+        {
+          "start": 128,
+          "end": 130
+        },
+        {
+          "start": 162,
+          "end": 164
+        },
+        {
+          "start": 175,
+          "end": 192
+        },
+        {
+          "start": 251,
+          "end": 251
+        }
+      ]
+    },
+    {
+      "filename": "nanoGPT/model.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "hidden_metrics": [
+    "piqa_*",
+    "winogrande_*"
+  ]
+}

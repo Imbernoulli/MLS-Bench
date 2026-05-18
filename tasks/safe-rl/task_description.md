@@ -16,6 +16,9 @@ the running cost violation. The mechanism that updates this multiplier
 and combines reward and cost advantages directly determines the
 agent's safety behavior:
 
+- **naive** — constraint-unaware PPO baseline that ignores the safety
+  constraint entirely; provides an upper bound on reward with no cost
+  control.
 - **PPOLag** — the multiplier is treated as a learnable parameter
   optimized by Adam to satisfy the dual objective. Simple but slow to
   react and prone to oscillation.

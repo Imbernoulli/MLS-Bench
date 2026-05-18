@@ -41,3 +41,9 @@ Dataset loading, input/output normalization, train/val/test splits, optimizer ch
 - **Secondary metrics**: R² (higher is better), RMSE, plus separate `ml_nmse` (multi-level) and `sl_nmse` (single-level) breakdowns.
 - **Training budgets**: 30 epochs (short), 100 epochs (medium), 200 epochs (long).
 - All three training budgets are run; improvements should be consistent across all three.
+
+## Reference Baselines
+- **cnn**: 1D convolutional network with residual blocks operating on vertical atmospheric profiles. Multi-level variables are treated as spatial sequences over 60 vertical levels; single-level scalars are broadcast and concatenated. Inspired by the ClimSim CNN baseline (Yu et al., NeurIPS 2023 D&B).
+- **ed**: Encoder-decoder (ClimSim ED baseline). Wide 6-layer fully-connected encoder compresses the 556-dim atmospheric state to a 5-node latent bottleneck, then a symmetric 6-layer decoder expands back to the 368-dim tendency output. Layer widths follow the published ClimSim Table A (768/512/384/256/128/64).
+- **unet**: 1D U-Net with ResNet-style blocks over 60 vertical levels. Encoder-decoder with skip connections and self-attention at the bottleneck. Adapted from the ClimSim-style stable-ML-parameterization U-Net (arXiv:2407.00124).
+- **hsr**: Heteroskedastic regression (ClimSim HSR baseline). Shared MLP backbone with two output heads predicting mean and log-variance per output dimension, trained with Gaussian NLL loss (Nix & Weigend 1994). Inference returns only the mean.

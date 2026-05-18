@@ -1,0 +1,109 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/eval_cancer.sh",
+      "label": "Cancer",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "causal-bnlearn"
+    },
+    {
+      "cmd": "scripts/eval_child.sh",
+      "label": "Child",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "causal-bnlearn"
+    },
+    {
+      "cmd": "scripts/eval_alarm.sh",
+      "label": "Alarm",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "causal-bnlearn"
+    },
+    {
+      "cmd": "scripts/eval_hailfinder.sh",
+      "label": "Hailfinder",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "causal-bnlearn"
+    },
+    {
+      "cmd": "scripts/eval_win95pts.sh",
+      "label": "Win95pts",
+      "hidden": true,
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "causal-bnlearn"
+    }
+  ],
+  "baselines": {
+    "pc": {
+      "edit_ops": "edits/pc.edit.py"
+    },
+    "ges": {
+      "edit_ops": "edits/ges.edit.py"
+    },
+    "grasp": {
+      "edit_ops": "edits/grasp.edit.py"
+    },
+    "boss": {
+      "edit_ops": "edits/boss.edit.py"
+    },
+    "hc": {
+      "edit_ops": "edits/hc.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "causal-bnlearn/bench/custom_algorithm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 3,
+          "end": 14
+        }
+      ]
+    },
+    {
+      "filename": "causal-bnlearn/bench/run_eval.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "causal-bnlearn/bench/data_gen.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "causal-bnlearn/bench/metrics.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

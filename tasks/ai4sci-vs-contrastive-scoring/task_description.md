@@ -15,6 +15,11 @@ Existing approaches range from simple CLIP-style contrastive learning to hyperbo
 - **DrugCLIP** (Gao et al., "DrugCLIP: Contrastive Protein-Molecule Representation Learning for Virtual Screening", NeurIPS 2023; arXiv:2310.06367). CLIP-style symmetric in-batch contrastive loss between pocket and molecule embeddings. Code: https://github.com/bowen-gao/DrugCLIP.
 - **HypSeek** (Wang et al., "Learning Protein-Ligand Binding in Hyperbolic Space", AAAI 2026; arXiv:2508.15480). Three-tower model (pocket, ligand, protein sequence) embedded in Lorentz hyperbolic space, trained with a hierarchical contrastive constraint (HCC) loss and an entailment-cone hierarchy regularizer. Code: https://github.com/jianhuiwemi/HypSeek.
 
+## Reference Baselines
+- **vanilla_clip**: DrugCLIP-style CLIP contrastive scoring. Euclidean L2-normalized embeddings with symmetric in-batch softmax contrastive loss between pocket and molecule representations.
+- **hcc**: HypSeek HCC loss in Euclidean space. Adds an activity-aware ranking loss on top of the vanilla contrastive objective; embeddings remain in Euclidean space.
+- **hcc_hyp_cone**: Full HypSeek — Lorentz hyperboloid embeddings with learnable curvature, HCC contrastive ranking loss, and an entailment-cone hierarchy regularizer (AAAI 2026).
+
 Backbone references: Uni-Mol (Zhou et al., ICLR 2023, OpenReview 6K2RM6wVqKu) and ESM-2 (Lin et al., Science 2023, "Evolutionary-scale prediction of atomic-level protein structure with a language model").
 
 ## What to Implement

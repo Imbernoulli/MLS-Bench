@@ -219,6 +219,22 @@ download of `sif/<Pkg>.sif`, which can be faster in networks where Docker
 registries are slow. Select the source with `--sif-source {docker,hf,auto}`
 on `mlsbench build`.
 
+## Running under Harbor
+
+MLS-Bench's 140 tasks are also available as a [Harbor](https://github.com/harbor-framework/harbor)
+dataset so any Harbor-supported agent (`claude-code`, `codex`, `openhands`,
+`terminus-2`, …) can be evaluated on the suite without going through this
+repository's own runner:
+
+```bash
+PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
+```
+
+The pre-rendered dataset, GPU-capable environment plugin, and reference
+Harbor config live under [`harbor/`](harbor/). See
+[`harbor/README.md`](harbor/README.md) for usage details and the
+self-contained per-task layout.
+
 ## Repository Map
 
 ```text
@@ -230,6 +246,7 @@ vendor/data_scripts/           Dataset and model-cache preparation scripts
 configs/react.yaml             Runtime and provider configuration
 configs/openevolve.yaml        OpenEvolve defaults
 configs/discover.yaml          Discover defaults
+harbor/                        Pre-rendered Harbor dataset (140 tasks) + run config
 ```
 
 Fetched upstream repositories, built images, downloaded datasets, run workspaces, logs, and scheduler state are intentionally not versioned.
@@ -374,7 +391,7 @@ Fetched upstream repositories, built images, downloaded datasets, run workspaces
 | SCR | [graph-node-classification](tasks/graph-node-classification) | Graph Node Message Passing | Studies how message-passing layers affect node classification across citation network benchmarks. | [pyg-team/pytorch_geometric](https://github.com/pyg-team/pytorch_geometric) | GCN<br>GAT<br>GraphSAGE | Cora<br>CiteSeer<br>PubMed |
 | SCR | [graph-signal-propagation](tasks/graph-signal-propagation) | Homophily-Heterophily Graph Filter | The graph signal propagation filter is changed to improve node classification accuracy across homophilic and heterophilic graphs. | [ivam-he/ChebNetII](https://github.com/ivam-he/ChebNetII) | GPR-GNN<br>BernNet<br>ChebNetII | Cora<br>CiteSeer<br>Texas<br>Cornell |
 | TL | [security-adversarial-attack-black-box-score](tasks/security-adversarial-attack-black-box-score) | Score-Based Black-Box Linf Attack | Designs a query-efficient black-box Linf evasion attack to improve attack success rate under a fixed per-sample query budget. | [Harry24k/adversarial-attacks-pytorch](https://github.com/Harry24k/adversarial-attacks-pytorch) | Square Attack<br>SPSA<br>Random Search | ResNet-20 / CIFAR-10<br>VGG-11-BN / CIFAR-10<br>MobileNet-V2 / CIFAR-10<br>ResNet-20 / CIFAR-100<br>MobileNet-V2 / CIFAR-100 |
-| TL | [security-adversarial-attack-sparse-l0](tasks/security-adversarial-attack-sparse-l0) | Sparse L0 Adversarial Attack | Studies how sparse perturbation strategies improve attack success while respecting a strict pixel budget. | [Harry24k/adversarial-attacks-pytorch](https://github.com/Harry24k/adversarial-attacks-pytorch) | OnePixel<br>SparseFool<br>JSMA<br>Pixle<br>Sparse-RS | ResNet-20 / CIFAR-10<br>VGG-11-BN / CIFAR-10<br>MobileNet-V2 / CIFAR-10<br>ResNet-20 / CIFAR-100<br>MobileNet-V2 / CIFAR-100 |
+| TL | [security-adversarial-attack-sparse-l0](tasks/security-adversarial-attack-sparse-l0) | Sparse L0 Adversarial Attack | Studies how sparse perturbation strategies improve attack success while respecting a strict pixel budget. | [Harry24k/adversarial-attacks-pytorch](https://github.com/Harry24k/adversarial-attacks-pytorch) | OnePixel<br>SparseFool<br>JSMA<br>Pixle<br>Sparse-RS | Rebuffi-R18 (l2-AT) / CIFAR-10<br>Augustin (l2-robust) / CIFAR-10<br>Engstrom (l2-robust) / CIFAR-10 |
 | TL | [security-adversarial-attack-white-box-linf](tasks/security-adversarial-attack-white-box-linf) | White-Box Linf Evasion Attack | Designs a gradient-based white-box Linf attack to improve attack success rate while respecting the perturbation budget. | [Harry24k/adversarial-attacks-pytorch](https://github.com/Harry24k/adversarial-attacks-pytorch) | FGSM<br>PGD<br>MI-FGSM<br>AutoAttack | ResNet-20 / CIFAR-10<br>VGG-11-BN / CIFAR-10<br>ResNet-20 / CIFAR-100<br>VGG-11-BN / CIFAR-100<br>MobileNet-V2 / CIFAR-100 |
 | TL | [security-adversarial-training](tasks/security-adversarial-training) | Linf Adversarial Training for Robust Accuracy | Studies how adversarial training procedures improve robust accuracy while maintaining clean accuracy. | [Harry24k/adversarial-attacks-pytorch](https://github.com/Harry24k/adversarial-attacks-pytorch) | Standard Training<br>PGD-AT<br>TRADES<br>MART<br>AWP + TRADES | SmallCNN / MNIST<br>PreAct ResNet-18 / CIFAR-10<br>VGG-11-BN / CIFAR-10<br>PreAct ResNet-18 / CIFAR-100 |
 | TL | [security-backdoor-defense](tasks/security-backdoor-defense) | Poisoned-Sample Scoring for Backdoor Filtering | A suspicion scoring rule identifies and filters backdoored training examples to reduce attack success rate while preserving clean accuracy. | custom | Confidence Filter<br>Spectral Signatures<br>Activation Clustering<br>Z-Score Outlier | ResNet-20 / CIFAR-10 (BadNets)<br>VGG-16-BN / CIFAR-100 (Blend)<br>MobileNet-V2 / Fashion-MNIST (BadNets) |

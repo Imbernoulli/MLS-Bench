@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/halfcheetah.sh",
+      "label": "halfcheetah-v4",
+      "group": 1,
+      "compute": 0.33,
+      "time": "05:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/reacher.sh",
+      "label": "reacher-v4",
+      "group": 1,
+      "compute": 0.33,
+      "time": "05:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/ant.sh",
+      "label": "ant-v4",
+      "group": 1,
+      "compute": 0.5,
+      "time": "06:00:00",
+      "package": "cleanrl",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "ddpg": {
+      "edit_ops": "edits/ddpg.edit.py"
+    },
+    "td3": {
+      "edit_ops": "edits/td3.edit.py"
+    },
+    "sac": {
+      "edit_ops": "edits/sac.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "cleanrl/cleanrl/custom_offpolicy_continuous.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 153,
+          "end": 244
+        }
+      ]
+    }
+  ]
+}

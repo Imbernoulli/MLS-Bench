@@ -1,0 +1,67 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/run_e2h.sh",
+      "label": "edges2handbags",
+      "group": 1,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "package": "dbim-codebase"
+    },
+    {
+      "cmd": "scripts/run_Imagenet.sh",
+      "label": "Imagenet",
+      "group": 1,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "package": "dbim-codebase",
+      "hidden": true
+    },
+    {
+      "cmd": "scripts/run_DIODE.sh",
+      "label": "DIODE",
+      "group": 1,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "package": "dbim-codebase",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "karras": {
+      "edit_ops": "edits/karras.py"
+    },
+    "uniform": {
+      "edit_ops": "edits/uniform.py"
+    },
+    "cosine": {
+      "edit_ops": "edits/cosine.py"
+    },
+    "loglinear": {
+      "edit_ops": "edits/loglinear.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "dbim-codebase/ddbm/karras_diffusion.py",
+      "_comment": "Only show the editable template (get_sigmas_karras, L301-311). All sibling schedulers and sampler implementations in this file are hidden \u2014 agent learns allowed APIs only from the baseline variants (karras/uniform/cosine/loglinear).",
+      "read": [
+        {
+          "start": 301,
+          "end": 311
+        }
+      ],
+      "edit": [
+        {
+          "start": 310,
+          "end": 320
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

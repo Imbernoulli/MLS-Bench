@@ -1,0 +1,44 @@
+defaults:
+  - _self_
+  - task: hopper-medium-v2
+
+pipeline_name: custom_guidance
+mode: train
+seed: 42
+device: cuda:0
+
+# Environment
+terminal_penalty: -100
+discount: 0.997
+
+# Diffuser
+solver: ddpm
+model_dim: 32
+diffusion_steps: 20
+sampling_steps: 20
+predict_noise: False
+action_loss_weight: 10.
+ema_rate: 0.9999
+
+# CFG (used by classifier-free guidance variants; ignored by CG default)
+label_dropout: 0.25
+
+# Training
+diffusion_gradient_steps: 100000
+classifier_gradient_steps: 100000
+batch_size: 256
+log_interval: 1000
+save_interval: 50000
+
+# Inference
+ckpt: latest
+num_envs: 10
+num_episodes: 10
+num_candidates: 64
+temperature: 0.5
+use_ema: True
+
+# hydra
+hydra:
+  job:
+    chdir: false

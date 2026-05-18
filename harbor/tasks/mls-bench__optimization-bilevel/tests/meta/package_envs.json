@@ -1,0 +1,5 @@
+{
+  "penalized-bilevel-gradient-descent": {
+    "PYTHONPATH": "/workspace/penalized-bilevel-gradient-descent:${PYTHONPATH}"
+  }
+}
