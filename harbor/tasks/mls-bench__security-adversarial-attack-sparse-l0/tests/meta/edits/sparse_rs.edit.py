@@ -36,7 +36,7 @@ def run_attack(
     _ = (n_classes,)
     model.eval()
 
-    n_queries = 1000
+    n_queries = 10000
     p_init = 0.8
     eps = int(pixels)
 

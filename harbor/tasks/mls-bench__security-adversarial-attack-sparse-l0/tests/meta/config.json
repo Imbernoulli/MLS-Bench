@@ -4,44 +4,28 @@
   "use_cuda": true,
   "test_cmds": [
     {
-      "cmd": "scripts/eval_resnet20_cifar10.sh",
-      "label": "ResNet20-C10",
+      "cmd": "scripts/eval_rebuffi_r18.sh",
+      "label": "Rebuffi-R18-L2",
       "group": 1,
       "compute": 0.5,
-      "time": "1:00:00",
+      "time": "4:00:00",
       "package": "torchattacks"
     },
     {
-      "cmd": "scripts/eval_vgg11bn_cifar10.sh",
-      "label": "VGG11BN-C10",
+      "cmd": "scripts/eval_augustin.sh",
+      "label": "Augustin-L2",
       "group": 1,
       "compute": 0.5,
-      "time": "1:00:00",
+      "time": "4:00:00",
       "package": "torchattacks"
     },
     {
-      "cmd": "scripts/eval_mobilenetv2_cifar10.sh",
-      "label": "MobileNetV2-C10",
-      "group": 1,
-      "compute": 0.5,
-      "time": "1:00:00",
-      "package": "torchattacks"
-    },
-    {
-      "cmd": "scripts/eval_resnet20_cifar100.sh",
-      "label": "ResNet20-C100",
-      "group": 1,
-      "compute": 0.5,
-      "time": "1:00:00",
-      "package": "torchattacks"
-    },
-    {
-      "cmd": "scripts/eval_mobilenetv2_cifar100.sh",
-      "label": "MobileNetV2-C100",
+      "cmd": "scripts/eval_engstrom.sh",
+      "label": "Engstrom-L2",
       "hidden": true,
       "group": 1,
       "compute": 0.5,
-      "time": "1:00:00",
+      "time": "4:00:00",
       "package": "torchattacks"
     }
   ],

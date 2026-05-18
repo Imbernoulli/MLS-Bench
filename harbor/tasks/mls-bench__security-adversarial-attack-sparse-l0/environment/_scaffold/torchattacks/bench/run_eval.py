@@ -14,11 +14,13 @@ from custom_attack import run_attack
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--arch", type=str, required=True)
-    parser.add_argument("--dataset", type=str, choices=["cifar10", "cifar100"], required=True)
+    # RobustBench L2-robust CIFAR-10 model-zoo key (Croce et al., AAAI 2022
+    # canonical sparse-L0 threat model: k=24, untargeted, robust models).
+    parser.add_argument("--model-name", type=str, required=True)
+    parser.add_argument("--model-dir", type=str, default="/data/robustbench_models")
     parser.add_argument("--data-dir", type=str, required=True)
-    parser.add_argument("--pixels", type=int, default=10)
-    parser.add_argument("--n-samples", type=int, default=1000)
+    parser.add_argument("--pixels", type=int, default=24)
+    parser.add_argument("--n-samples", type=int, default=150)
     parser.add_argument("--batch-size", type=int, default=100)
     parser.add_argument("--seed", type=int, default=42)
     return parser.parse_args()
@@ -31,20 +33,24 @@ def set_seed(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def load_dataset(name: str, data_dir: str) -> tuple[torch.utils.data.Dataset, int]:
+def load_dataset(data_dir: str) -> tuple[torch.utils.data.Dataset, int]:
+    # CIFAR-10 only: the Sparse-RS paper never evaluates L0 on CIFAR-100.
     transform = transforms.ToTensor()
-    if name == "cifar10":
-        return datasets.CIFAR10(data_dir, train=False, transform=transform, download=False), 10
-    return datasets.CIFAR100(data_dir, train=False, transform=transform, download=False), 100
+    return datasets.CIFAR10(data_dir, train=False, transform=transform, download=False), 10
 
 
-def load_model(dataset: str, arch: str, device: torch.device) -> torch.nn.Module:
-    entry = f"{dataset}_{arch}"
-    model = torch.hub.load(
-        "chenyaofo/pytorch-cifar-models",
-        entry,
-        pretrained=True,
-        trust_repo=True,
+def load_model(model_name: str, model_dir: str, device: torch.device) -> torch.nn.Module:
+    # Adversarially-robust L2 CIFAR-10 target from the RobustBench model zoo,
+    # matching the Sparse-RS paper's L0 evaluation (App. A.5). Checkpoints are
+    # pre-fetched by the data-prep step into model_dir (compute nodes are
+    # offline); robustbench.load_model reads them without network access.
+    from robustbench.utils import load_model as rb_load_model
+
+    model = rb_load_model(
+        model_name,
+        model_dir=model_dir,
+        dataset="cifar10",
+        threat_model="L2",
     )
     return model.to(device).eval()
 
@@ -87,9 +93,9 @@ def main() -> None:
     set_seed(args.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    dataset, n_classes = load_dataset(args.dataset, args.data_dir)
+    dataset, n_classes = load_dataset(args.data_dir)
     # score_model is the trusted reference — never passed to user code.
-    score_model = load_model(args.dataset, args.arch, device)
+    score_model = load_model(args.model_name, args.model_dir, device)
 
     clean_images_cpu, clean_labels_cpu = collect_correct_subset(
         model=score_model,

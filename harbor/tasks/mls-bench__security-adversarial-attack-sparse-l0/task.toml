@@ -14,10 +14,10 @@ mls_bench_task_id = "security-adversarial-attack-sparse-l0"
 mls_bench_package = "torchattacks"
 
 [agent]
-timeout_sec = 7200
+timeout_sec = 14400
 
 [verifier]
-timeout_sec = 6000
+timeout_sec = 16560
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the
@@ -29,5 +29,5 @@ build_timeout_sec = 1800
 cpus = 4
 memory_mb = 16384
 storage_mb = 61440
-gpus = 3
+gpus = 2
 allow_internet = true
