@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet20_cifar10.sh",
+      "label": "resnet20-cifar10",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/resnet56_cifar100.sh",
+      "label": "resnet56-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/resnet110_cifar100.sh",
+      "label": "resnet110-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "04:00:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "pre_activation": {
+      "edit_ops": "edits/pre_activation.edit.py"
+    },
+    "gated_residual": {
+      "edit_ops": "edits/gated_residual.edit.py"
+    },
+    "stochastic_depth": {
+      "edit_ops": "edits/stochastic_depth.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/custom_residual.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 31,
+          "end": 61
+        }
+      ]
+    }
+  ]
+}

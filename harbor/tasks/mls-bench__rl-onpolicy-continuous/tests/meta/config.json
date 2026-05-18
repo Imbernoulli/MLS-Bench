@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/halfcheetah.sh",
+      "label": "halfcheetah-v4",
+      "group": 1,
+      "compute": 0.33,
+      "time": "05:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/swimmer.sh",
+      "label": "swimmer-v4",
+      "group": 1,
+      "compute": 0.33,
+      "time": "05:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/inverteddoublependulum.sh",
+      "label": "inverteddoublependulum-v4",
+      "group": 1,
+      "compute": 0.25,
+      "time": "04:00:00",
+      "package": "cleanrl",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "ppo": {
+      "edit_ops": "edits/ppo.edit.py"
+    },
+    "awr": {
+      "edit_ops": "edits/awr.edit.py"
+    },
+    "ppo_penalty": {
+      "edit_ops": "edits/ppo_penalty.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "cleanrl/cleanrl/custom_onpolicy_continuous.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 175,
+          "end": 221
+        }
+      ]
+    }
+  ]
+}

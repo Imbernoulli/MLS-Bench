@@ -1,0 +1,70 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/rastrigin_30d.sh",
+      "label": "rastrigin-30d",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "deap"
+    },
+    {
+      "cmd": "scripts/rosenbrock_30d.sh",
+      "label": "rosenbrock-30d",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "deap"
+    },
+    {
+      "cmd": "scripts/ackley_30d.sh",
+      "label": "ackley-30d",
+      "group": 1,
+      "compute": 0.25,
+      "time": "01:00:00",
+      "package": "deap"
+    },
+    {
+      "cmd": "scripts/rastrigin_100d.sh",
+      "label": "rastrigin-100d",
+      "group": 1,
+      "compute": 0.25,
+      "time": "02:00:00",
+      "package": "deap",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "ga_sbx": {
+      "edit_ops": "edits/ga_sbx.edit.py"
+    },
+    "de": {
+      "edit_ops": "edits/de.edit.py"
+    },
+    "lshade": {
+      "edit_ops": "edits/lshade.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "deap/custom_evolution.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 87,
+          "end": 225
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

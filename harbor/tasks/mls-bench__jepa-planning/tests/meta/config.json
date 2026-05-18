@@ -1,0 +1,83 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/horizon_30.sh",
+      "label": "horizon-30",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "eb_jepa"
+    },
+    {
+      "cmd": "scripts/horizon_60.sh",
+      "label": "horizon-60",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "eb_jepa"
+    },
+    {
+      "cmd": "scripts/horizon_90.sh",
+      "label": "horizon-90",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "eb_jepa",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "random": {
+      "edit_ops": "edits/random.edit.py"
+    },
+    "cem": {
+      "edit_ops": "edits/cem.edit.py"
+    },
+    "mppi": {
+      "edit_ops": "edits/mppi.edit.py"
+    },
+    "icem": {
+      "edit_ops": "edits/icem.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "eb_jepa/custom_planner.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 323,
+          "end": 367
+        }
+      ]
+    },
+    {
+      "filename": "eb_jepa/planning.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "eb_jepa/jepa.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

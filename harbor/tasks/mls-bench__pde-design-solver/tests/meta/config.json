@@ -1,0 +1,164 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/car.sh",
+      "label": "Car",
+      "group": 1,
+      "compute": 0.33,
+      "time": "23:59:59",
+      "package": "Neural-Solver-Library"
+    },
+    {
+      "cmd": "scripts/airfrans.sh",
+      "label": "AirfRANS",
+      "group": 1,
+      "compute": 0.33,
+      "time": "23:59:59",
+      "package": "Neural-Solver-Library"
+    },
+    {
+      "cmd": "scripts/aircraft.sh",
+      "label": "AirCraft",
+      "group": 1,
+      "compute": 0.33,
+      "time": "23:59:59",
+      "package": "Neural-Solver-Library",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "pointnet": {
+      "edit_ops": "edits/pointnet.edit.py"
+    },
+    "graphsage": {
+      "edit_ops": "edits/graphsage.edit.py"
+    },
+    "graphunet": {
+      "edit_ops": "edits/graphunet.edit.py"
+    },
+    "transolver": {
+      "edit_ops": "edits/transolver.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "Neural-Solver-Library/models/Custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 1,
+          "end": 64
+        },
+        {
+          "start": 74,
+          "end": 74
+        }
+      ]
+    },
+    {
+      "filename": "Neural-Solver-Library/models/Transolver.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "Neural-Solver-Library/models/PointNet.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "Neural-Solver-Library/models/GraphSAGE.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "Neural-Solver-Library/models/Graph_UNet.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "Neural-Solver-Library/models/GNOT.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "Neural-Solver-Library/layers/Basic.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Neural-Solver-Library/layers/Embedding.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "Neural-Solver-Library/layers/Physics_Attention.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

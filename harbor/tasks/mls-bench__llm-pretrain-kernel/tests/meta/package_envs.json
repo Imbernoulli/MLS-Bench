@@ -1,0 +1,13 @@
+{
+  "nanoGPT": {
+    "DATA_DIR": "/data/climbmix",
+    "EVAL_DIR": "/data/eval",
+    "PYTHONPATH": "/workspace/nanoGPT:${PYTHONPATH}",
+    "TRITON_CACHE_DIR": "/tmp/triton_cache"
+  },
+  "lm-evaluation-harness": {
+    "TIKTOKEN_CACHE_DIR": "/opt/tiktoken_cache",
+    "HF_DATASETS_OFFLINE": "1",
+    "HF_HUB_OFFLINE": "1"
+  }
+}

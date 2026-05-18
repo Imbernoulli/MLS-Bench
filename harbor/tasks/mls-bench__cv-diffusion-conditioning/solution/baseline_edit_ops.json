@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "diffusers-main/custom_train.py",
+    "start_line": 195,
+    "end_line": 227,
+    "content": "def prepare_conditioning(time_emb, class_emb):\n    # Cross-attn: time_emb unchanged, conditioning via ClassConditioner\n    return time_emb\n\n\nclass ClassConditioner(nn.Module):\n    # Cross-attention: class embedding as key/value\n    def __init__(self, channels, cond_dim):\n        super().__init__()\n        self.cross_attn = CrossAttentionLayer(channels, cond_dim, num_heads=4)\n\n    def forward(self, h, class_emb):\n        return self.cross_attn(h, class_emb)\n"
+  }
+]

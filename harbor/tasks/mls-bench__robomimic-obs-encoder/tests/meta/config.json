@@ -1,0 +1,57 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "tool_hang_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "can_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "group": 0,
+      "label": "square_ph",
+      "compute": 0.33,
+      "time": "8:00:00",
+      "package": "robomimic",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "attention_fusion": {
+      "edit_ops": "edits/attention_fusion.edit.py"
+    },
+    "gated_fusion": {
+      "edit_ops": "edits/gated_fusion.edit.py"
+    },
+    "default": {}
+  },
+  "files": [
+    {
+      "filename": "robomimic/custom_obs_encoder.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 19,
+          "end": 46
+        }
+      ]
+    }
+  ]
+}

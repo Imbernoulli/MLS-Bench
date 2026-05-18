@@ -1,0 +1,91 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/eval_resnet20_cifar10.sh",
+      "label": "ResNet20-C10",
+      "group": 1,
+      "compute": 0.5,
+      "time": "0:20:00",
+      "package": "torchattacks"
+    },
+    {
+      "cmd": "scripts/eval_vgg11bn_cifar10.sh",
+      "label": "VGG11BN-C10",
+      "group": 1,
+      "compute": 0.5,
+      "time": "0:20:00",
+      "package": "torchattacks"
+    },
+    {
+      "cmd": "scripts/eval_resnet20_cifar100.sh",
+      "label": "ResNet20-C100",
+      "group": 1,
+      "compute": 0.5,
+      "time": "0:20:00",
+      "package": "torchattacks"
+    },
+    {
+      "cmd": "scripts/eval_vgg11bn_cifar100.sh",
+      "label": "VGG11BN-C100",
+      "group": 1,
+      "compute": 0.5,
+      "time": "0:20:00",
+      "package": "torchattacks"
+    },
+    {
+      "cmd": "scripts/eval_mobilenetv2_cifar100.sh",
+      "label": "MobileNetV2-C100",
+      "hidden": true,
+      "group": 1,
+      "compute": 0.5,
+      "time": "0:20:00",
+      "package": "torchattacks"
+    }
+  ],
+  "baselines": {
+    "fgsm": {
+      "edit_ops": "edits/fgsm.edit.py"
+    },
+    "pgd": {
+      "edit_ops": "edits/pgd.edit.py"
+    },
+    "mifgsm": {
+      "edit_ops": "edits/mifgsm.edit.py"
+    },
+    "autoattack": {
+      "edit_ops": "edits/autoattack.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "torchattacks/bench/custom_attack.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 3,
+          "end": 26
+        }
+      ]
+    },
+    {
+      "filename": "torchattacks/bench/run_eval.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

@@ -1,0 +1,122 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/inv_scatter.sh",
+      "label": "inv-scatter",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "InverseBench"
+    },
+    {
+      "cmd": "scripts/blackhole.sh",
+      "label": "blackhole",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "InverseBench"
+    },
+    {
+      "cmd": "scripts/inpainting.sh",
+      "label": "inpainting",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "InverseBench",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "dps": {
+      "edit_ops": "edits/dps.edit.py"
+    },
+    "reddiff": {
+      "edit_ops": "edits/reddiff.edit.py"
+    },
+    "lgd": {
+      "edit_ops": "edits/lgd.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "InverseBench/algo/custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "InverseBench/algo/base.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "InverseBench/utils/scheduler.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "InverseBench/utils/diffusion.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "InverseBench/inverse_problems/base.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "InverseBench/inverse_problems/blackhole.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "InverseBench/inverse_problems/image_restore.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

@@ -1,0 +1,6 @@
+{
+  "Uni-Mol": {
+    "PYTHONPATH": "/workspace/Uni-Mol:${PYTHONPATH}",
+    "DATA_DIR": "/data"
+  }
+}

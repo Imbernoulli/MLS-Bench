@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-geometric/custom_graph_cls.py",
+    "start_line": 41,
+    "end_line": 81,
+    "content": "class GraphReadout(nn.Module):\n    \"\"\"GIN JK-Sum Readout (Xu et al., 2019).\n\n    Concatenates sum-pooled embeddings from all GIN layers\n    (Jumping Knowledge). Each layer's graph embedding is batch-normalized\n    before concatenation to stabilize training -- this prevents the\n    different-scale representations across layers from causing\n    optimization issues (some folds failing to converge).\n\n    The output dimension is hidden_dim * num_layers, matching the\n    original GIN paper's readout.\n    \"\"\"\n\n    def __init__(self, hidden_dim, num_layers):\n        super().__init__()\n        self.hidden_dim = hidden_dim\n        self.num_layers = num_layers\n        # Full concatenated dimension -- no projection bottleneck\n        self.output_dim = hidden_dim * num_layers\n        # Per-layer batch normalization on graph-level embeddings\n        self.graph_bns = nn.ModuleList([\n            nn.BatchNorm1d(hidden_dim) for _ in range(num_layers)\n        ])\n\n    def forward(self, x, edge_index, batch, layer_outputs):\n        # Sum-pool each layer's node embeddings independently\n        graph_embs = []\n        for i, h in enumerate(layer_outputs):\n            g = global_add_pool(h, batch)\n            g = self.graph_bns[i](g)\n            graph_embs.append(g)\n        # Concatenate all layers (Jumping Knowledge)\n        return torch.cat(graph_embs, dim=-1)\n"
+  }
+]

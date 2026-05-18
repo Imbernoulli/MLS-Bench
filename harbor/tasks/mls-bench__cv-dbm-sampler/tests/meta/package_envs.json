@@ -1,0 +1,7 @@
+{
+  "dbim-codebase": {
+    "PYTHONPATH": "/workspace/dbim-codebase",
+    "HOME": "/root",
+    "TORCH_HOME": "/data/torch_cache"
+  }
+}

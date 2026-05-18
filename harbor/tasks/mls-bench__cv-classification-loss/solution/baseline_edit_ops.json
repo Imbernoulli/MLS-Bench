@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_loss.py",
+    "start_line": 246,
+    "end_line": 266,
+    "content": "def compute_loss(logits, targets, config):\n    \"\"\"Label Smoothing cross-entropy (eps=0.1).\n\n    Softens hard targets to (1-eps)*one_hot + eps/C, preventing\n    overconfident predictions and improving generalization.\n    \"\"\"\n    return F.cross_entropy(logits, targets, label_smoothing=0.1)\n"
+  }
+]

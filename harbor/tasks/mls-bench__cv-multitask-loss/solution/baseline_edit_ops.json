@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_mtl.py",
+    "start_line": 195,
+    "end_line": 216,
+    "content": "class MultiTaskLoss(nn.Module):\n    \"\"\"Dynamic Weight Average (Liu et al., 2019).\n\n    Weights tasks by relative loss change rate with temperature.\n    \"\"\"\n\n    def __init__(self, num_tasks=2):\n        super().__init__()\n        self.prev_losses = None\n        self.T = 2.0  # temperature\n\n    def forward(self, fine_loss, coarse_loss, epoch, total_epochs):\n        losses = torch.stack([fine_loss, coarse_loss])\n        if self.prev_losses is None or epoch == 0:\n            weights = torch.ones(2, device=losses.device)\n        else:\n            ratios = losses.detach() / (self.prev_losses + 1e-8)\n            weights = 2 * F.softmax(ratios / self.T, dim=0)\n        self.prev_losses = losses.detach().clone()\n        return (weights * losses).sum()\n"
+  }
+]

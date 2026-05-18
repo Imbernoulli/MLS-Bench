@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet20_cifar10.sh",
+      "label": "resnet20-cifar10",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/resnet56_cifar100.sh",
+      "label": "resnet56-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/mobilenetv2_fmnist.sh",
+      "label": "mobilenetv2-fmnist",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "cutout": {
+      "edit_ops": "edits/cutout.edit.py"
+    },
+    "randaugment": {
+      "edit_ops": "edits/randaugment.edit.py"
+    },
+    "trivialaugment": {
+      "edit_ops": "edits/trivialaugment.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/custom_augment.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 246,
+          "end": 275
+        }
+      ]
+    }
+  ]
+}

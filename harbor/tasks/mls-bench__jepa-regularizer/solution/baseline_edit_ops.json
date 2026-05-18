@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "eb_jepa/custom_regularizer.py",
+    "start_line": 33,
+    "end_line": 58,
+    "content": "class CustomRegularizer(nn.Module):\n    \"\"\"BCS (Batched Characteristic Slicing) regularizer for SIGReg.\"\"\"\n\n    def __init__(self, num_slices=256, lmbd=10.0):\n        super().__init__()\n        self.num_slices = num_slices\n        self.step = 0\n        self.lmbd = lmbd\n\n    def _epps_pulley(self, x, t_min=-3, t_max=3, n_points=10):\n        t = torch.linspace(t_min, t_max, n_points, device=x.device)\n        exp_f = torch.exp(-0.5 * t ** 2)\n        x_t = x.unsqueeze(2) * t\n        ecf = (1j * x_t).exp().mean(0)\n        err = exp_f * (ecf - exp_f).abs() ** 2\n        T = torch.trapz(err, t, dim=1)\n        return T\n\n    def forward(self, z1, z2):\n        dev = z1.device\n        with torch.no_grad():\n            g = torch.Generator(device=dev)\n            g.manual_seed(self.step)\n            proj_shape = (z1.size(1), self.num_slices)\n            A = torch.randn(proj_shape, device=dev, generator=g)\n            A = A / A.norm(p=2, dim=0)\n        view1 = z1 @ A\n        view2 = z2 @ A\n\n        self.step += 1\n        bcs = (self._epps_pulley(view1).mean() + self._epps_pulley(view2).mean()) / 2\n        invariance_loss = F.mse_loss(z1, z2)\n        total_loss = invariance_loss + self.lmbd * bcs\n        return {\n            \"loss\": total_loss,\n            \"bcs_loss\": bcs,\n            \"invariance_loss\": invariance_loss,\n        }\n\n\n# CONFIG_OVERRIDES: override training hyperparameters for your method.\n# Allowed keys: proj_output_dim, proj_hidden_dim.\n# Paper sigreg.yaml uses 2048->128 \u2014 SIGReg's Gaussianity test on random\n# projections concentrates better at low output dims (paper rank-1: 91.02%).\nCONFIG_OVERRIDES = {\"proj_output_dim\": 128}\n"
+  }
+]

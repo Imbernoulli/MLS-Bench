@@ -1,0 +1,7 @@
+{
+  "eb_jepa": {
+    "EBJEPA_DSETS": "/data/eb_jepa",
+    "PYTHONPATH": "/workspace/eb_jepa:${PYTHONPATH}",
+    "WANDB_MODE": "disabled"
+  }
+}

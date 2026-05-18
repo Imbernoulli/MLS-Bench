@@ -1,0 +1,5 @@
+{
+  "eplb": {
+    "PYTHONPATH": "/workspace/eplb:/workspace:${PYTHONPATH}"
+  }
+}

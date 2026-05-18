@@ -1,0 +1,54 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "deepmath-3bench-h100",
+      "group": 1,
+      "compute": 2,
+      "mem": 200,
+      "time": "12:00:00",
+      "package": "verl"
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "outcome_only": {
+      "edit_ops": "baselines/outcome_only.edit.py"
+    },
+    "group_std": {
+      "edit_ops": "baselines/group_std.edit.py"
+    },
+    "batch_std": {
+      "edit_ops": "baselines/batch_std.edit.py"
+    },
+    "length_aware": {
+      "edit_ops": "baselines/length_aware.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "verl/verl/trainer/ppo/custom_reward_normalization.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 17,
+          "end": 72
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "hidden_metrics": [
+    "amc_*",
+    "gsm8k_reward_mean",
+    "aime2024_*"
+  ]
+}

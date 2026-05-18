@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "epymarl/src/modules/critics/custom_critic.py",
+    "start_line": 13,
+    "end_line": 69,
+    "content": "class CustomCritic(nn.Module):\n    \"\"\"MAPPO critic \u2014 shared MLP over (state + agent one-hot).\n\n    Standard centralized V from Yu et al. 2022 (arXiv 2103.01955).\n    Matches epymarl's CentralVCritic. All agents share the same network;\n    the agent one-hot lets the shared network produce agent-specific\n    value estimates while still conditioning on the full global state.\n    \"\"\"\n\n    def __init__(self, scheme, args):\n        super(CustomCritic, self).__init__()\n        self.args = args\n        self.n_agents = args.n_agents\n        self.n_actions = args.n_actions\n        self.output_type = \"v\"\n\n        state_dim = int(scheme[\"state\"][\"vshape\"])\n        input_shape = state_dim + self.n_agents\n        self.fc1 = nn.Linear(input_shape, args.hidden_dim)\n        self.fc2 = nn.Linear(args.hidden_dim, args.hidden_dim)\n        self.fc3 = nn.Linear(args.hidden_dim, 1)\n\n    def forward(self, batch, t=None):\n        bs = batch.batch_size\n        max_t = batch.max_seq_length if t is None else 1\n        ts = slice(None) if t is None else slice(t, t + 1)\n\n        state = batch[\"state\"][:, ts]                                    # (B, T, state_dim)\n        state = state.unsqueeze(2).expand(-1, -1, self.n_agents, -1)     # (B, T, n, state_dim)\n        agent_id = th.eye(self.n_agents, device=batch.device)\n        agent_id = agent_id.unsqueeze(0).unsqueeze(0).expand(bs, max_t, -1, -1)\n        inputs = th.cat([state, agent_id], dim=-1)                       # (B, T, n, state+n)\n\n        x = F.relu(self.fc1(inputs))\n        x = F.relu(self.fc2(x))\n        q = self.fc3(x)                                                  # (B, T, n, 1)\n        return q\n"
+  }
+]

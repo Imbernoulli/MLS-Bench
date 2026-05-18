@@ -1,0 +1,73 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/mini_imagenet_1shot.sh",
+      "label": "mini_imagenet_1shot",
+      "group": 1,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "package": "learn2learn"
+    },
+    {
+      "cmd": "scripts/mini_imagenet_5shot.sh",
+      "label": "mini_imagenet_5shot",
+      "group": 1,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "package": "learn2learn"
+    },
+    {
+      "cmd": "scripts/cifar_fs_5shot.sh",
+      "label": "cifar_fs_5shot",
+      "hidden": true,
+      "group": 1,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "package": "learn2learn"
+    }
+  ],
+  "baselines": {
+    "maml": {
+      "edit_ops": "edits/maml.edit.py"
+    },
+    "meta_sgd": {
+      "edit_ops": "edits/meta_sgd.edit.py"
+    },
+    "anil": {
+      "edit_ops": "edits/anil.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "learn2learn/custom_maml.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 177,
+          "end": 254
+        }
+      ]
+    },
+    {
+      "filename": "learn2learn/learn2learn/algorithms/gbml.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

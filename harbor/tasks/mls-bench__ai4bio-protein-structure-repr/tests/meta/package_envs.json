@@ -1,0 +1,6 @@
+{
+  "ProteinWorkshop": {
+    "PYTHONPATH": "/workspace/ProteinWorkshop:${PYTHONPATH}",
+    "PROTEIN_WORKSHOP_DATA_DIR": "/data/ProteinWorkshop"
+  }
+}

@@ -1,0 +1,66 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/blat_ecolx.sh",
+      "label": "BLAT_ECOLX",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "ProteinGym"
+    },
+    {
+      "cmd": "scripts/esta_bacsu.sh",
+      "label": "ESTA_BACSU",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "ProteinGym"
+    },
+    {
+      "cmd": "scripts/rash_human.sh",
+      "label": "RASH_HUMAN",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "ProteinGym",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "ridge": {
+      "edit_ops": "edits/ridge.edit.py"
+    },
+    "mlp": {
+      "edit_ops": "edits/mlp.edit.py"
+    },
+    "reshape_cnn": {
+      "edit_ops": "edits/reshape_cnn.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ProteinGym/custom_mutation_pred.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 108,
+          "end": 137
+        },
+        {
+          "start": 345,
+          "end": 347
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

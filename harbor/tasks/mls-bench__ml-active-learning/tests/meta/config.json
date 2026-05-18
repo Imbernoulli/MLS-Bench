@@ -1,0 +1,78 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/letter.sh",
+      "label": "letter",
+      "group": 1,
+      "compute": 0.33,
+      "time": "10:00:00",
+      "mem": 64,
+      "package": "badge"
+    },
+    {
+      "cmd": "scripts/spambase.sh",
+      "label": "spambase",
+      "group": 1,
+      "compute": 0.33,
+      "time": "04:00:00",
+      "package": "badge"
+    },
+    {
+      "cmd": "scripts/splice.sh",
+      "label": "splice",
+      "group": 1,
+      "compute": 0.33,
+      "time": "04:00:00",
+      "package": "badge",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "badge": {
+      "edit_ops": "edits/badge.edit.py"
+    },
+    "bait": {
+      "edit_ops": "edits/bait.edit.py"
+    },
+    "bald": {
+      "edit_ops": "edits/bald.edit.py"
+    },
+    "least_confidence": {
+      "edit_ops": "edits/least_confidence.edit.py"
+    },
+    "random": {
+      "edit_ops": "edits/random.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "badge/query_strategies/custom_sampling.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 28,
+          "end": 54
+        }
+      ]
+    },
+    {
+      "filename": "badge/query_strategies/strategy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,88 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/csi300.sh",
+      "label": "csi300",
+      "group": 1,
+      "compute": 1.0,
+      "time": "3:00:00",
+      "package": "qlib"
+    },
+    {
+      "cmd": "scripts/csi300_shifted.sh",
+      "label": "csi300_shifted",
+      "group": 1,
+      "compute": 1.0,
+      "time": "3:00:00",
+      "package": "qlib"
+    },
+    {
+      "cmd": "scripts/csi300_recent.sh",
+      "label": "csi300_recent",
+      "group": 1,
+      "hidden": true,
+      "compute": 1.0,
+      "time": "3:00:00",
+      "package": "qlib"
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "tra": {
+      "edit_ops": "edits/tra.edit.py"
+    },
+    "adarnn": {
+      "edit_ops": "edits/adarnn.edit.py"
+    },
+    "lgbm": {
+      "edit_ops": "edits/lgbm.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "qlib/custom_model.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 16,
+          "end": 103
+        }
+      ]
+    },
+    {
+      "filename": "qlib/workflow_config.yaml",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 13,
+          "end": 26
+        },
+        {
+          "start": 32,
+          "end": 45
+        }
+      ]
+    },
+    {
+      "filename": "qlib/qlib/model/base.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    }
+  ]
+}

@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "ProteinGym/custom_mutation_pred.py",
+    "start_line": 108,
+    "end_line": 137,
+    "content": "\nclass MutationPredictor(nn.Module):\n    \"\"\"Single-hidden-layer MLP over delta_embedding (mutant - WT).\n\n    Architecture: Linear(embed_dim, hidden) -> Dropout -> ReLU -> Linear(hidden, 1)\n    Uses delta_embedding so the network sees the mutation-induced shift\n    in PLM representation space directly.\n    \"\"\"\n\n    def __init__(self, embed_dim: int = EMBED_DIM, hidden_dim: int = 512,\n                 dropout: float = 0.1):\n        super().__init__()\n        self.fc1 = nn.Linear(embed_dim, hidden_dim)\n        self.dropout = nn.Dropout(dropout)\n        self.fc2 = nn.Linear(hidden_dim, 1)\n\n    def forward(self, embedding, delta_embedding):\n        x = self.fc1(delta_embedding)\n        x = self.dropout(x)\n        x = F.relu(x)\n        return self.fc2(x).squeeze(-1)\n\n"
+  }
+]

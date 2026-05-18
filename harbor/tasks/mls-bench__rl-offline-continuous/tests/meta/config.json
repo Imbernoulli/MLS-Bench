@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/halfcheetah.sh",
+      "label": "halfcheetah-medium-v2",
+      "group": 1,
+      "compute": 0.33,
+      "time": "10:00:00",
+      "package": "CORL"
+    },
+    {
+      "cmd": "scripts/maze2d_medium.sh",
+      "label": "maze2d-medium-v1",
+      "group": 1,
+      "compute": 0.25,
+      "time": "06:00:00",
+      "package": "CORL"
+    },
+    {
+      "cmd": "scripts/walker2d.sh",
+      "label": "walker2d-medium-v2",
+      "group": 1,
+      "compute": 0.33,
+      "time": "10:00:00",
+      "package": "CORL",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "rebrac": {
+      "edit_ops": "edits/rebrac.edit.py"
+    },
+    "td3_bc": {
+      "edit_ops": "edits/td3_bc.edit.py"
+    },
+    "iql": {
+      "edit_ops": "edits/iql.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "CORL/algorithms/offline/custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 193,
+          "end": 397
+        }
+      ]
+    }
+  ]
+}
