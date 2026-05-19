@@ -700,9 +700,8 @@ PREBUILT_DOCKER = "bohanlyu2022/mlsbench-{pkg}:latest"
 # harbor_adapter/scripts/build_base_image.py.
 HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 # Internal registry mirror for Mangrove (K8s can't reach Docker Hub directly).
-# moonshot-registry-vpc.cn-beijing.cr.aliyuncs.com is closest to compute nodes
-# but images must be pushed there first. Fallback: Volces / Docker Hub.
-HARBOR_BASE_DOCKER_INTERNAL = "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
+# moonshot-registry-vpc is closest to compute nodes; it mirrors Volces.
+HARBOR_BASE_DOCKER_INTERNAL = "moonshot-registry-vpc.cn-beijing.cr.aliyuncs.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 
 
 def _harbor_safe_name(task_id: str) -> str:
