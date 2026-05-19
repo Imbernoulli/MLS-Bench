@@ -536,6 +536,22 @@ def _reserved_gpu_count(task_meta: Path, config: dict) -> int:
     return _infer_reserved_gpu_count(config)
 
 
+def _gpu_compute_cap(task_meta: Path) -> int:
+    """Per-GPU compute capability relative to H100.
+
+    B200 ≈ 2× H100, so gpu_compute_cap=2 means each physical GPU
+    satisfies 2 units of the original H100-based ``compute`` field.
+    Defaults to 1 (H100 parity).
+    """
+    p = task_meta / "gpu_compute_cap"
+    if p.exists():
+        try:
+            return max(1, int(p.read_text().strip() or "1"))
+        except ValueError:
+            pass
+    return 1
+
+
 def _visible_gpu_indices(task_meta: Path, config: dict) -> list[str]:
     reserved = _reserved_gpu_count(task_meta, config)
     if reserved <= 0:
@@ -574,24 +590,28 @@ def _visible_gpu_indices(task_meta: Path, config: dict) -> list[str]:
     return [str(i) for i in range(reserved)]
 
 
-def _task_gpu_need(task: dict) -> int:
+def _task_gpu_need(task: dict, gpu_cap: int = 1) -> int:
     compute = _test_cmd_compute(task["entry"]["tc"])
     if compute <= 0.0:
         return 0
-    if compute >= 1.0:
-        return max(1, math.ceil(compute))
+    # Scale by per-GPU capability (e.g. B200 ≈ 2× H100 → gpu_cap=2).
+    effective = compute / gpu_cap
+    if effective >= 1.0:
+        return max(1, math.ceil(effective))
     return 1
 
 
 def _try_allocate_task_to_remaining(
     task: dict,
     remaining: dict[str, float],
+    gpu_cap: int = 1,
 ) -> str | None:
     compute = _test_cmd_compute(task["entry"]["tc"])
     if compute <= 0.0:
         return None
-    if compute >= 1.0:
-        need = max(1, math.ceil(compute))
+    effective = compute / gpu_cap
+    if effective >= 1.0:
+        need = max(1, math.ceil(effective))
         free = [device for device, cap in remaining.items() if cap >= 1.0]
         if len(free) < need:
             return None
@@ -600,16 +620,17 @@ def _try_allocate_task_to_remaining(
             remaining[device] = 0.0
         return ",".join(chosen)
 
-    chosen = next((device for device, cap in remaining.items() if cap >= compute), None)
+    chosen = next((device for device, cap in remaining.items() if cap >= effective), None)
     if chosen is None:
         return None
-    remaining[chosen] -= compute
+    remaining[chosen] -= effective
     return chosen
 
 
 def _allocate_group_gpu_assignments(
     tasks: list[dict],
     devices: list[str],
+    gpu_cap: int = 1,
 ) -> list[str | None] | None:
     if not devices:
         return [None] * len(tasks)
@@ -624,8 +645,8 @@ def _allocate_group_gpu_assignments(
     )
 
     for idx, task in indexed:
-        assignment = _try_allocate_task_to_remaining(task, remaining)
-        if assignment is None and _task_gpu_need(task) > 0:
+        assignment = _try_allocate_task_to_remaining(task, remaining, gpu_cap)
+        if assignment is None and _task_gpu_need(task, gpu_cap) > 0:
             return None
         assignments[idx] = assignment
     return assignments
@@ -634,6 +655,7 @@ def _allocate_group_gpu_assignments(
 def _partition_group_gpu_batches(
     tasks: list[dict],
     devices: list[str],
+    gpu_cap: int = 1,
 ) -> list[tuple[list[dict], list[str | None]]] | None:
     if not devices:
         return [(list(tasks), [None] * len(tasks))]
@@ -642,21 +664,21 @@ def _partition_group_gpu_batches(
     current: list[dict] = []
     for task in tasks:
         trial = [*current, task]
-        if _allocate_group_gpu_assignments(trial, devices) is None:
+        if _allocate_group_gpu_assignments(trial, devices, gpu_cap) is None:
             if not current:
                 return None
-            assignments = _allocate_group_gpu_assignments(current, devices)
+            assignments = _allocate_group_gpu_assignments(current, devices, gpu_cap)
             if assignments is None:
                 return None
             batches.append((current, assignments))
             current = [task]
-            if _allocate_group_gpu_assignments(current, devices) is None:
+            if _allocate_group_gpu_assignments(current, devices, gpu_cap) is None:
                 return None
         else:
             current = trial
 
     if current:
-        assignments = _allocate_group_gpu_assignments(current, devices)
+        assignments = _allocate_group_gpu_assignments(current, devices, gpu_cap)
         if assignments is None:
             return None
         batches.append((current, assignments))
@@ -975,6 +997,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
     grouped = _group_entries(test_cmds)
     devices = _visible_gpu_indices(task_meta, config)
     n_reserved = len(devices)
+    gpu_cap = _gpu_compute_cap(task_meta)
 
     for group_key in sorted(grouped.keys()):
         group_entries = [
@@ -995,7 +1018,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
         for task in group_tasks:
             entry = task["entry"]
             seed = int(task["seed"])
-            need = _task_gpu_need(task)
+            need = _task_gpu_need(task, gpu_cap)
             if n_reserved > 0 and need > n_reserved:
                 records[(entry["idx"], seed)] = _write_error_record(
                     out_dir,
@@ -1013,7 +1036,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
         if not schedulable:
             continue
 
-        batches = _partition_group_gpu_batches(schedulable, devices)
+        batches = _partition_group_gpu_batches(schedulable, devices, gpu_cap)
         if batches is None:
             for task in schedulable:
                 entry = task["entry"]

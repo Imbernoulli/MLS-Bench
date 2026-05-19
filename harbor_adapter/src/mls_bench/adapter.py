@@ -700,6 +700,8 @@ PREBUILT_DOCKER = "bohanlyu2022/mlsbench-{pkg}:latest"
 # harbor_adapter/scripts/build_base_image.py.
 HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 # Internal registry mirror for Mangrove (K8s can't reach Docker Hub directly).
+# moonshot-registry-vpc.cn-beijing.cr.aliyuncs.com is closest to compute nodes
+# but images must be pushed there first. Fallback: Volces / Docker Hub.
 HARBOR_BASE_DOCKER_INTERNAL = "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 
 
@@ -825,6 +827,9 @@ def _mangrove_resources(pkg_config: dict, config: dict) -> dict:
         )
 
     # Tasks where individual cmds need ≥ 2 H100s use full B300 cards.
+    # gpu_compute_cap tells the in-container scheduler how many H100-equiv
+    # compute units each physical GPU satisfies, so it won't reject tasks
+    # that were specced for more H100s than we have physical B200s.
     if max_compute >= 2.0:
         if max_compute <= 2.0:
             gpus = 1
@@ -832,9 +837,11 @@ def _mangrove_resources(pkg_config: dict, config: dict) -> dict:
             gpus = 2
         else:
             gpus = 2  # cap at 2 full B300
+        gpu_cap = math.ceil(max_compute / gpus)
         return dict(
             cpus=4, memory_mb=32 * 1024, storage_mb=60 * 1024,
             gpus=gpus, gpu_types=["B200"], batch_size_multiplier=2,
+            gpu_compute_cap=gpu_cap,
         )
 
     # All cmds have compute ≤ 1.0 → use MIG slices.
@@ -1411,6 +1418,9 @@ def _stage_verifier_assets(
     else:
         res_for_gpu = _resources(ctx.pkg_config, cfg)
     (meta / "gpu_count").write_text(str(res_for_gpu["gpus"]) + "\n")
+    gpu_cap = res_for_gpu.get("gpu_compute_cap", 1)
+    if gpu_cap > 1:
+        (meta / "gpu_compute_cap").write_text(str(gpu_cap) + "\n")
     package_envs: dict[str, dict] = {}
     for tc in ctx.config.get("test_cmds", []):
         pkg = tc.get("package")
