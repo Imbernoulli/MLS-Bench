@@ -827,9 +827,9 @@ def _mangrove_resources(pkg_config: dict, config: dict) -> dict:
         )
 
     # Tasks where individual cmds need ≥ 2 H100s use full B300 cards.
-    # gpu_compute_cap tells the in-container scheduler how many H100-equiv
-    # compute units each physical GPU satisfies, so it won't reject tasks
-    # that were specced for more H100s than we have physical B200s.
+    # B200 ≈ 2× H100, so use half the GPUs and double the batch size.
+    # gpu_compute_cap tells the scheduler each GPU satisfies N H100-equiv
+    # compute units.
     if max_compute >= 2.0:
         if max_compute <= 2.0:
             gpus = 1
@@ -1360,6 +1360,46 @@ def _materialized_package_source(mb: MlsBenchRoot, pkg: str) -> Path | None:
     return dst
 
 
+def _adapt_scripts_for_b200(scripts_dir: Path) -> None:
+    """Adapt eval scripts for B200 (≈ 2× H100): halve TP, boost memory util.
+
+    Applied in-place after copying scripts to the rendered task directory.
+    Only modifies shell scripts that contain known multi-GPU patterns.
+    """
+    if not scripts_dir.exists():
+        return
+    import re as _re
+    for sh in scripts_dir.glob("*.sh"):
+        text = sh.read_text()
+        orig = text
+        # tensor_model_parallel_size=2 → 1 (verl/vLLM RL tasks)
+        text = _re.sub(
+            r"tensor_model_parallel_size=2\b",
+            "tensor_model_parallel_size=1",
+            text,
+        )
+        # gpu_memory_utilization=0.4 → 0.5 (more VRAM on B200)
+        text = _re.sub(
+            r"gpu_memory_utilization=0\.4\b",
+            "gpu_memory_utilization=0.5",
+            text,
+        )
+        # Hardcoded nproc_per_node=4 → 2 (nanogpt pretrain 4-GPU scripts)
+        text = _re.sub(
+            r"nproc_per_node=4\b",
+            "nproc_per_node=2",
+            text,
+        )
+        # Hardcoded nproc_per_node=8 → 2
+        text = _re.sub(
+            r"nproc_per_node=8\b",
+            "nproc_per_node=2",
+            text,
+        )
+        if text != orig:
+            sh.write_text(text)
+
+
 def _stage_verifier_assets(
     mb: MlsBenchRoot,
     ctx: TaskContext,
@@ -1442,6 +1482,12 @@ def _stage_verifier_assets(
     # Eval scripts.
     if scripts_src.exists():
         shutil.copytree(scripts_src, tests_dir / "eval" / "scripts", dirs_exist_ok=True)
+
+    # Mangrove B200 adaptation: halve GPU counts and double batch sizes in
+    # eval scripts.  B200 ≈ 2× H100, so we run with half the physical GPUs.
+    if skip_pristine:  # mangrove mode
+        _adapt_scripts_for_b200(tests_dir / "eval" / "scripts")
+        _adapt_scripts_for_b200(meta / "scripts")
 
     # mlsbench source tree — required by parser.py / score_spec.py / score_task.py
     # to import mlsbench.scoring.* and mlsbench.agent.parsers. NOT baked into
