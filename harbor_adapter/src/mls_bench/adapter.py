@@ -154,6 +154,7 @@ class MlsBenchAdapter:
         mls_bench_root: Path | None = None,
         continue_on_error: bool = False,
         mangrove: bool = False,
+        gpu_backend: str = "b200",
     ):
         self.output_dir = output_dir
         self.limit = limit
@@ -162,6 +163,7 @@ class MlsBenchAdapter:
         self.mls_bench_root = mls_bench_root
         self.continue_on_error = continue_on_error
         self.mangrove = mangrove
+        self.gpu_backend = gpu_backend
 
     def _wanted_task_ids(self, mb: MlsBenchRoot) -> list[str]:
         wanted = list(self.task_ids) if self.task_ids else mb.list_tasks()
@@ -180,7 +182,7 @@ class MlsBenchAdapter:
         for task_id in wanted:
             try:
                 ctx = build_task_context(mb, task_id)
-                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite, mangrove=self.mangrove)
+                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite, mangrove=self.mangrove, gpu_backend=self.gpu_backend)
                 print(f"[ok] {task_id} -> {out}")
                 ok += 1
                 task_dirs.append(out)
@@ -699,9 +701,27 @@ PREBUILT_DOCKER = "bohanlyu2022/mlsbench-{pkg}:latest"
 # pristine package source, mlsbench src, and any data deps. See
 # harbor_adapter/scripts/build_base_image.py.
 HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
-# Internal registry mirror for Mangrove (K8s can't reach Docker Hub directly).
-# moonshot-registry-vpc is closest to compute nodes; it mirrors Volces.
+# Internal registries for Mangrove (K8s can't reach Docker Hub directly).
+# moonshot-registry-vpc is closest to compute nodes but missing 9 packages.
+# Volces has ALL images and K8s build pods already use it for built images.
 HARBOR_BASE_DOCKER_INTERNAL = "moonshot-registry-vpc.cn-beijing.cr.aliyuncs.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
+HARBOR_BASE_DOCKER_VOLCES = "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
+
+# Packages missing from moonshot-registry-vpc; fall back to Volces registry.
+_INTERNAL_REGISTRY_MISSING: set[str] = {
+    "alphaflow-main", "basicts", "causal-bnlearn", "cfgpp-main",
+    "chebnetii", "cleandiffuser", "climax", "continual-learning",
+    "transformers-kv-lab",
+}
+
+
+def _base_image(pkg: str, mangrove: bool) -> str:
+    """Return the FROM image for the per-task Dockerfile."""
+    if not mangrove:
+        return HARBOR_BASE_DOCKER.format(pkg=pkg)
+    if pkg in _INTERNAL_REGISTRY_MISSING:
+        return HARBOR_BASE_DOCKER_VOLCES.format(pkg=pkg)
+    return HARBOR_BASE_DOCKER_INTERNAL.format(pkg=pkg)
 
 
 def _harbor_safe_name(task_id: str) -> str:
@@ -792,15 +812,16 @@ def _resources(pkg_config: dict, config: dict) -> dict:
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
-def _mangrove_resources(pkg_config: dict, config: dict) -> dict:
-    """Compute B300-targeted resource allocation for Mangrove.
+def _mangrove_resources(pkg_config: dict, config: dict,
+                        gpu_backend: str = "b200") -> dict:
+    """Compute GPU-targeted resource allocation for Mangrove.
 
-    A B200-MIG-1g.23gb slice ≈ 1/3–1/2 H100.  Each MIG slice can only run
-    one experiment at a time (no time-sharing like H100), so the number of
-    MIG slices equals the number of parallel experiments in the peak group.
-
-    For tasks where individual cmds need ≥ 2 H100s, we use full B300 cards
-    instead: compute 2 → 1 B200, compute 4 → 2 B200, compute ≥ 8 → 2 B200.
+    gpu_backend controls which hardware pool to target:
+      - "b200" (default): B200-MIG-1g.23gb slices for compute ≤ 1, full B200
+        cards for compute ≥ 2. Requires torch 2.7.0 upgrade for sm_100.
+      - "h20": H20 whole cards (96 GB, SM 90). No torch upgrade needed;
+        existing base-image torch works as-is. Each GPU task gets 1 H20;
+        multi-GPU tasks get ceil(compute) H20s.
     """
     test_cmds = list(config.get("test_cmds", []) or [])
     max_compute = max((_test_cmd_compute(tc) for tc in test_cmds), default=0.0)
@@ -825,6 +846,21 @@ def _mangrove_resources(pkg_config: dict, config: dict) -> dict:
             gpus=0, gpu_types=[], batch_size_multiplier=1,
         )
 
+    # ---- H20 backend ----
+    if gpu_backend == "h20":
+        # H20 ≈ H100 performance, 96 GB VRAM, SM 90.
+        # No batch_size_multiplier (same perf as H100).
+        # No gpu_compute_cap (1 H20 ≈ 1 H100).
+        if max_compute >= 2.0:
+            gpus = math.ceil(max_compute)
+        else:
+            gpus = 1 if (use_cuda or not all_zero) else 0
+        return dict(
+            cpus=4, memory_mb=32 * 1024, storage_mb=60 * 1024,
+            gpus=gpus, gpu_types=["H20"], batch_size_multiplier=1,
+        )
+
+    # ---- B200 backend (default) ----
     # Tasks where individual cmds need ≥ 2 H100s use full B300 cards.
     # B200 ≈ 2× H100, so use half the GPUs and double the batch size.
     # gpu_compute_cap tells the scheduler each GPU satisfies N H100-equiv
@@ -903,6 +939,7 @@ def render_task(
     out_root: Path,
     overwrite: bool = False,
     mangrove: bool = False,
+    gpu_backend: str = "b200",
 ) -> Path:
     if mangrove:
         out_dir = out_root / ctx.task_id
@@ -918,7 +955,7 @@ def render_task(
 
     pkg_workdir = ctx.pkg_config.get("workdir", "/workspace")
     if mangrove:
-        res = _mangrove_resources(ctx.pkg_config, ctx.config)
+        res = _mangrove_resources(ctx.pkg_config, ctx.config, gpu_backend=gpu_backend)
     else:
         res = _resources(ctx.pkg_config, ctx.config)
     effective_config = _config_with_shifted_edit_ranges(mb, ctx)
@@ -933,17 +970,16 @@ def render_task(
     gpu_types = res.get("gpu_types", []) if mangrove else []
     batch_size_multiplier = res.get("batch_size_multiplier", 1) if mangrove else 1
 
-    # Always upgrade torch for Mangrove (B200/B300 sm_100 support).
-    # pip torch wheels bundle their own CUDA runtime, so this works
-    # regardless of the base image's system CUDA version.
-    torch_upgrade = mangrove
+    # Upgrade torch only for B200/B300 (sm_100 needs torch ≥ 2.7.0).
+    # H20 is SM 90 (Hopper) — existing base-image torch works as-is.
+    torch_upgrade = mangrove and gpu_backend != "h20"
 
     template_ctx = {
         "task_id": ctx.task_id,
         "task_description": ctx.task_description,
         "package": ctx.package,
         "workdir": pkg_workdir,
-        "base_image": (HARBOR_BASE_DOCKER_INTERNAL if mangrove else HARBOR_BASE_DOCKER).format(pkg=ctx.package.lower()),
+        "base_image": _base_image(ctx.package.lower(), mangrove),
         "pkg_base_image": ctx.pkg_config.get("base_image", "python:3.11"),
         "pkg_install_cmds": ctx.pkg_config.get("install_cmds") or [],
         "agent_timeout_sec": agent_timeout,
@@ -1045,6 +1081,7 @@ def render_task(
         scaffold_dir=env_dir / "_scaffold",
         config=effective_config,
         skip_pristine=mangrove,
+        gpu_backend=gpu_backend,
     )
 
     return out_dir
@@ -1408,6 +1445,7 @@ def _stage_verifier_assets(
     scaffold_dir: Path,
     config: dict | None = None,
     skip_pristine: bool = False,
+    gpu_backend: str = "b200",
 ) -> None:
     """Stage the per-task verifier-only files under tests/.
 
@@ -1453,7 +1491,7 @@ def _stage_verifier_assets(
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
     cfg = config if config is not None else ctx.config
     if skip_pristine:
-        res_for_gpu = _mangrove_resources(ctx.pkg_config, cfg)
+        res_for_gpu = _mangrove_resources(ctx.pkg_config, cfg, gpu_backend=gpu_backend)
     else:
         res_for_gpu = _resources(ctx.pkg_config, cfg)
     (meta / "gpu_count").write_text(str(res_for_gpu["gpus"]) + "\n")
@@ -1484,7 +1522,8 @@ def _stage_verifier_assets(
 
     # Mangrove B200 adaptation: halve GPU counts and double batch sizes in
     # eval scripts.  B200 ≈ 2× H100, so we run with half the physical GPUs.
-    if skip_pristine:  # mangrove mode
+    # Skip for H20 — it's ≈ H100 so original scripts work as-is.
+    if skip_pristine and gpu_backend != "h20":  # mangrove B200 mode
         _adapt_scripts_for_b200(tests_dir / "eval" / "scripts")
         _adapt_scripts_for_b200(meta / "scripts")
 
