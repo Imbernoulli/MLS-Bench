@@ -616,10 +616,19 @@ def _pick_strongest_baseline(
             return None
         return max(rows, key=lambda r: (_completeness(r), str(r.get("timestamp", ""))))
 
+    # Only consider baselines that have edit_ops; baselines without edit_ops
+    # (e.g. built-in models in Time-Series-Library) can't be applied as oracle
+    # edits and may exceed parameter budgets.
+    eligible = {n for n in baselines if baselines[n].get("edit_ops")}
+    if not eligible:
+        eligible = set(baselines)  # fall back to all if none have edit_ops
+
     best_name: str | None = None
     best_score: float = float("-inf")
     any_scored = False
     for name in baselines:
+        if name not in eligible:
+            continue
         candidates = {name, f"baseline:{name}"}
         rows = [r for r in leaderboard if r.get("model") in candidates]
         if not rows:
@@ -665,6 +674,11 @@ def build_task_context(mb: MlsBenchRoot, task_id: str) -> TaskContext:
     leaderboard = _load_leaderboard(task_dir)
 
     # Pick baseline + load its edit ops (resolved relative to task_dir).
+    # Ensure mlsbench.scoring is importable so _pick_strongest_baseline can
+    # score baselines properly (instead of falling back to first-declared).
+    _src_str = str(mb.src_dir)
+    if _src_str not in sys.path:
+        sys.path.insert(0, _src_str)
     baseline_name = ""
     edit_ops: list[dict] = []
     baselines = config.get("baselines") or {}
@@ -701,26 +715,15 @@ PREBUILT_DOCKER = "bohanlyu2022/mlsbench-{pkg}:latest"
 # pristine package source, mlsbench src, and any data deps. See
 # harbor_adapter/scripts/build_base_image.py.
 HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
-# Internal registries for Mangrove (K8s can't reach Docker Hub directly).
-# moonshot-registry-vpc is closest to compute nodes but missing 9 packages.
+# Internal registry for Mangrove (K8s can't reach Docker Hub directly).
 # Volces has ALL images and K8s build pods already use it for built images.
-HARBOR_BASE_DOCKER_INTERNAL = "moonshot-registry-vpc.cn-beijing.cr.aliyuncs.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
-HARBOR_BASE_DOCKER_VOLCES = "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
-
-# Packages missing from moonshot-registry-vpc; fall back to Volces registry.
-_INTERNAL_REGISTRY_MISSING: set[str] = {
-    "alphaflow-main", "basicts", "causal-bnlearn", "cfgpp-main",
-    "chebnetii", "cleandiffuser", "climax", "continual-learning",
-    "transformers-kv-lab",
-}
+HARBOR_BASE_DOCKER_INTERNAL = "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 
 
 def _base_image(pkg: str, mangrove: bool) -> str:
     """Return the FROM image for the per-task Dockerfile."""
     if not mangrove:
         return HARBOR_BASE_DOCKER.format(pkg=pkg)
-    if pkg in _INTERNAL_REGISTRY_MISSING:
-        return HARBOR_BASE_DOCKER_VOLCES.format(pkg=pkg)
     return HARBOR_BASE_DOCKER_INTERNAL.format(pkg=pkg)
 
 
@@ -849,30 +852,44 @@ def _mangrove_resources(pkg_config: dict, config: dict,
     # ---- H20 backend ----
     if gpu_backend == "h20":
         # H20 ≈ H100 performance, 96 GB VRAM, SM 90.
-        # No batch_size_multiplier (same perf as H100).
-        # No gpu_compute_cap (1 H20 ≈ 1 H100).
-        if max_compute >= 2.0:
-            gpus = math.ceil(max_compute)
-        else:
-            gpus = 1 if (use_cuda or not all_zero) else 0
+        # GPU count = peak parallel demand across groups (same as _resources).
+        n_seeds = _seed_count(config)
+        peak_gpus = 0
+        for entries in _group_test_cmds(test_cmds).values():
+            whole_per_seed = 0
+            fractional_per_seed = 0.0
+            for tc in entries:
+                compute = _test_cmd_compute(tc)
+                if compute >= 1.0:
+                    whole_per_seed += max(1, math.ceil(compute))
+                elif compute > 0.0:
+                    fractional_per_seed += compute
+            total_whole = n_seeds * whole_per_seed
+            total_fractional = n_seeds * fractional_per_seed
+            peak_gpus = max(
+                peak_gpus,
+                total_whole + max(0, math.ceil(total_fractional)),
+            )
+        gpus = max(1, peak_gpus) if (use_cuda or not all_zero) else 0
         return dict(
             cpus=4, memory_mb=32 * 1024, storage_mb=60 * 1024,
             gpus=gpus, gpu_types=["H20"], batch_size_multiplier=1,
         )
 
     # ---- B200 backend (default) ----
-    # Tasks where individual cmds need ≥ 2 H100s use full B300 cards.
-    # B200 ≈ 2× H100, so use half the GPUs and double the batch size.
-    # gpu_compute_cap tells the scheduler each GPU satisfies N H100-equiv
-    # compute units.
+    # Tasks where individual cmds need ≥ 2 H100s use full B200 cards.
+    # B200 ≈ 2× H100 (gpu_cap=2), so divide H100-equiv demand by 2.
     if max_compute >= 2.0:
-        if max_compute <= 2.0:
-            gpus = 1
-        elif max_compute <= 4.0:
-            gpus = 2
-        else:
-            gpus = 2  # cap at 2 full B300
-        gpu_cap = math.ceil(max_compute / gpus)
+        gpu_cap = 2
+        n_seeds = _seed_count(config)
+        peak_h100_equiv = 0
+        for entries in _group_test_cmds(test_cmds).values():
+            group_h100_equiv = 0
+            for tc in entries:
+                compute = _test_cmd_compute(tc)
+                group_h100_equiv += max(1, math.ceil(compute))
+            peak_h100_equiv = max(peak_h100_equiv, n_seeds * group_h100_equiv)
+        gpus = max(1, math.ceil(peak_h100_equiv / gpu_cap))
         return dict(
             cpus=4, memory_mb=32 * 1024, storage_mb=60 * 1024,
             gpus=gpus, gpu_types=["B200"], batch_size_multiplier=2,
