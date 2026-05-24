@@ -1,33 +1,33 @@
-"""Score spec for security-adversarial-attack-sparse-l0."""
+"""Score spec for security-adversarial-attack-sparse-l0.
+
+ATTACKER task: ASR = attack success rate against an adversarially-robust
+target (== robust error in Croce et al., AAAI 2022). Higher is better for
+the attacker, bounded [0, 1].
+
+Canonical Sparse-RS L0 setting (arXiv:2006.12834v3, Table 2 / App. A.5):
+k = 24 perturbed pixels, untargeted, RobustBench L2-robust CIFAR-10 models.
+On robust targets Sparse-RS lands well below 1.0 (paper: 81-86% robust
+error), so the worst-baseline floor / best-baseline anchor stay separated
+and the task is not saturated.
+
+Settings match config labels: Rebuffi-R18-L2, Augustin-L2, Engstrom-L2.
+"""
 from mlsbench.scoring.dsl import *
 
-# ATTACKER task: ASR = higher better (attacker wants high success rate), bounded [0,1]
-# Settings match config labels: ResNet20-C10, VGG11BN-C10, MobileNetV2-C10, ResNet20-C100, MobileNetV2-C100
-
-term("asr_ResNet20_C10",
-    col("asr_ResNet20_C10").higher().id()
+term("asr_Rebuffi_R18_L2",
+    col("asr_Rebuffi_R18_L2").higher().id()
     .bounded_power(bound=1.0))
 
-term("asr_VGG11BN_C10",
-    col("asr_VGG11BN_C10").higher().id()
+term("asr_Augustin_L2",
+    col("asr_Augustin_L2").higher().id()
     .bounded_power(bound=1.0))
 
-term("asr_MobileNetV2_C10",
-    col("asr_MobileNetV2_C10").higher().id()
+term("asr_Engstrom_L2",
+    col("asr_Engstrom_L2").higher().id()
     .bounded_power(bound=1.0))
 
-term("asr_ResNet20_C100",
-    col("asr_ResNet20_C100").higher().id()
-    .bounded_power(bound=1.0))
+setting("Rebuffi-R18-L2", weighted_mean(("asr_Rebuffi_R18_L2", 1.0)))
+setting("Augustin-L2", weighted_mean(("asr_Augustin_L2", 1.0)))
+setting("Engstrom-L2", weighted_mean(("asr_Engstrom_L2", 1.0)))
 
-term("asr_MobileNetV2_C100",
-    col("asr_MobileNetV2_C100").higher().id()
-    .bounded_power(bound=1.0))
-
-setting("ResNet20-C10", weighted_mean(("asr_ResNet20_C10", 1.0)))
-setting("VGG11BN-C10", weighted_mean(("asr_VGG11BN_C10", 1.0)))
-setting("MobileNetV2-C10", weighted_mean(("asr_MobileNetV2_C10", 1.0)))
-setting("ResNet20-C100", weighted_mean(("asr_ResNet20_C100", 1.0)))
-setting("MobileNetV2-C100", weighted_mean(("asr_MobileNetV2_C100", 1.0)))
-
-task(gmean("ResNet20-C10", "VGG11BN-C10", "MobileNetV2-C10", "ResNet20-C100", "MobileNetV2-C100"))
+task(gmean("Rebuffi-R18-L2", "Augustin-L2", "Engstrom-L2"))

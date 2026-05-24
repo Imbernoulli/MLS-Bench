@@ -8,11 +8,13 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
+import tempfile
 import threading
 import time as _time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -321,7 +323,11 @@ class WorkspaceTools:
             # Skip if we're already inside a scheduler-managed job (baseline via scheduler).
             try:
                 from mlsbench.scheduler import is_scheduler_running
-                if is_scheduler_running():
+                is_docker_baseline = (
+                    self.container_runtime == "docker"
+                    and str(self.model_name).startswith("baseline:")
+                )
+                if not is_docker_baseline and is_scheduler_running():
                     from mlsbench.agent.local_executor import LocalSchedulerExecutor
                     self.slurm_executor = LocalSchedulerExecutor(self.project_root, self.global_config)
                     print("[info] Local GPU scheduler detected — test jobs will be submitted for GPU allocation")
@@ -1704,6 +1710,154 @@ class WorkspaceTools:
         status, _ = self._docker_container_state(container_name, run_env)
         return status is not None
 
+    def _configured_timeout_seconds(self, cmd_entry: dict) -> int:
+        """Return the hard timeout for one test command."""
+        for key in ("test_timeout_seconds", "hard_timeout_seconds", "container_timeout_seconds"):
+            value = self.global_config.get(key)
+            if value not in (None, ""):
+                return max(1, self._parse_time_to_seconds(str(value)))
+
+        if "time" in cmd_entry:
+            return max(1, self._parse_time_to_seconds(str(cmd_entry["time"])))
+
+        return max(1, min(int(self.global_config.get("default_test_timeout_seconds", 1800)), 1800))
+
+    @staticmethod
+    def _timeout_feedback(timeout_secs: int | float) -> str:
+        return (
+            f"[TIMEOUT] Command timed out after {int(timeout_secs)} seconds. "
+            f"This result is INVALID and will not count. "
+            f"Your algorithm is too slow — reduce model size or computational complexity."
+        )
+
+    @staticmethod
+    def _read_output_file(output_path: str | Path) -> str:
+        try:
+            return Path(output_path).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _unlink_output_file(output_path: str | Path) -> None:
+        try:
+            Path(output_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def _start_subprocess_to_file(
+        self,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[subprocess.Popen, object, str]:
+        """Start a subprocess with stdout/stderr redirected to a temp file."""
+        output_file = tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix="mlsbench-subprocess-",
+            suffix=".log",
+            delete=False,
+        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=output_file,
+                stderr=subprocess.STDOUT,
+                cwd=cwd,
+                env=env,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except Exception:
+            output_path = output_file.name
+            output_file.close()
+            self._unlink_output_file(output_path)
+            raise
+        return proc, output_file, output_file.name
+
+    def _collect_subprocess_output(self, output_file, output_path: str) -> str:
+        try:
+            output_file.flush()
+        except Exception:
+            pass
+        try:
+            output_file.close()
+        except Exception:
+            pass
+        raw_output = self._read_output_file(output_path)
+        self._unlink_output_file(output_path)
+        return raw_output
+
+    @staticmethod
+    def _terminate_process_group(proc: subprocess.Popen, grace_secs: float = 5.0) -> None:
+        """Best-effort process-group termination for timed-out subprocesses."""
+        if proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=grace_secs)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            return
+
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=grace_secs)
+        except Exception:
+            pass
+
+    def _run_subprocess_to_file(
+        self,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout_secs: int | float | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], str, bool]:
+        """Run a subprocess without PIPEs and return captured combined output."""
+        proc, output_file, output_path = self._start_subprocess_to_file(
+            cmd,
+            cwd=cwd,
+            env=env,
+        )
+        timed_out = False
+        deadline = None if timeout_secs is None else _time.time() + float(timeout_secs)
+        try:
+            while True:
+                if proc.poll() is not None:
+                    break
+                if deadline is not None and _time.time() >= deadline:
+                    timed_out = True
+                    self._terminate_process_group(proc)
+                    break
+                _time.sleep(0.2)
+        except Exception:
+            self._terminate_process_group(proc)
+            raise
+
+        raw_output = self._collect_subprocess_output(output_file, output_path)
+        returncode = proc.returncode if proc.returncode is not None else 124
+        return subprocess.CompletedProcess(cmd, returncode, stdout=raw_output, stderr=""), raw_output, timed_out
+
     def _wait_for_docker_create(
         self,
         create_cmd: list[str],
@@ -1713,43 +1867,35 @@ class WorkspaceTools:
     ) -> tuple[subprocess.CompletedProcess[str], str] | None:
         """Wait for a ``docker create`` client or the container object to materialize."""
         create_deadline = min(deadline, _time.time() + 60)
-        proc = subprocess.Popen(
+        proc, output_file, output_path = self._start_subprocess_to_file(
             create_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        while _time.time() < create_deadline:
-            ret = proc.poll()
-            if ret is not None:
-                stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                result = subprocess.CompletedProcess(create_cmd, ret, stdout=stdout, stderr=stderr)
-                if ret == 0 or self._docker_container_exists(container_name, run_env):
-                    return result, raw_output
-                return result, raw_output
-            if self._docker_container_exists(container_name, run_env):
-                try:
-                    proc.terminate()
-                    stdout, stderr = proc.communicate(timeout=5)
-                except Exception:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                return subprocess.CompletedProcess(create_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-            _time.sleep(0.2)
-
         try:
-            proc.kill()
+            while _time.time() < create_deadline:
+                ret = proc.poll()
+                if ret is not None:
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    result = subprocess.CompletedProcess(create_cmd, ret, stdout=raw_output, stderr="")
+                    if ret == 0 or self._docker_container_exists(container_name, run_env):
+                        return result, raw_output
+                    return result, raw_output
+                if self._docker_container_exists(container_name, run_env):
+                    self._terminate_process_group(proc)
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    return subprocess.CompletedProcess(create_cmd, 0, stdout=raw_output, stderr=""), raw_output
+                _time.sleep(0.2)
+
+            self._terminate_process_group(proc)
+            raw_output = self._collect_subprocess_output(output_file, output_path)
+            if self._docker_container_exists(container_name, run_env):
+                return subprocess.CompletedProcess(create_cmd, 0, stdout=raw_output, stderr=""), raw_output
+            return None
         except Exception:
-            pass
-        stdout, stderr = proc.communicate()
-        raw_output = (stdout or "") + (stderr or "")
-        if self._docker_container_exists(container_name, run_env):
-            return subprocess.CompletedProcess(create_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-        return None
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            raise
 
     def _wait_for_docker_start_attempt(
         self,
@@ -1759,47 +1905,40 @@ class WorkspaceTools:
         attempt_deadline: float,
     ) -> tuple[subprocess.CompletedProcess[str], str] | None:
         """Wait for one ``docker start`` attempt to move the container beyond ``Created``."""
-        proc = subprocess.Popen(
+        proc, output_file, output_path = self._start_subprocess_to_file(
             start_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        while _time.time() < attempt_deadline:
-            ret = proc.poll()
-            if ret is not None:
-                stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                result = subprocess.CompletedProcess(start_cmd, ret, stdout=stdout, stderr=stderr)
-                status, _ = self._docker_container_state(container_name, run_env)
-                if ret == 0 or status in ("running", "exited", "dead"):
+        try:
+            while _time.time() < attempt_deadline:
+                ret = proc.poll()
+                if ret is not None:
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    result = subprocess.CompletedProcess(start_cmd, ret, stdout=raw_output, stderr="")
+                    status, _ = self._docker_container_state(container_name, run_env)
+                    if ret == 0 or status in ("running", "exited", "dead"):
+                        return result, raw_output
                     return result, raw_output
-                return result, raw_output
+                status, _ = self._docker_container_state(container_name, run_env)
+                if status in ("running", "exited", "dead"):
+                    self._terminate_process_group(proc)
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    return subprocess.CompletedProcess(start_cmd, 0, stdout=raw_output, stderr=""), raw_output
+                _time.sleep(0.2)
+
             status, _ = self._docker_container_state(container_name, run_env)
             if status in ("running", "exited", "dead"):
-                try:
-                    proc.terminate()
-                    stdout, stderr = proc.communicate(timeout=5)
-                except Exception:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                return subprocess.CompletedProcess(start_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-            _time.sleep(0.2)
-
-        status, _ = self._docker_container_state(container_name, run_env)
-        if status in ("running", "exited", "dead"):
-            try:
-                proc.terminate()
-                stdout, stderr = proc.communicate(timeout=5)
-            except Exception:
-                proc.kill()
-                stdout, stderr = proc.communicate()
-            raw_output = (stdout or "") + (stderr or "")
-            return subprocess.CompletedProcess(start_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-        return None
+                self._terminate_process_group(proc)
+                raw_output = self._collect_subprocess_output(output_file, output_path)
+                return subprocess.CompletedProcess(start_cmd, 0, stdout=raw_output, stderr=""), raw_output
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            return None
+        except Exception:
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            raise
 
     def _start_docker_container(
         self,
@@ -1847,22 +1986,13 @@ class WorkspaceTools:
 
             started = self._start_docker_container(container_name, run_env, deadline)
             if started is None:
-                subprocess.run(
+                self._run_subprocess_to_file(
                     ["docker", "stop", container_name],
-                    capture_output=True,
-                    timeout=30,
+                    cwd=str(self.project_root),
+                    env=run_env,
+                    timeout_secs=30,
                 )
-                raw_output = ""
-                try:
-                    logs_result = subprocess.run(
-                        ["docker", "logs", container_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
-                except Exception:
-                    pass
+                raw_output = self._docker_logs(container_name, run_env)
                 raw_output = (
                     f"[TIMEOUT] docker start did not move '{container_name}' out of Created before timeout.\n"
                     f"{raw_output}"
@@ -1881,33 +2011,41 @@ class WorkspaceTools:
         """Best-effort removal that tolerates hanging rootless Docker clients."""
         remove_cmd = ["docker", "rm", "-f", container_name]
         remove_deadline = _time.time() + 30
-        proc = subprocess.Popen(
+        proc, output_file, output_path = self._start_subprocess_to_file(
             remove_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        while _time.time() < remove_deadline:
-            ret = proc.poll()
-            if ret is not None:
-                proc.communicate()
-                return
-            if not self._docker_container_exists(container_name, run_env):
-                try:
-                    proc.terminate()
-                    proc.communicate(timeout=5)
-                except Exception:
-                    proc.kill()
-                    proc.communicate()
-                return
-            _time.sleep(0.2)
         try:
-            proc.kill()
+            while _time.time() < remove_deadline:
+                ret = proc.poll()
+                if ret is not None:
+                    self._collect_subprocess_output(output_file, output_path)
+                    return
+                if not self._docker_container_exists(container_name, run_env):
+                    self._terminate_process_group(proc)
+                    self._collect_subprocess_output(output_file, output_path)
+                    return
+                _time.sleep(0.2)
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
         except Exception:
-            pass
-        proc.communicate()
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            raise
+
+    def _docker_logs(self, container_name: str, run_env: dict[str, str], timeout_secs: int = 30) -> str:
+        """Read Docker logs without routing large output through a PIPE."""
+        try:
+            _result, raw_output, _timed_out = self._run_subprocess_to_file(
+                ["docker", "logs", container_name],
+                cwd=str(self.project_root),
+                env=run_env,
+                timeout_secs=timeout_secs,
+            )
+            return raw_output
+        except Exception:
+            return ""
 
     def _run_docker_container(
         self,
@@ -1937,54 +2075,25 @@ class WorkspaceTools:
                 return launch_result, start_output, False
             created = True
 
-            try:
-                wait_result = subprocess.run(
-                    ["docker", "wait", container_name],
-                    capture_output=True,
-                    text=True,
-                    cwd=str(self.project_root),
-                    timeout=max(1.0, deadline - _time.time()),
-                    env=run_env,
-                )
-            except subprocess.TimeoutExpired:
-                subprocess.run(
-                    ["docker", "stop", container_name],
-                    capture_output=True,
-                    timeout=30,
-                )
-                raw_output = ""
+            wait_result, wait_output, wait_timed_out = self._run_subprocess_to_file(
+                ["docker", "wait", container_name],
+                cwd=str(self.project_root),
+                env=run_env,
+                timeout_secs=max(1.0, deadline - _time.time()),
+            )
+            if wait_timed_out:
+                raw_output = self._docker_logs(container_name, run_env)
                 try:
-                    logs_result = subprocess.run(
-                        ["docker", "logs", container_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
+                    self._remove_docker_container(container_name, run_env)
                 except Exception:
                     pass
-                raw_output = (
-                    f"[TIMEOUT] Command timed out after {timeout_secs}s. "
-                    f"This result is INVALID and will not count. "
-                    f"Your algorithm is too slow — reduce model size or computational complexity.\n{raw_output}"
-                )
+                raw_output = f"{self._timeout_feedback(timeout_secs)}\n{raw_output}"
                 return None, raw_output, True
 
-            raw_output = ""
-            if not raw_output:
-                try:
-                    logs_result = subprocess.run(
-                        ["docker", "logs", container_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
-                except Exception:
-                    pass
+            raw_output = self._docker_logs(container_name, run_env)
             if not raw_output:
                 raw_output = start_output
-            exit_code_str = (wait_result.stdout or "").strip().splitlines()
+            exit_code_str = (wait_output or wait_result.stdout or "").strip().splitlines()
             try:
                 exit_code = int(exit_code_str[-1]) if exit_code_str else wait_result.returncode
             except ValueError:
@@ -1994,7 +2103,7 @@ class WorkspaceTools:
                     ["docker", "wait", container_name],
                     exit_code,
                     stdout=raw_output,
-                    stderr=wait_result.stderr or "",
+                    stderr="",
                 ),
                 raw_output,
                 False,
@@ -2230,21 +2339,18 @@ class WorkspaceTools:
                 if timed_out:
                     return _finalize(output, None, output)
             else:
-                result = subprocess.run(
+                result, output, timed_out = self._run_subprocess_to_file(
                     container_cmd,
-                    capture_output=True,
-                    text=True,
                     cwd=str(self.project_root),
-                    timeout=120,
                     env=run_env,
+                    timeout_secs=120,
                 )
-                output = (result.stdout or "") + (result.stderr or "")
+                if timed_out:
+                    return _finalize(output, None, "[BUDGET CHECK TIMEOUT] budget_check.py took >120s")
             if result is None or result.returncode != 0:
                 return _finalize(output, getattr(result, "returncode", None),
                                  f"[BUDGET CHECK FAILED]\n{output}")
             return _finalize(output, result.returncode, None)
-        except subprocess.TimeoutExpired:
-            return _finalize("", None, "[BUDGET CHECK TIMEOUT] budget_check.py took >120s")
         except Exception as e:
             return _finalize("", None, f"[BUDGET CHECK ERROR] {e}")
 
@@ -2375,6 +2481,7 @@ class WorkspaceTools:
         seed: int,
         label: str,
         gpu_devices: str | None = None,
+        session_gpu_devices: str | None = None,
     ) -> list[str]:
         """Build ``docker exec`` environment arguments for one command."""
         args: list[str] = []
@@ -2386,9 +2493,32 @@ class WorkspaceTools:
         if label:
             args.extend(["-e", f"ENV={label}"])
         if gpu_devices:
-            args.extend(["-e", f"CUDA_VISIBLE_DEVICES={gpu_devices}"])
-            args.extend(["-e", f"NVIDIA_VISIBLE_DEVICES={gpu_devices}"])
+            args.extend([
+                "-e",
+                f"CUDA_VISIBLE_DEVICES={self._docker_exec_cuda_visible_devices(gpu_devices, session_gpu_devices)}",
+            ])
         return args
+
+    @staticmethod
+    def _docker_exec_cuda_visible_devices(
+        gpu_devices: str,
+        session_gpu_devices: str | None,
+    ) -> str:
+        """Map host GPU ids to logical ids visible inside a restricted Docker container."""
+        if not session_gpu_devices:
+            return gpu_devices
+
+        session = [d.strip() for d in session_gpu_devices.split(",") if d.strip()]
+        if not session:
+            return gpu_devices
+
+        logical: list[str] = []
+        for device in [d.strip() for d in gpu_devices.split(",") if d.strip()]:
+            if device in session:
+                logical.append(str(session.index(device)))
+            else:
+                logical.append(device)
+        return ",".join(logical)
 
     def _run_docker_exec(
         self,
@@ -2401,23 +2531,22 @@ class WorkspaceTools:
     ) -> tuple[subprocess.CompletedProcess[str] | None, str, bool]:
         """Run one command inside an existing Docker container."""
         cmd = ["docker", "exec", *exec_env_args, "-w", pkg_workdir, container_name, *exec_cmd]
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                cwd=str(self.project_root),
-                timeout=timeout_secs,
-                env=run_env,
-            )
-            raw_output = (result.stdout or "") + (result.stderr or "")
-            return result, raw_output, False
-        except subprocess.TimeoutExpired:
-            return None, (
-                f"[TIMEOUT] Command timed out after {timeout_secs}s. "
-                f"This result is INVALID and will not count. "
-                f"Your algorithm is too slow — reduce model size or computational complexity."
-            ), True
+        result, raw_output, timed_out = self._run_subprocess_to_file(
+            cmd,
+            cwd=str(self.project_root),
+            env=run_env,
+            timeout_secs=timeout_secs,
+        )
+        if timed_out:
+            try:
+                self._remove_docker_container(container_name, run_env)
+            except Exception:
+                pass
+            timeout_output = self._timeout_feedback(timeout_secs)
+            if raw_output:
+                timeout_output = f"{timeout_output}\n{raw_output}"
+            return None, timeout_output, True
+        return result, raw_output, False
 
     def _run_docker_entries_in_session(
         self,
@@ -2488,7 +2617,12 @@ class WorkspaceTools:
                 label = entry.get("label", "test")
                 cmd = entry["cmd"]
                 entry_gpu = session_devices[idx] if idx < len(session_devices) else None
-                exec_env_args = self._docker_exec_env_args(seed, label, gpu_devices=entry_gpu)
+                exec_env_args = self._docker_exec_env_args(
+                    seed,
+                    label,
+                    gpu_devices=entry_gpu,
+                    session_gpu_devices=session_gpu_devices,
+                )
 
                 budget_script = self.project_root / "tasks" / self.task_name / "budget_check.py"
                 if budget_script.exists():
@@ -2511,8 +2645,7 @@ class WorkspaceTools:
                         results[idx] = (f"### {label} ({cmd})\n[BUDGET CHECK FAILED]\n{output}", {}, _time.time() - budget_start)
                         continue
 
-                time_str = entry.get("time", "1:00:00")
-                timeout_secs = self._parse_time_to_seconds(time_str) + 300
+                timeout_secs = self._configured_timeout_seconds(entry)
                 runnable.append((idx, entry, exec_env_args, timeout_secs))
 
             def _run_one_session_entry(
@@ -2533,6 +2666,7 @@ class WorkspaceTools:
                 elapsed = _time.time() - t_start
 
                 if cmd_timed_out:
+                    self._current_test_had_failures = True
                     parse_result = self.parser.parse(label, raw_output)
                     return idx, (f"### {label} ({cmd})\n{raw_output}", parse_result.metrics or {}, elapsed)
 
@@ -2558,12 +2692,15 @@ class WorkspaceTools:
                 idx, result = _run_one_session_entry(runnable[0])
                 results[idx] = result
             elif runnable:
-                with ThreadPoolExecutor(max_workers=len(runnable)) as executor:
-                    future_to_idx = {
-                        executor.submit(_run_one_session_entry, item): item[0]
-                        for item in runnable
-                    }
-                    for future in as_completed(future_to_idx):
+                timeout_by_idx = {item[0]: item[3] for item in runnable}
+                max_wait = max(timeout_by_idx.values()) + 30
+                executor = ThreadPoolExecutor(max_workers=len(runnable))
+                future_to_idx = {
+                    executor.submit(_run_one_session_entry, item): item[0]
+                    for item in runnable
+                }
+                try:
+                    for future in as_completed(future_to_idx, timeout=max_wait):
                         idx = future_to_idx[future]
                         try:
                             result_idx, result_tuple = future.result()
@@ -2578,6 +2715,29 @@ class WorkspaceTools:
                                 0.0,
                             )
                         results[result_idx] = result_tuple
+                except FuturesTimeoutError:
+                    self._current_test_had_failures = True
+                    try:
+                        self._remove_docker_container(container_name, run_env)
+                    except Exception:
+                        pass
+                    for future, idx in future_to_idx.items():
+                        if future.done():
+                            continue
+                        future.cancel()
+                        entry = cmd_entries[idx]
+                        label = entry.get("label", "test")
+                        cmd = entry.get("cmd", "unknown")
+                        timeout_secs = timeout_by_idx.get(idx, max_wait)
+                        timeout_output = self._timeout_feedback(timeout_secs)
+                        parse_result = self.parser.parse(label, timeout_output)
+                        results[idx] = (
+                            f"### {label} ({cmd})\n{timeout_output}",
+                            parse_result.metrics or {},
+                            float(timeout_secs),
+                        )
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
         finally:
             try:
                 self._remove_docker_container(container_name, run_env)
@@ -2713,8 +2873,7 @@ class WorkspaceTools:
 
         if self.container_runtime == "local":
             local_cmd, cwd, run_env = self._build_local_exec_spec(cmd_entry, seed, gpu_devices=gpu_devices)
-            time_str = cmd_entry.get("time", "1:00:00")
-            timeout_secs = self._parse_time_to_seconds(time_str) + 300
+            timeout_secs = self._configured_timeout_seconds(cmd_entry)
             t_start = _time.time()
             result, raw_output, timed_out = self._run_local_command(
                 local_cmd,
@@ -2724,11 +2883,7 @@ class WorkspaceTools:
             )
             if timed_out:
                 self._current_test_had_failures = True
-                raw_output = (
-                    f"[TIMEOUT] Command timed out after {timeout_secs} seconds. "
-                    f"This result is INVALID and will not count. "
-                    f"Your algorithm is too slow — reduce model size or computational complexity."
-                )
+                raw_output = self._timeout_feedback(timeout_secs)
                 elapsed = _time.time() - t_start
                 parse_result = self.parser.parse(label, raw_output)
                 feedback_str = f"### {label} ({cmd})\n{raw_output}"
@@ -2764,9 +2919,7 @@ class WorkspaceTools:
         else:
             container_cmd, container_name = container_result, None
 
-        # Use config time field for timeout (+ 5min buffer), default 1hr
-        time_str = cmd_entry.get("time", "1:00:00")
-        timeout_secs = self._parse_time_to_seconds(time_str) + 300
+        timeout_secs = self._configured_timeout_seconds(cmd_entry)
 
         t_start = _time.time()
         run_env = os.environ.copy()
@@ -2788,21 +2941,23 @@ class WorkspaceTools:
                     feedback_str = f"### {label} ({cmd})\n{raw_output}"
                     return feedback_str, parse_result.metrics or {}, elapsed
             else:
-                result = subprocess.run(
+                result, raw_output, timed_out = self._run_subprocess_to_file(
                     container_cmd,
-                    capture_output=True,
-                    text=True,
                     cwd=str(self.project_root),
-                    timeout=timeout_secs,
                     env=run_env,
+                    timeout_secs=timeout_secs,
                 )
-                raw_output = (result.stdout or "") + (result.stderr or "")
+                if timed_out:
+                    self._current_test_had_failures = True
+                    elapsed = _time.time() - t_start
+                    timeout_output = self._timeout_feedback(timeout_secs)
+                    if raw_output:
+                        timeout_output = f"{timeout_output}\n{raw_output}"
+                    parse_result = self.parser.parse(label, timeout_output)
+                    feedback_str = f"### {label} ({cmd})\n{timeout_output}"
+                    return feedback_str, parse_result.metrics or {}, elapsed
         except subprocess.TimeoutExpired:
-            raw_output = (
-                f"[TIMEOUT] Command timed out after {timeout_secs} seconds. "
-                f"This result is INVALID and will not count. "
-                f"Your algorithm is too slow — reduce model size or computational complexity."
-            )
+            raw_output = self._timeout_feedback(timeout_secs)
             self._current_test_had_failures = True
             elapsed = _time.time() - t_start
             parse_result = self.parser.parse(label, raw_output)

@@ -511,7 +511,7 @@ digest = "sha256:4f8d2ea66b679f79f309fcd1d79a463adbd7bec51b83744ff6e399580a59b16
 
 [[tasks]]
 name = "mls-bench/security-adversarial-attack-sparse-l0"
-digest = "sha256:e25b74639dc13e1aeb09d4b0c0ac3e76785c8b60fa75aea1009814f4f603783b"
+digest = "sha256:e202cff4b73eed92c791862f8834ce55954c39abf773006b0fc5ec94e839fd4a"
 
 [[tasks]]
 name = "mls-bench/security-adversarial-attack-white-box-linf"
