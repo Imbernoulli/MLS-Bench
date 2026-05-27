@@ -20,10 +20,9 @@ The benchmark contains **140 tasks across 12 ML research domains**. Each task fi
 
 ## News
 
-- **2026.5**
-  - **Harbor support**: official Harbor-compatible runtime and pre-rendered task images on Docker Hub under `bohanlyu2022/mlsbench-harbor-*`. See [`harbor/README.md`](harbor/README.md).
-  - **Stronger `security-adversarial-attack-sparse-l0`**: upgraded to the canonical Sparse-RS L0 threat model (k=24, untargeted) against three adversarially-robust RobustBench L2 CIFAR-10 targets (Rebuffi-R18 / Augustin / Engstrom). Strong attacks no longer trivially saturate, leaving real headroom to measure genuine attack improvements.
-  - **Scoring**: switched within-area aggregation in the main results table from geometric mean to arithmetic mean for easier comparison with the per-task numbers. Rankings are unchanged and no conclusions are affected.
+- **2026.5** — **Harbor support**: official Harbor-compatible runtime and pre-rendered task images on Docker Hub under `bohanlyu2022/mlsbench-harbor-*`. See [`harbor/README.md`](harbor/README.md).
+- **2026.5** — **Stronger _Sparse L0 Adversarial Attack_ task**: upgraded to the canonical Sparse-RS L0 threat model (k=24, untargeted) against three adversarially-robust RobustBench L2 CIFAR-10 targets (Rebuffi-R18 / Augustin / Engstrom). Strong attacks no longer trivially saturate, leaving real headroom to measure genuine attack improvements.
+- **2026.5** — **Scoring**: the main results table in the [arXiv paper](https://arxiv.org/abs/2605.08678) previously aggregated tasks within each area by geometric mean; switched to arithmetic mean for easier comparison with the per-task numbers. Rankings are unchanged and no conclusions are affected.
 
 ## Installation
 
