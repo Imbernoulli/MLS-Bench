@@ -18,6 +18,13 @@
 
 The benchmark contains **140 tasks across 12 ML research domains**. Each task fixes a research scaffold, gives the agent the relevant source code and strong baseline implementations, then asks for one algorithmic change inside a constrained edit surface.
 
+## News
+
+- **2026.5**
+  - **Harbor support**: official Harbor-compatible runtime and pre-rendered task images on Docker Hub under `bohanlyu2022/mlsbench-harbor-*`. See [`harbor/README.md`](harbor/README.md).
+  - **Stronger `security-adversarial-attack-sparse-l0`**: upgraded to the canonical Sparse-RS L0 threat model (k=24, untargeted) against three adversarially-robust RobustBench L2 CIFAR-10 targets (Rebuffi-R18 / Augustin / Engstrom). Strong attacks no longer trivially saturate, leaving real headroom to measure genuine attack improvements.
+  - **Scoring**: switched within-area aggregation in the main results table from geometric mean to arithmetic mean for easier comparison with the per-task numbers. Rankings are unchanged and no conclusions are affected.
+
 ## Installation
 
 ```bash
