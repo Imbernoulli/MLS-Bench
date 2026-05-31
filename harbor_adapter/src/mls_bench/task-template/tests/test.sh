@@ -81,6 +81,16 @@ chmod -R a-w "${PRIVATE_META}" "${PRIVATE_ROOT}/score_task.py"
 chmod go-rwx "${PRIVATE_ROOT}" || true
 trap 'rm -rf "${PRIVATE_ROOT}"' EXIT
 
+# Provide /workspace/_task as a stable handle to the verifier-only meta dir.
+# Several tasks' eval scripts and edit_ops resolve task files (data/, task_description.md)
+# through TASK_DIR or /workspace/_task, expecting this to exist at eval time.
+if [ -n "${WORKDIR:-}" ]; then
+    mkdir -p "${WORKDIR}" 2>/dev/null || true
+    rm -rf "${WORKDIR}/_task" 2>/dev/null || true
+    ln -s "${PRIVATE_META}" "${WORKDIR}/_task" 2>/dev/null || true
+fi
+export TASK_DIR="${WORKDIR:-/workspace}/_task"
+
 # Step 1: edit-range diff guard. The pristine baseline is the
 # per-task-rendered tree under tests/meta/pristine/ (mounted only at verify
 # time), so the agent had no opportunity to tamper with it.
@@ -111,11 +121,21 @@ fi
 # Step 2: run every eval script (visible + hidden), with cwd = the package root
 # (config.json::files[].filename is workdir-relative; PKG_NAME is the first
 # path component, e.g. "causal-learn").
+#
+# Heartbeat: some GPU clusters kill containers that produce no stdout for
+# extended periods. Print a short line every 10 minutes so the cluster
+# knows the process is still alive.
+_heartbeat() { while sleep 600; do echo "[heartbeat] $(date -u +%H:%M:%S) eval running"; done; }
+_heartbeat &
+_HB_PID=$!
+
 "${PYTHON_BIN}" -I "${PRIVATE_ROOT}/score_task.py" run-evals \
     --task-meta "${PRIVATE_META}" \
     --workspace "${WORKDIR}" \
     --eval-root /tests/eval \
     --out-dir /logs/verifier
+
+kill $_HB_PID 2>/dev/null || true
 
 # Step 3: aggregate metrics → combined_score → reward.txt.
 "${PYTHON_BIN}" -I "${PRIVATE_ROOT}/score_task.py" score \

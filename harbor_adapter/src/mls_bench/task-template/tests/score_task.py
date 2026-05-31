@@ -751,6 +751,20 @@ def _remove_budget_legacy_links(links: list[Path]) -> None:
             pass
 
 
+def _install_task_meta_legacy_links(task_meta: Path, workspace_root: Path) -> None:
+    for dst in {workspace_root / "_task", Path("/workspace/_task")}:
+        try:
+            if dst.exists() or dst.is_symlink():
+                if dst.is_dir() and not dst.is_symlink():
+                    shutil.rmtree(dst)
+                else:
+                    dst.unlink()
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            os.symlink(task_meta, dst, target_is_directory=True)
+        except OSError:
+            continue
+
+
 def _run_budget_check(
     *,
     task_meta: Path,
@@ -774,6 +788,7 @@ def _run_budget_check(
     # — test.sh stripped agent-planted PYTHONPATH before this script runs.
     safe_label = re.sub(r"[^A-Za-z0-9_.-]+", "-", label)[:64] or "test"
     scratch_dir = Path(tempfile.mkdtemp(prefix=f"mlsbench-budget-{safe_label}-{seed}-"))
+    budget_timeout = int(os.environ.get("MLSBENCH_BUDGET_TIMEOUT_SEC", "600"))
     legacy_links: list[Path] = []
     with log_path.open("w") as fh:
         try:
@@ -788,12 +803,15 @@ def _run_budget_check(
                 env=budget_env,
                 stdout=fh,
                 stderr=subprocess.STDOUT,
-                timeout=120,
+                timeout=budget_timeout,
                 check=False,
             )
             rc = proc.returncode
         except subprocess.TimeoutExpired:
-            fh.write("\n[BUDGET CHECK TIMEOUT] budget_check.py took >120s\n")
+            fh.write(
+                f"\n[BUDGET CHECK TIMEOUT] budget_check.py took "
+                f">{budget_timeout}s\n"
+            )
             rc = 124
         except Exception as exc:
             fh.write(f"\n[BUDGET CHECK ERROR] {exc}\n")
@@ -859,6 +877,11 @@ def _run_eval_wave(
     deadline = time.time() + timeout_secs
     running: list[dict] = []
     results: dict[tuple[int, int], dict] = {}
+
+    # budget_check.py may temporarily replace /workspace/_task with a scratch
+    # copy and remove it afterwards. Restore the hidden verifier meta link
+    # before launching eval scripts that resolve _task/scripts or _task/data.
+    _install_task_meta_legacy_links(task_meta, workspace_root)
 
     for task, gpu_devices in zip(tasks, assignments):
         entry = task["entry"]
