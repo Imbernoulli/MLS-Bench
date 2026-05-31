@@ -222,10 +222,13 @@ class CustomModel(Model):
         self.hidden_size = 64
         self.num_layers = 2
         self.dropout = 0.0
-        self.n_epochs = 200
+        # Harbor evaluation runs three market splits in one container. The
+        # official 200-epoch recipe is too slow there; early stopping reaches
+        # the same validation plateau much earlier for this oracle baseline.
+        self.n_epochs = 30
         self.lr = 1e-4
         self.metric = "ic"
-        self.early_stop = 20
+        self.early_stop = 5
         self.loss = "mse"
         self.base_model = "LSTM"
         self.model_path = "examples/benchmarks/LSTM/model_lstm_csi300.pkl"
@@ -387,7 +390,9 @@ class CustomModel(Model):
 
         for step in range(self.n_epochs):
             self.train_epoch(x_train, y_train, stock_index_train)
-            train_loss, train_score = self.test_epoch(x_train, y_train, stock_index_train)
+            # train_score is only logged; validation score drives checkpointing.
+            # Skipping the full train-set eval cuts each epoch substantially.
+            train_loss, train_score = float("nan"), float("nan")
             val_loss, val_score = self.test_epoch(x_valid, y_valid, stock_index_valid)
             print("Epoch%d: train %.6f, valid %.6f" % (step, train_score, val_score))
 

@@ -10,6 +10,16 @@ generalizability across different market universes and time periods.
 
 import argparse
 import os
+
+for _var in (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+):
+    os.environ.setdefault(_var, "1")
+
 import sys
 import random
 import numpy as np
@@ -19,6 +29,34 @@ import yaml
 import qlib
 from qlib.config import REG_CN
 from qlib.model.trainer import task_train
+
+
+def configure_runtime():
+    torch_threads = int(os.environ.get("TORCH_NUM_THREADS", "1"))
+    torch.set_num_threads(torch_threads)
+    try:
+        torch.set_num_interop_threads(int(os.environ.get("TORCH_INTEROP_THREADS", "1")))
+    except RuntimeError:
+        pass
+
+
+def print_runtime_info():
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        gpu_names = [torch.cuda.get_device_name(i) for i in range(torch.cuda.device_count())]
+    else:
+        gpu_names = []
+    print(
+        "RUNTIME "
+        f"ENV={os.environ.get('ENV', '')} "
+        f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '')} "
+        f"NVIDIA_VISIBLE_DEVICES={os.environ.get('NVIDIA_VISIBLE_DEVICES', '')} "
+        f"torch_cuda_available={torch.cuda.is_available()} "
+        f"torch_cuda_count={torch.cuda.device_count()} "
+        f"torch_threads={torch.get_num_threads()} "
+        f"qlib_kernels={os.environ.get('QLIB_KERNELS', '4')} "
+        f"gpu_names={gpu_names}",
+        flush=True,
+    )
 
 
 def set_seed(seed: int):
@@ -77,6 +115,8 @@ def apply_overrides(config, args):
 
 def main():
     args = parse_args()
+    configure_runtime()
+    print_runtime_info()
 
     seed = int(os.environ.get("SEED", 42))
     set_seed(seed)
@@ -100,7 +140,8 @@ def main():
     provider_uri = os.path.expanduser(qlib_init_cfg.get("provider_uri", "~/.qlib/qlib_data/cn_data"))
     region_str = qlib_init_cfg.get("region", "cn")
     region = REG_CN if region_str == "cn" else REG_CN
-    qlib.init(provider_uri=provider_uri, region=region, kernels=1)
+    kernels = int(os.environ.get("QLIB_KERNELS", "4"))
+    qlib.init(provider_uri=provider_uri, region=region, kernels=kernels)
 
     print(f"SEED={seed}")
 
