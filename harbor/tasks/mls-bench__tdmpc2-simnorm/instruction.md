@@ -42,7 +42,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `tdmpc2/tdmpc2/common/custom_simnorm.py`
 - editable lines **16–43**
@@ -103,25 +103,6 @@ Other files you may **read** for context (do not modify):
     42:     def __repr__(self):
     43:         return f"CustomSimNorm(dim={self.dim})"
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **walker-walk** — wall-clock budget `6:00:00`, compute share `0.33`
-- **cheetah-run** — wall-clock budget `6:00:00`, compute share `0.33`
-- **cartpole-swingup** — wall-clock budget `6:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

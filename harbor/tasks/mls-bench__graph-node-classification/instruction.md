@@ -92,7 +92,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-geometric/custom_nodecls.py`
 - editable lines **48–157**
@@ -429,23 +429,6 @@ or deleting existing ones — will cause your submission to score zero.
    321:     print(f"Final test accuracy: {100 * final['test_acc']:.2f}%", flush=True)
    322:     print(f"Final test macro F1: {100 * final['test_f1']:.2f}%", flush=True)
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **Cora** — wall-clock budget `00:59:00`, compute share `0.33`
-- **CiteSeer** — wall-clock budget `00:59:00`, compute share `0.33`
-- **PubMed** — wall-clock budget `00:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

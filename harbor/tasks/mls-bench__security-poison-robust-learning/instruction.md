@@ -63,7 +63,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/bench/poison/custom_robust_loss.py`
 - editable: **entire file**
@@ -99,25 +99,6 @@ Other files you may **read** for context (do not modify):
     18: # END EDITABLE
     19: # ============================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet20-cifar10-labelflip** — wall-clock budget `1:00:00`, compute share `1.0`
-- **vgg16bn-cifar100-labelflip** — wall-clock budget `1:00:00`, compute share `1.0`
-- **mobilenetv2-fmnist-labelflip** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

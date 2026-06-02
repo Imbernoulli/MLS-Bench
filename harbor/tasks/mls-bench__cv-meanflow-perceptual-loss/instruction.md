@@ -94,7 +94,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `alphaflow-main/custom_train_perceptual.py`
 - editable lines **384–401**
@@ -542,25 +542,6 @@ Other files you may **read** for context (do not modify):
    430:     fid = compute_fid(net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
    431:     print(f"TEST_METRICS: fid={fid:.2f}, best_fid={best_fid:.2f}", flush=True)
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **train_small** — wall-clock budget `4:00:00`, compute share `1.0`
-- **train_medium** — wall-clock budget `6:00:00`, compute share `1.0`
-- **train_large** — wall-clock budget `8:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 
