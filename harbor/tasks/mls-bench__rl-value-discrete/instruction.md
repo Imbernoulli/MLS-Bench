@@ -28,10 +28,9 @@ Reference baselines spanning the design space:
   distributional critic with default 51 atoms over `[-10, 10]`.
 
 ## Constraints
-- Network architecture dimensions are FIXED and cannot be modified.
-- Total parameter count is enforced at runtime; the contribution must
-  be algorithmic (head design, target construction, TD loss,
-  exploration, replay usage) rather than encoder capacity.
+- The shared encoder architecture is FIXED and cannot be modified; the
+  contribution must be algorithmic (head design, target construction, TD
+  loss, exploration, replay usage) rather than encoder capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
 ## Your Workspace

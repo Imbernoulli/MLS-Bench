@@ -43,7 +43,7 @@ class BoostingStrategy:
 Available context: true labels, current ensemble predictions, sample weights, fitted learner (`learner.predict(X)`), round index, config dict with dataset metadata. Available imports in the FIXED section: `numpy`, `sklearn.tree`, `sklearn.metrics`, `sklearn.datasets`, `sklearn.model_selection`.
 
 ## Fixed Pipeline
-- 200 boosting rounds, base learner = `DecisionTree(max_depth=3)`, learning rate `0.1`, 80/20 train/test split.
+- 200 boosting rounds, base learner = `DecisionTree(max_depth=3)`, learning rate `0.1`.
 - Your strategy is evaluated on both classification and regression tabular datasets.
 
 

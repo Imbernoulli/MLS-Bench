@@ -19,7 +19,7 @@ Modify the three functions in `RAIN/opt_diagonal_net/custom_optimizer.py` (insid
 2. `init_state(u, v, hyperparameters)` — initialise optimizer state.
 3. `step(u, v, grad_u, grad_v, state, hyperparameters)` — perform one update step.
 
-The default template implements vanilla gradient descent. Your goal is to achieve successful recovery (test MSE < 1.0) with fewer training samples across all evaluation settings.
+The default template implements vanilla gradient descent. Your goal is to reliably recover the sparse ground truth (low test MSE) from fewer training samples.
 
 ## Interface
 - `u`, `v`: parameter vectors of shape `(d,)` as `torch.Tensor` (float64), initialised as `alpha/sqrt(2d) * ones(d)` with `alpha = 1e-3`.

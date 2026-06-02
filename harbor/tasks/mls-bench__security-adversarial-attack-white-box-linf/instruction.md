@@ -13,7 +13,7 @@ Implement a stronger white-box `L_inf` attack in `bench/custom_attack.py`. The m
 
 - Threat model: white-box (full model access, including gradients).
 - Norm constraint: `||x_adv - x||_inf <= eps`.
-- Budget: `eps = 2/255`. RobustBench uses `8/255` for *defended* models, which saturates ASR to ~1.0 on undefended models and leaves no headroom for agents; the `2/255` regime is used here to differentiate attack quality on undefended classifiers.
+- Budget: `eps = 2/255`.
 
 ## Editable Interface
 You must implement:

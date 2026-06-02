@@ -42,7 +42,7 @@ You must design:
 The PPO rollout loop, value functions, optimizer, environment
 interface, and registration plumbing are fixed.
 
-The agent is evaluated on Safety-Gymnasium navigation environments where a robot must navigate to goals while avoiding hazards. A method should achieve high return while keeping the cost (safety violation count) below the configured cost limit across all environments.
+The agent is evaluated on safe-navigation environments where a robot must reach goals while avoiding hazards. A method should achieve high return while keeping the cost (safety violation count) below the configured cost limit across all environments.
 
 
 ## Your Workspace

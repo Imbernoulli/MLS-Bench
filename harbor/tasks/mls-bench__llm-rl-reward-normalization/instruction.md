@@ -31,7 +31,7 @@ def normalize_rewards(
 ) -> torch.Tensor:                      # (bs, response_length) normalized
 ```
 - Outcome rewards live at the last valid token; use `.sum(dim=-1)` to recover per-sequence scalars.
-- Samples sharing `index[i]` come from the same prompt (16 rollouts per prompt).
+- Samples sharing `index[i]` come from the same prompt (a GRPO-style group of rollouts).
 - Output shape must equal input shape; multiply by `response_mask` to preserve "outcome reward at last token" semantics where appropriate.
 - Wrap in `torch.no_grad()`.
 - Available utilities: `verl_F.masked_whiten`, `verl_F.masked_mean`, `defaultdict`, `torch`, `numpy`.
@@ -46,7 +46,7 @@ def normalize_rewards(
 | `length_aware` | divide scalar by `√(response_length)` before broadcast (DAPO length-bias fix) |
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter), verl, GRPO advantage estimator, n=16 rollouts per prompt.
+- The policy model, verl training stack, GRPO advantage estimator, and grouped rollout setup are fixed.
 - Reward source, advantage estimator, model, rollout setup, optimizer, KL-loss setting, and evaluation data are fixed.
 
 

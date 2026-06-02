@@ -58,7 +58,7 @@ Utilities: `verl_F.masked_mean`, `verl_F.masked_whiten`, `agg_loss`, `torch`. `a
 | `first_k_tokens` | per-token ratio for first K=64 tokens, stop-grad after | DAPO-style truncated IS, arXiv:2503.14476 |
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter training), verl framework, GRPO advantage estimator.
+- **Policy**: full-parameter training within the verl framework, GRPO advantage estimator.
 - Advantage estimator, reward manager, model, rollout setup, optimizer, and evaluation are all fixed.
 
 

@@ -6,7 +6,7 @@
 Design a better search/reasoning strategy for an LLM-based tool-use agent on multi-step API tasks. The strategy controls how the agent explores the action space (which tool to call next, when to backtrack, when to give up) and trades off task success against the number of LLM queries spent.
 
 ## Background
-StableToolBench (Guo et al., 2024, arXiv:2403.07714) is a stabilized version of ToolBench (Qin et al., 2023, arXiv:2307.16789, the ToolLLM paper). It evaluates LLM agents on multi-step tool use over RapidAPI tools, replacing unstable real APIs with a virtual API server (cache + simulator) and a GPT-4-based judge. Given a user query and a set of tool APIs, the agent decides which tools to call, with what arguments, and in what order to arrive at a final answer.
+StableToolBench (Guo et al., 2024, arXiv:2403.07714) is a stabilized version of ToolBench (Qin et al., 2023, arXiv:2307.16789, the ToolLLM paper) for multi-step tool use over RapidAPI tools, replacing unstable real APIs with a virtual API server (cache + simulator). Given a user query and a set of tool APIs, the agent decides which tools to call, with what arguments, and in what order to arrive at a final answer.
 
 ## Fixed Pipeline
 - The tool environment (virtual API server), agent backbones, and answer judge are all fixed and must not be modified.

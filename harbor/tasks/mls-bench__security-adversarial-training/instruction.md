@@ -25,10 +25,10 @@ class AdversarialTrainer:
 
 `__init__`:
 - `model`: the neural network to train (`nn.Module`).
-- `eps`: `L_inf` perturbation budget (`0.3` for MNIST, `8/255` for CIFAR).
+- `eps`: `L_inf` perturbation budget.
 - `alpha`: step size for the inner PGD attack.
 - `attack_steps`: number of PGD steps for adversarial example generation.
-- `num_classes`: number of output classes (10 or 100).
+- `num_classes`: number of output classes.
 
 `train_step`:
 - `images`: clean images, shape `(N, C, H, W)`, values in `[0, 1]`.

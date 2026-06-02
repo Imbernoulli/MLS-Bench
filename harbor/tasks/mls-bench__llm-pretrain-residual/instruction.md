@@ -42,8 +42,8 @@ In `nanoGPT/custom_pretrain.py`:
 - `full_attnres` — attention over all previous layer outputs.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Training**: multi-GPU DDP, standard warmup + cosine LR decay.
+- **Model**: a GPT-2-style decoder-only transformer.
+- **Training**: standard warmup + cosine LR decay.
 
 
 ## Your Workspace

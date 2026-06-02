@@ -22,14 +22,14 @@ forward(self, x, fx, T=None, geo=None) -> output
 - `fx`: input features (boundary conditions + geometry), shape `(1, N, 7)`.
 - `T`: unused (always `None`).
 - `geo`: **edge_index** tensor for graph connectivity between mesh points (required for graph-based models, can be `None` for non-graph approaches).
-- output: predicted flow field, shape `(1, N, 4)` for Car/AirfRANS or `(1, N, 6)` for AirCraft (velocity + pressure components).
+- output: predicted flow field, shape `(1, N, out_dim)` (velocity + pressure components), where `out_dim` is provided via `args.out_dim`.
 
 **Note**: Batch size is always 1 (one mesh per forward pass). Graph models (PointNet, GraphSAGE, Graph_UNet) squeeze the batch dimension and use `geo` for message passing. Non-graph models like Transolver ignore `geo`.
 
-Key `args` attributes: `n_hidden`, `n_layers`, `n_heads`, `space_dim` (2 for AirfRANS, 3 for Car/AirCraft), `fun_dim=7`, `out_dim` (4 for Car/AirfRANS, 6 for AirCraft), `act`, `mlp_ratio`, `dropout`, `geotype` (`unstructured`), `radius` (for graph construction), `slice_num` (for Transolver-style physics attention).
+Key `args` attributes: `n_hidden`, `n_layers`, `n_heads`, `space_dim` (spatial dimensionality of the mesh), `fun_dim=7`, `out_dim` (number of predicted flow-field channels), `act`, `mlp_ratio`, `dropout`, `geotype` (`unstructured`), `radius` (for graph construction), `slice_num` (for Transolver-style physics attention).
 
 ## Hyperparameter Override (`CONFIG_OVERRIDES`)
-The shell scripts (`scripts/car.sh`, `scripts/airfrans.sh`, `scripts/aircraft.sh`) default to `--n_hidden 128 --slice_num 32`. Different model families need different widths to be competitive — for example Transolver uses 256 in the original paper, while PointNet and Graph_UNet typically use much smaller widths. To set per-method values, edit the `CONFIG_OVERRIDES` dict at the bottom of `models/Custom.py`:
+The per-dataset shell scripts under `scripts/` default to `--n_hidden 128 --slice_num 32`. Different model families need different widths to be competitive — for example Transolver uses 256 in the original paper, while PointNet and Graph_UNet typically use much smaller widths. To set per-method values, edit the `CONFIG_OVERRIDES` dict at the bottom of `models/Custom.py`:
 
 ```python
 # Allowed keys: n_hidden (int), slice_num (int).

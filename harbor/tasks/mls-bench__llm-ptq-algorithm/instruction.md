@@ -51,7 +51,7 @@ The `LayerQuantizer` class and helper functions in `custom_ptq.py`:
 - `LayerQuantizer.__init__()`: set hyperparameters; receives `num_bits`
   and `group_size` from the evaluation script
 - `LayerQuantizer.add_batch(inp)`: collect statistics from calibration
-  data (128 sequences)
+  data
 - `LayerQuantizer.quantize()`: apply quantization to the layer's weight
   matrix
 

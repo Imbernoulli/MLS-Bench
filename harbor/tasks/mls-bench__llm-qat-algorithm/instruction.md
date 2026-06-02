@@ -36,12 +36,11 @@ task. Linear layers in every transformer block are quantized; embeddings,
 LayerNorm, and the LM head stay full precision.
 
 A control baseline `finetune_then_ptq` runs a full-precision finetune on
-WikiText-2 train with the same schedule as the QAT methods (`lr=2e-5`,
-500 steps, batch 2, grad-accum 4) and then applies the same RTN
-quantize-dequantize as `no_qat`. This isolates the finetune signal from
-the QAT signal: a useful QAT method must beat `finetune_then_ptq`,
-otherwise its apparent gains over `no_qat` are just the in-domain
-finetune talking.
+the training corpus with the same schedule as the QAT methods and then
+applies the same RTN quantize-dequantize as `no_qat`. This isolates the
+finetune signal from the QAT signal: a useful QAT method must beat
+`finetune_then_ptq`, otherwise its apparent gains over `no_qat` are just
+the in-domain finetune talking.
 
 ## What You Can Modify
 
@@ -73,10 +72,10 @@ you may only edit the `# EDITABLE REGION START / END` block. It contains:
   precision.
 
 The fixed (non-editable) region implements: model load (Pythia-1.4B in
-FP32 with gradient checkpointing), WikiText-2 train data sampling
-(block-1024 random crops), the QAT training loop (`AdamW`, cosine LR with
-warmup, gradient accumulation, grad-norm clipping), real-quantization
-roundtrip after training, and WikiText-2 test perplexity evaluation.
+FP32 with gradient checkpointing), training-corpus sampling (block-1024
+random crops), the QAT training loop (`AdamW`, cosine LR with warmup,
+gradient accumulation, grad-norm clipping), real-quantization roundtrip
+after training, and held-out perplexity evaluation.
 
 ## Architecture
 
@@ -84,9 +83,9 @@ roundtrip after training, and WikiText-2 test perplexity evaluation.
   GPTNeoX architecture, 24 layers x 16 heads x 2048 hidden, native
   context length 2048). Linear layers are wrapped via the recursive
   traversal in `prepare_qat_model`.
-- Optimizer: AdamW, cosine schedule with linear warmup. Default 500 steps
-  x batch 2 x grad-accum 4 (~4000 sequences seen, seqlen 1024) — the
-  agent may shorten/lengthen via `CONFIG_OVERRIDES`.
+- Optimizer: AdamW, cosine schedule with linear warmup; training length
+  and batching are exposed via `CONFIG_OVERRIDES` (see the interface
+  below) and the agent may shorten/lengthen them.
 - Training data: a standard language modelling corpus, random 1024-token crops.
 
 ## Interface
@@ -151,9 +150,9 @@ learnable per-group quantization scales trained jointly with the weights,
 giving a tighter quantization grid than STE.
 
 ### finetune_then_ptq
-Full-precision fine-tune on WikiText-2 (same schedule as QAT methods)
-followed by RTN quantization. Isolates the in-domain fine-tune signal
-from the QAT signal; a valid QAT method must outperform this baseline.
+Full-precision fine-tune on the training corpus (same schedule as QAT
+methods) followed by RTN quantization. Isolates the in-domain fine-tune
+signal from the QAT signal; a valid QAT method must outperform this baseline.
 
 
 ## Your Workspace

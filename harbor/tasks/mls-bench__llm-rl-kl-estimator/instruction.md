@@ -47,8 +47,7 @@ def compute_custom_kl_penalty(
 | `abs` | `|logprob − ref_logprob|` | robust |
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter), verl framework, GRPO advantage estimator.
-- **Training set**: math reasoning problems (MATH level 3–5, plus additional challenging problems).
+- **Framework**: verl, with the GRPO advantage estimator and a frozen reference policy.
 - **Hyperparameters**: `actor.use_kl_loss=True`, `actor.kl_loss_type=custom`. Reward manager, advantage estimator, rollout, model, optimizer, and evaluation are fixed.
 
 ## Your Workspace

@@ -8,7 +8,7 @@ How can we design a stronger unlearning update rule that removes information abo
 ## Background
 Machine unlearning methods approximate the effect of retraining without the deleted data. The central tradeoff is clear: aggressive forgetting reduces utility, while conservative updates leave measurable traces of the forgotten examples. Approximate-unlearning approaches range from continued retain-only finetuning, to gradient ascent on the forget loss (NegGrad / "Eternal Sunshine of the Spotless Net": Golatkar, Achille, Soatto, CVPR 2020, arXiv:1911.04933), to incompetent-teacher distillation (Bad-T: Chundawat et al., AAAI 2023, arXiv:2205.08096), and selective student-teacher scrubbing (SCRUB: Kurmanji et al., NeurIPS 2023, arXiv:2302.09880).
 
-The harness pretrains a standard vision model (ResNet-20, VGG-16-BN, or MobileNetV2) on the full training set for 80 epochs using SGD with cosine annealing. After pretraining, a single class is designated as the forget set. The unlearning method then runs for 20 epochs, receiving both retain-set and forget-set minibatches each step, with an Adam optimizer (`lr = 0.001`).
+The harness first pretrains a standard vision model on an image-classification training set. After pretraining, a single class is designated as the forget set. The unlearning method then runs for a fixed number of epochs, receiving both retain-set and forget-set minibatches each step, with an Adam optimizer (`lr = 0.001`).
 
 ## Task
 Implement a better unlearning rule in `bench/unlearning/custom_unlearning.py`. The fixed harness trains an initial model, defines a forget split, and then applies your update rule for a fixed number of unlearning steps using retain and forget minibatches.

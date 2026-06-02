@@ -67,8 +67,7 @@ The visible baseline chain is `MHA -> MQA -> GQA -> MLA`:
 - `MLA`: latent-KV bottleneck adapted from the DeepSeek-V2
   (arXiv:2405.04434) / TransMLA (arXiv:2502.07864) family into the fixed
   nanoGPT substrate. A proper MLA implementation has
-  `kv_lora_rank < head_dim` so that `kv_bytes_per_token < 256` (beating
-  MQA on the same evaluation).
+  `kv_lora_rank < head_dim`, reducing the realized KV state.
 
 
 ## Your Workspace

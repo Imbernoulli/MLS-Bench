@@ -62,27 +62,11 @@ class VAELoss(nn.Module):
 
 ## Fixed Pipeline
 
-Architecture (fixed):
-
-- `AutoencoderKL` from `diffusers`, 3 blocks and 2 downsample stages, latent
-  resolution 8×8 (compression factor f = 4) for 32×32 input.
-- `latent_channels=4`, `layers_per_block=2`.
-- GroupNorm (32 groups) + SiLU activation.
-
-Channel widths and latent channels scale via environment variables across
-training scales:
-
-- Small:  `BLOCK_OUT_CHANNELS=(64, 128, 256)`,  `LATENT_CHANNELS=4`,  20,000 steps.
-- Medium: `BLOCK_OUT_CHANNELS=(96, 192, 384)`,  `LATENT_CHANNELS=8`,  30,000 steps.
-- Large:  `BLOCK_OUT_CHANNELS=(128, 256, 512)`, `LATENT_CHANNELS=16`, 30,000 steps.
-
-Training (fixed):
-
-- Optimizer: AdamW, lr = 4e-4, weight_decay = 1e-4.
-- LR schedule: 5% warmup + cosine decay.
-- Mixed precision (autocast + GradScaler).
-- Gradient clipping at 1.0.
-- EMA with rate 0.999.
+The `AutoencoderKL` architecture (from `diffusers`), the data pipeline, the
+optimizer and learning-rate schedule, mixed-precision training, gradient
+clipping, and EMA are all fixed. Channel widths and latent channels may scale
+across training configurations via environment variables. The only editable
+component is the loss function.
 
 ## Baselines
 

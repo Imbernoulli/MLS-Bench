@@ -22,9 +22,9 @@ and how well MAPPO scales to hard cooperation tasks.
 The training uses EPyMARL's `ppo_learner` with the MAPPO default
 hyperparameters from Yu et al. (2022) on cooperative SMAC maps via
 **smaclite**, a pure-Python reimplementation of the StarCraft Multi-Agent
-Challenge benchmark that does not require the StarCraft II binary. Each map
-trains for roughly 5M environment steps. The actor architecture, learner,
-optimizer, GAE settings, and environment interface are fixed.
+Challenge benchmark that does not require the StarCraft II binary. The actor
+architecture, learner, optimizer, GAE settings, and environment interface are
+fixed.
 
 ## Interface
 Your `CustomCritic` must:

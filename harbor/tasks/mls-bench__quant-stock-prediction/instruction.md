@@ -30,7 +30,7 @@ class CustomModel(Model):
 `predict` must return a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index. Available imports inside the class: `torch`, `numpy`, `pandas`, `lightgbm`, `sklearn`, `scipy`.
 
 ## Reference Implementations (read-only)
-Three reference models ship with qlib's `examples/benchmarks/` and are available as read-only context. Defaults are taken from each method's qlib CSI300 example config.
+Three reference models ship with qlib's `examples/benchmarks/` and are available as read-only context. Defaults are taken from each method's qlib example config.
 
 - **LightGBM** — Ke et al., "LightGBM: A Highly Efficient Gradient Boosting Decision Tree", NeurIPS 2017. qlib defaults: `loss=mse`, `learning_rate=0.0421`, `num_leaves=210`, `feature_fraction=0.879`, `bagging_fraction=0.856`, `bagging_freq=5`, `lambda_l1=205.7`, `lambda_l2=580.9`.
 - **LSTM** — qlib's RNN baseline with `d_feat=6`, `hidden_size=64`, `num_layers=2`, `dropout=0.0`, Adam `lr=1e-3`, `n_epochs=200`, early-stopping patience 20.

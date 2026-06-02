@@ -8,7 +8,7 @@ How can we design a stronger loss function or sample-weighting rule that improve
 ## Background
 A fraction of poisoned (label-flipped) training labels can disproportionately distort model decision boundaries. Robust learning methods typically modify the objective to downweight suspicious samples or reduce memorization of corrupted targets. Representative approaches include the bootstrapping target (Reed et al., ICLR Workshop 2015, arXiv:1412.6596), Generalized Cross Entropy (Zhang and Sabuncu, NeurIPS 2018, arXiv:1805.07836), and Symmetric Cross Entropy (Wang et al., ICCV 2019, arXiv:1908.06112), each of which introduces a saturation or interpolation mechanism that limits the gradient impact of confidently wrong labels.
 
-This task uses research-scale models trained on full datasets with standard SGD + CosineAnnealing for 100 epochs.
+This task uses research-scale models trained on full datasets with standard SGD + CosineAnnealing.
 
 ## Task
 Implement a better poison-robust objective in `bench/poison/custom_robust_loss.py`. The fixed harness injects random label-flip corruption (`(original + 1) % num_classes`) into the training set, trains with your loss, and evaluates on a clean test set.

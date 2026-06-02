@@ -31,7 +31,7 @@ The `compute_loss` function in `nanoGPT/custom_pretrain.py`:
 - `softcap_ce` — Gemma-2-style final-logit soft-cap at 30.0.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
+- **Model**: a GPT-2-style decoder-only Transformer.
 - Architecture, tokenizer, dataset, training loop, and evaluation pipeline are fixed.
 
 

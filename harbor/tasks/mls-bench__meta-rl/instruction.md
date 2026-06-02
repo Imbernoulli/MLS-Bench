@@ -49,12 +49,6 @@ Your `CustomContextEncoder` must:
 - **Attention encoder** — a small Transformer-style aggregator over the
   context tuples.
 
-## Environments
-The encoder is evaluated across MuJoCo locomotion and point-robot meta-RL
-task families with different reward structures, spanning both dense and
-sparse reward settings, continuous action spaces, and varying observation
-dimensionalities.
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

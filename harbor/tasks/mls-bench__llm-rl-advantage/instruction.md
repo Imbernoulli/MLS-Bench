@@ -49,11 +49,9 @@ Available utilities: `verl_F.masked_whiten(values, mask)`, `verl_F.masked_mean(v
 - `reinforce_plus_plus_baseline` — group mean + token-level batch whitening.
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter training).
 - **Framework**: verl.
-- **Training set**: math reasoning problems (Qwen split).
-- **RL hyperparameters**: 16 rollout samples per prompt; other hyperparameters are fixed.
-- The reward manager, model, rollout config, optimizer, KL-loss setting, and evaluation data are all fixed.
+- **Training set**: math reasoning problems.
+- The policy model, reward manager, rollout config, optimizer, KL-loss setting, RL hyperparameters, and evaluation data are all fixed.
 
 ## Your Workspace
 

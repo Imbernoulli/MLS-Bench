@@ -36,10 +36,9 @@ Reference baselines spanning the design space:
   use 256 units. A `_mlp()` factory function is provided in the FIXED
   section for convenience. You may define custom network classes but
   hidden widths must remain 256.
-- **Total parameter count is enforced.** The training loop checks that
-  total trainable parameters do not exceed 1.2x the largest baseline
-  architecture, so the contribution must be algorithmic (loss,
-  regularization, target construction, training procedure) rather than
+- **Keep the contribution algorithmic, not capacity-driven.** The
+  improvement should come from the algorithm (loss, regularization,
+  target construction, training procedure) rather than from adding model
   capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 

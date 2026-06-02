@@ -24,7 +24,7 @@ The `CausalSelfAttention` class in `nanoGPT/custom_pretrain.py` (the editable re
 If your attention mechanism implements its own position encoding (replacing the learned `wpe`), set `self.use_pos_emb = False` in `__init__` — the model will then skip adding position embeddings in the forward pass.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
+- **Model**: A GPT-2-style decoder-only transformer. Layer/head/width are configured outside the editable region.
 - **Training**: Optimizer, schedule, dataset, tokenizer, training loop, and evaluation scripts are fixed.
 
 A strong solution should reduce validation loss / perplexity and transfer to downstream accuracy without depending on changes outside the attention module.

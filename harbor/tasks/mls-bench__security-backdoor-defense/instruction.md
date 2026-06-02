@@ -11,11 +11,11 @@ Backdoor attacks (BadNets: Gu, Dolan-Gavitt, Garg, 2017, arXiv:1708.06733; Blend
 ## Task
 Implement a stronger backdoor defense in `bench/backdoor/custom_backdoor_defense.py`. The fixed harness will:
 
-1. Construct a poisoned training set for a fixed trigger pattern (full dataset, no subsampling).
-2. Train a victim model on the poisoned data for 100 epochs (SGD + CosineAnnealingLR).
+1. Construct a poisoned training set for a fixed trigger pattern.
+2. Train a victim model on the poisoned data.
 3. Extract features from the penultimate layer and logits for the entire training set.
 4. Call your defense to assign suspicion scores to training examples.
-5. Remove the top `1.5 * epsilon` fraction of highest-scoring samples (over-estimate of the poison count, as recommended by Tran et al., 2018, Sec. 4.1) and retrain on the filtered set for 100 epochs.
+5. Remove a fixed fraction of the highest-scoring samples (an over-estimate of the poison count, as recommended by Tran et al., 2018, Sec. 4.1) and retrain on the filtered set.
 6. Evaluate the retrained model.
 
 The objective is to reduce the backdoor attack success rate without sacrificing clean accuracy.

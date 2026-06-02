@@ -29,9 +29,7 @@ The `CustomNorm` class inside `pytorch-vision/custom_norm.py`. It must be a drop
 You may modify normalization statistics (mean/variance over batch, channel, spatial, or any combination), learnable affine parameters (scale and shift), grouping strategies, mixtures of normalization approaches, and adaptive or input-dependent normalization, as long as the interface is preserved.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
+The optimizer, learning-rate schedule, data augmentation, backbones, activations, datasets, and loss functions are fixed by the harness.
 
 The normalization module must preserve tensor shape, accept the expected channel count, remain numerically stable in train and eval, and must not change backbones, activations, datasets, loss functions, or optimizer settings.
 

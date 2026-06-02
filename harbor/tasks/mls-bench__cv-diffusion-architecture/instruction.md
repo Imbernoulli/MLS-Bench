@@ -42,8 +42,8 @@ function, which must return a denoiser satisfying:
 also build a fully custom `nn.Module`.
 
 Channel widths are passed via the `BLOCK_OUT_CHANNELS` environment variable
-(e.g. `"128,256,256,256"`) so that the same architecture scales across
-evaluation tiers. `LAYERS_PER_BLOCK` (default 2) is also available.
+(e.g. `"128,256,256,256"`) so that the same architecture can scale to
+different channel widths. `LAYERS_PER_BLOCK` (default 2) is also available.
 
 ## Fixed Pipeline
 
@@ -52,8 +52,7 @@ The following are fixed across baselines and submissions:
 - Training target: epsilon prediction with MSE loss.
 - Optimizer: AdamW, learning rate 2e-4, EMA rate 0.9995.
 - Inference: 50-step DDIM sampling (Song et al., 2020, arXiv:2010.02502).
-- Channel widths are passed via `BLOCK_OUT_CHANNELS` env var; the same
-  architecture is evaluated at multiple channel scales.
+- Channel widths are passed via `BLOCK_OUT_CHANNELS` env var.
 
 ## Baselines
 
