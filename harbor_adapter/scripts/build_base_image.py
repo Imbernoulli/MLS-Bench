@@ -270,6 +270,88 @@ def _resolve_data_deps(
     return out, warnings
 
 
+def _resolve_data_binds(
+    mb,
+    pkg_config: dict,
+) -> tuple[list[tuple[Path, str, str]], list[str]]:
+    """Resolve ``pkg_config['data_bind']`` ("src:target") into bake tuples.
+
+    Harbor has NO runtime bind-mount support, so every native ``data_bind``
+    must be baked into the image at its target path (otherwise files the eval
+    scripts read from e.g. ``/workspace/<pkg>/cache`` simply aren't there).
+    Mirrors ``_resolve_data_deps``' {project_root}/{data_root} substitution
+    and missing-host skipping. Returns ([(host, container, name), …], warnings).
+    """
+    out: list[tuple[Path, str, str]] = []
+    warnings: list[str] = []
+    data_root = mb.vendor_dir / "data"
+    data_root_resolved = data_root.resolve()
+    project_root = mb.root
+    # data_bind may be a single "src:target" string or a list of them.
+    raw_binds = pkg_config.get("data_bind") or []
+    if isinstance(raw_binds, str):
+        raw_binds = [raw_binds]
+    for i, raw in enumerate(raw_binds):
+        spec = str(raw)
+        if ":" not in spec:
+            warnings.append(f"data_bind entry {spec!r} has no ':target'; skipping")
+            continue
+        src_s, target = spec.rsplit(":", 1)
+        src_s = (
+            src_s.replace("{project_root}", str(project_root))
+            .replace("{data_root}", str(data_root))
+        )
+        host = Path(src_s).expanduser()
+        container = target.rstrip("/")
+        if not container:
+            continue
+        if not host.exists():
+            warnings.append(
+                f"data_bind src missing on host at {host}; skipping "
+                "(Harbor eval will fail if it needs this data)."
+            )
+            continue
+        # Same guard as _resolve_data_deps: never bake the whole shared
+        # vendor/data tree (some packages bind "{data_root}:/data").
+        try:
+            if host.resolve() == data_root_resolved:
+                warnings.append(
+                    f"data_bind src == data_root ({host}); skipping to avoid "
+                    "baking the entire shared data tree into the image."
+                )
+                continue
+        except OSError:
+            pass
+        out.append((host, container, f"bind_{i}"))
+    return out, warnings
+
+
+def _dedupe_bake_entries(
+    entries: list[tuple[Path, str, str]],
+) -> list[tuple[Path, str, str]]:
+    """Drop exact (resolved-host, container) duplicates only.
+
+    Intentionally does NOT drop ancestor-host entries: a package may map a
+    parent dir (with files directly under it) to one container AND a subdir to
+    another, and dropping the parent would lose the parent's own files (e.g.
+    dbim-codebase). The cost is that a package mapping the same bytes to two
+    containers bakes them twice — correct, just larger; preferred over wrong.
+    """
+    seen: set[tuple[str, str]] = set()
+    uniq: list[tuple[Path, str, str]] = []
+    for host, container, name in entries:
+        try:
+            hr = str(host.resolve())
+        except OSError:
+            hr = str(host)
+        key = (hr, container)
+        if key in seen:
+            continue
+        seen.add(key)
+        uniq.append((host, container, name))
+    return uniq
+
+
 def build_one(
     pkg: str,
     *,
@@ -323,6 +405,23 @@ def build_one(
         return 3
     for w in data_warnings:
         print(f"[{pkg}] [warn] {w}", file=sys.stderr)
+
+    # Harbor can't bind-mount, so bake data_bind targets into the image too.
+    # Dedupe so shared bytes (e.g. a big cache/ subdir) aren't baked twice.
+    bind_entries, bind_warnings = _resolve_data_binds(mb, pkg_cfg)
+    for w in bind_warnings:
+        print(f"[{pkg}] [warn] {w}", file=sys.stderr)
+    data_entries = _dedupe_bake_entries(list(data_entries) + bind_entries)
+    # Re-apply the size cap to the COMBINED set (binds bypass _resolve_data_deps' check).
+    if max_data_gb is not None:
+        combined_gb = sum(_du_hardlink_aware(h) for h, _, _ in data_entries) / 1e9
+        if combined_gb > max_data_gb:
+            print(
+                f"[skip] {pkg}: baked data {combined_gb:.1f} GB > "
+                f"--max-data-gb {max_data_gb:.0f}",
+                file=sys.stderr,
+            )
+            return 3
 
     with tempfile.TemporaryDirectory(prefix=f"mlsbench-harbor-{pkg}-") as td:
         ctx = Path(td)
