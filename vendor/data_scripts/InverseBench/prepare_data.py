@@ -242,32 +242,33 @@ def main():
     (root / "cache").mkdir(parents=True, exist_ok=True)
 
     # The pkg_config data_bind references several extra directories
-    # (fwi-test, ffhq256, pip_packages_v2, devito_packages). For the
-    # inv-scatter smoke verify only `inv-scatter-test` and the diffusion
-    # checkpoints are *required*, but apptainer's --bind hard-fails when
-    # ANY listed source directory does not exist. Mirror readable copies
-    # from the shared location when available, and otherwise create empty
-    # placeholder directories so the bind succeeds (the workload won't
-    # touch them).
-    _shared_root = Path(
-        "/scratch/gpfs/CHIJ/st3812/projects/MLS-Bench/vendor/data/inversebench"
-    )
+    # (fwi-test, ffhq256, pip_packages_v2, devito_packages) that are NOT part of
+    # the public InverseBench distribution. apptainer's --bind hard-fails when
+    # ANY listed source directory is missing, so every one of these must at least
+    # exist. If you have a local mirror of these assets, point
+    # MLSBENCH_INVERSEBENCH_SHARED_ROOT at it and readable subdirs are symlinked
+    # in; otherwise an empty placeholder is created so the bind succeeds (the
+    # inv-scatter/blackhole smoke verify never touches them). No server-specific
+    # path is hard-coded here.
+    _shared_env = os.environ.get("MLSBENCH_INVERSEBENCH_SHARED_ROOT")
+    _shared_root = Path(_shared_env) if _shared_env else None
     for sub in ("fwi-test", "ffhq256", "pip_packages_v2", "devito_packages"):
         dst = root / sub
         if dst.exists() or dst.is_symlink():
             continue
-        src = _shared_root / sub
-        try:
-            if src.exists() and os.access(str(src), os.R_OK):
-                # Symlink the readable shared mirror so subsequent runs see
-                # the contents; falls back to empty dir if that fails.
-                dst.symlink_to(src)
-                print(f"  symlinked {sub} -> {src}")
-                continue
-        except (PermissionError, OSError):
-            pass
+        if _shared_root is not None:
+            src = _shared_root / sub
+            try:
+                if src.exists() and os.access(str(src), os.R_OK):
+                    # Symlink the readable shared mirror so subsequent runs see
+                    # the contents; falls back to empty dir if that fails.
+                    dst.symlink_to(src)
+                    print(f"  symlinked {sub} -> {src}")
+                    continue
+            except (PermissionError, OSError):
+                pass
         dst.mkdir(parents=True, exist_ok=True)
-        print(f"  created empty placeholder {sub}/ (shared copy unreadable)")
+        print(f"  created empty placeholder {sub}/")
 
     # Torch Hub checkpoints (for runtime evaluators with no network access).
     # TORCH_HOME=/workspace/InverseBench/cache/torch in the container, so torch.hub
