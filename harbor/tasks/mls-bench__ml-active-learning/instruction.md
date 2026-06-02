@@ -37,12 +37,9 @@ Available from the `Strategy` base class:
 - `self.get_grad_embedding(X, Y)` — last-layer gradient embeddings `[len(X), emb_dim * n_classes]`.
 - `self.get_exp_grad_embedding(X, Y)` — expected (per-class) Fisher embeddings `[len(X), n_classes, emb_dim]`.
 
-## Fixed Pipeline & Evaluation
-- Datasets: 3 OpenML tabular classification datasets — **letter** recognition, **spambase**, **splice**.
-- Protocol: 20 rounds of batch active learning; model retrained after each round.
-- Metrics (higher is better):
-  - `accuracy` — test accuracy after the final round (fixed total label budget).
-  - `auc` — area under the learning curve (accuracy vs. # labeled samples) over all 20 rounds, capturing sample efficiency.
+## Fixed Pipeline
+- Protocol: multiple rounds of batch active learning; model retrained after each round.
+- The harness handles model retraining, data management, and evaluation — only the query strategy is under your control.
 
 
 ## Your Workspace

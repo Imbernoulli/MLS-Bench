@@ -36,14 +36,6 @@ Reference baselines spanning the design space:
   exploration, replay usage) rather than capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
-## Evaluation
-Trained and evaluated on multiple Atari games including Breakout, Pong
-and BeamRider within a fixed interaction budget using the benchmark
-Atari wrappers. Metric: mean episodic return over evaluation episodes
-(higher is better). Strong methods should improve across games rather
-than tuning to a single title.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -430,10 +422,7 @@ or deleting existing ones — will cause your submission to be invalid.
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Your edits must not significantly increase the model's total parameter count relative to the strongest baseline. The check runs automatically inside the eval scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

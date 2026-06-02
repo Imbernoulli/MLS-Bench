@@ -5,7 +5,7 @@
 ## Objective
 
 Design a novel time schedule for diffusion bridge sampling that improves
-generation quality (lower FID) over standard schedules under an extremely
+generation quality over standard schedules under an extremely
 small denoiser-call budget (NFE = 5).
 
 ## Background
@@ -28,7 +28,7 @@ held fixed. Common reference schedules include:
 
 Diffusion bridges (Zhou et al. DDBM, arXiv:2309.16948; Zheng et al. DBIM,
 arXiv:2405.15885) inherit this design choice: with NFE = 5, picking a good
-schedule can change FID substantially without touching the sampler.
+schedule can substantially affect generation quality without touching the sampler.
 
 ## Implementation Contract
 
@@ -60,12 +60,6 @@ def get_sigmas_uniform(n, t_min, t_max, device="cpu"):
 | `karras`    | EDM rho-schedule (Karras et al., NeurIPS 2022, arXiv:2206.00364), `ρ = 7`. |
 | `cosine`    | Cosine-spaced timesteps. |
 | `loglinear` | Log-linearly spaced timesteps from `t_max` to `t_min`. |
-
-## Evaluation
-
-The benchmark runs the bridge sampler with the candidate schedule on
-image-to-image workloads. The active budget is **NFE = 5** denoiser calls per
-sample. Metric: **FID**, lower is better.
 
 The proposed schedule should generalize across workloads rather than encode
 constants tuned for a single dataset. Do not change the sampler update rule,

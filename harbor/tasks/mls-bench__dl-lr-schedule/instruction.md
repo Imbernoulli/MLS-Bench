@@ -30,16 +30,11 @@ You may freely shape the LR curve (cosine, polynomial, exponential, linear, piec
 - Training: `200` epochs.
 - Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
 - Weight initialization: Kaiming normal (fixed, not editable).
-- Evaluation settings: ResNet-20 on CIFAR-10, ResNet-56 on CIFAR-100, MobileNetV2 on FashionMNIST.
 
 ## Baselines
 - **cosine** — Loshchilov & Hutter, arXiv:1608.03983; standard cosine annealing from `base_lr` to `0` over `total_epochs`.
 - **warmup_cosine** — Goyal et al., arXiv:1706.02677; linear warmup (commonly 5 epochs) followed by cosine annealing to `0`.
 - **one_cycle** — Smith & Topin, arXiv:1708.07120; triangular up-then-down ramp that peaks above `base_lr` and ends below it.
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The schedule must not modify model code, data augmentation, loss functions, optimizer type, weight decay, or evaluation.
-
 
 ## Your Workspace
 

@@ -4,7 +4,7 @@
 
 ## Research Question
 Design a novel **message-passing mechanism** for graph neural networks that
-improves node-classification performance across citation network benchmarks.
+improves node-classification performance across standard graph benchmarks.
 
 ## Background
 Graph neural networks learn node representations by iteratively aggregating
@@ -63,21 +63,6 @@ Available PyG utilities:
 - `softmax(src, index)`: sparse softmax over edges.
 - Reference convolution layers: `GCNConv`, `GATConv`, `SAGEConv`
   (imported but read-only).
-
-## Evaluation
-Trained and evaluated on three citation networks (semi-supervised node
-classification with standard Planetoid splits):
-
-| Label    | Nodes  | Edges  | Classes | Features |
-|----------|--------|--------|---------|----------|
-| Cora     | 2,708  | 5,429  | 7       | 1,433    |
-| CiteSeer | 3,327  | 4,732  | 6       | 3,703    |
-| PubMed   | 19,717 | 44,338 | 3       | 500      |
-
-Fixed training pipeline: 200 epochs with early stopping (patience=50), Adam,
-`lr=0.01`, `weight_decay=5e-4`.
-
-Metrics: test accuracy and macro F1, both higher-is-better.
 
 The research contribution should be the GNN propagation/model design rather
 than changing the data split, loss target, or evaluation protocol.
@@ -432,10 +417,8 @@ or deleting existing ones — will cause your submission to be invalid.
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+This task enforces a parameter-count cap. The check runs automatically inside
+the training script — you don't need to invoke it separately.
 
 ## Reference Baselines
 

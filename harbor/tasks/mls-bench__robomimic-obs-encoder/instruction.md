@@ -22,15 +22,6 @@ Interface:
 
 You may add parameters to `__init__`, define helper methods, and add learnable layers.
 
-## Evaluation
-- **Metric**: `success_rate` — rollout success rate in the environment (higher is better)
-- **Tasks**: Lift, Can, Square (robot manipulation with proficient human demonstrations)
-- **Dataset**: ~200 proficient human demonstrations per task, low-dimensional observations
-- **Policy**: GMM (Gaussian Mixture Model) with 5 mixture components, trained with NLL loss. A 2-layer MLP backbone (1024, 1024) with ReLU feeds into GMM heads (means, log-stds, mixture logits) on top of encoder output
-- **Training**: 2000 epochs, Adam optimizer (lr = 1e-4), batch size 100
-- **Rollout**: 50 episodes per task, horizon 400 steps, every 50 epochs
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

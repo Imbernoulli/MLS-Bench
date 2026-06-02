@@ -1,6 +1,6 @@
 # MLS-Bench: quant-graph-stock
 
-# Graph-Based Multi-Stock Prediction on Chinese Equity Universes
+# Graph-Based Multi-Stock Prediction
 
 ## Research Question
 Can a relation-aware predictor exploit cross-stock structure (sector / concept membership, learned relations, attention across instruments) to deliver consistently better next-day return rankings than instrument-independent models, while keeping the data, labels, splits, and backtest fixed?
@@ -15,7 +15,7 @@ Implement a `CustomModel` in `custom_model.py` that exposes the qlib model inter
 - **Features**: Alpha360 (360 features per stock-day, reshape to `[N, 60, 6]` for sequence models).
 - **Auxiliary input**: stock-concept membership graph used by HIST and similar baselines, exposed through the dataset handler.
 - **Label**: `Ref($close, -2) / Ref($close, -1) - 1`.
-- **Universes / splits**: `csi300`, `csi100`, `csi300_recent` — fixed.
+- **Universes / splits**: fixed equity universes — do not modify.
 - **Backtest**: TopkDropout, top 50 / drop 5.
 
 ## Model Interface
@@ -25,12 +25,6 @@ class CustomModel(qlib.model.base.Model):
     def predict(self, dataset, segment="test") -> pd.Series: ...
 ```
 `predict` returns a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index.
-
-## Evaluation Metrics
-Per universe:
-- Signal: IC, ICIR, Rank IC, Rank ICIR (higher is better).
-- Portfolio: annualized return, information ratio (higher is better); max drawdown (closer to zero is better).
-Computed by qlib's `SignalAnalysisRecord` and `PortAnaRecord`.
 
 ## Reference Implementations (read-only)
 Three reference models ship with qlib and are available as read-only context.
@@ -318,10 +312,8 @@ Other files you may **read** for context (do not modify):
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+This task enforces a parameter-count cap. The check runs automatically inside
+the training script — you don't need to invoke it separately.
 
 ## Reference Baselines
 

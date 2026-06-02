@@ -56,15 +56,6 @@ auxiliary losses on `x_denoised`:
 small `t` the implied `x_denoised` becomes ill-conditioned and auxiliary
 gradients dominate the velocity target.
 
-## Fixed Pipeline
-
-- Dataset: CIFAR-10 (32×32).
-- Model: SmallDiT (~512 hidden, ~8 layers, ~40M params).
-- Training: 10,000 steps, batch size 128.
-- Inference: 10-step Euler sampler.
-- Metric: FID computed by clean-fid against the CIFAR-10 train set, lower is
-  better.
-
 ## Baselines
 
 | Baseline         | Description |
@@ -73,16 +64,10 @@ gradients dominate the velocity target.
 | `lpips_grad`     | MSE + Charbonnier-smoothed L1 on velocity + LPIPS + Sobel gradient + multiscale L1 on `x_denoised`, with a `(1 − t)^2` perceptual schedule and a `t ≤ 0.1` mask (spatial-domain perceptual recipe). |
 | `lpips_spectral` | `lpips_grad` stack augmented with an FFT-magnitude L1 term on `x_denoised` (spatial + frequency-domain recipe). |
 
-## Evaluation
-
-Evaluation trains on CIFAR-10 at the configured scales / budgets and samples
-with the fixed ten-step Euler sampler. Scoring uses FID per scale; lower is
-better.
-
 A useful method should improve visual sample quality without destabilizing the
 velocity target. Auxiliary losses must be applied only where `x_denoised` is
 numerically meaningful. Do not change the architecture, data pipeline,
-sampler, number of evaluation steps, or metric computation.
+sampler, or metric computation.
 
 
 ## Your Workspace

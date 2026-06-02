@@ -67,17 +67,6 @@ Geometric features only (same 11-dim encoding as intra-molecular geometric featu
 ## Fixed Pipeline
 Graph construction, feature extraction, train/test splits, optimizer, schedule, loss (regression on `-logKd/Ki`), and evaluation harness are all fixed by the scaffold. The contribution is the `AffinityModel` architecture only.
 
-## Evaluation
-The model is trained on PDBbind v2020 (general + refined) and tested on three benchmarks:
-- **PDBbind 2013 core set** (107 complexes): CASF-2013 benchmark.
-- **PDBbind 2016 core set** (285 complexes): CASF-2016 benchmark.
-- **PDBbind 2019 holdout** (4366 complexes): Temporal split.
-
-Metrics: **RMSE** (lower is better), **Rp** / Pearson correlation (higher is better).
-
-### Note on Baseline Reproduction
-The baselines (EHIGN / GIGN / SchNet / EGNN) are paper-faithful re-implementations on this task's data pipeline (PDBbind **v2020** general+refined → temporal/CASF splits, with intra/inter graph features regenerated from raw PDB/SDF). The original EHIGN and GIGN papers train on PDBbind v2016/v2019 with their own preprocessing, so absolute numbers and the relative ordering between baselines on this leaderboard may differ from the published numbers. The baseline implementations are intentionally NOT tuned to recover the published ordering; they are kept faithful to the published methods.
-
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_pla.py` is editable. You may define helper classes, layers, or functions within this region. The region must contain an `AffinityModel` class with the specified interface.
 
@@ -564,13 +553,6 @@ or deleting existing ones — will cause your submission to be invalid.
    457: if __name__ == '__main__':
    458:     main()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

@@ -68,21 +68,8 @@ per sample.
 ## Fixed Pipeline
 
 - Models: Stable Diffusion v1.5 and SDXL (frozen weights).
-- Prompt set: shared evaluation prompts across all baselines.
 - NFE budget: 20 denoiser calls per sample.
-
-## Evaluation
-
-Evaluation runs text-to-image sampling on the model variants above. Metrics
-reported:
-
-- **CLIP score** (cosine similarity between generated image and text prompt;
-  higher is better).
-- **FID** computed against a reference image set (lower is better).
-
-Task scoring uses per-variant FID (lower is better). The method should
-improve image quality across variants without changing prompts, model weights,
-allowed function-evaluation budget, or metric computation.
+- Prompt set, model weights, and metric computation are fixed and may not be changed.
 
 
 ## Your Workspace

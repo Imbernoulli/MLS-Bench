@@ -33,14 +33,6 @@ class CustomPredictionLoss(nn.Module):
 ```
 The loss is called during JEPA's `unroll()` method as `predcost(state, predicted_states)`, where both tensors share the same shape. The returned scalar is added to the regularization loss and backpropagated.
 
-## Evaluation
-Mean detection Average Precision (AP) across prediction timesteps on Moving MNIST. Higher is better. The model is trained for 50 epochs with the Adam optimizer (lr=1e-3) and the final mean detection AP is reported.
-
-The prediction loss is evaluated across three model sizes to test generalization:
-- **small**: henc=16, dstc=8, hpre=16
-- **base**: henc=32, dstc=16, hpre=32
-- **large**: henc=64, dstc=32, hpre=64
-
 ## Notes
 - The encoder produces spatial feature maps (not just vectors), so spatial structure matters.
 - The predictor operates autoregressively over time steps, so temporal weighting/ordering can be exploited.

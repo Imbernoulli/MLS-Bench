@@ -36,16 +36,6 @@ Reference baselines spanning the design space:
   Adversarial reward learning with a state-only reward decomposition
   that yields a reward robust to dynamics changes.
 
-## Evaluation
-Trained and evaluated on Gymnasium MuJoCo locomotion environments
-including HalfCheetah-v4, Hopper-v4 and Walker2d-v4 using
-pre-generated expert demonstrations bundled with the benchmark. The
-PPO policy is trained with the learned reward signal and evaluated
-under the true environment reward. Metric: mean episodic return over
-evaluation episodes (higher is better). Strong methods should learn
-rewards that generalize across state distributions and task dynamics.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -574,13 +564,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from imitation/custom_irl.py]
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

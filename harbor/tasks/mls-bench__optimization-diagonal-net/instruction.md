@@ -43,19 +43,6 @@ with torch.no_grad():
     model.v.data.copy_(v_new)
 ```
 
-## Evaluation
-Settings exercised by the harness include:
-- **d200_k5_s01**: d=200, k=5, sigma=0.1, delta=0.5.
-- **d500_k10_s01**: d=500, k=10, sigma=0.1, delta=0.5.
-- **d500_k10_s02**: d=500, k=10, sigma=0.2, delta=0.5.
-- A larger-scale setting at d=10000, k=50.
-
-For each setting, the benchmark performs a coarse-to-fine search over training-set sizes `n ∈ {50, 75, ..., 1600}` (with the larger setting using a wider range) to find the smallest `n*` where recovery succeeds on at least 4 of 5 seeds. Recovery means test MSE < 1.0 at the time training stops.
-
-**Metric**: `score = -log2(n*)` per setting (higher is better — fewer samples needed).
-
-Training uses full-batch gradients (with noisy labels) and a shared stopping rule: training halts when both train and test MSE have plateaued (two-window comparison over 20,000 steps), or after 1,000,000 steps.
-
 ## Baselines (16 paper-default configurations)
 - **SGD** (4 configs): lr ∈ {0.005, 0.01, 0.05, 0.1}.
 - **AdaGrad** (4 configs): lr ∈ {0.005, 0.01, 0.05, 0.1}, eps=1e-6 (Duchi, Hazan, and Singer, JMLR 2011).

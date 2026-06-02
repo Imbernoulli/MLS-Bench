@@ -8,7 +8,7 @@ Design a molecular representation model for predicting chemical properties (toxi
 ## Background
 Molecular property prediction is a core task in drug discovery and materials science. Given a molecule (as a SMILES string → molecular graph + optional 3D coordinates), the model must predict one or more chemical properties. Key challenges include:
 - **Molecular representation**: How to encode atoms, bonds, and 3D geometry into informative features.
-- **Multi-task learning**: Some datasets have multiple targets with missing labels (e.g., Tox21 has 12 assays).
+- **Multi-task learning**: Some datasets have multiple targets with missing labels across multiple assays.
 - **Scaffold generalization**: The scaffold split ensures the model generalizes to structurally novel molecules.
 
 Existing approaches include:
@@ -58,14 +58,6 @@ One-hot encodings of: bond_type (4), stereo (3), conjugated (1), in_ring (1).
 
 ## Fixed Pipeline
 SMILES preprocessing, conformer generation, scaffold splitting, training loop, optimizer schedule, normalization for regression targets, masked loss for missing labels, and test-time augmentation are all fixed by the scaffold.
-
-## Evaluation
-The model is tested on three MoleculeNet classification benchmarks with scaffold splits (metric: ROC-AUC, higher is better):
-- **BBBP**: Blood-brain barrier penetration (2,039 molecules, 1 task).
-- **BACE**: Beta-secretase 1 inhibition (1,513 molecules, 1 task).
-- **Tox21**: Toxicity across 12 assays (7,831 molecules, 12 tasks, multi-task with missing labels).
-
-ROC-AUC is averaged over valid labels per task and across tasks.
 
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_molprop.py` is editable. You may define helper classes, layers, or functions within this region. The region must contain a `MoleculeModel` class with the specified interface.

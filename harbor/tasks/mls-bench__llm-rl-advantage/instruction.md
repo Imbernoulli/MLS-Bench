@@ -51,18 +51,9 @@ Available utilities: `verl_F.masked_whiten(values, mask)`, `verl_F.masked_mean(v
 ## Fixed Pipeline
 - **Policy**: Qwen2.5-0.5B (full-parameter training).
 - **Framework**: verl.
-- **Training set**: simpleRL-Zoo MATH level 3–5 (Qwen split), ~8K problems.
-- **RL hyperparameters**: 100 steps, 16 rollout samples per prompt, batch size 128, 1 H200 GPU per experiment.
+- **Training set**: math reasoning problems (Qwen split).
+- **RL hyperparameters**: 16 rollout samples per prompt; other hyperparameters are fixed.
 - The reward manager, model, rollout config, optimizer, KL-loss setting, and evaluation data are all fixed.
-
-## Evaluation
-Math-reasoning accuracy (`mean@1`) on:
-- **GSM8K** — grade-school math (1,319 problems).
-- **MATH-500** — 500-problem subset of MATH competition problems.
-- **AMC 23** — AMC 2022–2023 competition-math subset.
-
-Higher is better.
-
 
 ## Your Workspace
 

@@ -5,8 +5,8 @@
 ## Objective
 
 Design a scalar regularizer on 3D Gaussian parameters that improves novel-view
-reconstruction quality (higher PSNR / SSIM, lower LPIPS) on Mip-NeRF 360
-scenes, without using any depth, normal, or feature-level supervision.
+reconstruction quality on held-out views, without using any depth, normal, or
+feature-level supervision.
 
 ## Background
 
@@ -34,8 +34,8 @@ Hand-designed regularizers attack different failure modes:
 - **Neighbour consistency / blob-prior penalties** — encourage parameter
   smoothness among spatially adjacent Gaussians.
 
-Each is a small, modular addition to the loss, yet can change PSNR by tenths
-to ones of a dB on standard benchmarks.
+Each is a small, modular addition to the loss, yet can measurably improve
+reconstruction quality on held-out views.
 
 ## Implementation Contract
 
@@ -91,18 +91,6 @@ The regularizer is the only quantity you change.
 | `none`      | Returns 0 — photometric loss only. |
 | `scale_opa` | L1 on `exp(scales)` and `sigmoid(opacities)` (coefficient 1e-2 each), the default compactness regularizer in 3DGS-MCMC (Kheradmand et al., NeurIPS 2024 Spotlight, arXiv:2404.09591). |
 | `erank_opa` | `scale_opa` plus the effective-rank log-barrier regularizer of Hyung et al. (NeurIPS 2024, arXiv:2406.11672) with warmup at step 7000. Pushes the effective rank of each Gaussian toward 2 (planar) while keeping compactness pressure. |
-
-## Evaluation
-
-Evaluation runs on Mip-NeRF 360 scenes (Barron et al., 2022) with every 8th
-image held out for testing. Each scene is trained for 30k steps under the
-fixed schedule and evaluated on held-out views.
-
-| Metric  | Direction | Description |
-|---------|-----------|-------------|
-| **PSNR**  | higher is better | Peak signal-to-noise ratio (primary metric). |
-| **SSIM**  | higher is better | Structural similarity. |
-| **LPIPS** | lower is better  | Learned perceptual similarity. |
 
 ## Implementation Hints
 

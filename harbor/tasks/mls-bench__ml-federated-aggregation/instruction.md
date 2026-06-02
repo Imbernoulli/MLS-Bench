@@ -3,7 +3,7 @@
 # Federated Learning Aggregation Strategy Design
 
 ## Research Question
-Design a server-side aggregation strategy for federated learning that converges faster and to higher test accuracy under heterogeneous (non-IID) client data. The contribution is the *aggregation rule* (and optionally the client-selection / client-side correction exposed by this interface), not changes to the local optimizer or simulation harness.
+Design a server-side aggregation strategy for federated learning that converges faster and to a better-performing global model under heterogeneous (non-IID) client data. The contribution is the *aggregation rule* (and optionally the client-selection / client-side correction exposed by this interface), not changes to the local optimizer or simulation harness.
 
 ## Background
 Federated Learning (FL) trains a shared global model across many clients without centralizing data. Under non-IID client data, naive averaging suffers from "client drift" — local updates diverge, slowing or destabilizing convergence.
@@ -34,17 +34,12 @@ class ServerAggregator:
         ...
 ```
 
-## Fixed Pipeline & Evaluation
+## Fixed Pipeline
 - **Communication rounds**: 200.
 - **Per-round participation**: 10 of 100 clients.
 - **Local training**: 5 local epochs per round, SGD with `lr=0.01`.
 
-Benchmarks:
-1. **CIFAR-10** with Dirichlet split (`alpha=0.1`) — 100 clients, 10-class image classification.
-2. **FEMNIST** (EMNIST ByClass) with Dirichlet split — 100 clients, character recognition.
-3. **Shakespeare** (next-character prediction) — naturally non-IID by speaker.
-
-Metric: **test accuracy** after 200 rounds (higher is better).
+The simulation runs over multiple datasets with non-IID Dirichlet-partitioned or naturally heterogeneous splits, covering image classification and character-level sequence prediction tasks.
 
 
 ## Your Workspace
@@ -573,13 +568,6 @@ or deleting existing ones — will cause your submission to be invalid.
 
 [truncated: showing at most 500 lines / 60000 bytes from flower/custom_fl_aggregation.py]
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

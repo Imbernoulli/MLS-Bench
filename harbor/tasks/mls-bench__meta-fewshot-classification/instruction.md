@@ -48,8 +48,7 @@ class CustomFewShotMethod(FewShotClassifier):
 ## Fixed Training & Evaluation Pipeline
 - Backbone: ResNet-12 (640-dim).
 - Episodic training: 500 tasks/epoch for 200 epochs, 5-way 5-shot tasks.
-- Evaluation: mean classification accuracy over 600 test episodes per benchmark (higher is better).
-- Benchmarks: **miniImageNet** (100 ImageNet classes), **CIFAR-FS** (100 classes from CIFAR-100), **CUB-200** (200 fine-grained bird species). All evaluated 5-way 5-shot.
+- Evaluation: episodic classification accuracy on held-out test splits across multiple few-shot image recognition benchmarks.
 
 
 ## Your Workspace

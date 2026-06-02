@@ -35,14 +35,6 @@ class Compressor:
 - `ctx`: local context (not communicated) needed for decompression.
 - The decompressed tensor must have the same shape as the original input.
 
-## Evaluation
-Trained and evaluated on three settings with 100x compression (`compress_ratio = 0.01`):
-- **ResNet-20 / CIFAR-10** (~0.27M params): small model, standard benchmark.
-- **VGG-11-BN / CIFAR-100** (~9.8M params): larger model, harder 100-class problem.
-- **ResNet-56 / CIFAR-10** (~0.85M params): deeper model, tests scalability.
-
-Metric: **best test accuracy** (higher is better). All settings use SGD with momentum, cosine LR schedule, and 200 training epochs.
-
 ## Baselines (paper-cited reference implementations)
 - **topk_ef** — Top-K sparsification with error feedback (Stich et al., "Sparsified SGD with Memory", NeurIPS 2018; Karimireddy et al., "Error Feedback Fixes SignSGD and Other Gradient Compression Schemes", ICML 2019; arXiv:1901.09847). Keeps the `k = compress_ratio * d` largest-magnitude entries.
 - **qsgd** — Quantized SGD with stochastic uniform quantization (Alistarh, Grubic, Li, Tomioka, and Vojnovic, "QSGD: Communication-Efficient SGD via Gradient Quantization and Encoding", NeurIPS 2017; arXiv:1610.02132).

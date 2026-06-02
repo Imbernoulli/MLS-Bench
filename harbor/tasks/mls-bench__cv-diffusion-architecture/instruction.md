@@ -4,9 +4,10 @@
 
 ## Objective
 
-Design a UNet backbone for unconditional CIFAR-10 diffusion that achieves
-lower FID than the standard DDPM-style architectures, under a fixed training
-target (epsilon prediction), DDIM sampler, optimizer, and noise schedule.
+Design a UNet backbone for unconditional image diffusion that achieves
+better generation quality than the standard DDPM-style architectures, under
+a fixed training target (epsilon prediction), DDIM sampler, optimizer, and
+noise schedule.
 
 ## Background
 
@@ -48,17 +49,11 @@ evaluation tiers. `LAYERS_PER_BLOCK` (default 2) is also available.
 
 The following are fixed across baselines and submissions:
 
-- Dataset: CIFAR-10 (32×32, unconditional).
 - Training target: epsilon prediction with MSE loss.
 - Optimizer: AdamW, learning rate 2e-4, EMA rate 0.9995.
-- Training: 35,000 steps per scale.
 - Inference: 50-step DDIM sampling (Song et al., 2020, arXiv:2010.02502).
-- Metric: FID computed by clean-fid against the CIFAR-10 train set
-  (50,000 samples), lower is better.
-- Channel scales:
-  - Small:  `block_out_channels=(64, 128, 128, 128)`, ~9M params, batch 128.
-  - Medium: `block_out_channels=(128, 256, 256, 256)`, ~36M params, batch 128.
-  - Large:  `block_out_channels=(256, 512, 512, 512)`, ~140M params, batch 64.
+- Channel widths are passed via `BLOCK_OUT_CHANNELS` env var; the same
+  architecture is evaluated at multiple channel scales.
 
 ## Baselines
 
@@ -67,14 +62,6 @@ The following are fixed across baselines and submissions:
 | `standard`  | Original DDPM architecture (Ho et al., 2020, arXiv:2006.11239). Self-attention only at the 16×16 resolution. Matches the `google/ddpm-cifar10-32` configuration. |
 | `full-attn` | Self-attention at every resolution (32×32, 16×16, 8×8, 4×4). More expressive but significantly more compute and memory per step. |
 | `no-attn`   | Pure convolutional UNet with no per-resolution self-attention; only the mid-block retains its default self-attention layer. Smallest and fastest. |
-
-## Evaluation
-
-Evaluation trains the candidate architecture at the multiple channel scales
-above and scores generated samples with clean-fid against the CIFAR-10 train
-set (50,000 samples); lower FID is better. The architecture must preserve the
-denoising interface: it receives images and timesteps and returns a same-shaped
-noise prediction.
 
 Improvements should come from transferable architecture design, not from
 changes to data, loss target, optimizer, sampler, or evaluation.

@@ -5,9 +5,8 @@
 ## Research Question
 
 Design a cache policy for diffusion language-model inference. Given a fixed
-LLaDA-8B-Instruct host model and public final-task benchmarks, can a method
-preserve benchmark accuracy while reusing KV state during the bidirectional
-denoising rollout?
+LLaDA-8B-Instruct host model, can a method preserve generation quality while
+reusing KV state during the bidirectional denoising rollout?
 
 ## Background
 
@@ -30,16 +29,12 @@ The task isolates this design space onto a shared cache-control surface so a
 policy can be evaluated end-to-end on real LLaDA generation rather than on a
 proxy token-trajectory metric.
 
-## Evaluation Setup
+## Evaluation Interface
 
 The harness runs real `LLaDA-8B-Instruct` inference end to end. For each
-workload it:
-
-1. Loads the public benchmark dataset.
-2. Runs one fixed denoising rollout with a shared cache-plan interface.
-3. Generates deterministic outputs using the submitted cache policy.
-4. Scores the generated outputs with benchmark-native final-task metrics.
-5. Emits the benchmark-native final score.
+workload it loads a dataset, runs one fixed denoising rollout with a shared
+cache-plan interface, and generates deterministic outputs using the submitted
+cache policy.
 
 The task is not a backend-selection problem: paper baselines are implemented
 through the same cache-control surface rather than called as black-box
@@ -82,51 +77,9 @@ Participants may not modify:
 Each baseline uses one predeclared cache policy across all workloads to
 avoid rewarding per-benchmark hyperparameter search.
 
-## Workloads
-
-| Label | Workload | Public source | Final metric |
-|---|---|---|---|
-| `math` | MATH-500 test split | exact final-answer accuracy |
-| `humaneval` | OpenAI HumanEval | pass@1 execution accuracy |
-| `lm-eval` | ARC-Challenge test split | exact answer-letter accuracy |
-
-All examples in the selected public splits are evaluated by default.
-
-## Metrics
-
-Each script prints one `TEST_METRICS:` line. The parser records the benchmark
-score and runtime diagnostics:
-
-| Metric | Direction | Meaning |
-|---|---|---|
-| `final_score` | higher | benchmark-native final task score on a 0-100 scale |
-| `reuse_ratio` | higher | diagnostic fraction of generated-token cache work reused by the hook plan |
-| `refresh_ratio` | lower | diagnostic `1 - reuse_ratio` |
-| `tokens_per_s` | higher | diagnostic decode throughput on the current hardware |
-| `peak_memory_mb` | lower | diagnostic peak GPU memory allocated during the example loop |
-| `n_examples` | fixed | number of examples evaluated |
-| `elapsed` | lower | diagnostic wall-clock time recorded by the harness for the script |
-
-`final_score` is the canonical quality metric. `reuse_ratio` and
-`tokens_per_s` enter the scalar ranking because the task is a cache-policy
-benchmark: methods should preserve final-task quality while reducing
-redundant denoising work and improving decode throughput.
-
-## Canonical Ranking
-
-The score in `score_spec.py` follows the MLS-Bench efficiency-task pattern:
-
-- each workload applies `final_score_*` as a near-lossless soft quality gate
-- once the quality gate is satisfied, small benchmark-native score
-  differences are not rewarded further
-- each workload ranks cache reuse and decode throughput as efficiency terms
-- throughput is normalized against the visible baseline envelope rather than
-  a hard hardware-specific pass/fail range
-- the task score is the geometric mean across the three workloads
-
 ## Baselines
 
-| Baseline | Source |
+| Baseline | Description |
 |---|---|
 | `vanilla_uncached` | no-cache LLaDA control: full denoising forward every step |
 | `dllm_cache` | dLLM-Cache (arXiv:2506.06295), `maomaocun/dLLM-cache`: prompt/generation feature refresh and low-similarity generated-row update |

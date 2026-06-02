@@ -32,15 +32,8 @@ class Model(nn.Module):
         return out[:, -self.pred_len:, :]
 ```
 
-## Datasets and Fixed Protocol
-- **ETTh1** — 7 variables, hourly Electricity Transformer Temperature (Zhou et al., AAAI 2021).
-- **Weather** — 21 variables, weather observations.
-- **ECL** — 321 variables, hourly client electricity consumption.
-
-All settings: `features=M` (multivariate input → multivariate output), `seq_len=96`, `label_len=48`, `pred_len=96`. Standardization, splits, and evaluation are fixed by the Time-Series-Library data pipeline.
-
-## Metrics
-MSE and MAE on all channels — lower is better.
+## Fixed Protocol
+All settings: `features=M` (multivariate input → multivariate output), `seq_len=96`, `label_len=48`, `pred_len=96`. The evaluation covers heterogeneous multivariate datasets spanning different numbers of variables and domains. Standardization, splits, and evaluation are fixed by the Time-Series-Library data pipeline.
 
 ## Reference Implementations (read-only)
 Five reference models from `models/`:

@@ -112,20 +112,7 @@ The following are FIXED across all strategies and must not be changed:
 | `taming`   | Taming-3DGS budgeted densification with max-grad blending (Mallick et al., arXiv:2406.15643), combined with the AbsGS gradient and the revised opacity formula. |
 | `edc`      | Taming densification combined with EDC long-axis splitting and recovery-aware pruning (Deng et al., arXiv:2411.10133). |
 
-## Evaluation
-
-Evaluation uses Mip-NeRF 360 scenes (Barron et al., 2022) with every 8th image
-held out for testing. Metrics:
-
-| Metric  | Direction | Description |
-|---------|-----------|-------------|
-| **PSNR**  | higher is better | Peak signal-to-noise ratio (primary metric). |
-| **SSIM**  | higher is better | Structural similarity. |
-| **LPIPS** | lower is better  | Learned perceptual similarity. |
-
-Scoring uses per-scene PSNR. The contribution should be a transferable
-densification rule, not a change to the renderer, photometric loss, optimizer,
-dataset, or evaluation protocol.
+The contribution should be a transferable densification rule, not a change to the renderer, photometric loss, optimizer, or training pipeline.
 
 
 ## Your Workspace

@@ -27,22 +27,6 @@ def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
     """
 ```
 
-## Evaluation Scenarios
-
-| Label       | Graph type      | Nodes | Density       | Samples | Noise |
-|-------------|-----------------|-------|---------------|---------|-------|
-| ER10        | Erdos-Renyi     | 10    | p=0.3         | 500     | 1.0   |
-| ER20        | Erdos-Renyi     | 20    | p=0.2         | 1000    | 1.0   |
-| SF50        | Scale-Free (BA) | 50    | m=2           | 2000    | 1.0   |
-| SF50-Hard   | Scale-Free (BA) | 50    | m=3 (denser)  | 1000    | 1.0   |
-| ER20-Noisy  | Erdos-Renyi     | 20    | p=0.35 denser | 400     | 2.5   |
-
-## Metrics
-Computed by comparing the estimated CPDAG with the ground-truth CPDAG:
-- **SHD** via `SHD(...).get_shd()` (lower is better)
-- **Adjacency Precision / Recall** via `AdjacencyConfusion` (higher is better)
-- **Arrow Precision / Recall** via `ArrowConfusion` (higher is better)
-
 ## Reference baselines
 Citations are provided so the agent can study the prior art; default
 hyperparameters are the ones recommended in the cited papers.

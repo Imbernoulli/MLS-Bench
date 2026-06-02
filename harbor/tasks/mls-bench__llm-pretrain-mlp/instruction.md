@@ -31,15 +31,8 @@ The `MLP` class in `nanoGPT/custom_pretrain.py`:
 - `relu_squared` — Primer-EZ squared-ReLU activation.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 12,030 iterations, micro-batch 96, gradient accumulation 6, 2-GPU DDP.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
-
+- **Model**: A multi-layer GPT-style transformer with causal self-attention and learned positional embeddings.
+- **Training**: AdamW optimizer with cosine LR decay and linear warmup, bfloat16 mixed precision, DDP multi-GPU.
 
 ## Your Workspace
 
@@ -508,10 +501,7 @@ Other files you may **read** for context (do not modify):
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Your MLP implementation must not significantly increase total model parameter count relative to the standard 4× GELU baseline. Keep hidden dimension sizing comparable; if you use a gating mechanism (e.g., GLU variants), reduce the hidden width accordingly (commonly to ⌊8d/3⌋).
 
 ## Reference Baselines
 

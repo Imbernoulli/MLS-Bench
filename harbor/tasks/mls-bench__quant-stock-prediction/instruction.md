@@ -14,8 +14,8 @@ Implement a `CustomModel` in `custom_model.py` that exposes the standard qlib mo
 ## Fixed Pipeline
 - **Features**: Alpha360 (360 features per stock-day = 6 base ratios over 60 days of history). For temporal models, reshape with `x.reshape(N, 6, 60).permute(0, 2, 1) -> [N, 60, 6]`.
 - **Label**: `Ref($close, -2) / Ref($close, -1) - 1` (return from T+1 to T+2, predicted at T).
-- **Universes / splits**: `csi300`, `csi100`, `csi300_recent` — instruments and date ranges fixed by the workflow YAML.
-- **Backtest**: TopkDropout, top 50 / drop 5, executed by the qlib workflow runner.
+- **Universes / splits**: instruments and date ranges are fixed by the workflow YAML.
+- **Backtest**: portfolio construction executed by the qlib workflow runner.
 
 ## Model Interface
 ```python
@@ -28,13 +28,6 @@ class CustomModel(Model):
     def predict(self, dataset: DatasetH, segment: str = "test") -> pd.Series: ...
 ```
 `predict` must return a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index. Available imports inside the class: `torch`, `numpy`, `pandas`, `lightgbm`, `sklearn`, `scipy`.
-
-## Evaluation Metrics
-Reported per universe:
-- **Signal quality**: IC, ICIR, Rank IC, Rank ICIR — higher is better.
-- **Portfolio**: annualized return, information ratio — higher is better; max drawdown — closer to zero is better.
-
-All metrics are produced by qlib's standard `SignalAnalysisRecord` and `PortAnaRecord`.
 
 ## Reference Implementations (read-only)
 Three reference models ship with qlib's `examples/benchmarks/` and are available as read-only context. Defaults are taken from each method's qlib CSI300 example config.
@@ -265,13 +258,6 @@ Other files you may **read** for context (do not modify):
     81:               close_cost: 0.0015
     82:               min_cost: 5
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

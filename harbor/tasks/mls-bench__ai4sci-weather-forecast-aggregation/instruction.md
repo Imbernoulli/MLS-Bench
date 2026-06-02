@@ -44,15 +44,7 @@ The input contains 48 variables: 3 surface constants (land-sea mask, orography, 
 You have access to standard PyTorch modules (`nn.Linear`, `nn.MultiheadAttention`, `nn.LayerNorm`, etc.) and `torch.nn.functional`. The FIXED section imports `torch`, `torch.nn`, and `torch.nn.functional as F`.
 
 ## Fixed Pipeline
-ClimaX backbone, per-variable patch tokenization, fine-tuning recipe (initialized from pretrained ClimaX weights), data pipeline, ERA5 reanalysis at 5.625° resolution, optimizer/schedule, and the latitude-weighted RMSE metric are all fixed.
-
-## Evaluation
-The model is fine-tuned from pretrained ClimaX weights on ERA5 reanalysis data at 5.625-degree resolution and evaluated on three forecasting targets:
-- **z500-3day**: Geopotential height at 500 hPa, 3-day lead time.
-- **t850-5day**: Temperature at 850 hPa, 5-day lead time.
-- **wind10m-7day**: 10 m wind speed, 7-day lead time.
-
-Metric: Latitude-weighted RMSE (lower is better). The metric accounts for the convergence of meridians at the poles by weighting errors by the cosine of latitude.
+ClimaX backbone, per-variable patch tokenization, fine-tuning recipe (initialized from pretrained ClimaX weights), data pipeline, optimizer/schedule, and the evaluation metric are all fixed.
 
 ## Reference Baselines
 - **cross_attention**: ClimaX default aggregation. A learnable query token attends to all V variable tokens at each spatial location via multi-head cross-attention, producing one token per location.

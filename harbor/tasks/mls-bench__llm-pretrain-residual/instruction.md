@@ -43,13 +43,7 @@ In `nanoGPT/custom_pretrain.py`:
 
 ## Fixed Pipeline
 - **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 13,535 iterations, micro-batch 32, gradient accumulation 16, 2-GPU DDP.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
+- **Training**: multi-GPU DDP, standard warmup + cosine LR decay.
 
 
 ## Your Workspace
@@ -523,13 +517,6 @@ Other files you may **read** for context (do not modify):
    440:     if ddp:
    441:         dist.destroy_process_group()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

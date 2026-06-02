@@ -35,15 +35,6 @@ Interface:
 
 You may restructure the function body, add helper computations, and use any PyTorch operations.
 
-## Evaluation
-- **Metric**: `success_rate` — rollout success rate on the task (higher is better)
-- **Tasks**: Lift, Can, Square (robot manipulation with proficient human demonstrations)
-- **Dataset**: ~200 demonstrations with (s, a, r, s', done) transitions
-- **Training**: IQL with Q-ensemble (2 critics), GMM actor (5 modes), 2000 epochs × 100 steps
-- **Hyperparameters**: discount = 0.99, target_tau = 0.01, adv_beta = 1.0, vf_quantile = 0.9
-- **Rollout evaluation**: 50 episodes per task, horizon 400 steps, every 50 epochs
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

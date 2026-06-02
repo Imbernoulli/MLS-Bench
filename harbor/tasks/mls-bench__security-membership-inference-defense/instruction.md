@@ -29,21 +29,6 @@ class MembershipDefense:
 
 The optimizer (SGD + CosineAnnealing), architecture, data pipeline, and attack implementation are fixed.
 
-## Evaluation
-Benchmarks:
-
-- `resnet20-cifar10`: ResNet-20 on CIFAR-10.
-- `vgg16bn-cifar100`: VGG-16-BN on CIFAR-100.
-- `mobilenetv2-fmnist`: MobileNetV2 on FashionMNIST.
-
-Reported metrics:
-- `test_acc`
-- `mia_auc`
-- `privacy_gap`
-- `privacy_score`
-
-Primary metric: `privacy_score = test_acc - max(mia_auc - 0.5, 0)` (higher is better).
-
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:
 

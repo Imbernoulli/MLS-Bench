@@ -61,28 +61,6 @@ def custom_attention_forward(q, k, v, causal=True, sm_scale=None):
 Correctness constraint: max absolute difference from reference (PyTorch
 SDPA) must be `< 1e-2`.
 
-## Evaluation
-
-Benchmarked on multiple causal configurations aligned with the FA3 paper
-(total tokens = 16384):
-
-| Config | Batch | SeqLen | Heads | HeadDim |
-|---|---|---|---|---|
-| `hdim64_seq4k` | 4 | 4096 | 32 | 64 |
-| `hdim128_seq8k` | 2 | 8192 | 16 | 128 |
-| `hdim256_seq16k` | 1 | 16384 | 8 | 256 |
-
-All configurations use FP16, causal masking, on H100 80GB SXM5.
-
-Metrics (per configuration):
-
-- `tflops`: achieved TFLOPs/s (higher is better) — primary metric
-- `latency_ms`: kernel latency in milliseconds (lower is better)
-- `correct`: binary (1 if `max_diff < 1e-2`, else 0) — hard constraint
-
-FLOP formula (FA2/FA3 convention):
-`4 * batch * seqlen^2 * nheads * headdim / 2` (causal).
-
 ## Hints
 
 - The default template provides a basic flash attention kernel. Key

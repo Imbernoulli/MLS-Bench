@@ -25,14 +25,7 @@ If your attention mechanism implements its own position encoding (replacing the 
 
 ## Fixed Pipeline
 - **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (Penedo et al., 2024, arXiv:2406.17557; HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens (D = 20 N, Chinchilla-optimal for 355M).
-- **Training**: 13,535 iterations, micro-batch 64, gradient accumulation 8, 2-GPU DDP.
-- Optimizer, schedule, dataset, tokenizer, training loop, and evaluation scripts are fixed.
-
-## Evaluation
-- **Validation loss** — cross-entropy on a held-out FineWeb shard (lower is better).
-- **Perplexity** — WikiText-2 and LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better) via the LM Evaluation Harness.
+- **Training**: Optimizer, schedule, dataset, tokenizer, training loop, and evaluation scripts are fixed.
 
 A strong solution should reduce validation loss / perplexity and transfer to downstream accuracy without depending on changes outside the attention module.
 
@@ -504,10 +497,7 @@ Other files you may **read** for context (do not modify):
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Your edits must not significantly increase the model's total parameter count relative to the standard attention baseline. The check runs automatically inside the eval scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

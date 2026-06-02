@@ -48,14 +48,6 @@ compute_loss_on_batch(model, X_batch, y_batch, loss_type, l2_reg)
 - The learning rate (`self.lr`) and L2 regularization (`self.l2_reg`) are fixed.
 - Do not modify the model architecture, loss function, or evaluation code.
 
-## Evaluation
-- **Problems**:
-  - `logistic`: L2-regularized multinomial logistic regression on MNIST (convex, n=60K, 20 epochs).
-  - `mlp`: 2-layer MLP on CIFAR-10 (non-convex, n=50K, 40 epochs).
-  - `conditioned`: L2-regularized linear regression on synthetic ill-conditioned data (strongly convex, kappa=100, n=10K, 30 epochs).
-- **Metrics**: `best_test_accuracy` and `final_test_accuracy` (logistic, mlp; higher is better) and `best_test_mse` / `final_test_mse` (conditioned; lower is better).
-- All problems run in parallel with shared compute.
-
 ## Baselines (paper-cited reference implementations)
 - **svrg** — Johnson and Zhang (NeurIPS 2013); paper-default outer-loop length `m = n / b` and a single full-gradient snapshot per epoch.
 - **storm** — Cutkosky and Orabona (NeurIPS 2019; arXiv:1905.10018); paper-default momentum schedule `a_t = c / (k + t)^{2/3}` with the prescribed adaptive step size.

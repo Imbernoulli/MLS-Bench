@@ -45,16 +45,10 @@ semantics.
 
 The following are fixed across baselines and submissions:
 
-- Dataset: CIFAR-10 (32×32, 10 classes).
-- Model: `UNet2DModel` (diffusers backbone) at three channel scales:
-  - Small:  `block_out_channels=(64, 128, 128, 128)`, ~9M params, batch 128.
-  - Medium: `block_out_channels=(128, 256, 256, 256)`, ~36M params, batch 128.
-  - Large:  `block_out_channels=(256, 512, 512, 512)`, ~140M params, batch 64.
-- Training: 35,000 steps per scale, AdamW lr=2e-4, EMA rate 0.9995.
-- Inference: 50-step DDIM sampling (Song et al., 2020, arXiv:2010.02502),
-  class-conditional.
-- Metric: FID computed by clean-fid against the CIFAR-10 train set
-  (50,000 samples), lower is better.
+- Dataset: class-conditional image generation benchmark (small 32×32 images, 10 classes).
+- Model: `UNet2DModel` (diffusers backbone) at multiple channel scales.
+- Training: AdamW with EMA, fixed hyperparameters.
+- Inference: DDIM sampling (Song et al., 2020, arXiv:2010.02502), class-conditional.
 
 ## Baselines
 
@@ -63,14 +57,6 @@ The following are fixed across baselines and submissions:
 | `concat-film` | FiLM-style conditioning (Perez et al., AAAI 2018): add class embedding to timestep embedding, inject via adaptive GroupNorm in ResBlocks. Simplest. |
 | `cross-attn`  | Cross-attention conditioning: class embedding is key / value in cross-attention layers after each ResBlock. Most expressive. |
 | `adanorm`     | DiT-style AdaLN-Zero conditioning (Peebles & Xie, ICCV 2023, arXiv:2212.09748): class embedding generates scale / shift / gate parameters for adaptive normalization, with the residual gate initialized to zero. |
-
-## Evaluation
-
-Evaluation trains the candidate conditioning at the channel scales above and
-scores generated samples with clean-fid against CIFAR-10; lower FID is better.
-The improvement should come from a transferable conditioning design, not from
-changes to the dataset, labels, loss, optimizer, sampler, or metric.
-
 
 ## Your Workspace
 

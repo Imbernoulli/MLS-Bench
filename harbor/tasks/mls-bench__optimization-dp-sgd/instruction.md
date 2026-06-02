@@ -36,14 +36,6 @@ class DPMechanism:
 - Focus on algorithmic innovation in the DP mechanism: clipping strategies, noise schedules, gradient processing.
 - Available imports: `torch`, `math`, `numpy` (via the FIXED section), `scipy.optimize`.
 
-## Evaluation
-Trained and evaluated on three datasets at `epsilon = 3.0`, `delta = 1e-5`:
-- **MNIST** (28x28 grayscale digits, 10 classes)
-- **Fashion-MNIST** (28x28 grayscale clothing, 10 classes)
-- **CIFAR-10** (32x32 color images, 10 classes)
-
-Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded.
-
 ## Baselines (paper-cited reference implementations)
 - **standard_dpsgd** — Abadi et al. (CCS 2016; arXiv:1607.00133): fixed `C` and constant `σ` calibrated up-front.
 - **automatic_clipping** — Bu, Wang, Zha, and Karypis, "Automatic Clipping: Differentially Private Deep Learning Made Easier and Stronger" (NeurIPS 2023; arXiv:2206.07136): per-sample normalization removes the clipping-norm hyperparameter.

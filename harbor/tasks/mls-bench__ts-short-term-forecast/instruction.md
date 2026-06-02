@@ -1,15 +1,15 @@
 # MLS-Bench: ts-short-term-forecast
 
-# Univariate Short-Term Forecasting on the M4 Competition Dataset
+# Univariate Short-Term Forecasting
 
 ## Research Question
-Can one univariate forecasting component (seasonal decomposition, scale normalization, horizon-aware decoding, multi-scale temporal mixing) deliver consistently low SMAPE across the very different seasonal regimes — monthly, quarterly, yearly — of the M4 competition, under a fixed training and evaluation protocol?
+Can one univariate forecasting component (seasonal decomposition, scale normalization, horizon-aware decoding, multi-scale temporal mixing) deliver consistently strong performance across very different seasonal regimes under a fixed training and evaluation protocol?
 
 ## Background
-The M4 competition (Makridakis, Spiliotis & Assimakopoulos, "The M4 Competition: 100,000 time series and 61 forecasting methods", *International Journal of Forecasting*, 2018/2020) collected 100,000 short, real-world series across 6 seasonal patterns (Yearly, Quarterly, Monthly, Weekly, Daily, Hourly). It is the standard benchmark for *short, univariate, many-series* forecasting and is dominated by combinations of statistical and ML methods. The Time-Series-Library protocol (Wu et al., ICLR 2023) wraps M4 with per-pattern fixed look-back / horizon settings, SMAPE training loss, and SMAPE / MAPE / OWA scoring.
+Short, univariate, many-series forecasting is a well-studied problem dominated by combinations of statistical and ML methods. The Time-Series-Library (Wu et al., ICLR 2023) provides a standardized training and evaluation protocol with per-pattern fixed look-back / horizon settings and a SMAPE training loss.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the M4 univariate setting `enc_in == c_out == 1`.
+Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the univariate setting `enc_in == c_out == 1`.
 
 ## Model Interface
 ```python
@@ -29,16 +29,8 @@ class Model(nn.Module):
         return out[:, -self.pred_len:, :]
 ```
 
-## Datasets and Fixed Protocol
-Three M4 seasonal patterns. Per Time-Series-Library defaults:
-- **Monthly** — `seq_len=104`, `pred_len=18`, `frequency_map=12`.
-- **Quarterly** — `seq_len=52`, `pred_len=8`, `frequency_map=4`.
-- **Yearly** — `seq_len=42`, `pred_len=6`, `frequency_map=1`.
-
-All settings: `features=M`, `enc_in=1`, `loss=SMAPE`. Train/test splits are the official M4 splits.
-
-## Metrics
-SMAPE (primary) and MAPE — lower is better. Computed by the Time-Series-Library M4 evaluator on the official test horizon.
+## Fixed Protocol
+Multiple seasonal patterns evaluated. Per Time-Series-Library defaults, `seq_len`, `pred_len`, and `frequency_map` vary by pattern and are passed through `configs`. All settings: `features=M`, `enc_in=1`, `loss=SMAPE`.
 
 ## Reference Implementations (read-only)
 Four reference models from `models/`:

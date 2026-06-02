@@ -5,8 +5,8 @@
 ## Research Question
 Design a better demasking (decoding) strategy for masked diffusion language models. The strategy must generalize across **different decoding regimes**:
 
-- **Block-based semi-autoregressive decoding** for downstream-task accuracy (LLaDA on MATH/HumanEval, following the KLASS protocol).
-- **Fully-parallel decoding** for open-ended text generation (Dream on prefix-conditioned C4 continuation, measured by perplexity / diversity).
+- **Block-based semi-autoregressive decoding** for downstream-task accuracy.
+- **Fully-parallel decoding** for open-ended text generation.
 
 ## Background
 Masked diffusion LMs generate by starting from a fully masked generation region and iteratively unmasking over `steps` denoising iterations. A demasking strategy decides at each step:
@@ -49,26 +49,6 @@ class DemaskDecoder:
 - `confidence_greedy` — LLaDA's `low_confidence` remasking: top-k by max prob.
 - `topk_margin` — Dream's `topk_margin`: top-k by (top1 prob − top2 prob).
 - `klass` — KLASS: KL-adaptive stability + confidence thresholds (KLASS paper, default `kl_threshold=0.01`, `conf_threshold=0.9`, `history_length=2`).
-
-## Evaluation
-| Label | Task | Model | gen_len | steps | block_len | Metrics |
-|-------|------|-------|---------|-------|-----------|---------|
-| `llada-math` | MATH-500 | LLaDA-8B-Instruct | 256 | 256 | 64 | accuracy + avg_steps |
-| `llada-humaneval` | HumanEval (164) | LLaDA-8B-Instruct | 256 | 256 | 64 | accuracy + avg_steps |
-| `dream-text` | C4 prefix-continuation (256 samples, 32-tok prefix → 224-tok continuation) | Dream-v0-Instruct-7B | 224 | 256 | 224 | gen_ppl + MAUVE + entropy + rep2 + avg_steps |
-
-### Metrics
-| Metric | Direction | Where | Description |
-|--------|-----------|-------|-------------|
-| `accuracy` | ↑ | math/humaneval | exact-match (MATH) or pass@1 (HumanEval) |
-| `gen_ppl` | ↓ | text | conditional perplexity via GPT-2-Large |
-| `mauve` | ↑ | text | distributional similarity to C4 reference text |
-| `entropy` | ↑ | text | bigram entropy (lexical diversity) |
-| `rep2` | ↓ | text | repeated bigram ratio |
-| `avg_steps` | ↓ | all | actual model forward passes used |
-
-For MATH/HumanEval we use the KLASS protocol's `data/math_test.json`, prompts, and `utils.py` for answer extraction (`extract_math_answer`, `compare_answers`). The text-generation setting follows MDLM/ReMDM-style prefix-conditioned C4 continuation.
-
 
 ## Your Workspace
 

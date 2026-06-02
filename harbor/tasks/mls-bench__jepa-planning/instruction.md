@@ -51,15 +51,6 @@ def plan(self, obs_init, steps_left=None, eval_mode=True,
 - `self.cost_function(actions, obs_init)`: convenience method that calls `unroll` then `objective`.
   - Returns: `[B]` cost per sample
 
-## Evaluation
-- Environment: Two Rooms (65×65 grid with wall and door)
-- Episodes: 20 with random start and goal positions controlled by the MLS-Bench SEED
-- Max steps per episode: 200
-- Success threshold: Euclidean distance < 4.5 from goal
-- Benchmarks: three planning horizons (30, 60, 90 steps) test the algorithm across short, medium, and long-range planning
-- Metric: `success_rate` (fraction of successful episodes) per horizon, higher is better
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

@@ -47,12 +47,7 @@ def normalize_rewards(
 
 ## Fixed Pipeline
 - **Policy**: Qwen2.5-0.5B (full-parameter), verl, GRPO advantage estimator, n=16 rollouts per prompt.
-- **Training set**: simpleRL-Zoo MATH level 3–5 (Qwen split) + 5K DeepMath problems.
-- **Hyperparameters**: 100 steps, batch size 128, max response length 16,384 tokens, `test_freq=25`, `total_epochs=1`.
 - Reward source, advantage estimator, model, rollout setup, optimizer, KL-loss setting, and evaluation data are fixed.
-
-## Evaluation
-Math-reasoning accuracy (`mean@1`) on **GSM8K**, **MATH-500**, and **AMC 23**; primary score is the mean across the three.
 
 
 ## Your Workspace

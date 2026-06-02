@@ -36,15 +36,8 @@ class CustomImputer(BaseEstimator, TransformerMixin):
 
 Available libraries: `numpy`, `scipy`, `scikit-learn` (all submodules: `sklearn.impute`, `sklearn.ensemble`, `sklearn.neighbors`, ...).
 
-## Fixed Pipeline & Evaluation
-Datasets, all with **20% MCAR (Missing Completely At Random)** corruption:
-- **Breast Cancer Wisconsin** — 569 samples, 30 features, binary classification.
-- **Wine** — 178 samples, 13 features, 3-class classification.
-- **California Housing** — 5,000 samples, 8 features, regression.
-
-Metrics:
-- **RMSE** — root mean squared error between imputed and true values on the masked entries (lower is better).
-- **downstream_score** — accuracy (breast_cancer, wine) or R² (california) of a `GradientBoosting` model trained on the imputed data (higher is better).
+## Fixed Pipeline
+Data is standardized tabular data (classification and regression tasks) with **20% MCAR (Missing Completely At Random)** corruption applied to features. Your imputer receives `X` with NaN entries and must produce a complete array with no NaNs. Do not use test labels during imputation.
 
 
 ## Your Workspace
@@ -332,13 +325,6 @@ or deleting existing ones — will cause your submission to be invalid.
    260: if __name__ == "__main__":
    261:     main()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

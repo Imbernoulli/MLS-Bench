@@ -40,18 +40,6 @@ Available hooks on the framework:
 
 Constraints: only modify the editable region of `custom_regularization.py`; do not create new files.
 
-## Fixed Pipeline & Evaluation
-Three benchmarks:
-
-| Benchmark | Scenario | Contexts | Description |
-|-----------|----------|----------|-------------|
-| **Split-MNIST** | Task-incremental | 5 (2 classes each) | MNIST digits split into 5 binary tasks. |
-| **Permuted-MNIST** | Domain-incremental | 10 | Same digit classes; each context applies a different fixed pixel permutation. |
-| **Split-CIFAR100** | Task-incremental | 10 (10 classes each) | CIFAR-100 split into 10 ten-way tasks. |
-
-Primary metric: **average accuracy across all contexts after training completes** (higher is better).
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -205,13 +193,6 @@ Other files you may **read** for context (do not modify):
    121: # EDITABLE REGION END
    122: # ======================================================================
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

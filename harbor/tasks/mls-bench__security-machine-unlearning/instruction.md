@@ -31,21 +31,6 @@ class UnlearningMethod:
 
 The architecture, initial training, forget split, and evaluation probes are fixed.
 
-## Evaluation
-Benchmarks:
-
-- `resnet20-cifar10-class0`: ResNet-20 on CIFAR-10, forgetting class 0.
-- `vgg16bn-cifar100-class0`: VGG-16-BN on CIFAR-100, forgetting class 0.
-- `mobilenetv2-fmnist-class0`: MobileNetV2 on FashionMNIST, forgetting class 0.
-
-Reported metrics:
-- `retain_acc`: accuracy on non-forget test data.
-- `forget_acc`: accuracy on forget-class test data (lower is better).
-- `forget_mia_auc`: membership inference attack AUC on forget set (lower is better).
-- `unlearn_score`: `(retain_acc + (1 - forget_acc) + (1 - forget_mia_auc)) / 3`.
-
-Primary metric: `unlearn_score` (higher is better).
-
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:
 

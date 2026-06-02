@@ -31,12 +31,6 @@ The `custom_plan()` function in `custom_planner.py`. You have access to:
 - `agent.cfg`: all configuration parameters (horizon, num_samples, etc.)
 - `common.math`: utility functions (`gumbel_softmax_sample`, `two_hot_inv`, etc.)
 
-## Evaluation
-- **Metric**: episode reward (higher is better)
-- **Environments**: DMControl walker-walk and cheetah-run
-- **Model**: TD-MPC2 with 1M parameters, 200K training steps
-- **Note**: the planning algorithm affects both data collection quality during training and action selection during evaluation.
-
 ## Key Constraints
 - The function must return a single action tensor of shape `(action_dim,)` clamped to `[-1, 1]`.
 - The function runs under `@torch.no_grad()` — no gradient computation.

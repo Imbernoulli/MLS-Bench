@@ -3,7 +3,7 @@
 # LLM Pretraining: Native Low-Bit Linear (BitLinear)
 
 ## Research Question
-Design a low-bit linear layer for GPT-2 pretraining that uses native low-precision weights (binary / ternary / few-bit) during both training and inference, instead of standard float weights. The goal is to minimize validation loss and preserve downstream language ability while constraining the effective forward weights to a small discrete set.
+Design a low-bit linear layer for GPT-2 pretraining that uses native low-precision weights (binary / ternary / few-bit) during both training and inference, instead of standard float weights. The goal is to improve language modeling performance while constraining the effective forward weights to a small discrete set.
 
 ## Background
 Standard neural networks store and compute with full-precision (FP32 / BF16) weights. Post-training quantization (PTQ) and quantization-aware training (QAT) compress these weights after or during training, but the model fundamentally trains with float weights. Native low-bit training takes a different approach: weights are inherently discrete (e.g., {-1, +1} or {-1, 0, +1}) during every forward pass, while a float latent weight is maintained only for gradient accumulation (with a straight-through estimator).
@@ -35,17 +35,6 @@ The BitLinear module in `nanoGPT/custom_pretrain.py`:
 - `binary_sign` — BitNet sign-based binary weights {-1, +1} with absmean scale.
 - `ternary_158bit` — BitNet b1.58 ternary {-1, 0, +1} with absmean scale.
 - `int2_uniform` — uniform 2-bit quantization grid.
-
-## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens (Chinchilla-optimal D=20N).
-- **Training**: 13,535 iterations, micro-batch 64, gradient accumulation 8, 2-GPU DDP.
-
-## Evaluation
-- **Validation loss** — cross-entropy on a held-out FineWeb shard (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
-
 
 ## Your Workspace
 
@@ -576,13 +565,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from nanoGPT/custom_pretrain.py]
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

@@ -20,11 +20,6 @@ The `CustomSimNorm` class in `custom_simnorm.py`:
 - `__init__(self, cfg)`: initialize parameters (`cfg.simnorm_dim = 8`)
 - `forward(self, x)`: normalize the latent vector (must preserve shape)
 
-## Evaluation
-- **Metric**: episode reward (higher is better)
-- **Environments**: DMControl walker-walk and cheetah-run
-- **Model**: TD-MPC2 with 1M parameters, 200K training steps
-
 ## Architecture Context
 The normalization is used in:
 1. **Encoder** (`layers.py: enc()`): maps observations to latent states.
@@ -84,9 +79,7 @@ Other files you may **read** for context (do not modify):
     23:     The input tensor has shape (*batch_dims, latent_dim) where latent_dim
     24:     is divisible by simnorm_dim. Your normalization should constrain the
     25:     geometry of the latent space to improve world model learning.
-    26: 
-    27:     Evaluated on DMControl walker-walk and cheetah-run tasks.
-    28:     """
+    26:     """
     29: 
     30:     def __init__(self, cfg):
     31:         super().__init__()

@@ -30,16 +30,11 @@ You may iterate over `model.named_modules()` or `model.named_parameters()` and d
 - Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
 - Schedule: cosine annealing over `200` epochs.
 - Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-56 on CIFAR-100, VGG-16-BN on CIFAR-100, MobileNetV2 on FashionMNIST.
 
 ## Baselines
 - **kaiming_normal** — He et al., arXiv:1502.01852; conv weights from `N(0, sqrt(2/fan_out))`, zero biases, BatchNorm `(weight=1, bias=0)`.
 - **fixup** — Zhang et al., arXiv:1901.09321; scales the first residual conv by `L^(-1/(2m-2))` with `m=2` and zero-initializes the last conv per residual block.
 - **orthogonal** — Saxe et al., arXiv:1312.6120; orthogonal init for conv and linear layers (gain `sqrt(2)` for ReLU), zero biases, BatchNorm `(weight=1, bias=0)`.
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The initialization must be data-independent and must not run calibration passes, alter the model graph, change optimizer hyperparameters, or modify evaluation behavior.
-
 
 ## Your Workspace
 

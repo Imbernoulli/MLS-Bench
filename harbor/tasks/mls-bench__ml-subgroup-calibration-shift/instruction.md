@@ -32,20 +32,8 @@ class CalibrationMethod:
 
 The method must produce valid probabilities; `groups` may be ignored by group-agnostic methods.
 
-## Fixed Pipeline & Evaluation
-Datasets (cached high-stakes tabular data from AIF360):
-- **Adult** — Census income; subgroup attributes: sex, race.
-- **COMPAS** — ProPublica recidivism risk; subgroup attributes: race, sex.
-- **Law School GPA** — admissions/outcome data binarized at the median first-year GPA; subgroup attributes: race, gender.
-
-For each dataset the test split is intentionally shifted: a domain score selects the held-out test tail, and calibration is fit on the source region and evaluated on the shifted region. Subgroups come from protected attributes exposed by the dataset loaders.
-
-Metrics:
-- **`worst_group_ece`** — worst-subgroup expected calibration error (lower is better).
-- **`brier`** — Brier score on test (lower is better).
-- **`max_subgroup_gap`** — max over subgroups of `|accuracy − mean confidence|` (lower is better).
-- **`subgroup_auroc`** — subgroup-level AUROC (higher is better; reported diagnostically).
-
+## Fixed Pipeline
+Tabular datasets with protected subgroup attributes are loaded from AIF360. For each dataset the test split is intentionally shifted: a domain score selects the held-out test tail, and calibration is fit on the source region and evaluated on the shifted region. Subgroups come from protected attributes exposed by the dataset loaders.
 
 ## Your Workspace
 

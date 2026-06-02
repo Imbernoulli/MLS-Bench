@@ -22,14 +22,6 @@ Interface:
 
 You may add any parameters to `__init__`, define helper methods, and use any PyTorch operations. The imports at the top of the file (torch, torch.nn, torch.nn.functional, etc.) are available.
 
-## Evaluation
-- **Metric**: `val_acc` — linear probe classification accuracy on CIFAR-10 (higher is better)
-- **Benchmarks**: three backbone architectures (ResNet-18, ResNet-34, ResNet-50) test regularizer generalization across model scales
-- **Projector**: features_dim → 2048 → 2048 MLP
-- **Training**: 100 epochs, batch size 256, LARS optimizer (lr=0.3), warmup cosine schedule
-- **Dataset**: CIFAR-10 (50k train / 10k val)
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

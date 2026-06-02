@@ -68,20 +68,6 @@ allowed denoiser evaluations, or evaluation code.
 - Sampling: fixed sampler call structure with a fixed step budget.
 - Prompts: shared evaluation prompt set across all baselines.
 
-## Evaluation
-
-Evaluation runs the text-to-image sampling pipeline on the model variants
-above. Metrics reported:
-
-- **CLIP score** (cosine similarity between generated image and text prompt;
-  higher is better).
-- **FID** computed against a reference image set (lower is better).
-
-Task scoring uses per-variant FID (lower is better). A good method should
-improve image quality without sacrificing the prompt-following behaviour
-provided by guidance.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

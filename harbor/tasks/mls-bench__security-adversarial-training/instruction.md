@@ -38,20 +38,6 @@ class AdversarialTrainer:
 
 The training loop, learning-rate schedule (cosine annealing), model architecture, and data loading are handled externally. You only control the adversarial training procedure within each step.
 
-## Evaluation
-After training, models are evaluated on:
-- **Clean accuracy**: accuracy on unperturbed test images.
-- **Robust accuracy (FGSM)**: accuracy under one-step FGSM attack.
-- **Robust accuracy (PGD-50)**: accuracy under a 50-step PGD attack — primary metric.
-
-Scenarios (model + dataset):
-- SmallCNN on MNIST (`eps = 0.3`)
-- PreActResNet-18 on CIFAR-10 (`eps = 8/255`)
-- VGG-11-BN on CIFAR-10 (`eps = 8/255`)
-- PreActResNet-18 on CIFAR-100 (`eps = 8/255`)
-
-Higher robust accuracy under PGD-50 across all scenarios is better.
-
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:
 

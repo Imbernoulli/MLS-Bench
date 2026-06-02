@@ -15,30 +15,12 @@ The original identifiability result is due to Shimizu, Hoyer, Hyvarinen &
 Kerminen, "A Linear Non-Gaussian Acyclic Model for Causal Discovery,"
 JMLR 7, 2006.
 
-The benchmark uses synthetic Erdos-Renyi and scale-free DAGs with signed linear
-edge weights and independent non-Gaussian noise. The method should handle
-moderate-to-large node counts and avoid assuming a single fixed noise
-distribution or graph family.
+The method should handle moderate-to-large variable counts and avoid assuming a single fixed noise distribution or graph family. Data is generated from synthetic DAGs with signed linear edge weights and independent non-Gaussian noise.
 
 ## Task
 Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
 return a directed DAG (skeleton + correct edge orientation) compatible with the
 benchmark evaluation.
-
-## Evaluation Scenarios
-
-| Label  | Graph type      | Nodes | Samples | Noise       |
-|--------|-----------------|-------|---------|-------------|
-| ER30   | Erdos-Renyi     | 30    | 1000    | Laplace     |
-| ER50   | Erdos-Renyi     | 50    | 2000    | Exponential |
-| SF100  | Scale-Free (BA) | 100   | 1000    | Uniform     |
-
-## Metrics
-Computed on the directed edge set (skeleton + direction must both be correct):
-- **F1** (primary ranking metric, higher is better)
-- **SHD** (lower is better)
-- **Precision** (higher is better)
-- **Recall** (higher is better)
 
 ## Reference baselines
 - `icalingam`: ICA-based LiNGAM. Shimizu, Hoyer, Hyvarinen & Kerminen,

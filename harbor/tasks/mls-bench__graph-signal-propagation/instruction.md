@@ -70,26 +70,6 @@ Available utilities:
 - `comb(n, k)` -- binomial coefficient (from scipy).
 - Constants: `K`, `ALPHA`, `HIDDEN`, `DROPOUT`, `DPRATE`.
 
-## Evaluation
-Datasets (a mix of homophilic and heterophilic graphs):
-
-| Label    | Nodes | Classes | Type         | Source                |
-|----------|-------|---------|--------------|-----------------------|
-| cora     | 2,708 | 7       | homophilic   | citation network      |
-| citeseer | 3,327 | 6       | homophilic   | citation network      |
-| texas    | 183   | 5       | heterophilic | WebKB webpage network |
-| cornell  | 183   | 5       | heterophilic | WebKB webpage network |
-
-Fixed pipeline: each dataset runs 10 random 60/20/20 train/val/test splits with
-early stopping.
-
-Metric: mean test accuracy over the 10 runs, higher-is-better.
-
-The contribution should remain a modular graph filter paired with the fixed
-classification pipeline, rather than changing the data split or evaluation
-target.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -532,13 +512,6 @@ or deleting existing ones — will cause your submission to be invalid.
    417:         flush=True,
    418:     )
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

@@ -43,14 +43,6 @@ Reference baselines spanning the design space:
   capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
-## Evaluation
-Trained and evaluated on Adroit tasks Pen (rotation), Door (opening) and
-Hammer (nailing) using the D4RL `human-v1` datasets. Metric: D4RL
-normalized score (0 = random performance, 100 = expert), averaged over
-evaluation rollouts. Higher is better. Strong methods should work across
-the manipulation tasks rather than overfitting to a single dataset.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -577,13 +569,6 @@ or deleting existing ones — will cause your submission to be invalid.
 
 [truncated: showing at most 500 lines / 60000 bytes from CORL/algorithms/offline/custom_adroit.py]
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

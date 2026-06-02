@@ -41,14 +41,6 @@ Implement the `CustomScoring` class in `custom_scoring.py`. You must implement:
 ## Fixed Pipeline
 The backbone encoders, data loaders, training loop, and evaluation scripts are fixed. Backbone parameters are loaded from pretrained weights and fine-tuned jointly with the scoring module.
 
-## Evaluation
-The model is evaluated on three virtual screening benchmarks (zero-shot, no target-specific training):
-1. **DUD-E** (102 targets): Active compounds vs property-matched decoys.
-2. **LIT-PCBA** (15 targets): Realistic screening with confirmed actives/inactives.
-3. **DEKOIS 2.0** (81 targets): Challenging decoy benchmark.
-
-Metrics (averaged across targets): **AUROC**, **BEDROC** (α=80.5), **EF** at 0.5%/1%/5%. Higher is better for all of them.
-
 ## Editable Region
 The entire `custom_scoring.py` file is editable. You may define any helper classes or functions within this file. The backbone encoders and training loop are fixed; backbone parameters are loaded from pretrained weights and fine-tuned jointly with the scoring module.
 

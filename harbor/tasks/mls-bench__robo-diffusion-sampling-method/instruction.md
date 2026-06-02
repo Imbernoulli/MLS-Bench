@@ -3,7 +3,7 @@
 # Robo-Diffusion: Sampling Algorithm Design
 
 ## Objective
-Design a single efficient diffusion sampler for a fixed DQL-style diffusion policy, maximizing D4RL MuJoCo return at low inference NFE (number of function evaluations).
+Design a single efficient diffusion sampler for a fixed DQL-style diffusion policy that achieves high quality at low inference NFE (number of function evaluations).
 
 This task is deliberately about inference-time sampler choice, not policy learning, guidance, or trajectory planning. The trained actor / critic, dataset, environment list, seeds, and evaluation loop are fixed.
 
@@ -22,37 +22,9 @@ The setup builds on **CleanDiffuser** (Dong et al., NeurIPS 2024, arXiv:2406.095
 ## What Is Fixed
 - The pipeline code, model architecture, critic, and training objective
 - `diffusion_steps`, training budgets, checkpoint selection, and EMA use
-- D4RL environment names, seeds, and vectorized evaluation
+- The environments, seeds, and vectorized evaluation loop
 
-The score's NFE term is read from the same `sampling_steps` field passed to CleanDiffuser's sampler. Custom pipeline-code samplers are intentionally out of scope here because they would decouple true NFE from the reported score column.
-
-## Evaluation
-Evaluated on three D4RL MuJoCo environments:
-1. **hopper-medium-v2**
-2. **walker2d-medium-v2**
-3. **halfcheetah-medium-v2**
-
-Metrics: `normalized_score` (D4RL return) and `sampling_steps` (NFE per inference call).
-
-### Score formula
-The per-env score multiplies a quality term by an NFE penalty:
-
-```
-score(env) = sigmoid(normalized_score) * penalty_upper(sampling_steps, target=10)
-penalty_upper(x, target=10) = exp(-0.015 * (x - 10))   for x > 10
-                              1.0                       for x <= 10
-```
-
-NFE penalty cheat-sheet:
-
-| sampling_steps | penalty | example                |
-|---------------:|--------:|------------------------|
-| 10             | 1.000   | DPM-Solver++ baseline  |
-| 20             | 0.861   | DDIM baseline          |
-| 50             | 0.549   |                        |
-| 100            | 0.259   | DDPM baseline          |
-
-Task score is the geometric mean of the three env scores. **Submitting at lower NFE is strictly preferred when quality is comparable.**
+The `sampling_steps` field you set controls how many reverse-process steps the sampler takes at inference. Custom pipeline-code samplers are intentionally out of scope here.
 
 ## Baselines
 

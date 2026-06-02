@@ -39,14 +39,6 @@ Reference baselines spanning the design space:
   rather than capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
-## Evaluation
-Trained and evaluated on Gymnasium MuJoCo continuous-control
-environments including HalfCheetah-v4, Hopper-v4 and Walker2d-v4 within
-a fixed interaction budget. Metric: mean episodic return over evaluation
-episodes (higher is better). Strong methods should transfer across
-environments with different dynamics and action effects.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

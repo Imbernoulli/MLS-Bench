@@ -42,23 +42,7 @@ You must design:
 The PPO rollout loop, value functions, optimizer, environment
 interface, and registration plumbing are fixed.
 
-## Evaluation
-Evaluated on Safety-Gymnasium navigation environments including:
-- **SafetyPointGoal1-v0** — point robot navigating to goals while
-  avoiding hazards.
-- **SafetyCarGoal1-v0** — non-holonomic car robot with the same goal
-  structure.
-- **SafetyPointButton1-v0** — point robot pressing goal buttons while
-  avoiding hazards.
-
-Each environment trains for the benchmark's fixed step budget.
-Metrics:
-- Episode return (`reward`) — higher is better.
-- Episode cost (`cost`) — lower is better, with a target threshold of
-  25.0 per the Safety-Gymnasium convention used in `omnisafe`.
-
-A method should achieve high return only when the cost constraint is
-controlled across all environments.
+The agent is evaluated on Safety-Gymnasium navigation environments where a robot must navigate to goals while avoiding hazards. A method should achieve high return while keeping the cost (safety violation count) below the configured cost limit across all environments.
 
 
 ## Your Workspace

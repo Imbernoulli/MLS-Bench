@@ -3,10 +3,10 @@
 # Online Bandits: Exploration-Exploitation Strategy Design
 
 ## Objective
-Design and implement a bandit policy that minimizes cumulative regret across diverse multi-armed bandit settings. Your code goes in `custom_bandit.py`. Three reference implementations (UCB1, Thompson Sampling, KL-UCB) are available as read-only in the SMPyBandits package.
+Design and implement a bandit policy that performs well across diverse multi-armed bandit settings. Your code goes in `custom_bandit.py`. Three reference implementations (UCB1, Thompson Sampling, KL-UCB) are available as read-only in the SMPyBandits package.
 
 ## Background
-The multi-armed bandit problem is a fundamental model for the exploration-exploitation tradeoff in sequential decision-making. At each round, an agent selects one of K arms and observes a stochastic reward. The goal is to minimize cumulative regret — the gap between the reward of the best arm (in hindsight) and the agent's actual reward.
+The multi-armed bandit problem is a fundamental model for the exploration-exploitation tradeoff in sequential decision-making. At each round, an agent selects one of K arms and observes a stochastic reward. The goal is to approach the performance of the best arm as quickly as possible.
 
 Classic algorithms include:
 - **UCB1** (Auer, Cesa-Bianchi, and Fischer, "Finite-time Analysis of the Multiarmed Bandit Problem", *Machine Learning* 47, 2002): plays the arm with the highest upper confidence bound `mu_hat + sqrt(2 log(t) / n_a)`, achieving `O(sqrt(KT log T))` minimax regret.
@@ -34,15 +34,6 @@ class BanditPolicy:
 Available utilities (in the FIXED section):
 - `kl_bernoulli(p, q)`: KL divergence between Bernoulli distributions.
 - `kl_ucb_bound(mu_hat, n, t, c)`: computes the KL-UCB upper confidence bound (Garivier and Cappé, 2011).
-
-## Evaluation
-Evaluated on three bandit settings (lower regret is better):
-
-1. **Stochastic MAB**: 10-armed Bernoulli bandit, T = 10,000 rounds. Arms have fixed reward probabilities.
-2. **Contextual**: 5-armed linear contextual bandit with `d = 10` features, T = 10,000 rounds. Expected reward is a linear function of the context.
-3. **Non-stationary**: 5-armed piece-wise stationary Bernoulli bandit with 4 abrupt changepoints, T = 10,000 rounds. The best arm changes over time.
-
-Metric: normalized cumulative regret = `(cumulative regret) / T`.
 
 ## Baselines (paper-cited reference implementations from SMPyBandits)
 - **ucb1** — Auer, Cesa-Bianchi, and Fischer (*Machine Learning* 2002); paper-default exploration constant `c = 2` in the `sqrt(c log t / n_a)` term.

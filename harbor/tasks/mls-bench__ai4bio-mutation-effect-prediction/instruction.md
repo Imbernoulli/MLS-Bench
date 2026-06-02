@@ -31,23 +31,6 @@ The model receives two inputs per mutant:
 ## Fixed Pipeline
 The data pipeline, train/test loop, embedding extraction, and cross-validation splits are all fixed by the scaffold. The only learnable degrees of freedom are (a) the `MutationPredictor` architecture and (b) optimizer hyperparameters exposed via `CONFIG_OVERRIDES` in `main()` (allowed keys: `learning_rate`, `weight_decay`).
 
-## Evaluation
-The model is evaluated on DMS assays from the ProteinGym benchmark (Notin et al., "ProteinGym: Large-Scale Benchmarks for Protein Fitness Prediction and Design", NeurIPS 2023 Datasets & Benchmarks):
-
-- **BLAT_ECOLX** (Beta-lactamase, OrganismalFitness, 4783 single mutants): Antibiotic resistance enzyme from E. coli.
-- **ESTA_BACSU** (Esterase, Stability, 2172 single mutants): Thermostability of a B. subtilis esterase.
-- **RASH_HUMAN** (K-Ras GTPase, Activity, 3134 single mutants): Oncogene activity in human cells.
-
-**Metric**: Spearman rank correlation between predicted and true fitness scores, averaged over 5-fold cross-validation using ProteinGym's pre-defined **random** folds. Higher is better.
-
-> ⚠️ **Evaluation protocol note.** ProteinGym's supervised leaderboard averages
-> Spearman over three fold strategies — `random`, `modulo` (every 5th residue),
-> and `contiguous` (held-out sequence blocks). This task uses **only the
-> `random` fold strategy**, which is the easiest of the three and tends to
-> give higher Spearman than the published ProteinGym SOTA averages. Numbers
-> reported here are therefore not directly comparable to the ProteinGym
-> supervised leaderboard; treat them as within-benchmark-relative scores.
-
 ## Baselines
 Reference baselines on the same fixed pipeline:
 - **Ridge regression** on concatenated `[embedding, delta_embedding]` features.
@@ -456,13 +439,6 @@ or deleting existing ones — will cause your submission to be invalid.
    368: if __name__ == '__main__':
    369:     main()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

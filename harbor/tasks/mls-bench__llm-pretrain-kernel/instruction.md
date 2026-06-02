@@ -29,17 +29,6 @@ preserved.
 
 The MLP class calls this function and handles dropout separately.
 
-## Evaluation
-
-- Metrics: validation loss (cross-entropy, lower is better) and training
-  throughput (elapsed time, lower is better) — kernel optimizations that
-  also change the activation function may improve loss
-- Model: GPT-2 Medium (24L/16H/1024D, ~355M params)
-- Dataset: FineWeb 10B (GPT-2 tokenizer), ~7.1B tokens (D=20N
-  Chinchilla-optimal)
-- Training: 13535 iterations, BSZ=64, GA=8, 2-GPU DDP
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -516,13 +505,6 @@ Other files you may **read** for context (do not modify):
    448:     if ddp:
    449:         dist.destroy_process_group()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

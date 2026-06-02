@@ -37,18 +37,8 @@ class CustomAnomalyDetector:
 
 Available libraries: `numpy`, `scipy` (linear algebra, statistics, spatial, optimization), `scikit-learn` (PCA, KDE, NearestNeighbors, GaussianMixture, ...), `pyod` (IForest, LOF, OCSVM, ECOD, COPOD, KNN, HBOS, PCA, LODA, SUOD, ...).
 
-## Fixed Pipeline & Evaluation
-Datasets (from ADBench / ODDS):
-- **Cardio** — 1,831 samples, 21 features, ~9.6% anomalies (cardiotocography).
-- **Thyroid** — 3,772 samples, 6 features, ~2.5% anomalies.
-- **Satellite** — 6,435 samples, 36 features, ~31.6% anomalies (Landsat).
-- **Shuttle** — 49,097 samples, 9 features, ~7.2% anomalies (NASA shuttle).
-
-Protocol: 60/40 stratified train/test split (standard ADBench/ECOD protocol). Detector fits on train features without labels; scores are computed for test features.
-
-Metrics (higher is better):
-- **AUROC** — area under ROC curve (ranking quality).
-- **F1** — F1 score at the optimal contamination threshold (decision quality after thresholding).
+## Fixed Pipeline
+The evaluation applies your detector across multiple tabular anomaly detection datasets with varying sample counts, dimensionality, and anomaly rates. The detector fits on training features without labels; anomaly scores are computed for held-out test features. Dataset loading, splitting, and metric computation are handled by the fixed harness.
 
 
 ## Your Workspace
@@ -331,13 +321,6 @@ or deleting existing ones — will cause your submission to be invalid.
    255:         flush=True,
    256:     )
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

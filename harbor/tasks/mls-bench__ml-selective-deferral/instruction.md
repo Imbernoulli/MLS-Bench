@@ -51,19 +51,8 @@ class SelectivePolicy:
 
 You may implement a global threshold, a learned acceptance score, subgroup-specific thresholds, conformal mechanisms, or any compact policy fitting this interface. The base classifier and the train/calibration/test split are not editable.
 
-## Fixed Pipeline & Evaluation
-Datasets (cached high-stakes tabular data from AIF360):
-- **Adult** — Census income prediction; subgroup attributes: sex, race.
-- **COMPAS** — ProPublica recidivism risk; subgroup attributes: race, sex.
-- **Law School GPA** — admissions/outcome data, binarized at the training-set median; subgroup attributes: race, gender.
-
-Each dataset is split into train / calibration / test; the policy fits on calibration probabilities/labels/subgroups and is evaluated on test.
-
-Metrics:
-- **`selective_risk_at80`** — classification error on accepted examples at 80% target coverage (lower is better).
-- **`worst_group_selective_risk`** — worst-subgroup error among accepted examples (lower is better).
-- **`deferral_rate_gap`** — max-subgroup deferral rate minus min-subgroup deferral rate (lower is better).
-- **`auroc`** — AUROC of the acceptance score as a predictor of correctness (higher is better).
+## Fixed Pipeline
+Each dataset is split into train / calibration / test; the policy fits on calibration probabilities/labels/subgroups and is evaluated on test. The data pipeline and base classifier are not editable.
 
 
 ## Your Workspace

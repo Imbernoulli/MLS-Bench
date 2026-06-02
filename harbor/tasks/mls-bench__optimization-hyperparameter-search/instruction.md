@@ -61,19 +61,6 @@ Each `Trial` records:
 
 The fidelity parameter controls evaluation cost: lower fidelity means cheaper but noisier evaluation (e.g., fewer boosting rounds, fewer CV folds, fewer MLP epochs).
 
-## Evaluation
-Evaluated on three ML model tuning benchmarks (**higher `best_val_score` is better, higher `convergence_auc` is better**):
-
-- **XGBoost** (6D: `n_estimators`, `max_depth`, `learning_rate`, `subsample`, `min_samples_split`, `min_samples_leaf`; `GradientBoostingRegressor` on California Housing; budget = 50).
-- **SVM** (3D: `C`, `gamma`, `kernel`; `SVC` on Breast Cancer; budget = 40).
-- **Neural Net** (6D: hidden layers, learning rate, alpha, batch_size, activation; MLP on Diabetes; budget = 40).
-
-Metrics:
-- **best_val_score**: best validation score found within the budget (primary metric).
-- **convergence_auc**: area under the normalized convergence curve (higher = found good configs earlier).
-
-Each benchmark runs with multiple seeds; mean metrics across seeds are reported.
-
 ## Baselines (paper-cited reference implementations)
 - **random_search** — Bergstra and Bengio (JMLR 2012).
 - **tpe** — Bergstra et al. (NIPS 2011); paper-default `gamma = 0.25`, 24 candidate configurations per suggestion.

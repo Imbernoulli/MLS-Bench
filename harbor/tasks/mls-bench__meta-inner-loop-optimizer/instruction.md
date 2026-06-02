@@ -45,12 +45,11 @@ class InnerLoopOptimizer:
 
 Available reference code: `learn2learn/algorithms/maml.py`, `meta_sgd.py`, `gbml.py`.
 
-## Fixed Pipeline & Evaluation
+## Fixed Pipeline
 - Backbone: CNN4.
 - Meta-training: 60,000 iterations, 4 tasks per meta-batch.
 - Inner loop: 5 steps during training, 10 steps during evaluation.
-- Benchmarks: **miniImageNet 5-way 1-shot**, **miniImageNet 5-way 5-shot**, **CIFAR-FS 5-way 5-shot**.
-- Metric: mean classification accuracy over 600 test episodes (higher is better).
+- Evaluation metric, benchmark settings, and episode counts are fixed.
 
 
 ## Your Workspace

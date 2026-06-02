@@ -36,7 +36,7 @@ unconditional Gaussian noise. The benchmark provides three reference families:
 
 The research question is whether a better transition rule can synthesize the
 strengths of these families — or introduce a new mathematical update — to
-reduce FID under a small NFE budget.
+improve generation quality under a small NFE budget.
 
 ## Implementation Contract
 
@@ -72,8 +72,7 @@ def sample_dbim(
   `(final_image, sampling_path, num_function_evals, predicted_x0_list, time_schedule, initial_noise)`.
 - Do not alter how external hyperparameters (e.g. `guidance_scale`,
   `corrupt_scale`) are parsed from environment variables.
-- The evaluation pipeline wraps the denoiser with a counter. You may call
-  `denoiser(...)` at most `len(ts)` times per sample — the
+- You may call `denoiser(...)` at most `len(ts)` times per sample — the
   `(len(ts) + 1)`-th call raises `RuntimeError: NFE_BUDGET_EXCEEDED` and the
   run is rejected. How you allocate those calls and schedule stochasticity is
   entirely your choice.
@@ -85,19 +84,8 @@ def sample_dbim(
 |--------------------|-------------|
 | `dbim`             | Diffusion Bridge Implicit Models (Zheng et al., ICLR 2025, arXiv:2405.15885) — fast non-Markovian bridge sampler with closed-form coefficients. |
 | `dbim_high_order`  | DBIM with the high-order ODE solver derived in the same paper. |
-| `ddbm`             | Reverse-SDE sampler from the original DDBM paper (Zhou et al., arXiv:2309.16948). Used here as a high-NFE reference; its budget is not available to the agent. |
+| `ddbm`             | Reverse-SDE sampler from the original DDBM paper (Zhou et al., arXiv:2309.16948). High-NFE reference; its budget is not available to the agent. |
 | `ecsi`             | Endpoint-conditioned stochastic interpolant sampler (Tang et al., arXiv:2410.21553). |
-
-## Evaluation
-
-Evaluation runs multiple image-to-image and restoration workloads (e.g.
-Edges→Handbags, ImageNet center-inpainting). Metric: **FID — Fréchet Inception
-Distance**, lower is better. The parser also verifies the actual number of
-denoiser calls per sample and rejects runs that exceed the allowed budget.
-
-The agent-facing budget is **NFE = 5 denoiser calls per sample**. The DDBM
-high-NFE baseline is a reference point only — it does not grant additional
-function evaluations to your sampler.
 
 The contribution should be the sampler update rule. Keep dataset handling,
 external hyperparameter parsing, and evaluation scripts unchanged.

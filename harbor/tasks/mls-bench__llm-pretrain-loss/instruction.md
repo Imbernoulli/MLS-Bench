@@ -3,7 +3,7 @@
 # LLM Pretraining: Loss Function Optimization
 
 ## Research Question
-Design an improved loss function for GPT-2 next-token language model pretraining. The change should reduce validation loss and improve downstream language ability under the same architecture, data, and optimization budget, compared to standard cross-entropy.
+Design an improved loss function for GPT-2 next-token language model pretraining. The change should improve model quality under the same architecture, data, and optimization budget, compared to standard cross-entropy.
 
 ## Background
 The default objective is plain next-token cross-entropy. Several modifications have been studied as drop-in replacements at this layer:
@@ -32,14 +32,7 @@ The `compute_loss` function in `nanoGPT/custom_pretrain.py`:
 
 ## Fixed Pipeline
 - **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 13,535 iterations, micro-batch 64, gradient accumulation 8, 2-GPU DDP.
 - Architecture, tokenizer, dataset, training loop, and evaluation pipeline are fixed.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
 
 
 ## Your Workspace
@@ -508,13 +501,6 @@ Other files you may **read** for context (do not modify):
    438:     if ddp:
    439:         dist.destroy_process_group()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

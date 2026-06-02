@@ -32,15 +32,8 @@ class Model(nn.Module):
         return out[:, -self.pred_len:, :]
 ```
 
-## Datasets and Fixed Protocol
-- **ETTh1** — 7 → 1, hourly Electricity Transformer Temperature (Zhou et al., AAAI 2021).
-- **Weather** — 21 → 1, 21 weather observations.
-- **ECL** — 321 → 1, hourly electricity consumption of 321 clients.
-
-All settings: `features=MS`, `seq_len=96`, `label_len=48`, `pred_len=96`. Standardization, splits, and the target column are fixed by the Time-Series-Library data loaders.
-
-## Metrics
-MSE and MAE on the target variable only (the harness extracts `outputs[:, :, -1:]` before scoring). Lower is better.
+## Fixed Protocol
+The evaluation datasets, splits, normalization, `seq_len`, `label_len`, `pred_len`, and target column are all fixed by the Time-Series-Library data loaders and harness config. All inputs use `features=MS` mode; the harness extracts `outputs[:, :, -1:]` so only the final (target) channel is scored.
 
 ## Reference Implementations (read-only)
 Four reference models from `models/`:

@@ -30,17 +30,12 @@ The evaluation loss reported during training (`test_loss`) is computed with stan
 - Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
 - Schedule: cosine annealing over `200` epochs.
 - Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip` (CIFAR-style).
-- Evaluation settings include ResNet-56 on CIFAR-100 (deep residual, 100 classes), VGG-16-BN on CIFAR-100 (deep non-residual with BatchNorm, 100 classes), and MobileNetV2 on FashionMNIST (lightweight inverted-residual, 10 classes).
 
 ## Baselines
 The included baselines provide reference implementations of:
 - **label_smoothing** — Szegedy et al., arXiv:1512.00567.
 - **focal_loss** — Lin et al., arXiv:1708.02002, with default focusing parameter `gamma=2.0`.
 - **poly_loss** — Leng et al., arXiv:2204.12511, Poly-1 form with default leading coefficient `eps=2.0` (the value reported in the paper for image classification).
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The custom loss must remain differentiable, accept raw logits and integer class labels, and must not change datasets, model definitions, optimizer setup, or test-time evaluation.
-
 
 ## Your Workspace
 

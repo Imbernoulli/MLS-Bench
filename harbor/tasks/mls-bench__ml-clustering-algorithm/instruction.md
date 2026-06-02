@@ -28,16 +28,8 @@ class CustomClustering(BaseEstimator, ClusterMixin):
 
 Available imports (already in the FIXED section): `numpy`, `sklearn.base.BaseEstimator`, `sklearn.base.ClusterMixin`, `sklearn.preprocessing.StandardScaler`, `sklearn.metrics.*`. You may import any module from `scikit-learn`, `numpy`, or `scipy`.
 
-## Fixed Pipeline & Evaluation
-Datasets:
-- **blobs** — 5 isotropic Gaussian clusters.
-- **moons** — 2 interleaving half-circles (non-convex).
-- **digits** — `sklearn.datasets.load_digits()`, 10 classes, 64 features (high-dimensional real data).
-
-Metrics (higher is better):
-- **ARI** — Adjusted Rand Index (matches predicted clusters to ground-truth labels).
-- **NMI** — Normalized Mutual Information.
-- **Silhouette** — intrinsic compactness/separation of clusters.
+## Fixed Pipeline
+The algorithm is evaluated on several datasets covering diverse geometries (convex blobs, non-convex shapes, and high-dimensional real data). The data pipeline, evaluation harness, and metrics are fixed.
 
 
 ## Your Workspace

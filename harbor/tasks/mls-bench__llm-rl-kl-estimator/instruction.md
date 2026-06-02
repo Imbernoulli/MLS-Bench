@@ -48,13 +48,8 @@ def compute_custom_kl_penalty(
 
 ## Fixed Pipeline
 - **Policy**: Qwen2.5-0.5B (full-parameter), verl framework, GRPO advantage estimator.
-- **Training set**: simpleRL-Zoo MATH level 3–5 (Qwen split) plus a 5K subset of DeepMath.
-- **Hyperparameters**: 100 steps, 16 rollout samples per prompt, batch size 128, `actor.use_kl_loss=True`, `actor.kl_loss_coef=0.001`, `actor.kl_loss_type=custom`.
-- Reward manager, advantage estimator, rollout, model, optimizer, and evaluation are fixed.
-
-## Evaluation
-Math-reasoning accuracy (`mean@1`) on **GSM8K**, **MATH-500**, and **AMC 23**; primary score is the mean across the three.
-
+- **Training set**: math reasoning problems (MATH level 3–5, plus additional challenging problems).
+- **Hyperparameters**: `actor.use_kl_loss=True`, `actor.kl_loss_type=custom`. Reward manager, advantage estimator, rollout, model, optimizer, and evaluation are fixed.
 
 ## Your Workspace
 

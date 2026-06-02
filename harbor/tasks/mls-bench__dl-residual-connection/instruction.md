@@ -3,7 +3,7 @@
 # DL Residual Connection Block Design
 
 ## Research Question
-Design a residual / skip-connection block for CIFAR-style ResNets that improves test accuracy across different network depths and datasets, while keeping the broader training recipe, initialization, data pipeline, optimizer, and classifier objective fixed.
+Design a residual / skip-connection block for CIFAR-style ResNets that improves classification performance across different network depths and datasets, while keeping the broader training recipe, initialization, data pipeline, optimizer, and classifier objective fixed.
 
 ## Background
 Residual connections (He et al., "Deep Residual Learning for Image Recognition", arXiv:1512.03385) enabled training of very deep networks by providing identity shortcut paths. The basic residual block adds the input to the output of two stacked 3×3 convolutions. Several improvements have been proposed:
@@ -32,16 +32,12 @@ You may modify the internal convolution structure (number, kernel sizes, groupin
 - Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
 - Schedule: cosine annealing over `200` epochs.
 - Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-20 (`[3,3,3]`) on CIFAR-10, ResNet-56 (`[9,9,9]`) on CIFAR-100, ResNet-110 (`[18,18,18]`) on CIFAR-100.
+- Network architecture: CIFAR-adapted ResNets at varying depths, evaluated on CIFAR-style image classification datasets.
 
 ## Baselines
 - **pre_activation** — He et al., arXiv:1603.05027; BN-ReLU-Conv ordering inside the block.
 - **gated_residual** — ReZero-style learnable scalar gate per block, initialized to `0` (Bachlechner et al., arXiv:2003.04887).
 - **stochastic_depth** — Huang et al., arXiv:1603.09382; linearly decaying per-block survival probability with `p_L=0.5`.
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The block must satisfy the interface above and must not change dataset construction, optimization, global pooling, classifier heads, or the outer training loop.
-
 
 ## Your Workspace
 
@@ -345,13 +341,6 @@ or deleting existing ones — will cause your submission to be invalid.
    277: if __name__ == '__main__':
    278:     main()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

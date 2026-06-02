@@ -47,26 +47,6 @@ The editable code must keep the public interface intact:
 - `loss(batch_obs, batch_next_obs, batch_actions)`
 - `mix_advantages(ext_advantages, int_advantages, args)`
 
-## Evaluation
-The agent is trained with the same fixed PPO-style loop on multiple
-sparse-reward Atari environments, including:
-- **Tutankham-v5** — medium-difficulty visible game.
-- **Frostbite-v5** — hard-exploration visible game.
-- **PrivateEye-v5** — additional hard-exploration setting.
-
-Reported metrics:
-- `eval_return` — mean evaluation episodic return at the fixed training
-  budget.
-- `auc` — area under the evaluation-return curve across training.
-- `nonzero_rate` — fraction of evaluation episodes with non-zero
-  episodic return.
-
-Evaluation uses deterministic rollouts with a fixed per-episode step
-cap so that non-terminating Atari behavior cannot stall the benchmark.
-Higher is better for all metrics. A method should improve across
-multiple games rather than helping only one.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

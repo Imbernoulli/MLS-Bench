@@ -64,18 +64,6 @@ serve as design points spanning the literature:
   "Multi-Agent Reinforcement Learning is a Sequence Modeling Problem"
   (arXiv:2205.14953, NeurIPS 2022); the MAPPO actor is kept unchanged.
 
-## Evaluation
-Performance is measured by **test win rate** (`battle_won_mean`) averaged
-over the SMAC test episodes with the greedy policy, evaluated separately
-per map and recorded under setup-specific metric keys:
-
-- Primary: `test_battle_won_mean_<map>` (higher is better)
-- Secondary: `test_return_mean_<map>` (higher is better)
-
-A strong centralized critic should generalize across cooperative maps of
-varying difficulty rather than specialize to one scenario.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree

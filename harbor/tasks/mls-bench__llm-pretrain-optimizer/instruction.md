@@ -3,7 +3,7 @@
 # LLM Pretraining: Optimizer & Learning Rate Schedule Optimization
 
 ## Research Question
-Design an improved optimizer and / or learning-rate schedule for GPT-style language model pretraining. The change should reduce validation loss compared to AdamW + cosine annealing under the same model and data budget.
+Design an improved optimizer and / or learning-rate schedule for GPT-style language model pretraining. The change should improve training efficiency or final model quality compared to AdamW + cosine annealing under the same model and data budget.
 
 ## Background
 The default optimizer is AdamW (fused) with weight decay only on 2D parameters and cosine LR decay with linear warmup. Studied alternatives at this layer:
@@ -35,15 +35,9 @@ You may modify:
 - `adamw_nesterov` — AdamW with Nesterov momentum.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 12,030 iterations, micro-batch 96, gradient accumulation 6, 2-GPU DDP.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
-
+- **Model**: A multi-layer GPT-style transformer with causal self-attention.
+- **Dataset**: A large English web-text corpus tokenized with the GPT-2 tokenizer.
+- **Training**: Multi-GPU DDP with gradient accumulation and mixed-precision (bfloat16).
 
 ## Your Workspace
 

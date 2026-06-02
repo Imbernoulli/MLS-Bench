@@ -3,7 +3,7 @@
 # Optimization Bilevel
 
 ## Research Question
-Can you design a single first-order update rule that makes a fixed bilevel-optimization benchmark — Shen and Chen's penalty-based bilevel gradient descent setting — converge faster on a numerical toy and recover more of the clean MNIST data in a hyper-cleaning task?
+Can you design a single first-order update rule that makes a fixed bilevel-optimization benchmark — Shen and Chen's penalty-based bilevel gradient descent setting — converge faster on a numerical toy and recover more of the clean data in a hyper-cleaning task?
 
 ## Background
 A bilevel problem couples an outer objective `f(x, y)` to an inner problem `min_y g(x, y)` whose solution depends on `x`. Penalty-based bilevel gradient descent (PBGD) replaces the inner argmin with a penalty term that constrains the lower-level value gap and then performs first-order updates jointly on `x` and `y`. Two PBGD variants are studied in the reference work:
@@ -11,7 +11,7 @@ A bilevel problem couples an outer objective `f(x, y)` to an inner problem `min_
 - **V-PBGD** uses a value-function penalty `g(x, y) - g*(x)` and is the main method of Shen and Chen, "On Penalty-based Bilevel Gradient Descent Method" (ICML 2023; arXiv:2302.05185).
 - **G-PBGD** penalizes the squared lower-level gradient norm; an iterative-differentiation baseline (RHG / T-RHG) competes via inner unrolling.
 
-The reference repository `hanshen95/penalized-bilevel-gradient-descent` provides the Section 5/6 toy convergence experiment and the data hyper-cleaning experiment, where a fraction of MNIST training labels are corrupted and the outer problem learns per-example weights so that an inner classifier trained on the weighted set generalizes to clean validation data.
+The reference repository `hanshen95/penalized-bilevel-gradient-descent` provides the Section 5/6 toy convergence experiment and the data hyper-cleaning experiment, where a fraction of training labels are corrupted and the outer problem learns per-example weights so that an inner classifier trained on the weighted set generalizes to clean validation data.
 
 ## What You Can Modify
 Edit only `penalized-bilevel-gradient-descent/mlsbench/custom_strategy.py` inside the editable block. Define:
@@ -32,14 +32,12 @@ The driver, dataset split, pollution protocol, metrics, and model architectures 
 ### Toy / Numerical Verification
 - Problem definition follows Section 5.1 / 6.1 of Shen and Chen (2023).
 - Upper variable `x` is projected to `[0, 3]`.
-- 1000 random initial points are sampled (per the official toy script).
-- Primary metric: `convergence_steps`. Secondary: `success_rate`, `final_residual`, `runtime_sec` (lower step counts and residuals are better).
+- Multiple random initial points are sampled (per the official toy script).
 
 ### Data Hyper-Cleaning
-- MNIST split: 5000 train / 5000 validation / 10000 test.
-- Label-pollution rate: 50% (per the official code).
-- Models: linear classifier and 2-layer MLP (`784 -> 300 -> 10`, sigmoid hidden layer).
-- Primary metric: `test_accuracy` (higher is better). Secondary: `f1_score`, cleaner precision/recall, runtime to best accuracy.
+- A standard image classification dataset is used with a train/validation/test split.
+- A fixed fraction of training labels are corrupted (per the official code).
+- Models: linear classifier and 2-layer MLP with sigmoid hidden layer.
 
 ## Reference Files (read-only)
 - `penalized-bilevel-gradient-descent/V-PBGD/toy/toy.py`

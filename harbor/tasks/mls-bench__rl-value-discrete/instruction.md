@@ -34,14 +34,6 @@ Reference baselines spanning the design space:
   exploration, replay usage) rather than encoder capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
-## Evaluation
-Trained and evaluated on Gymnasium discrete-control tasks including
-CartPole-v1, LunarLander-v2 and Acrobot-v1 within a fixed interaction
-budget. Metric: mean episodic return over greedy evaluation episodes
-(higher is better). Strong methods should remain stable across tasks
-with different reward scales and episode lengths.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -395,13 +387,6 @@ or deleting existing ones — will cause your submission to be invalid.
    328: 
    329:     envs.close()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

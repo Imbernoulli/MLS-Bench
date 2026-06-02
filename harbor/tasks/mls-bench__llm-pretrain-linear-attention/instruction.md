@@ -39,15 +39,7 @@ Two editable regions in `nanoGPT/custom_pretrain.py`:
 - `deltanet` — DeltaNet (delta-rule linear attention).
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 13,535 iterations, micro-batch 32, gradient accumulation 16, 2-GPU DDP.
-- Dataset, tokenizer, training schedule, evaluation code, and unrelated objectives are out of scope.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
+- The dataset, tokenizer, training schedule, evaluation code, and unrelated objectives are out of scope (fixed by the harness).
 
 
 ## Your Workspace
@@ -514,13 +506,6 @@ or deleting existing ones — will cause your submission to be invalid.
    437:     if ddp:
    438:         dist.destroy_process_group()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

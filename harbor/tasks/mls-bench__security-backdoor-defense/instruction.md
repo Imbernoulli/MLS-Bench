@@ -16,13 +16,9 @@ Implement a stronger backdoor defense in `bench/backdoor/custom_backdoor_defense
 3. Extract features from the penultimate layer and logits for the entire training set.
 4. Call your defense to assign suspicion scores to training examples.
 5. Remove the top `1.5 * epsilon` fraction of highest-scoring samples (over-estimate of the poison count, as recommended by Tran et al., 2018, Sec. 4.1) and retrain on the filtered set for 100 epochs.
-6. Evaluate clean accuracy and attack success rate on triggered test inputs on the *retrained* model.
+6. Evaluate the retrained model.
 
-The objective is to reduce backdoor ASR on the retrained model without sacrificing too much clean accuracy. The primary objective `defense_score = 0.5 * clean_acc + 0.5 * (1 - asr)` follows the BackdoorBench convention (https://github.com/SCLBD/BackdoorBench, NeurIPS 2022 D&B Track): filter-stage `poison_recall` is reported as a diagnostic but is **not** directly part of `defense_score`. A defense that under-ranks poison but still triggers the model to forget the backdoor during retrain can still succeed.
-
-### Task-Design Notes
-- **CIFAR-100 Blend uses 1% poison fraction**, not 5%, because at 5% the target class becomes 83% poisoned (2500 poisoned + 500 clean), which is a degenerate regime for per-class SVD/clustering defenses where the class mean is dominated by poison and centering makes the *clean* examples the outliers. Tran et al. (2018) assume poison rate within a class is well below 50%; with `poison_fraction = 0.01`, the CIFAR-100 target class is ~33% poisoned, matching the paper's setting.
-- BadNets on CIFAR-10 (5%) and FashionMNIST (8%) keep the target class at <=45% poisoned, which is within the operating regime of SVD-style defenses.
+The objective is to reduce the backdoor attack success rate without sacrificing clean accuracy.
 
 ## Editable Interface
 You must implement:
@@ -43,23 +39,6 @@ class BackdoorDefense:
 - Return value from `score_samples`: 1-D suspicion scores; higher means more suspicious.
 
 The model architecture, poison injection process, filtering budget, and retraining schedule are fixed.
-
-## Evaluation
-Three benchmark settings are evaluated with research-scale training:
-
-- `resnet20-cifar10-badnets`: ResNet-20 on full CIFAR-10, BadNets trigger, 5% poison fraction.
-- `vgg16bn-cifar100-blend`: VGG-16-BN on full CIFAR-100, Blend trigger, 1% poison fraction.
-- `mobilenetv2-fmnist-badnets`: MobileNetV2 on full FashionMNIST, BadNets trigger, 8% poison fraction.
-
-All models train for 100 epochs with SGD (`lr = 0.1`, `momentum = 0.9`, `weight_decay = 5e-4`) and a cosine annealing schedule.
-
-Reported metrics:
-- `clean_acc`: clean test accuracy after defense.
-- `asr`: attack success rate on trigger-patched test data (lower is better).
-- `poison_recall`: fraction of true poisoned points removed by the defense (diagnostic).
-- `defense_score`: aggregate score used for ranking, higher is better.
-
-Primary objective: maximize `defense_score`.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops:

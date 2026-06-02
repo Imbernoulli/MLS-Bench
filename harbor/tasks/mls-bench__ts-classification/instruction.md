@@ -1,12 +1,12 @@
 # MLS-Bench: ts-classification
 
-# Multivariate Time Series Classification on UEA Datasets
+# Multivariate Time Series Classification
 
 ## Research Question
-Can a single classification component (temporal encoder + channel-interaction + padding-aware pooling) generalize across heterogeneous multivariate time series — spectral chemistry signals, MEG brain recordings, accelerometer handwriting traces — when training and evaluation are held to a fixed protocol?
+Can a single classification component (temporal encoder + channel-interaction + padding-aware pooling) generalize across heterogeneous multivariate time series when training and evaluation are held to a fixed protocol?
 
 ## Background
-The UEA Multivariate Time Series Classification archive (Bagnall et al., "The UEA multivariate time series classification archive, 2018", arXiv 1811.00075) is the standard benchmark for multivariate TSC. Datasets vary widely in sequence length, channel count, number of classes, sampling rate, and noise characteristics, making it a stress test for "general-purpose" temporal encoders. The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes train/test splits, padding to a common per-dataset length, RAdam optimization, cross-entropy loss, and accuracy reporting.
+Standard multivariate time series classification benchmarks cover diverse signal types — datasets vary widely in sequence length, channel count, number of classes, sampling rate, and noise characteristics, making them a stress test for "general-purpose" temporal encoders. The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes train/test splits, padding to a common per-dataset length, RAdam optimization, cross-entropy loss, and accuracy reporting.
 
 ## Objective
 Implement the `Model` class in `models/Custom.py`. Given a padded input window plus a binary padding mask, return class logits.
@@ -30,15 +30,8 @@ class Model(nn.Module):
             return self.classification(x_enc, x_mark_enc)
 ```
 
-## Datasets and Fixed Protocol
-- **EthanolConcentration** — spectral data classification (4 classes).
-- **FaceDetection** — MEG brain-imaging binary classification.
-- **Handwriting** — accelerometer-based character recognition (26 classes).
-
-All from the UEA archive. Train/test splits are dataset-provided. Optimization: RAdam, CrossEntropyLoss, early-stopping `patience=10`, framework defaults for batch size and `train_epochs`.
-
-## Metric
-Test accuracy — higher is better.
+## Fixed Protocol
+Train/test splits are dataset-provided. Optimization: RAdam, CrossEntropyLoss, early-stopping `patience=10`, framework defaults for batch size and `train_epochs`.
 
 ## Reference Implementations (read-only)
 Three reference models from `models/`:

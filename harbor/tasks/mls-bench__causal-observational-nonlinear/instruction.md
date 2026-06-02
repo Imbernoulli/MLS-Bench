@@ -25,24 +25,6 @@ Gaussian, where ANM identifiability becomes more delicate.
 Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
 return a directed DAG compatible with the benchmark evaluation.
 
-## Evaluation Scenarios
-
-| Label           | Graph type      | Nodes | Samples | Noise       | Nonlinearity |
-|-----------------|-----------------|-------|---------|-------------|--------------|
-| SF20-GP         | Scale-Free (BA) | 20    | 2000    | Exponential | GP           |
-| ER20-Gauss      | Erdos-Renyi     | 20    | 2000    | Gaussian    | Mixed        |
-| ER12-LowSample  | Erdos-Renyi     | 12    | 150     | Laplace     | Mixed        |
-
-The settings vary nonlinearity family, graph topology, noise distribution, and
-sample regime, so the method should not depend on a single combination of
-these.
-
-## Metrics
-Computed on the directed edge set (skeleton + direction must both be correct):
-- **F1** (primary ranking metric, higher is better)
-- **SHD** (lower is better)
-- **Precision**, **Recall** (higher is better)
-
 ## Reference baselines
 - `cam`: Causal Additive Models with GAM regression. Score-based. Buhlmann,
   Peters & Ernest, "CAM: Causal additive models, high-dimensional order search

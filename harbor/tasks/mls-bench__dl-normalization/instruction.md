@@ -32,15 +32,13 @@ You may modify normalization statistics (mean/variance over batch, channel, spat
 - Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
 - Schedule: cosine annealing over `200` epochs.
 - Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-56 on CIFAR-100, MobileNetV2 on FashionMNIST, and ResNet-110 on CIFAR-100.
+
+The normalization module must preserve tensor shape, accept the expected channel count, remain numerically stable in train and eval, and must not change backbones, activations, datasets, loss functions, or optimizer settings.
 
 ## Baselines
 - **group_norm** — Wu & He, arXiv:1803.08494; default `num_groups=32` (paper-recommended), with channel counts smaller than `num_groups` falling back to InstanceNorm-equivalent grouping.
 - **batch_instance_norm** — Nam & Kim, arXiv:1805.07925; per-channel learnable gate `rho` initialized to `1.0` (BatchNorm-leaning, matching the paper).
 - **switchable_norm** — Luo et al., arXiv:1806.10779; learnable softmax weights over `{BN, LN, IN}` statistics per layer.
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The normalization module must preserve tensor shape, accept the expected channel count, remain numerically stable in train and eval, and must not change backbones, activations, datasets, loss functions, or optimizer settings.
 
 
 ## Your Workspace
@@ -498,13 +496,6 @@ or deleting existing ones — will cause your submission to be invalid.
    430: if __name__ == '__main__':
    431:     main()
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

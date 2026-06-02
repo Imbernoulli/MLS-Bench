@@ -55,32 +55,6 @@ One editable region in `custom_pretrain.py`:
   block, even though the internal contents of `CausalSelfAttention` remain
   flexible.
 
-## Evaluation
-
-Evaluation follows the same setup as other `llm-pretrain-*` tasks: primary
-evaluation at 345M scale (24L/16H/1024D) with downstream lm-eval. The KV
-footprint and throughput diagnostics specific to this task are measured
-from the 345M checkpoint.
-
-- Primary metric: validation loss at 345M (cross-entropy, lower is better)
-- Secondary metrics:
-  - `kv_bytes_per_token` (lower is better; evaluator-derived KV footprint
-    from the realized attention structure — the primary efficiency axis)
-  - `heldout_loss` (lower is better; average cross-entropy on
-    WikiText-2/103 + LAMBADA held-out corpora at the 345M final checkpoint)
-  - `arc_easy`, `hellaswag` (0-shot downstream accuracy via lm-eval, from
-    the 345M checkpoint)
-- Visible benchmark regimes:
-  - `gpt-345m`: 345M pretraining on ClimbMix with KV structural metrics +
-    held-out eval
-  - `lm-eval-345m`: 0-shot downstream evaluation (ARC-Easy, HellaSwag,
-    PIQA, Winogrande)
-- Training data: ClimbMix tokenized training split (~58GB)
-- Held-out eval data: WikiText-2, WikiText-103, LAMBADA (packaged `eval`
-  dependency)
-- Training schedule: 345M uses Chinchilla-optimal ~7.1B tokens (13535
-  steps, 2-GPU DDP, LR=3e-4, same as `llm-pretrain-attention`)
-
 ## Baselines
 
 The visible baseline chain is `MHA -> MQA -> GQA -> MLA`:
@@ -623,13 +597,6 @@ or deleting existing ones — will cause your submission to be invalid.
 
 [truncated: showing at most 500 lines / 60000 bytes from nanoGPT/custom_pretrain.py]
 ```
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

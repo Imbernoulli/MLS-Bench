@@ -34,15 +34,14 @@ You may use any combination of geometric transforms (crop, flip, rotation, affin
 - Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
 - Schedule: cosine annealing over `200` epochs.
 - Weight initialization: standard Kaiming normal.
-- Evaluation settings: ResNet-20 on CIFAR-10, ResNet-56 on CIFAR-100, MobileNetV2 on FashionMNIST.
 
 ## Baselines
 - **cutout** — DeVries & Taylor, arXiv:1708.04552; default 16×16 patch on CIFAR-style 32×32 inputs as in the paper.
 - **randaugment** — Cubuk et al., arXiv:1909.13719; default `N=2`, `M=14` (paper-reported defaults for ResNet-style models on CIFAR).
 - **trivialaugment** — Müller & Hutter, arXiv:2103.10158; parameter-free, single random op per image with random magnitude.
 
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The transform must produce normalized tensors compatible with the existing loaders and models, and must not use validation/test labels, change the dataset split, or alter the model and optimization code.
+## Implementation Contract
+The transform must produce normalized tensors compatible with the existing loaders and models, and must not use validation/test labels, change the dataset split, or alter the model and optimization code.
 
 
 ## Your Workspace

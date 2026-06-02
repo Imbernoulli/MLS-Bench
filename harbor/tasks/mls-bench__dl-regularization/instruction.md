@@ -3,7 +3,7 @@
 # DL Regularization Strategy Design
 
 ## Research Question
-Design an additional regularization term for deep convolutional image classifiers that improves generalization (test accuracy) across different architectures and datasets, while the main cross-entropy objective, optimizer, and outer training loop remain fixed.
+Design an additional regularization term for deep convolutional image classifiers that improves generalization across different architectures and datasets, while the main cross-entropy objective, optimizer, and outer training loop remain fixed.
 
 ## Background
 Beyond standard weight decay (L2 penalty applied through the optimizer), many regularization techniques have been proposed to improve generalization in deep networks:
@@ -33,15 +33,13 @@ Note: standard L2 weight decay (`5e-4`) is **already** applied via the optimizer
 - Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
 - Schedule: cosine annealing over `200` epochs.
 - Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-56 on CIFAR-100, VGG-16-BN on CIFAR-100, MobileNetV2 on FashionMNIST.
 
 ## Baselines
 - **dropblock** — Ghiasi et al., arXiv:1810.12890; loss-based DropBlock-inspired co-activation penalty.
 - **confidence_penalty** — Pereyra et al., arXiv:1701.06548; default penalty weight `beta=0.1` (within the `[0.1, 1.0]` range explored in the paper).
 - **orthogonal_reg** — Brock et al., arXiv:1609.07093; soft orthogonality penalty `||W^T W − I||_F^2` on conv weights with default coefficient `1e-4`.
 
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The regularizer must remain differentiable, computationally reasonable, and must not alter the dataset, architecture, base loss, optimizer, scheduler, or evaluation procedure.
+The regularizer must remain differentiable, computationally reasonable, and must not alter the dataset, architecture, base loss, optimizer, scheduler, or evaluation procedure.
 
 
 ## Your Workspace

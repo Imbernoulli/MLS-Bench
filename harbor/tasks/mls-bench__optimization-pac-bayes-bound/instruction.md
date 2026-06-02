@@ -40,16 +40,6 @@ Implement the `BoundOptimizer` class in `custom_pac_bayes.py`. You must implemen
 - `compute_01_risk(model, loader, device, mc_samples)`: MC estimate of 0-1 risk.
 - Available losses: `F.nll_loss`, `F.cross_entropy` on log-softmax outputs.
 
-## Evaluation
-The bound optimizer is tested on three settings:
-1. **MNIST-FCN**: 4-layer fully connected network (`784-600-600-600-10`) on MNIST.
-2. **MNIST-CNN**: 4-layer CNN (2 conv + 2 fc) on MNIST.
-3. **FashionMNIST-CNN**: same CNN architecture on FashionMNIST.
-
-**Primary metric**: `risk_certificate` (0-1 loss PAC-Bayes bound) — **lower is better** (tighter bound). Test error, KL divergence, cross-entropy-style bound, and empirical 0-1 risk are also recorded.
-
-Training uses data-dependent priors: 50% of training data trains a deterministic prior, 50% evaluates the bound (Pérez-Ortiz et al., 2021).
-
 ## Baselines (paper-cited bound formulations)
 - **mcallester** — McAllester / Maurer bound: `risk + sqrt((KL + log(2 sqrt(n) / delta)) / (2n))` (McAllester, *Machine Learning* 1999; Maurer, "A Note on the PAC-Bayesian Theorem", arXiv:cs/0411099, 2004).
 - **catoni** — Catoni's lambda bound (Catoni, IMS Lecture Notes 56, 2007); paper-default `lambda` tuned over a small grid.

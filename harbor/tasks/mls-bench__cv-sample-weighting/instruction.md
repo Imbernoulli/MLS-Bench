@@ -32,15 +32,14 @@ You may modify the functional form mapping class counts to weights (inverse, pow
 - Schedule: cosine annealing over `200` epochs.
 - Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
 - Evaluation is on the balanced test set; training is on the long-tail train split.
-- Evaluation settings: ResNet-32 on CIFAR-10-LT (imbalance ratio 100), ResNet-32 on CIFAR-100-LT (imbalance ratio 100), and VGG-16-BN on CIFAR-100-LT (imbalance ratio 50).
 
 ## Baselines
 - **inverse_freq** — `w[c] = total_samples / (num_classes * n[c])`.
 - **effective_number** — Cui et al., arXiv:1901.05555; default `β=0.9999` (paper-recommended for long-tail CIFAR-100), with weights normalized so they sum to `num_classes`.
 - **balanced_softmax** — weighting form motivated by Ren et al., arXiv:2007.10740, derived from the empirical class prior.
 
-## Metric
-Best test accuracy (%, higher is better) on the balanced test set. The weighting rule must produce numerically stable class weights compatible with cross-entropy and must not change the dataset construction, sampler, model architecture, optimizer, or evaluation metric.
+## Implementation Contract
+The weighting rule must produce numerically stable class weights compatible with cross-entropy and must not change the dataset construction, sampler, model architecture, optimizer, or evaluation metric.
 
 
 ## Your Workspace

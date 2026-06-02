@@ -30,18 +30,12 @@ importance signal shifts with the observation window (H2O, SnapKV) drift
 during generation under this setting; the baseline set is therefore
 restricted to methods that operate correctly under parallel forward.
 
-NIAH retrieval and LongBench QA evaluations need instruction-following
-ability, so this task uses an instruction-tuned backbone rather than a
-base model. The agent's `SparseAttention` instance (one per attention
-layer) is monkey-patched into `Qwen/Qwen2.5-1.5B-Instruct` (12 query
-heads, 2 KV heads — the harness handles GQA replication so this module
-sees 12 heads on both Q and K/V).
-
-| Env | Metric | Notes |
-|---|---|---|
-| `niah_8k` | retrieval accuracy | Synthetic Needle-In-A-Haystack at 8K context |
-| `longbench_qasper` | QA F1 | LongBench Qasper single-doc scientific paper QA |
-| `longbench_multifieldqa_en` | QA F1 | LongBench MultiFieldQA-EN long-document multi-field QA |
+Long-context understanding tasks need instruction-following ability, so
+this task uses an instruction-tuned backbone rather than a base model.
+The agent's `SparseAttention` instance (one per attention layer) is
+monkey-patched into `Qwen/Qwen2.5-1.5B-Instruct` (12 query heads, 2 KV
+heads — the harness handles GQA replication so this module sees 12 heads
+on both Q and K/V).
 
 ## Task
 
@@ -176,8 +170,8 @@ Other files you may **read** for context (do not modify):
     38: 
     39:     Default: sliding window + sink, computed via fused SDPA with a cached
     40:     bool mask (same speed regime as dense at this density). Replace with
-    41:     your own design — anything that preserves quality on NIAH / Qasper /
-    42:     MultiFieldQA-EN under the density budget.
+    41:     your own design — anything that preserves long-context quality under
+    42:     the density budget.
     43:     """
     44: 
     45:     def __init__(self, head_dim, num_heads, block_size=64, density_budget=0.25):

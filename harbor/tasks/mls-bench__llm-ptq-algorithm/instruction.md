@@ -5,9 +5,8 @@
 ## Research Question
 
 Design a post-training quantization algorithm that minimizes accuracy
-degradation when quantizing a pretrained Mistral-7B-v0.1 model
-(7.24B parameters) to low-bit integer precision, without any retraining
-or fine-tuning.
+degradation when quantizing a pretrained large language model to low-bit
+integer precision, without any retraining or fine-tuning.
 
 ## Background
 
@@ -62,17 +61,12 @@ adaptive grouping schemes that vary by group size or bit-width.
 
 ## Architecture
 
-The task loads real Mistral-7B-v0.1 weights (HuggingFace) and quantizes
-them. No training is done — the task is purely about the quantization
-algorithm quality.
-
-Mistral-7B-v0.1 specs: 32 layers, 32 attention heads, 8 KV heads (GQA),
-4096 hidden, 14336 intermediate, ~7.24B parameters.
+The task loads a pretrained LLM from a local path and quantizes it.
+No training is done — the task is purely about the quantization algorithm quality.
 
 The script (`custom_ptq.py`):
 
-1. Loads Mistral-7B-v0.1 from `/data/mistral-7b-v01` (pre-downloaded
-   HuggingFace snapshot)
+1. Loads a pretrained LLM from a pre-downloaded local path
 2. Evaluates the FP16 (unquantized) model as baseline
 3. Runs your `LayerQuantizer.add_batch()` on calibration data layer by
    layer
@@ -118,24 +112,6 @@ Constraints:
   available
 - Your algorithm must work for both INT4 and INT3, and for different
   group sizes
-
-## Evaluation
-
-The algorithm is evaluated across multiple quantization settings to test
-generalizability:
-
-- `ptq-7b-int4`: INT4 (4-bit) quantization with group size 128 — standard
-  PTQ setting
-- `ptq-7b-int3`: INT3 (3-bit) quantization with group size 128 — harder
-  setting with only 8 levels
-- `ptq-7b-int4-g64`: INT4 with group size 64 — finer granularity setting
-
-Primary metric: `wikitext2_ppl` — WikiText-2 perplexity after
-quantization (lower is better).
-Secondary metric: `degradation` — perplexity increase over FP16 baseline
-(lower is better).
-Calibration: 128 sequences from WikiText-2 training set, 2048 tokens each.
-
 
 ## Your Workspace
 

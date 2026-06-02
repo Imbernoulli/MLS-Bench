@@ -31,30 +31,16 @@ def generate_topology(node_num: int) -> list[tuple[int, int]]:
 - The MacNet runtime automatically adds an input sentinel (`-1`) connecting to source nodes and an output sentinel (`-2`) connecting from sink nodes.
 - The topology is deterministic in `node_num`; cross-seed variability comes from LLM API responses.
 
-The underlying LLM backbones, prompts, aggregation machinery, and evaluators are fixed.
-
 ## Reference baselines
 - `chain` — `0→1→…→N-1`.
 - `star` — all nodes feed into one hub.
 - `layered` — MLP-like layered DAG.
 
-## Fixed Pipeline / Evaluation
-Each topology is evaluated with **4 agent nodes** across three settings (2 benchmarks × different MacNet backbone LLMs):
-
-| # | Benchmark | MacNet backbone | label |
-|---|-----------|----------------|-------|
-| 1 | HumanEval (33 problems) | deepseek-chat | `humaneval-4-deepseek` |
-| 2 | HumanEval (33 problems) | qwen2.5-72b-instruct | `humaneval-4-qwen` |
-| 3 | SRDD (20 prompts) | deepseek-chat | `srdd-4-deepseek` |
-
-### Metrics
-- **`pass_at_1_deepseek` / `pass_at_1_qwen`** (HumanEval, higher is better) — fraction of problems whose generated code passes all unit tests on the first attempt.
-- **`srdd_exec_rate`** (SRDD, higher is better) — fraction of generated software projects whose entry point (`main.py`) executes without crashing (exit code 0 / running at timeout / no Traceback).
-
-The SRDD prompts come from the SRDD (Software Requirement Description Dataset) released with ChatDev (Qian et al., "ChatDev: Communicative Agents for Software Development", arXiv:2307.07924); 20 prompts are sampled across the 5 SRDD categories. A good topology should generalize across all three settings rather than over-specializing to one model or benchmark.
+## Fixed Pipeline
+The underlying LLM backbones, prompts, aggregation machinery, and evaluators are fixed. The topology is evaluated across multiple benchmark and LLM backbone combinations; a good topology should generalize rather than over-specializing to one setting.
 
 ### Network requirement
-This task requires internet access at runtime to call LLM APIs. Set both `DEEPSEEK_API_KEY` (for `humaneval-4-deepseek` and `srdd-4-deepseek`) and `QWEN_API_KEY` (for `humaneval-4-qwen` via DashScope) before running. Not compatible with offline / air-gapped compute nodes.
+This task requires internet access at runtime to call LLM APIs. Set both `DEEPSEEK_API_KEY` and `QWEN_API_KEY` (via DashScope) before running. Not compatible with offline / air-gapped compute nodes.
 
 
 ## Your Workspace

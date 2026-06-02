@@ -5,7 +5,7 @@
 ## Objective
 
 Design a training loss function for a Variational Autoencoder (VAE) that
-achieves the best reconstruction quality on CIFAR-10, under a fixed
+achieves the best reconstruction quality on small natural images, under a fixed
 `AutoencoderKL` architecture, optimizer, and evaluation protocol.
 
 ## Background
@@ -92,20 +92,7 @@ Training (fixed):
 | `perceptual` | MSE + LPIPS (Zhang et al., CVPR 2018) + KL — adds learned perceptual similarity over VGG features. |
 | `vqgan`      | Multi-objective VQGAN-style recipe (Esser et al., CVPR 2021, arXiv:2012.09841): L1 reconstruction + LPIPS perceptual + PatchGAN adversarial loss + KL. |
 
-## Evaluation
-
-Reconstruction quality is measured on the full CIFAR-10 test set
-(10,000 images):
-
-| Metric  | Direction        | Description |
-|---------|------------------|-------------|
-| **rFID**  | lower is better  | Reconstruction FID between original and reconstructed test images (primary metric). |
-| **PSNR**  | higher is better | Peak signal-to-noise ratio in dB. |
-| **SSIM**  | higher is better | Structural similarity index. |
-
-Task scoring uses best reconstruction FID per scale; PSNR and SSIM are
-supporting diagnostics. The contribution should be the loss design only — not
-changes to architecture, data pipeline, training schedule, or evaluation.
+The contribution should be the loss design only — not changes to architecture, data pipeline, training schedule, or evaluation.
 
 
 ## Your Workspace
@@ -187,12 +174,7 @@ or deleting existing ones — will cause your submission to be invalid.
     54: 
     55:     You may also use torch.fft for frequency-domain operations, or any
     56:     other approach you think will improve reconstruction quality.
-    57: 
-    58:     Evaluation metrics (for reference, you do NOT compute these):
-    59:         - rFID: Reconstruction FID (lower is better)
-    60:         - PSNR: Peak signal-to-noise ratio in dB (higher is better)
-    61:         - SSIM: Structural similarity (higher is better)
-    62:     """
+    57:     """
     63: 
     64:     def __init__(self, device):
     65:         super().__init__()

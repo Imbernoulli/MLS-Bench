@@ -87,10 +87,7 @@ roundtrip after training, and WikiText-2 test perplexity evaluation.
 - Optimizer: AdamW, cosine schedule with linear warmup. Default 500 steps
   x batch 2 x grad-accum 4 (~4000 sequences seen, seqlen 1024) — the
   agent may shorten/lengthen via `CONFIG_OVERRIDES`.
-- Calibration / training data: WikiText-2 raw v1 train split. Random
-  1024-token crops.
-- Evaluation: WikiText-2 raw v1 test split, sliding non-overlapping
-  blocks of 1024 tokens, exponentiated mean cross-entropy loss.
+- Training data: a standard language modelling corpus, random 1024-token crops.
 
 ## Interface
 
@@ -136,32 +133,6 @@ Constraints:
   `os`, `time`, plus `transformers.pytorch_utils.Conv1D`.
 - All seeds and training hyperparameters must be deterministic given
   `--seed`.
-
-## Evaluation
-
-The algorithm is evaluated across three bit-widths:
-
-- `qat-1b-int4`: INT4, group size 128 — easy.
-- `qat-1b-int3`: INT3, group size 128 — medium (8 levels).
-- `qat-1b-int2`: INT2, group size 128 — extreme (4 levels).
-
-Primary metric: `wikitext2_ppl` — WikiText-2 perplexity after the real
-QDQ roundtrip, lower is better.
-Secondary metric: `degradation` — `wikitext2_ppl - fp16_ppl`, where
-`fp16_ppl` is the FP baseline measured before any quantization.
-
-Note on absolute PPL vs. literature (OmniQuant / EfficientQAT tables):
-QAT here finetunes on WikiText-2 train and evaluates on WikiText-2 test
-(disjoint articles, but same domain). With 500 steps x bsz 2 x ga 4 =
-4000 sequences x 1024 tokens, the FP16 finetune alone can drop test PPL
-below the FP16 baseline (cf. `finetune_then_ptq` INT4 < `no_qat` FP16),
-because the QAT train domain matches the eval domain. Published OmniQuant
-/ EfficientQAT tables on LLaMA-{7B,13B} use C4 calibration and a
-held-out WikiText eval, so their absolute W2g128 / W3g128 / W4g128
-numbers are not directly comparable to ours. The intended internal
-comparison is QAT-method vs `finetune_then_ptq`: a method that beats
-`finetune_then_ptq` is showing real QAT signal, beyond the in-domain
-finetune effect.
 
 ## Reference baselines
 

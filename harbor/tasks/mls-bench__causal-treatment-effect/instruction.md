@@ -49,27 +49,6 @@ class CATEEstimator:
 
 scikit-learn, numpy, and scipy are available.
 
-## Evaluation
-Evaluation uses three task-local synthetic benchmarks with known ground-truth
-treatment effects. These are inspired by common causal-inference benchmark
-families, but they are **not** the official IHDP, Jobs/LaLonde, or ACIC
-datasets/settings:
-
-| Label         | Inspired by   | n    | p   | Notes                                |
-|---------------|---------------|------|-----|--------------------------------------|
-| ihdp_synth    | IHDP-like     | 747  | 25  | Nonlinear effects                    |
-| jobs_synth    | Jobs/LaLonde  | 2000 | 10  | Economic outcomes                    |
-| acic_synth    | ACIC-like     | 4000 | 50  | High-dimensional complex confounding |
-
-Each dataset is evaluated with 5-fold cross-fitting over 10 repetitions with
-different random seeds, so the estimator should be stable across train/test
-splits rather than tuned to one realization.
-
-Metrics (both lower is better):
-- **PEHE**: Precision in Estimation of Heterogeneous Effects =
-  `sqrt(mean((tau_hat - tau_true)^2))`.
-- **ATE error**: `|mean(tau_hat) - ATE_true|`.
-
 Valid contributions may combine outcome modeling, propensity modeling,
 orthogonalization, weighting, residualization, forests, neural models, or other
 modular CATE ideas, as long as they address confounding and treatment-effect
