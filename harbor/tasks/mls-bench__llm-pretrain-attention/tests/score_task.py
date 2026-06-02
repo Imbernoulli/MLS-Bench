@@ -194,9 +194,9 @@ def _check_editable_only(
         line_no
         for r in ranges
         for line_no in (
-            range(r.start, r.end + 1)
-            if r.start != -1 and r.end != -1
-            else range(1, len(pristine_lines) + 1)
+            range(1, total_lines + 1)
+            if r.start == -1
+            else range(r.start, _end_eff(r) + 1)
         )
     }
     for tag, i1, i2, _j1, _j2 in SequenceMatcher(
@@ -221,6 +221,11 @@ def _check_editable_only(
 
 _SKIP_DIR_PARTS = {".git", "__pycache__", "node_modules", ".pytest_cache", ".mypy_cache"}
 _SKIP_SUFFIXES = {".pyc", ".pyo", ".so", ".o", ".egg-info"}
+_EXEMPT_TOP_LEVEL_DIRS = {"_task"}
+
+
+def _is_workspace_guard_exempt(rel: Path) -> bool:
+    return bool(rel.parts and rel.parts[0] in _EXEMPT_TOP_LEVEL_DIRS)
 
 
 def _walk_workspace(workspace_root: Path) -> set[Path]:
@@ -234,7 +239,10 @@ def _walk_workspace(workspace_root: Path) -> set[Path]:
             continue
         if any(part.endswith(suf) for part in p.parts for suf in _SKIP_SUFFIXES):
             continue
-        out.add(p.relative_to(workspace_root))
+        rel = p.relative_to(workspace_root)
+        if _is_workspace_guard_exempt(rel):
+            continue
+        out.add(rel)
     return out
 
 
@@ -286,12 +294,10 @@ def cmd_guard(args: argparse.Namespace) -> int:
     guarded_prefixes = {Path(f).parts[0] for f in editable if f}
     guarded_prefixes |= {Path(f).parts[0] for f in manifest if f}
 
-    # Disallowed creation: anything in workspace under a guarded prefix that
-    # is NOT in the manifest (= agent created it post-start).
+    # Disallowed creation: anything in workspace that is NOT in the manifest
+    # (= agent created it post-start).
     if not allow_create:
         for rel in sorted(workspace_files):
-            if not rel.parts or rel.parts[0] not in guarded_prefixes:
-                continue
             rel_str = rel.as_posix()
             if rel_str in manifest:
                 continue
@@ -938,6 +944,46 @@ def _run_eval_wave(
     return results
 
 
+def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict[str, str]]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid oracle cmd overrides JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise ValueError("oracle cmd overrides must be a JSON list")
+
+    out: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("oracle cmd override entries must be objects")
+        cmd = str(item.get("cmd", "")).strip()
+        if not cmd:
+            raise ValueError("oracle cmd override missing non-empty cmd")
+        if "labels" in item:
+            labels = item.get("labels") or [""]
+            if not isinstance(labels, list):
+                labels = [labels]
+            out.extend({"label": str(label), "cmd": cmd} for label in labels)
+        else:
+            out.append({"label": str(item.get("label", "")), "cmd": cmd})
+    return out
+
+
+def _apply_oracle_cmd_overrides(
+    test_cmds: list[dict],
+    overrides: list[dict[str, str]],
+) -> list[dict]:
+    result = [dict(tc) for tc in test_cmds]
+    for override in overrides:
+        label = override["label"]
+        for entry in result:
+            if not label or str(entry.get("label", "")) == label:
+                entry["cmd"] = override["cmd"]
+    return result
+
+
 def cmd_run_evals(args: argparse.Namespace) -> int:
     task_meta = Path(args.task_meta)
     workspace_root = Path(args.workspace)
@@ -947,7 +993,12 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     config = _load_task_config(task_meta)
-    test_cmds = config.get("test_cmds", [])
+    test_cmds = list(config.get("test_cmds", []))
+    oracle_cmd_overrides = _parse_oracle_cmd_overrides(
+        getattr(args, "oracle_cmd_overrides", None)
+    )
+    if oracle_cmd_overrides:
+        test_cmds = _apply_oracle_cmd_overrides(test_cmds, oracle_cmd_overrides)
     seeds = _config_seeds(config)
 
     summary = [
@@ -1298,6 +1349,8 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--workspace", required=True, help="Workdir-level workspace root, e.g. /workspace")
     r.add_argument("--eval-root", required=True, help="Dir containing scripts/ — e.g. /tests/eval")
     r.add_argument("--out-dir", required=True)
+    r.add_argument("--oracle-cmd-overrides", default=None,
+                   help="Oracle-only JSON list of {label, cmd} substitutions.")
     r.set_defaults(func=cmd_run_evals)
 
     s = sub.add_parser("score")
