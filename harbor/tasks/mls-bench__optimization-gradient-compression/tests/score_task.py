@@ -713,7 +713,10 @@ def _kill_process_group(pgid: int, timeout: float = 30.0) -> None:
         pass
 
 
-def _copy_task_meta_for_budget(task_meta: Path, scratch_dir: Path) -> None:
+def _copy_task_meta_for_budget(
+    task_meta: Path, scratch_dir: Path,
+    effective_test_cmds: list[dict] | None = None,
+) -> None:
     scratch_dir.mkdir(parents=True, exist_ok=True)
     for name in ("config.json", "budget_check.py"):
         src = task_meta / name
@@ -723,6 +726,20 @@ def _copy_task_meta_for_budget(task_meta: Path, scratch_dir: Path) -> None:
         src = task_meta / name
         if src.exists():
             shutil.copytree(src, scratch_dir / name, dirs_exist_ok=True)
+    # budget_check.py derives the agent model's hyperparameters from this
+    # config.json's test_cmds (active_test_cmd -> cmd -> expand_script_argv). For
+    # an oracle run the eval cmd is replaced by the strongest baseline's cmd, and
+    # that substitution MUST be reflected here too — otherwise the budget check
+    # counts the agent model under the ORIGINAL (large) eval-script
+    # hyperparameters and wrongly rejects the oracle baseline (all-zero TS
+    # oracle). Native MLSBench runs the budget check against the
+    # baseline-substituted task config; mirror that.
+    if effective_test_cmds is not None:
+        cfg_path = scratch_dir / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text())
+            cfg["test_cmds"] = effective_test_cmds
+            cfg_path.write_text(json.dumps(cfg, indent=2))
 
 
 def _install_budget_legacy_links(scratch_dir: Path, workspace_root: Path) -> list[Path]:
@@ -760,6 +777,7 @@ def _run_budget_check(
     label: str,
     seed: int,
     env: dict[str, str],
+    effective_test_cmds: list[dict] | None = None,
 ) -> dict | None:
     if not (task_meta / "budget_check.py").exists():
         return None
@@ -777,7 +795,7 @@ def _run_budget_check(
     legacy_links: list[Path] = []
     with log_path.open("w") as fh:
         try:
-            _copy_task_meta_for_budget(task_meta, scratch_dir)
+            _copy_task_meta_for_budget(task_meta, scratch_dir, effective_test_cmds)
             legacy_links = _install_budget_legacy_links(scratch_dir, workspace_root)
             budget_env = env.copy()
             budget_env["TMPDIR"] = str(scratch_dir)
@@ -1120,6 +1138,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     label=entry["label"],
                     seed=seed,
                     env=env,
+                    effective_test_cmds=test_cmds,
                 )
                 if budget and budget["rc"] != 0:
                     records[(entry["idx"], seed)] = _write_error_record(
