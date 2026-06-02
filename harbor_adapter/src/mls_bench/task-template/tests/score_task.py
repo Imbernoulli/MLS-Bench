@@ -194,9 +194,9 @@ def _check_editable_only(
         line_no
         for r in ranges
         for line_no in (
-            range(r.start, r.end + 1)
-            if r.start != -1 and r.end != -1
-            else range(1, len(pristine_lines) + 1)
+            range(1, total_lines + 1)
+            if r.start == -1
+            else range(r.start, _end_eff(r) + 1)
         )
     }
     for tag, i1, i2, _j1, _j2 in SequenceMatcher(

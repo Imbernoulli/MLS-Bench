@@ -55,6 +55,69 @@ def test_edit_guard_rejects_deleted_fixed_separator_with_duplicate_in_editable(t
     assert "only the declared editable range" in reason
 
 
+def test_edit_guard_rejects_protected_line_with_open_ended_tail_range(tmp_path: Path):
+    """Regression: a disjoint range list whose last range uses end=-1 (to-EOF)
+    must NOT mark the whole file editable for the line-level backstop. Here the
+    protected line (4) has a duplicate in the editable tail so the byte-anchor
+    pass is satisfied — only the line-level check can catch the change."""
+    score_task = _load_score_task()
+    pristine = tmp_path / "pristine.py"
+    current = tmp_path / "current.py"
+
+    pristine.write_text(
+        "header\n"      # 1 fixed (range starts at 2)
+        "edit a\n"      # 2 editable
+        "edit b\n"      # 3 editable
+        "PROT\n"        # 4 PROTECTED (between the two ranges)
+        "edit c\n"      # 5 editable (range 5..EOF)
+        "PROT\n"        # 6 editable tail — same text as line 4
+    )
+    current.write_text(
+        "header\n"
+        "edit a\n"
+        "edit b\n"
+        "EVIL\n"        # 4 changed — must be rejected
+        "edit c\n"
+        "PROT\n"
+    )
+
+    ranges = [score_task.EditRange(2, 3), score_task.EditRange(5, -1)]
+    ok, reason = score_task._check_editable_only(pristine, current, ranges)
+
+    assert not ok
+    assert reason is not None
+    assert "only the declared editable range" in reason
+
+
+def test_edit_guard_allows_legit_open_ended_tail_edit(tmp_path: Path):
+    """Companion to the regression above: a legitimate edit confined to the
+    open-ended tail range must still pass."""
+    score_task = _load_score_task()
+    pristine = tmp_path / "pristine.py"
+    current = tmp_path / "current.py"
+
+    pristine.write_text(
+        "header\n"      # 1 fixed
+        "edit a\n"      # 2 editable
+        "edit b\n"      # 3 editable
+        "PROT\n"        # 4 PROTECTED
+        "edit c\n"      # 5 editable (5..EOF)
+    )
+    current.write_text(
+        "header\n"
+        "new a\n"       # 2 changed (editable) — ok
+        "edit b\n"
+        "PROT\n"        # 4 untouched
+        "new c\n"       # 5 changed (editable) — ok
+        "extra tail\n"  # appended within open-ended range — ok
+    )
+
+    ranges = [score_task.EditRange(2, 3), score_task.EditRange(5, -1)]
+    ok, reason = score_task._check_editable_only(pristine, current, ranges)
+
+    assert ok, reason
+
+
 def test_metric_aggregation_coerces_strings_and_filters_nan():
     score_task = _load_score_task()
 
