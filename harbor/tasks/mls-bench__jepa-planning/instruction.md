@@ -3,7 +3,7 @@
 # JEPA World Model Planning: Algorithm Design
 
 ## Objective
-Design a planning algorithm that exploits a learned JEPA (Joint Embedding Predictive Architecture) world model for goal-conditioned navigation. The evaluation uses a Two Rooms environment in which the agent must navigate around walls and through doorways to reach a randomly sampled goal location.
+Design a planning algorithm that exploits a learned JEPA (Joint Embedding Predictive Architecture) world model for goal-conditioned navigation, where the agent must navigate around walls and through doorways to reach a randomly sampled goal location.
 
 ## Research Question
 Can you design a planning algorithm that outperforms standard derivative-free methods such as CEM and MPPI by better exploiting the structure of a learned JEPA world model?
