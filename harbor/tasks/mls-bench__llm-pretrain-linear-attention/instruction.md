@@ -39,7 +39,7 @@ Two editable regions in `nanoGPT/custom_pretrain.py`:
 - `deltanet` — DeltaNet (delta-rule linear attention).
 
 ## Fixed Pipeline
-- The dataset, tokenizer, training schedule, evaluation code, and unrelated objectives are out of scope (fixed by the harness).
+The dataset, tokenizer, model size, training schedule, and evaluation code are fixed by the harness and out of scope. Evaluation reports validation loss and held-out perplexity.
 
 
 ## Your Workspace

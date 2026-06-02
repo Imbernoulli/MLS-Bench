@@ -67,9 +67,7 @@ per sample.
 
 ## Fixed Pipeline
 
-- Models: Stable Diffusion v1.5 and SDXL (frozen weights).
-- NFE budget: 20 denoiser calls per sample.
-- Prompt set, model weights, and metric computation are fixed and may not be changed.
+The training and evaluation pipeline (models, weights, prompt set, and metric computation) is fixed by the harness and not editable. Only the marked editable regions of the two solver files may be changed, and the fixed function-evaluation budget stated in the Implementation Contract must be respected.
 
 
 ## Your Workspace

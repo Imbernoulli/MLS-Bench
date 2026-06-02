@@ -3,7 +3,7 @@
 # Multivariate Long-Term Time Series Forecasting
 
 ## Research Question
-What forecasting component (sequence modeling, decomposition, cross-variable attention, normalization) generalizes across heterogeneous multivariate datasets at a fixed 96-step look-back / 96-step horizon, under the Time-Series-Library training and evaluation pipeline?
+What forecasting component (sequence modeling, decomposition, cross-variable attention, normalization) generalizes across heterogeneous multivariate datasets at a fixed look-back / horizon, under the Time-Series-Library training and evaluation pipeline?
 
 ## Background
 Long-term multivariate forecasting predicts the next horizon for all channels of a multivariate series given a fixed look-back window. Recent work has explored very different inductive biases: pure linear projections after trend/seasonal decomposition (DLinear); channel-independent Transformer over patches (PatchTST); inverted attention treating variates as tokens (iTransformer); MLP-based multi-scale decomposition (TimeMixer); and explicit endogenous/exogenous separation (TimeXer). The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes splits, normalization, and metric computation so that architectural contributions can be compared head-to-head.
@@ -33,7 +33,7 @@ class Model(nn.Module):
 ```
 
 ## Fixed Protocol
-All settings: `features=M` (multivariate input → multivariate output), `seq_len=96`, `label_len=48`, `pred_len=96`. The evaluation covers heterogeneous multivariate datasets spanning different numbers of variables and domains. Standardization, splits, and evaluation are fixed by the Time-Series-Library data pipeline.
+The training and evaluation pipeline (datasets, standardization, splits, look-back/horizon lengths, training loop, and metrics) is fixed by the Time-Series-Library harness and not editable. Your `Model` reads all shape and length settings (`seq_len`, `label_len`, `pred_len`, `enc_in`, `c_out`, etc.) from the `configs` object passed to `__init__`; do not hardcode them.
 
 ## Reference Implementations (read-only)
 Five reference models from `models/`:

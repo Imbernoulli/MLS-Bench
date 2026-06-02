@@ -39,10 +39,10 @@ Implement the `CustomScoring` class in `custom_scoring.py`. You must implement:
 - Training data provides: `batch_list` (pocket→ligand mapping), `act_list` (pIC50 activities), `uniprot_poc/mol` (for false-negative masking), `pocket_lig_smiles/lig_smiles` (for duplicate masking).
 
 ## Fixed Pipeline
-The backbone encoders, data loaders, training loop, and evaluation scripts are fixed. Backbone parameters are loaded from pretrained weights and fine-tuned jointly with the scoring module.
+The data pipeline, training loop, and evaluation scripts are fixed by the harness and not editable.
 
 ## Editable Region
-The entire `custom_scoring.py` file is editable. You may define any helper classes or functions within this file. The backbone encoders and training loop are fixed; backbone parameters are loaded from pretrained weights and fine-tuned jointly with the scoring module.
+The entire `custom_scoring.py` file is editable. You may define any helper classes or functions within this file. The backbone encoders and training loop are fixed.
 
 
 ## Your Workspace

@@ -35,9 +35,7 @@ You may modify:
 - `adamw_nesterov` — AdamW with Nesterov momentum.
 
 ## Fixed Pipeline
-- **Model**: A multi-layer GPT-style transformer with causal self-attention.
-- **Dataset**: A large English web-text corpus tokenized with the GPT-2 tokenizer.
-- **Training**: Multi-GPU DDP with gradient accumulation and mixed-precision (bfloat16).
+The training and evaluation pipeline (model architecture, tokenizer, dataset, batch construction, training loop, and metrics) is fixed by the harness and not editable. Only the optimizer/LR-schedule regions and the listed `CONFIG_OVERRIDES` keys are editable.
 
 ## Your Workspace
 

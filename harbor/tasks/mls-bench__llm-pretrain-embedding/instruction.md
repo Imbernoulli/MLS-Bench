@@ -36,8 +36,7 @@ Your `TokenEmbedding` class must implement:
 - `value_embed` — value-style per-layer embedding injection.
 
 ## Fixed Pipeline
-- The corpus, tokenizer, training loop, optimizer, and unrelated transformer blocks are fixed.
-- The benchmark's parameter accounting excludes `get_num_pos_params()` from the reported count, so simply scaling capacity through positional parameters is not a valid escape.
+The training and evaluation pipeline (corpus, tokenizer, training loop, optimizer, and unrelated transformer blocks) is fixed by the harness and not editable.
 
 ## Your Workspace
 

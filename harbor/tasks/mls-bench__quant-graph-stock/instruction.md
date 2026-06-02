@@ -12,11 +12,7 @@ Stocks are not independent: prices co-move within sectors, react jointly to macr
 Implement a `CustomModel` in `custom_model.py` that exposes the qlib model interface (`fit(dataset)` and `predict(dataset, segment="test")`). The class is wired into `workflow_config.yaml`, where the dataset adapter / preprocessor block is editable so the model can pull in graph-structured inputs (e.g., concept membership matrices) — but instruments, date ranges, train/valid/test splits, label, and the backtest configuration are fixed.
 
 ## Fixed Pipeline
-- **Features**: Alpha360 (360 features per stock-day, reshape to `[N, 60, 6]` for sequence models).
-- **Auxiliary input**: stock-concept membership graph used by HIST and similar baselines, exposed through the dataset handler.
-- **Label**: `Ref($close, -2) / Ref($close, -1) - 1`.
-- **Universes / splits**: fixed equity universes — do not modify.
-- **Backtest**: TopkDropout, top 50 / drop 5.
+The data, label, instrument universes, train/valid/test splits, and backtest configuration are fixed by the harness and not editable. A stock-concept membership graph is exposed through the dataset handler as an auxiliary input. Each stock-day feature vector has 360 features, which sequence models reshape to `[N, 60, 6]`.
 
 ## Model Interface
 ```python

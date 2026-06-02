@@ -46,9 +46,11 @@ class CustomFewShotMethod(FewShotClassifier):
 - `make_backbone(use_pooling=True/False)` — ResNet-12 with 640-dim feature vector or feature maps.
 
 ## Fixed Training & Evaluation Pipeline
-- Backbone: ResNet-12 (640-dim).
-- Episodic training: 500 tasks/epoch for 200 epochs, 5-way 5-shot tasks.
-- Evaluation: episodic classification accuracy on held-out test splits across multiple few-shot image recognition benchmarks.
+The episodic training and evaluation pipeline (backbone, data, optimizer,
+schedule, episode sampling, and the held-out benchmarks) is fixed by the
+harness and not editable. The metric is episodic classification accuracy. The
+shared backbone is created via `make_backbone(...)` and exposes 640-dim
+features.
 
 
 ## Your Workspace

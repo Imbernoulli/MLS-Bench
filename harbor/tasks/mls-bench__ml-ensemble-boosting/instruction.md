@@ -43,8 +43,7 @@ class BoostingStrategy:
 Available context: true labels, current ensemble predictions, sample weights, fitted learner (`learner.predict(X)`), round index, config dict with dataset metadata. Available imports in the FIXED section: `numpy`, `sklearn.tree`, `sklearn.metrics`, `sklearn.datasets`, `sklearn.model_selection`.
 
 ## Fixed Pipeline
-- 200 boosting rounds, base learner = `DecisionTree(max_depth=3)`, learning rate `0.1`.
-- Your strategy is evaluated on both classification and regression tabular datasets.
+The training and evaluation pipeline (number of boosting rounds, the shallow decision-tree weak learner, learning-rate shrinkage, datasets, and metrics) is fixed by the harness and not editable. Your strategy is evaluated on both classification and regression tabular tasks. Dataset metadata (including `learning_rate`) is provided to your class via the `config` dict.
 
 
 ## Your Workspace

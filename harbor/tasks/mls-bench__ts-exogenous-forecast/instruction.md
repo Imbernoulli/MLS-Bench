@@ -33,7 +33,7 @@ class Model(nn.Module):
 ```
 
 ## Fixed Protocol
-The evaluation datasets, splits, normalization, `seq_len`, `label_len`, `pred_len`, and target column are all fixed by the Time-Series-Library data loaders and harness config. All inputs use `features=MS` mode; the harness extracts `outputs[:, :, -1:]` so only the final (target) channel is scored.
+The evaluation pipeline (datasets, splits, normalization, look-back window, horizon, target column, and metrics) is fixed by the harness and not editable. All inputs use `features=MS` mode; the harness extracts `outputs[:, :, -1:]` so only the final (target) channel is scored. The model receives `configs.seq_len`, `configs.pred_len`, `configs.enc_in`, and `configs.c_out`.
 
 ## Reference Implementations (read-only)
 Four reference models from `models/`:

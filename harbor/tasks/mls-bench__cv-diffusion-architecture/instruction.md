@@ -6,8 +6,7 @@
 
 Design a UNet backbone for unconditional image diffusion that achieves
 better generation quality than the standard DDPM-style architectures, under
-a fixed training target (epsilon prediction), DDIM sampler, optimizer, and
-noise schedule.
+a fixed training and sampling pipeline.
 
 ## Background
 
@@ -47,12 +46,11 @@ different channel widths. `LAYERS_PER_BLOCK` (default 2) is also available.
 
 ## Fixed Pipeline
 
-The following are fixed across baselines and submissions:
-
-- Training target: epsilon prediction with MSE loss.
-- Optimizer: AdamW, learning rate 2e-4, EMA rate 0.9995.
-- Inference: 50-step DDIM sampling (Song et al., 2020, arXiv:2010.02502).
-- Channel widths are passed via `BLOCK_OUT_CHANNELS` env var.
+The training and sampling pipeline (training target/loss, optimizer, EMA,
+noise schedule, and the DDIM sampler of Song et al., 2020, arXiv:2010.02502)
+is fixed by the harness and not editable. Generation quality is scored with
+FID. The model receives channel widths via the `BLOCK_OUT_CHANNELS` env var
+(and `LAYERS_PER_BLOCK`, default 2).
 
 ## Baselines
 

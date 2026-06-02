@@ -27,9 +27,8 @@ Constraints:
 - No access to training data or labels inside the pooling layer.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
+The training and evaluation pipeline (data, augmentation, model, optimizer,
+schedule, and metrics) is fixed by the harness and not editable.
 
 ## Baselines
 - **global_max** — channel-wise max over the spatial axes (no extra parameters).

@@ -27,10 +27,7 @@ The activation is used in:
 - MobileNetV2: replaces the ReLU6 baseline used in inverted residuals.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Weight initialization: standard Kaiming normal (fixed).
+The model definitions, optimizer, schedule, data augmentation, weight initialization, and training loop are fixed by the harness and not editable. Test accuracy is the evaluation metric.
 
 ## Baselines
 - **gelu** — Hendrycks & Gimpel, arXiv:1606.08415; `nn.GELU` (no learnable parameters).

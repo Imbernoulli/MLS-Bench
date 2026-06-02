@@ -52,13 +52,7 @@ The `schedule` dict provides precomputed noise-schedule tensors:
 
 ## Fixed Pipeline
 
-The following are fixed across baselines and submissions:
-
-- Dataset: CIFAR-10 (32×32, unconditional).
-- Backbone: `UNet2DModel` (diffusers) at multiple channel scales.
-- Training: AdamW with EMA, multi-GPU DDP.
-- Inference: DDIM (Song et al., 2020, arXiv:2010.02502).
-- The contribution should be a transferable target parameterization, not a change to architecture, dataset, optimizer, noise schedule, sampling procedure, or metric computation.
+The training and evaluation pipeline (data, model, optimizer, schedule, sampler, and metric) is fixed by the harness and not editable. Inference uses DDIM (Song et al., 2020, arXiv:2010.02502). The contribution should be a transferable target parameterization, not a change to architecture, dataset, optimizer, noise schedule, sampling procedure, or metric computation.
 
 ## Baselines
 

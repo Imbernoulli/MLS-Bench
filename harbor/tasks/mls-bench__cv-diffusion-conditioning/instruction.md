@@ -5,7 +5,7 @@
 ## Objective
 
 Design a conditioning injection method that improves class-conditional
-CIFAR-10 diffusion FID under a fixed denoiser scaling, training procedure, and
+diffusion FID under a fixed denoiser scaling, training procedure, and
 DDIM sampler.
 
 ## Background
@@ -43,12 +43,11 @@ semantics.
 
 ## Fixed Pipeline
 
-The following are fixed across baselines and submissions:
-
-- Dataset: class-conditional image generation benchmark (small 32×32 images, 10 classes).
-- Model: `UNet2DModel` (diffusers backbone) at multiple channel scales.
-- Training: AdamW with EMA, fixed hyperparameters.
-- Inference: DDIM sampling (Song et al., 2020, arXiv:2010.02502), class-conditional.
+The training and evaluation pipeline (dataset, denoiser backbone, optimizer,
+schedule, sampler, and metrics) is fixed by the harness and not editable. The
+denoising interface is `(x, timestep, class_id)` → predicted epsilon of the same
+shape as `x`, and inference uses DDIM sampling (Song et al., 2020,
+arXiv:2010.02502).
 
 ## Baselines
 

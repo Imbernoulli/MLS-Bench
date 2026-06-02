@@ -14,10 +14,7 @@ This task isolates *temporal drift adaptation* on a fixed stock universe, evalua
 Implement a `CustomModel` in `custom_model.py` that exposes the qlib `Model` interface (`fit(dataset)`, `predict(dataset, segment="test")`). The class is wired into `workflow_config.yaml`, where the dataset adapter / processor block is editable so methods like TRA can request a different dataset view (e.g., `TSDatasetH`, custom processors). Instruments, date ranges, train/valid/test splits, and the backtest are fixed by the workflow.
 
 ## Fixed Pipeline
-- **Universe**: CSI300 (instruments fixed by the workflow YAML).
-- **Features**: Alpha158 (engineered per-stock daily features).
-- **Label**: `Ref($close, -2) / Ref($close, -1) - 1`.
-- **Backtest**: TopkDropout strategy; parameters fixed by the workflow.
+The stock universe, engineered features, label definition, train/valid/test splits, and the qlib backtest are fixed by the workflow and not editable (outside the editable dataset-adapter / processor block of `workflow_config.yaml` noted above).
 
 ## Model Interface
 ```python

@@ -29,15 +29,7 @@ The fixed scaffold also exposes reference helpers `run_v_pbgd(...)`, `run_g_pbgd
 The driver, dataset split, pollution protocol, metrics, and model architectures are fixed.
 
 ## Fixed Setup
-### Toy / Numerical Verification
-- Problem definition follows Section 5.1 / 6.1 of Shen and Chen (2023).
-- Upper variable `x` is projected to `[0, 3]`.
-- Multiple random initial points are sampled (per the official toy script).
-
-### Data Hyper-Cleaning
-- A standard image classification dataset is used with a train/validation/test split.
-- A fixed fraction of training labels are corrupted (per the official code).
-- Models: linear classifier and 2-layer MLP with sigmoid hidden layer.
+The benchmark setup for both the toy / numerical verification and the data hyper-cleaning experiments (problem definitions, projections, initialization, dataset, splits, pollution protocol, model architectures, and metrics) is fixed by the harness and not editable. The `algorithm`, `TOY_HPARAMS`, and `HYPERCLEAN_HPARAMS` editable hooks described above are the only things you change.
 
 ## Reference Files (read-only)
 - `penalized-bilevel-gradient-descent/V-PBGD/toy/toy.py`
@@ -53,7 +45,7 @@ The driver, dataset split, pollution protocol, metrics, and model architectures 
 - **T-RHG** — Truncated RHG, the truncated-unroll baseline implemented in the same repo.
 
 ## Evaluation
-Each command prints structured `TRAIN_METRICS` and `FINAL_METRICS` lines; the parser records final metrics per command label.
+Each command prints structured `TRAIN_METRICS` and `FINAL_METRICS` lines, which the fixed harness parses.
 
 
 ## Your Workspace

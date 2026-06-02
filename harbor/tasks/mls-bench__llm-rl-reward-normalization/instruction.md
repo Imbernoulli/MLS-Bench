@@ -46,8 +46,7 @@ def normalize_rewards(
 | `length_aware` | divide scalar by `√(response_length)` before broadcast (DAPO length-bias fix) |
 
 ## Fixed Pipeline
-- The policy model, verl training stack, GRPO advantage estimator, and grouped rollout setup are fixed.
-- Reward source, advantage estimator, model, rollout setup, optimizer, KL-loss setting, and evaluation data are fixed.
+The training and evaluation pipeline (policy model, training stack, advantage estimator, grouped rollout setup, reward source, optimizer, and evaluation data) is fixed by the harness and not editable. Your normalization runs upstream of the fixed advantage estimator.
 
 
 ## Your Workspace

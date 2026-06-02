@@ -31,14 +31,12 @@ You may use any combination of geometric transforms (crop, flip, rotation, affin
 **Required**: the returned pipeline must include `transforms.ToTensor()` and `transforms.Normalize(config['mean'], config['std'])` so that the produced tensors are normalized as expected by the downstream models. The test-time transform is fixed and is not part of the design space.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Weight initialization: standard Kaiming normal.
+The model architectures, weight initialization, optimizer, schedule, test transform, data loading, and training loop are fixed by the harness and not editable. Test accuracy is the evaluation metric.
 
 ## Baselines
-- **cutout** — DeVries & Taylor, arXiv:1708.04552; default 16×16 patch on CIFAR-style 32×32 inputs as in the paper.
-- **randaugment** — Cubuk et al., arXiv:1909.13719; default `N=2`, `M=14` (paper-reported defaults for ResNet-style models on CIFAR).
-- **trivialaugment** — Müller & Hutter, arXiv:2103.10158; parameter-free, single random op per image with random magnitude.
+- **cutout** — DeVries & Taylor, arXiv:1708.04552.
+- **randaugment** — Cubuk et al., arXiv:1909.13719.
+- **trivialaugment** — Müller & Hutter, arXiv:2103.10158.
 
 ## Implementation Contract
 The transform must produce normalized tensors compatible with the existing loaders and models, and must not use validation/test labels, change the dataset split, or alter the model and optimization code.

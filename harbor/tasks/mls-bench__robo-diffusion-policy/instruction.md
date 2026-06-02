@@ -21,9 +21,9 @@ Diffusion actors parameterize the action distribution as a denoising model condi
 - Actor-critic architecture
 
 ## What Is Fixed
-- D4RL dataset construction, environment names, and evaluation loop
-- Random seeds, episode count, vectorized environment count, and checkpoint names
-- The overall offline RL setup: train from fixed D4RL buffers, then evaluate a Markov policy that maps current observation to one action
+- Dataset construction, environment names, and the evaluation loop
+- Random seeds and checkpoint names
+- The overall offline RL setup: train from fixed offline buffers, then evaluate a Markov policy that maps the current observation to one action
 
 ## Baselines
 
@@ -38,7 +38,7 @@ Pure behavior cloning with a diffusion actor (no critic, single-action sampling 
 
 ## Fixed Pipeline
 
-The evaluation loop, environment names, dataset construction, and inference harness are fixed and may not be modified. Training runs for a fixed number of gradient steps; the model may shorten training inside its own edits but cannot exceed the configured limit. The `gradient_steps`, `num_candidates`, `num_envs`, `num_episodes`, and `use_ema` settings are all controlled by the harness config and must not be changed outside the editable region.
+The dataset construction, environments, evaluation loop, and inference harness are fixed by the harness and not editable. Training runs for a fixed number of gradient steps; the model may shorten training inside its own edits but cannot exceed the configured limit. The `args.gradient_steps`, `args.num_candidates`, `args.num_envs`, `args.num_episodes`, and `args.use_ema` settings are controlled by the harness config and must not be changed outside the editable region — reference them from your code rather than hard-coding values.
 
 
 ## Your Workspace

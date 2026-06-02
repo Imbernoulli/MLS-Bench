@@ -23,7 +23,7 @@ Reference papers:
 - KLASS (Kim et al., NeurIPS 2025 Spotlight; arXiv:2511.05664) — "KLASS: KL-Guided Fast Inference in Masked Diffusion Models"; KL-adaptive stability sampling for unmasking multiple tokens per step.
 
 ## Fixed Pipeline
-- Pretrained models (LLaDA-8B-Instruct, Dream-v0-Instruct-7B), prompts, evaluation data, and task runners are fixed.
+- The pretrained models, prompts, evaluation data, and task runners are fixed by the harness and not editable.
 - Block scheduling constraint: `gen_length % block_length == 0`. When equal, decoding is fully parallel.
 - Blocks are processed sequentially (no early-decoding into later blocks).
 - The same `DemaskDecoder` must work in both semi-autoregressive and fully-parallel regimes.

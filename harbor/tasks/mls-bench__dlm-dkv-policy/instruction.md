@@ -31,8 +31,8 @@ proxy token-trajectory metric.
 
 ## Evaluation Interface
 
-The harness runs real `LLaDA-8B-Instruct` inference end to end. For each
-workload it loads a dataset, runs one fixed denoising rollout with a shared
+The harness runs real diffusion-LM inference end to end on a fixed host
+model. For each workload it runs one fixed denoising rollout with a shared
 cache-plan interface, and generates deterministic outputs using the submitted
 cache policy.
 
@@ -66,16 +66,12 @@ The full hook contract and baseline mapping are recorded in
 
 ## Fixed Components
 
-Participants may not modify:
-
-- the model weights or tokenizer
-- benchmark loaders and scorers
-- task scripts, parser, score spec, or leaderboard schema
-- source-reference snapshots under `third_party/official_dlm_cache_baselines`
-- any harness code outside the editable policy region
-
-Each baseline uses one predeclared cache policy across all workloads to
-avoid rewarding per-benchmark hyperparameter search.
+The host model, tokenizer, datasets, loaders, scorers, schedule, and metrics
+are fixed by the harness and not editable. You may modify only the policy
+class in the editable region; everything else (task scripts, parser, score
+spec, leaderboard schema, baseline source snapshots under
+`third_party/official_dlm_cache_baselines`, and any harness code outside the
+editable region) is read-only.
 
 ## Baselines
 

@@ -51,7 +51,7 @@ Helper functions available in the FIXED section above the editable region:
 - `knn_graph(X_ca, mask, k)`: Build k-nearest neighbor graph from CA coordinates.
 
 ## Fixed Pipeline
-Datasets, train/validation/test splits, the training loop, padding/masking, optimizer schedule, loss (per-residue cross-entropy), and evaluation harness are all supplied by the scaffold and not part of the contribution.
+The training and evaluation pipeline (data, splits, training loop, padding/masking, optimizer, schedule, loss, and metrics) is fixed by the harness and not part of the contribution. Evaluation reports amino-acid sequence recovery.
 
 ## Your Workspace
 

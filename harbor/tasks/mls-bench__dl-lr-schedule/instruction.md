@@ -26,10 +26,11 @@ The `get_lr(epoch, total_epochs, base_lr, config)` function inside `pytorch-visi
 You may freely shape the LR curve (cosine, polynomial, exponential, linear, piecewise), include warmup of arbitrary length and shape, set any minimum/final LR, condition on `arch` and `dataset`, and use any epoch-dependent logic such as cyclic restarts, sharp transitions, or plateaus.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=base_lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`. The task setup uses **no** built-in PyTorch scheduler — your `get_lr` directly determines the per-epoch learning rate.
-- Training: `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Weight initialization: Kaiming normal (fixed, not editable).
+The training and evaluation pipeline (optimizer, training budget, data
+augmentation, weight initialization, and metrics) is fixed by the harness and
+not editable. The setup uses **no** built-in PyTorch scheduler — your `get_lr`
+directly determines the per-epoch learning rate, receiving `base_lr` and
+`total_epochs` as arguments.
 
 ## Baselines
 - **cosine** — Loshchilov & Hutter, arXiv:1608.03983; standard cosine annealing from `base_lr` to `0` over `total_epochs`.

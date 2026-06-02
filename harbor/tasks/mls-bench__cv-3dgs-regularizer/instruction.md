@@ -41,8 +41,7 @@ reconstruction quality on held-out views.
 
 Implement `compute_regularizer(splats, step, scene_scale)` in
 `gsplat/custom_regularizer.py`. The scalar return value is added directly to
-the photometric loss at every training step, for the entire 30k-step per-scene
-optimization.
+the photometric loss at every training step of the per-scene optimization.
 
 You may add helpers and module-level constants inside the editable region and
 import additional modules. You **must** keep the public signature
@@ -73,16 +72,11 @@ weights.
 
 ## Fixed Pipeline
 
-These are FIXED across baselines and submissions:
-
-- Renderer: `gsplat` CUDA rasterizer.
-- Optimizer: AdamW with per-parameter learning rates.
-- Photometric loss: `0.8 * L1 + 0.2 * (1 - SSIM)`.
-- Densification strategy: gsplat `DefaultStrategy` (original 3DGS
-  clone / split / prune).
-- Training: 30,000 steps per scene; SH degree 3 (gradually increased).
-
-The regularizer is the only quantity you change.
+The renderer, optimizer, photometric loss, densification strategy, and the
+training/evaluation pipeline (data, schedule, and metrics) are fixed by the
+harness and not editable. The regularizer is the only quantity you change.
+`step` runs from `0` to `max_steps - 1`, so you can schedule the regularizer
+over training.
 
 ## Baselines
 

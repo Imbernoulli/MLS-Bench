@@ -44,7 +44,7 @@ The input contains 48 variables: 3 surface constants (land-sea mask, orography, 
 You have access to standard PyTorch modules (`nn.Linear`, `nn.MultiheadAttention`, `nn.LayerNorm`, etc.) and `torch.nn.functional`. The FIXED section imports `torch`, `torch.nn`, and `torch.nn.functional as F`.
 
 ## Fixed Pipeline
-ClimaX backbone, per-variable patch tokenization, fine-tuning recipe (initialized from pretrained ClimaX weights), data pipeline, optimizer/schedule, and the evaluation metric are all fixed.
+The training and evaluation pipeline (backbone, tokenization, data, optimizer, schedule, and metric) is fixed by the harness and not editable.
 
 ## Reference Baselines
 - **cross_attention**: ClimaX default aggregation. A learnable query token attends to all V variable tokens at each spatial location via multi-head cross-attention, producing one token per location.

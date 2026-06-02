@@ -26,7 +26,7 @@ Implement the `ProteinEncoder` class and any helper modules in `custom_protein_e
    - Returns: `node_emb` (N, out_dim) per-node embeddings, `graph_emb` (B, out_dim) per-graph embeddings
 
 ## Fixed Pipeline
-Node-feature computation, dataset construction, batching, classifier heads, training/evaluation loops, and metric computation are all fixed. The contribution is the encoder architecture only.
+The training and evaluation pipeline (data, downstream heads, optimizer, schedule, and metrics) is fixed by the harness and not editable. The contribution is the encoder architecture only.
 
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_protein_encoder.py` is editable. You may define any helper classes, layers, or functions within this region. The region must contain a `ProteinEncoder` class with the interface described above.

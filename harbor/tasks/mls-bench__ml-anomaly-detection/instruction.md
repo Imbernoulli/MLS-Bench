@@ -38,7 +38,7 @@ class CustomAnomalyDetector:
 Available libraries: `numpy`, `scipy` (linear algebra, statistics, spatial, optimization), `scikit-learn` (PCA, KDE, NearestNeighbors, GaussianMixture, ...), `pyod` (IForest, LOF, OCSVM, ECOD, COPOD, KNN, HBOS, PCA, LODA, SUOD, ...).
 
 ## Fixed Pipeline
-The evaluation applies your detector across multiple tabular anomaly detection datasets with varying sample counts, dimensionality, and anomaly rates. The detector fits on training features without labels; anomaly scores are computed for held-out test features. Dataset loading, splitting, and metric computation are handled by the fixed harness.
+The training and evaluation pipeline (datasets, splitting, and metric computation) is fixed by the harness and not editable. The detector fits on unlabeled training features and produces anomaly scores on held-out test features; the contribution is the scoring rule only.
 
 
 ## Your Workspace

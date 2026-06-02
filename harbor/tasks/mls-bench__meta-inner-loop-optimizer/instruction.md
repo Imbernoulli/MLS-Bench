@@ -46,10 +46,7 @@ class InnerLoopOptimizer:
 Available reference code: `learn2learn/algorithms/maml.py`, `meta_sgd.py`, `gbml.py`.
 
 ## Fixed Pipeline
-- Backbone: CNN4.
-- Meta-training: 60,000 iterations, 4 tasks per meta-batch.
-- Inner loop: 5 steps during training, 10 steps during evaluation.
-- Evaluation metric, benchmark settings, and episode counts are fixed.
+The training and evaluation pipeline (backbone, data loader, outer-loop schedule, benchmark settings, episode counts, and metrics) is fixed by the harness and not editable. The number of inner-loop steps is passed to `adapt(...)` as the `n_steps` argument. You implement only the `InnerLoopOptimizer` adaptation rule.
 
 
 ## Your Workspace

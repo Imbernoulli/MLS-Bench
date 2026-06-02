@@ -62,11 +62,9 @@ class VAELoss(nn.Module):
 
 ## Fixed Pipeline
 
-The `AutoencoderKL` architecture (from `diffusers`), the data pipeline, the
-optimizer and learning-rate schedule, mixed-precision training, gradient
-clipping, and EMA are all fixed. Channel widths and latent channels may scale
-across training configurations via environment variables. The only editable
-component is the loss function.
+The model architecture, data pipeline, optimizer, learning-rate schedule, and
+training/evaluation protocol are fixed by the harness and not editable. The only
+editable component is the loss function.
 
 ## Baselines
 

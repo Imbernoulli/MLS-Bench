@@ -32,7 +32,7 @@ class Model(nn.Module):
 ```
 
 ## Fixed Protocol
-The evaluation runs on multiple heterogeneous multivariate time series datasets with varying channel counts, resolutions, and domains. A random binary mask is applied per (timestep, channel). Standardization, splits, and mask sampling are fixed by the Time-Series-Library imputation pipeline.
+The training and evaluation pipeline (datasets, standardization, splits, mask sampling, and metrics) is fixed by the harness and not editable. The model receives the masked sequence together with a binary observation mask (1 = observed, 0 = masked) and is scored only at masked positions; see the Model Interface above for the exact tensor shapes.
 
 ## Reference Implementations (read-only)
 Three reference models from `models/`:

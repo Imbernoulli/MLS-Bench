@@ -42,8 +42,7 @@ In `nanoGPT/custom_pretrain.py`:
 - `full_attnres` — attention over all previous layer outputs.
 
 ## Fixed Pipeline
-- **Model**: a GPT-2-style decoder-only transformer.
-- **Training**: standard warmup + cosine LR decay.
+The training and evaluation pipeline (data, model, optimizer, schedule, and metrics) is fixed by the harness and not editable, except for the `CONFIG_OVERRIDES` knobs noted above (allowed keys: `learning_rate`, `weight_decay`, `warmup_iters`, `min_lr`, `grad_clip`).
 
 
 ## Your Workspace

@@ -47,8 +47,7 @@ def compute_custom_kl_penalty(
 | `abs` | `|logprob − ref_logprob|` | robust |
 
 ## Fixed Pipeline
-- **Framework**: verl, with the GRPO advantage estimator and a frozen reference policy.
-- **Hyperparameters**: `actor.use_kl_loss=True`, `actor.kl_loss_type=custom`. Reward manager, advantage estimator, rollout, model, optimizer, and evaluation are fixed.
+The RL framework, advantage estimator, frozen reference policy, reward manager, rollout, model, optimizer, and evaluation are fixed by the harness and not editable. Your estimator is selected via the `custom` KL-loss branch (the wiring at the bottom of the file dispatches `actor.kl_loss_type=custom` to your function); the per-token KL it returns is the only quantity you change.
 
 ## Your Workspace
 

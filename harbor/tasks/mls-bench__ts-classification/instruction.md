@@ -31,14 +31,14 @@ class Model(nn.Module):
 ```
 
 ## Fixed Protocol
-Train/test splits are dataset-provided. Optimization: RAdam, CrossEntropyLoss, early-stopping `patience=10`, framework defaults for batch size and `train_epochs`.
+The training and evaluation pipeline (data, splits, optimizer, loss, early stopping, batch size, and epochs) is fixed by the harness and not editable. Classification accuracy is the evaluation metric.
 
 ## Reference Implementations (read-only)
 Three reference models from `models/`:
 
-- **DLinear** — Zeng et al., AAAI 2023 (arXiv 2205.13504). For classification, the trend+seasonal linear projections feed a global pooling + linear classifier head. TS-Lib classification defaults: `e_layers=2`, `d_model=128`, RAdam `lr=1e-3`, `batch_size=16`. Source: https://github.com/cure-lab/LTSF-Linear.
-- **TimesNet** — Wu et al., ICLR 2023 (arXiv 2210.02186). TS-Lib classification defaults: `e_layers=2`, `d_model=64`, `d_ff=64`, `top_k=3`, `num_kernels=6`, RAdam `lr=1e-3`. Source: https://github.com/thuml/Time-Series-Library.
-- **PatchTST** — Nie et al., ICLR 2023 (arXiv 2211.14730). TS-Lib classification defaults: `e_layers=3`, `n_heads=4`, `d_model=128`, `d_ff=256`, `patch_len=16`, `stride=8`. Source: https://github.com/yuqinie98/PatchTST.
+- **DLinear** — Zeng et al., AAAI 2023 (arXiv 2205.13504). For classification, the trend+seasonal linear projections feed a global pooling + linear classifier head. Source: https://github.com/cure-lab/LTSF-Linear.
+- **TimesNet** — Wu et al., ICLR 2023 (arXiv 2210.02186). Source: https://github.com/thuml/Time-Series-Library.
+- **PatchTST** — Nie et al., ICLR 2023 (arXiv 2211.14730). Source: https://github.com/yuqinie98/PatchTST.
 
 
 ## Your Workspace

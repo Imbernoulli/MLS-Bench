@@ -27,15 +27,13 @@ You may use any combination of cross-entropy variants, margin losses, confidence
 The evaluation loss reported during training (`test_loss`) is computed with standard cross-entropy regardless of the custom loss; the custom loss only affects training.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip` (CIFAR-style).
+The model architectures, optimizer, learning-rate schedule, data pipeline, augmentation, and the evaluation loss are fixed by the harness and not editable. The custom loss affects training only.
 
 ## Baselines
 The included baselines provide reference implementations of:
 - **label_smoothing** — Szegedy et al., arXiv:1512.00567.
-- **focal_loss** — Lin et al., arXiv:1708.02002, with default focusing parameter `gamma=2.0`.
-- **poly_loss** — Leng et al., arXiv:2204.12511, Poly-1 form with default leading coefficient `eps=2.0` (the value reported in the paper for image classification).
+- **focal_loss** — Lin et al., arXiv:1708.02002.
+- **poly_loss** — Leng et al., arXiv:2204.12511, Poly-1 form.
 
 ## Your Workspace
 

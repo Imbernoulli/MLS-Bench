@@ -36,7 +36,7 @@ Modify the `Custom` model class in `custom_emulator.py` to implement a better ne
   net shortwave, longwave down, snow/rain precipitation, direct/diffuse solar.
 
 ## Fixed Pipeline
-Dataset loading, input/output normalization, train/val/test splits, optimizer choice and schedule, and loss function are all fixed by the scaffold. Only the `Custom` architecture is editable.
+The training and evaluation pipeline (data, normalization, splits, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable. Only the `Custom` architecture is editable.
 
 ## Reference Baselines
 - **cnn**: 1D convolutional network with residual blocks operating on vertical atmospheric profiles. Multi-level variables are treated as spatial sequences over 60 vertical levels; single-level scalars are broadcast and concatenated. Inspired by the ClimSim CNN baseline (Yu et al., NeurIPS 2023 D&B).

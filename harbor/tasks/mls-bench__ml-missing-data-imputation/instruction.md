@@ -37,7 +37,7 @@ class CustomImputer(BaseEstimator, TransformerMixin):
 Available libraries: `numpy`, `scipy`, `scikit-learn` (all submodules: `sklearn.impute`, `sklearn.ensemble`, `sklearn.neighbors`, ...).
 
 ## Fixed Pipeline
-Data is standardized tabular data (classification and regression tasks) with **20% MCAR (Missing Completely At Random)** corruption applied to features. Your imputer receives `X` with NaN entries and must produce a complete array with no NaNs. Do not use test labels during imputation.
+The datasets, missingness corruption, and the evaluation pipeline (downstream models and metrics) are fixed by the harness and not editable. Your imputer receives `X` (a numpy array with NaN entries) and must produce a complete array of the same shape with no NaNs. Do not use test labels during imputation.
 
 
 ## Your Workspace

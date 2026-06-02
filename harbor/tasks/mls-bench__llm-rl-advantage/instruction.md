@@ -36,7 +36,7 @@ def compute_custom_advantage(
 
 - `token_level_rewards` — per-token rewards; for outcome rewards the scalar is at the last valid token (`.sum(dim=-1)` for per-sequence score).
 - `response_mask` — binary validity mask.
-- `index` — group / prompt identifier; same index = same prompt (16 responses per prompt).
+- `index` — group / prompt identifier; same index = same prompt (multiple sampled responses share a prompt).
 - `config` — `AlgoConfig` with `gamma`, `lam`, `norm_adv_by_std_in_grpo`, etc.
 - `old_log_probs`, `ref_log_probs` — per-token log-probs under the rollout / reference policy. Per-token KL ≈ `old_log_probs − ref_log_probs`.
 - Both returned tensors are `(bs, response_length)` and must be masked by `response_mask`.
@@ -49,9 +49,7 @@ Available utilities: `verl_F.masked_whiten(values, mask)`, `verl_F.masked_mean(v
 - `reinforce_plus_plus_baseline` — group mean + token-level batch whitening.
 
 ## Fixed Pipeline
-- **Framework**: verl.
-- **Training set**: math reasoning problems.
-- The policy model, reward manager, rollout config, optimizer, KL-loss setting, RL hyperparameters, and evaluation data are all fixed.
+The training and evaluation pipeline (framework, policy model, reward manager, rollout config, optimizer, KL-loss setting, RL hyperparameters, training set, and evaluation data) is fixed by the harness and not editable. Your function is invoked through the verl advantage-estimator registry described in the interface contract above.
 
 ## Your Workspace
 

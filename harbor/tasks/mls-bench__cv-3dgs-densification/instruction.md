@@ -96,13 +96,10 @@ The `params` dict contains:
 
 ### Fixed Pipeline
 
-The following are FIXED across all strategies and must not be changed:
-
-- Renderer: `gsplat` CUDA rasterizer.
-- Optimizer: AdamW with per-parameter learning rates.
-- Photometric loss: `0.8 * L1 + 0.2 * SSIM` per training step.
-- Training: 30,000 steps per scene.
-- SH degree: 3 (increased gradually during training).
+The renderer is the `gsplat` CUDA rasterizer. The full training and evaluation
+pipeline (renderer, optimizer, photometric loss, schedule, and metrics) is fixed
+by the harness and not editable. Your contribution must be confined to the
+densification strategy in the editable region.
 
 ## Baselines
 

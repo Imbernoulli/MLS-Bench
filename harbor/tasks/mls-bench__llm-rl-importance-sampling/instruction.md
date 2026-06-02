@@ -58,8 +58,10 @@ Utilities: `verl_F.masked_mean`, `verl_F.masked_whiten`, `agg_loss`, `torch`. `a
 | `first_k_tokens` | per-token ratio for first K=64 tokens, stop-grad after | DAPO-style truncated IS, arXiv:2503.14476 |
 
 ## Fixed Pipeline
-- **Policy**: full-parameter training within the verl framework, GRPO advantage estimator.
-- Advantage estimator, reward manager, model, rollout setup, optimizer, and evaluation are all fixed.
+The training and evaluation pipeline (advantage estimator, reward manager,
+model, rollout setup, optimizer, and evaluation) is fixed by the harness and not
+editable. The only variable is the importance-sampling policy loss in the
+editable region.
 
 
 ## Your Workspace

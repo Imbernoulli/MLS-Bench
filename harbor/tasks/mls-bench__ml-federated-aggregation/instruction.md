@@ -35,11 +35,11 @@ class ServerAggregator:
 ```
 
 ## Fixed Pipeline
-- **Communication rounds**: 200.
-- **Per-round participation**: 10 of 100 clients.
-- **Local training**: 5 local epochs per round, SGD with `lr=0.01`.
-
-The simulation runs over multiple datasets with non-IID Dirichlet-partitioned or naturally heterogeneous splits, covering image classification and character-level sequence prediction tasks.
+The federated simulation pipeline (number of communication rounds, client
+population and per-round participation, local training schedule, optimizer,
+datasets, non-IID partitioning, and evaluation) is fixed by the harness and not
+editable. Your contribution must be confined to the strategy in the editable
+region.
 
 
 ## Your Workspace

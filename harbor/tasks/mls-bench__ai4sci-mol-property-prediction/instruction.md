@@ -57,16 +57,15 @@ One-hot encodings of: atomic_num (118), degree (6), formal_charge (5), num_Hs (5
 One-hot encodings of: bond_type (4), stereo (3), conjugated (1), in_ring (1).
 
 ## Fixed Pipeline
-SMILES preprocessing, conformer generation, scaffold splitting, training loop, optimizer schedule, normalization for regression targets, masked loss for missing labels, and test-time augmentation are all fixed by the scaffold.
+The training and evaluation pipeline (data preparation, splitting, training loop, optimizer schedule, target normalization, masked loss, test-time augmentation, and metrics) is fixed by the scaffold and not editable.
 
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_molprop.py` is editable. You may define helper classes, layers, or functions within this region. The region must contain a `MoleculeModel` class with the specified interface.
 
 ## Available Resources
-- 3D conformers from LMDB (Uni-Mol pipeline: coordinates normalized, polar H removed).
-- Uni-Mol vocabulary tokens and edge types available in batch.
-- Uni-Mol pre-trained weights available inside the container at the path used by the `unimol` baseline.
-- Test-time augmentation: predictions averaged over 11 conformers at val/test time.
+- 3D conformers and pre-computed distances/edge types are provided in the batch.
+- Uni-Mol vocabulary tokens and edge types are available in the batch.
+- Uni-Mol pre-trained weights are available inside the container at the path used by the `unimol` baseline.
 
 
 ## Your Workspace

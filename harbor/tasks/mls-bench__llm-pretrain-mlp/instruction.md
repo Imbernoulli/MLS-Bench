@@ -31,8 +31,9 @@ The `MLP` class in `nanoGPT/custom_pretrain.py`:
 - `relu_squared` — Primer-EZ squared-ReLU activation.
 
 ## Fixed Pipeline
-- **Model**: A multi-layer GPT-style transformer with causal self-attention and learned positional embeddings.
-- **Training**: AdamW optimizer with cosine LR decay and linear warmup, bfloat16 mixed precision, DDP multi-GPU.
+The training and evaluation pipeline (data, model backbone, optimizer, schedule, precision, and metrics) is fixed by the harness and not editable, apart from the per-method `CONFIG_OVERRIDES` knobs noted below.
+
+The editable region exposes a `CONFIG_OVERRIDES = {}` dict whose allowed keys are `learning_rate`, `weight_decay`, `warmup_iters`, `min_lr`, and `grad_clip`; use it to override training hyperparameters for your method.
 
 ## Your Workspace
 

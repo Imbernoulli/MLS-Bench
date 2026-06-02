@@ -52,7 +52,7 @@ class SelectivePolicy:
 You may implement a global threshold, a learned acceptance score, subgroup-specific thresholds, conformal mechanisms, or any compact policy fitting this interface. The base classifier and the train/calibration/test split are not editable.
 
 ## Fixed Pipeline
-Each dataset is split into train / calibration / test; the policy fits on calibration probabilities/labels/subgroups and is evaluated on test. The data pipeline and base classifier are not editable.
+The data pipeline, base classifier, and the train / calibration / test split are fixed by the harness and not editable. The policy fits on the calibration outputs (probabilities/labels/subgroups) and is evaluated on the test split.
 
 
 ## Your Workspace

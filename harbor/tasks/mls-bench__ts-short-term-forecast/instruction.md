@@ -30,7 +30,7 @@ class Model(nn.Module):
 ```
 
 ## Fixed Protocol
-Multiple seasonal patterns evaluated. Per Time-Series-Library defaults, `seq_len`, `pred_len`, and `frequency_map` vary by pattern and are passed through `configs`. All settings: `features=M`, `enc_in=1`, `loss=SMAPE`.
+The training and evaluation pipeline (data, look-back/horizon settings, training schedule, and metrics) is fixed by the harness and not editable. The per-pattern `seq_len` and `pred_len` are supplied to your model through `configs`; the univariate setting fixes `enc_in == c_out == 1`, and the training loss / reported metric is SMAPE.
 
 ## Reference Implementations (read-only)
 Four reference models from `models/`:

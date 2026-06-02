@@ -28,10 +28,7 @@ The `compute_class_weights(class_counts, num_classes, config)` function inside `
 You may modify the functional form mapping class counts to weights (inverse, power-law, logarithmic, piecewise, effective-number, etc.), use any field from `config`, choose any normalization strategy (sum to `C`, sum to `1`, unnormalized), and combine multiple ideas. The computation must be pure: no access to training data, model parameters, or test labels.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation is on the balanced test set; training is on the long-tail train split.
+The training and evaluation pipeline (dataset construction, sampler, data augmentation, model, optimizer, schedule, and metrics) is fixed by the harness and not editable. `compute_class_weights` returns the only quantity you change. Evaluation reports balanced test accuracy.
 
 ## Baselines
 - **inverse_freq** — `w[c] = total_samples / (num_classes * n[c])`.

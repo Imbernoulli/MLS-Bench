@@ -30,10 +30,7 @@ The `get_lr` function in `nanoGPT/custom_pretrain.py`:
 - `wsd_sqrt` — WSD with `1 − sqrt(progress)` decay.
 
 ## Fixed Pipeline
-- **Model**: GPT-style transformer (medium scale).
-- **Dataset**: Large web-text corpus, GPT-2 tokenizer.
-- **Training**: Fixed number of iterations, micro-batch with gradient accumulation, multi-GPU DDP.
-- Architecture, dataset, optimizer implementation, batch construction, and evaluation are fixed.
+The training and evaluation pipeline (model architecture, dataset, tokenizer, optimizer, batch construction, total update budget, and metrics) is fixed by the harness and not editable. You implement only the `get_lr` schedule in the editable regions.
 
 
 ## Your Workspace

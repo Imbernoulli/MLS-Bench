@@ -18,13 +18,10 @@ Edit the scaffold file `pytorch-examples/optimization_parity/custom_strategy.py`
 3. `get_optimizer_config(config)`
 
 ## Fixed Setup
-- Task: `y = (sum_{i in S} x_i) mod 2` for a hidden secret subset `S` of size `K = 8`.
+- Task: `y = (sum_{i in S} x_i) mod 2` for a hidden secret subset `S`.
 - Inputs: binary vectors `x in {0, 1}^N`.
-- Model: `Linear(N, W) -> ReLU -> Linear(W, 1) -> Sigmoid` with `W = 512`.
-- Optimizer type: `AdamW`.
-- Loss: binary cross-entropy.
-- Batch size: 128.
-- Training budget: up to 100,000 steps, reshuffling every epoch.
+- The model architecture, optimizer family (`AdamW`), loss, batch size, training loop, and evaluation protocol are fixed by the harness and not editable. All sizes are provided to your functions via the `config` (`TaskConfig`) object.
+
 ## Interface Notes
 - `init_model(...)` must not depend on the hidden secret.
 - `make_dataset(...)` may use the provided secret and must return either `(x, y)` or `{"x": x, "y": y}`.

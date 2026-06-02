@@ -37,7 +37,7 @@ def generate_topology(node_num: int) -> list[tuple[int, int]]:
 - `layered` — MLP-like layered DAG.
 
 ## Fixed Pipeline
-The underlying LLM backbones, prompts, aggregation machinery, and evaluators are fixed. The topology is evaluated across multiple benchmark and LLM backbone combinations; a good topology should generalize rather than over-specializing to one setting.
+The underlying LLM backbones, prompts, aggregation machinery, evaluation benchmarks, and metrics are fixed by the harness. A good topology should generalize across settings rather than over-specializing to one.
 
 ### Network requirement
 This task requires internet access at runtime to call LLM APIs. Set both `DEEPSEEK_API_KEY` and `QWEN_API_KEY` (via DashScope) before running. Not compatible with offline / air-gapped compute nodes.

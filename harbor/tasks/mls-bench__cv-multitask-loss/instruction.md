@@ -28,10 +28,7 @@ The `forward` method receives:
 You may modify `__init__` to add learnable parameters (log-variances, weights, etc.), implement any combination strategy in `forward`, use `epoch` / `total_epochs` for curriculum or scheduling, and maintain auxiliary state such as loss-history buffers. The `MultiTaskLoss` parameters are included in the optimizer, so any registered learnable tensors will be trained.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Two-head model: shared backbone with separate fine (100-way) and coarse (20-way) classifiers.
+The training and evaluation pipeline (data, augmentation, two-head model, optimizer, and schedule) is fixed by the harness and not editable. The model exposes a fine head and a coarse head whose losses are passed to your `forward`.
 
 ## Baselines
 - **uncertainty** — Kendall et al., arXiv:1705.07115; learns one log-variance per task initialized to `0`.

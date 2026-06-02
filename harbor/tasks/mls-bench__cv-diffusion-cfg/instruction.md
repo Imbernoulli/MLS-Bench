@@ -64,9 +64,7 @@ allowed denoiser evaluations, or evaluation code.
 
 ## Fixed Pipeline
 
-- Models: Stable Diffusion v1.5 and SDXL (frozen weights).
-- Sampling: fixed sampler call structure with a fixed step budget.
-- Prompts: shared evaluation prompt set across all baselines.
+The training and evaluation pipeline (model weights, sampler call structure and step budget, prompt set, and metrics) is fixed by the harness and not editable. You implement only the guidance rule in the editable regions of the two files described above.
 
 ## Your Workspace
 

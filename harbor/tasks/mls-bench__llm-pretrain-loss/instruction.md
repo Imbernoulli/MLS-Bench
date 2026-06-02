@@ -3,7 +3,7 @@
 # LLM Pretraining: Loss Function Optimization
 
 ## Research Question
-Design an improved loss function for GPT-2 next-token language model pretraining. The change should improve model quality under the same architecture, data, and optimization budget, compared to standard cross-entropy.
+Design an improved loss function for next-token language model pretraining. The change should improve model quality under the same architecture, data, and optimization budget, compared to standard cross-entropy.
 
 ## Background
 The default objective is plain next-token cross-entropy. Several modifications have been studied as drop-in replacements at this layer:
@@ -31,8 +31,8 @@ The `compute_loss` function in `nanoGPT/custom_pretrain.py`:
 - `softcap_ce` — Gemma-2-style final-logit soft-cap at 30.0.
 
 ## Fixed Pipeline
-- **Model**: a GPT-2-style decoder-only Transformer.
-- Architecture, tokenizer, dataset, training loop, and evaluation pipeline are fixed.
+The model architecture, tokenizer, dataset, training loop, and evaluation
+pipeline are fixed by the harness and not editable.
 
 
 ## Your Workspace

@@ -39,7 +39,7 @@ CONFIG_OVERRIDES = {'n_hidden': 256, 'slice_num': 32}
 Allowed keys are restricted to `n_hidden` and `slice_num`. The shell scripts read these from your file at runtime and pass them through as `--n_hidden` and `--slice_num`.
 
 ## Fixed Pipeline
-Dataset loaders, OneCycleLR training schedule, loss function, metric computation, and the parameter budget check are all fixed. Only the `Model` class and the two `CONFIG_OVERRIDES` knobs are editable.
+The training and evaluation pipeline (data, training schedule, loss function, and metrics) is fixed by the harness and not editable. Only the `Model` class and the two `CONFIG_OVERRIDES` knobs are editable.
 
 
 ## Your Workspace

@@ -27,12 +27,10 @@ Inputs:
 
 Design directions: weight-based (L1/L2 norms, orthogonality, spectral norms, weight correlation), output-based (entropy, confidence penalty, label-smoothing-style penalties, logit penalties), activation-based (sparsity, diversity via forward hooks), epoch-dependent (warm-up schedules, annealing, curriculum), or architecture-aware (different penalties for conv vs linear, depth-dependent scaling). The returned term must be differentiable.
 
-Note: standard L2 weight decay (`5e-4`) is **already** applied via the optimizer. Your regularization term is *additional*.
+Note: standard L2 weight decay is **already** applied via the optimizer. Your regularization term is *additional*.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
+The training and evaluation pipeline (data, augmentation, model architectures, base loss, optimizer, schedule, and metrics) is fixed by the harness and not editable.
 
 ## Baselines
 - **dropblock** — Ghiasi et al., arXiv:1810.12890; loss-based DropBlock-inspired co-activation penalty.

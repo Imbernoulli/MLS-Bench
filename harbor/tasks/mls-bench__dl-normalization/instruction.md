@@ -29,9 +29,9 @@ The `CustomNorm` class inside `pytorch-vision/custom_norm.py`. It must be a drop
 You may modify normalization statistics (mean/variance over batch, channel, spatial, or any combination), learnable affine parameters (scale and shift), grouping strategies, mixtures of normalization approaches, and adaptive or input-dependent normalization, as long as the interface is preserved.
 
 ## Fixed Pipeline
-The optimizer, learning-rate schedule, data augmentation, backbones, activations, datasets, and loss functions are fixed by the harness.
+The training and evaluation pipeline (data, backbones, activations, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable.
 
-The normalization module must preserve tensor shape, accept the expected channel count, remain numerically stable in train and eval, and must not change backbones, activations, datasets, loss functions, or optimizer settings.
+The normalization module must preserve tensor shape, accept the expected channel count, and remain numerically stable in train and eval.
 
 ## Baselines
 - **group_norm** — Wu & He, arXiv:1803.08494; default `num_groups=32` (paper-recommended), with channel counts smaller than `num_groups` falling back to InstanceNorm-equivalent grouping.

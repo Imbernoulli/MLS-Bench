@@ -29,10 +29,7 @@ Constraints (the backbone relies on these):
 You may modify the internal convolution structure (number, kernel sizes, grouping), activation/normalization placement and type, the shortcut/skip design, attention mechanisms (channel or spatial), the `expansion` attribute, and any additional modules within the block.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Network architecture: CIFAR-adapted ResNets at varying depths, evaluated on CIFAR-style image classification datasets.
+The training and evaluation pipeline (datasets, network architecture, initialization, data pipeline, optimizer, schedule, and metrics) is fixed by the harness and not editable. The contribution is the `CustomBlock` design only.
 
 ## Baselines
 - **pre_activation** — He et al., arXiv:1603.05027; BN-ReLU-Conv ordering inside the block.

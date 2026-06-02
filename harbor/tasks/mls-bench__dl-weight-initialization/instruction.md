@@ -27,9 +27,7 @@ The `initialize_weights(model, config)` function inside `pytorch-vision/custom_i
 You may iterate over `model.named_modules()` or `model.named_parameters()` and design per-layer or depth-dependent strategies, treat residual shortcut projections separately from main-path convs, set `BatchNorm2d` weight/bias differently, and use any data-independent logic. No access to training data and no calibration passes.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
+The training and evaluation pipeline (data, augmentation, model definitions, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable.
 
 ## Baselines
 - **kaiming_normal** — He et al., arXiv:1502.01852; conv weights from `N(0, sqrt(2/fan_out))`, zero biases, BatchNorm `(weight=1, bias=0)`.

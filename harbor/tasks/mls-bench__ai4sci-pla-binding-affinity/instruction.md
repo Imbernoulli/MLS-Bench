@@ -65,7 +65,7 @@ Bond type (4) + conjugated (1) + in_ring (1) + geometric features (11): angle st
 Geometric features only (same 11-dim encoding as intra-molecular geometric features): computed between ligand-pocket atom pairs within a 5 Å distance threshold.
 
 ## Fixed Pipeline
-Graph construction, feature extraction, train/test splits, optimizer, schedule, loss (regression on `-logKd/Ki`), and evaluation harness are all fixed by the scaffold. The contribution is the `AffinityModel` architecture only.
+The training and evaluation pipeline (data, feature extraction, model wiring, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable. The contribution is the `AffinityModel` architecture only.
 
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_pla.py` is editable. You may define helper classes, layers, or functions within this region. The region must contain an `AffinityModel` class with the specified interface.

@@ -29,15 +29,13 @@ The model receives two inputs per mutant:
 - Return a tensor of shape `[B]` with predicted fitness scores (real-valued).
 
 ## Fixed Pipeline
-The data pipeline, train/test loop, embedding extraction, and cross-validation splits are all fixed by the scaffold. The only learnable degrees of freedom are (a) the `MutationPredictor` architecture and (b) optimizer hyperparameters exposed via `CONFIG_OVERRIDES` in `main()` (allowed keys: `learning_rate`, `weight_decay`).
+The training and evaluation pipeline (data, embeddings, train/test loop, splits, and metric) is fixed by the harness and not editable. The only learnable degrees of freedom are (a) the `MutationPredictor` architecture and (b) optimizer hyperparameters exposed via `CONFIG_OVERRIDES` in `main()` (allowed keys: `learning_rate`, `weight_decay`).
 
 ## Baselines
-Reference baselines on the same fixed pipeline:
+Reference baselines on the same fixed pipeline, differing only in the prediction head:
 - **Ridge regression** on concatenated `[embedding, delta_embedding]` features.
 - **MLP** prediction head over the same concatenated features.
-- **Reshape-CNN** that reshapes the 1280-dim embedding into a 2D grid and applies small convolutions before regression.
-
-All baselines see the same ESM-2 embeddings, the same CV splits, and the same train/test loop; they differ only in the prediction head.
+- **Reshape-CNN** that reshapes the embedding into a 2D grid and applies small convolutions before regression.
 
 ## Editable Region
 The `MutationPredictor` class lives between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_mutation_pred.py`. You may define helper classes, layers, or functions within this region. The region must contain a `MutationPredictor` class that is an `nn.Module` with the specified interface.

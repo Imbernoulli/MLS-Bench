@@ -12,10 +12,13 @@ Quantitative stock prediction in Microsoft `qlib` formulates daily forecasting a
 Implement a `CustomModel` in `custom_model.py` that exposes the standard qlib model interface (`fit(dataset)` and `predict(dataset, segment="test")`). The class is wired into the qlib `workflow_config.yaml`, which controls the dataset adapter / preprocessor block but keeps the universe, label, and date splits fixed. You may change the dataset class (e.g., to `TSDatasetH`) or processors if your model needs a different input view.
 
 ## Fixed Pipeline
-- **Features**: Alpha360 (360 features per stock-day = 6 base ratios over 60 days of history). For temporal models, reshape with `x.reshape(N, 6, 60).permute(0, 2, 1) -> [N, 60, 6]`.
-- **Label**: `Ref($close, -2) / Ref($close, -1) - 1` (return from T+1 to T+2, predicted at T).
-- **Universes / splits**: instruments and date ranges are fixed by the workflow YAML.
-- **Backtest**: portfolio construction executed by the qlib workflow runner.
+The training and evaluation pipeline (universes, label, train/valid/test splits,
+and downstream backtest) is fixed by the harness and not editable.
+
+The input feature view your model receives is Alpha360: 360 features per
+stock-day (6 base ratios over 60 days of history). For temporal models, reshape
+with `x.reshape(N, 6, 60).permute(0, 2, 1) -> [N, 60, 6]` to get 60 time steps of
+6 features each.
 
 ## Model Interface
 ```python

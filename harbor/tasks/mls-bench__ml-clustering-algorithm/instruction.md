@@ -29,7 +29,7 @@ class CustomClustering(BaseEstimator, ClusterMixin):
 Available imports (already in the FIXED section): `numpy`, `sklearn.base.BaseEstimator`, `sklearn.base.ClusterMixin`, `sklearn.preprocessing.StandardScaler`, `sklearn.metrics.*`. You may import any module from `scikit-learn`, `numpy`, or `scipy`.
 
 ## Fixed Pipeline
-The algorithm is evaluated on several datasets covering diverse geometries (convex blobs, non-convex shapes, and high-dimensional real data). The data pipeline, evaluation harness, and metrics are fixed.
+The data pipeline and evaluation harness are fixed by the harness and not editable. Cluster quality is measured by ARI (Adjusted Rand Index), NMI (Normalized Mutual Information), and Silhouette Score.
 
 
 ## Your Workspace

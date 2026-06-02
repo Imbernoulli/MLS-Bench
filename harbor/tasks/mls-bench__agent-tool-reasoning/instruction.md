@@ -9,9 +9,7 @@ Design a better search/reasoning strategy for an LLM-based tool-use agent on mul
 StableToolBench (Guo et al., 2024, arXiv:2403.07714) is a stabilized version of ToolBench (Qin et al., 2023, arXiv:2307.16789, the ToolLLM paper) for multi-step tool use over RapidAPI tools, replacing unstable real APIs with a virtual API server (cache + simulator). Given a user query and a set of tool APIs, the agent decides which tools to call, with what arguments, and in what order to arrive at a final answer.
 
 ## Fixed Pipeline
-- The tool environment (virtual API server), agent backbones, and answer judge are all fixed and must not be modified.
-- The same `search()` policy is run across all backbones.
-- Prompts and per-call decoding parameters are fixed.
+The tool environment, agent backbones, answer judge, prompts, and per-call decoding parameters are fixed by the harness and not editable. Your `search()` policy is run unchanged across all backbones.
 
 ## What you can modify
 The `search(self, root_node)` method in `custom_search.py`. You have access to:

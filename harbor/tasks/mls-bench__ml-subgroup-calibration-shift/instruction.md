@@ -33,7 +33,7 @@ class CalibrationMethod:
 The method must produce valid probabilities; `groups` may be ignored by group-agnostic methods.
 
 ## Fixed Pipeline
-Tabular datasets with protected subgroup attributes are loaded from AIF360. For each dataset the test split is intentionally shifted: a domain score selects the held-out test tail, and calibration is fit on the source region and evaluated on the shifted region. Subgroups come from protected attributes exposed by the dataset loaders.
+The datasets, the (intentionally shifted) train/calibration/test splits, the base classifier, the subgroup definitions, and the metric computation are fixed by the harness and not editable. Calibration is fit on the calibration set and evaluated on the shifted test set; worst-subgroup calibration error is the primary metric.
 
 ## Your Workspace
 

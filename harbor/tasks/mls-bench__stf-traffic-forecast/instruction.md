@@ -23,7 +23,7 @@ def forward(self, inputs: torch.Tensor, inputs_timestamps: torch.Tensor) -> torc
 `CustomConfig` extends `basicts.configs.BasicTSModelConfig` with at least `input_len`, `output_len`, `num_features`.
 
 ## Fixed Protocol
-All settings use `input_len=12`, `output_len=12` (one hour of 5-min intervals → next hour). Data is Z-score normalized; outputs are inverse-transformed before evaluation. Missing values (encoded as `0.0`) are masked during both loss and evaluation.
+The model operates under a fixed `input_len=12` → `output_len=12` horizon (these are the I/O shapes your `forward` must consume and produce). The data pipeline, normalization, and evaluation are otherwise fixed by the harness and not editable.
 
 ## Available Modules
 You may import components from `basicts.modules`:
@@ -34,11 +34,11 @@ You may import components from `basicts.modules`:
 - `basicts.modules.activations` — common activations
 
 ## Training Hyperparameter Override
-The harness uses Adam with `lr=2e-3`, `weight_decay=1e-4`, and `MultiStepLR(milestones=[1, 50, 80], gamma=0.5)` for 100 epochs at `batch_size=64`. If your method needs a different `lr` or `weight_decay`, set them in the `CONFIG_OVERRIDES` dict at the bottom of `custom_model.py`:
+The training optimizer, learning-rate schedule, epochs, batch size, and gradient clipping are fixed by the harness and not editable. If your method needs a different `lr` or `weight_decay`, set them in the `CONFIG_OVERRIDES` dict at the bottom of `custom_model.py`:
 ```python
 CONFIG_OVERRIDES = {'lr': 5e-4, 'weight_decay': 1e-3}
 ```
-Only `lr` and `weight_decay` are forwarded; epochs, batch size, scheduler, and gradient clipping are fixed.
+Only `lr` and `weight_decay` are forwarded.
 
 ## Reference Implementations (read-only)
 Six reference models live in `basicts/models/` and serve as context:
