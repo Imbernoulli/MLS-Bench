@@ -221,6 +221,11 @@ def _check_editable_only(
 
 _SKIP_DIR_PARTS = {".git", "__pycache__", "node_modules", ".pytest_cache", ".mypy_cache"}
 _SKIP_SUFFIXES = {".pyc", ".pyo", ".so", ".o", ".egg-info"}
+_EXEMPT_TOP_LEVEL_DIRS = {"_task"}
+
+
+def _is_workspace_guard_exempt(rel: Path) -> bool:
+    return bool(rel.parts and rel.parts[0] in _EXEMPT_TOP_LEVEL_DIRS)
 
 
 def _walk_workspace(workspace_root: Path) -> set[Path]:
@@ -234,7 +239,10 @@ def _walk_workspace(workspace_root: Path) -> set[Path]:
             continue
         if any(part.endswith(suf) for part in p.parts for suf in _SKIP_SUFFIXES):
             continue
-        out.add(p.relative_to(workspace_root))
+        rel = p.relative_to(workspace_root)
+        if _is_workspace_guard_exempt(rel):
+            continue
+        out.add(rel)
     return out
 
 
@@ -286,12 +294,10 @@ def cmd_guard(args: argparse.Namespace) -> int:
     guarded_prefixes = {Path(f).parts[0] for f in editable if f}
     guarded_prefixes |= {Path(f).parts[0] for f in manifest if f}
 
-    # Disallowed creation: anything in workspace under a guarded prefix that
-    # is NOT in the manifest (= agent created it post-start).
+    # Disallowed creation: anything in workspace that is NOT in the manifest
+    # (= agent created it post-start).
     if not allow_create:
         for rel in sorted(workspace_files):
-            if not rel.parts or rel.parts[0] not in guarded_prefixes:
-                continue
             rel_str = rel.as_posix()
             if rel_str in manifest:
                 continue

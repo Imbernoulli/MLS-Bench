@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import sys
 import argparse
@@ -22,6 +23,90 @@ def _load_score_task():
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
     return module
+
+
+def _write_guard_fixture(tmp_path: Path, *, allow_create: bool) -> tuple[Path, Path, Path, Path]:
+    task_meta = tmp_path / "meta"
+    pristine = tmp_path / "pristine"
+    workspace = tmp_path / "workspace"
+    for root in (task_meta, pristine / "pkg", workspace / "pkg"):
+        root.mkdir(parents=True)
+
+    content = b"def f():\n    return 1\n"
+    (pristine / "pkg" / "existing.py").write_bytes(content)
+    (workspace / "pkg" / "existing.py").write_bytes(content)
+    (task_meta / "config.json").write_text(json.dumps({
+        "allow_create": allow_create,
+        "files": [
+            {
+                "filename": "pkg/existing.py",
+                "edit": [{"start": 1, "end": -1}],
+            }
+        ],
+    }))
+    (task_meta / "pristine_manifest.json").write_text(json.dumps({
+        "pkg/existing.py": hashlib.sha256(content).hexdigest(),
+    }))
+    return task_meta, pristine, workspace, tmp_path / "violation.txt"
+
+
+def test_allow_create_false_outside_prefix(tmp_path: Path):
+    score_task = _load_score_task()
+    task_meta, pristine, workspace, violation = _write_guard_fixture(
+        tmp_path,
+        allow_create=False,
+    )
+    (workspace / "sitecustomize.py").write_text("print('bypass')\n")
+
+    rc = score_task.cmd_guard(argparse.Namespace(
+        task_meta=str(task_meta),
+        pristine=str(pristine),
+        workspace=str(workspace),
+        violation_out=str(violation),
+    ))
+
+    assert rc == 10
+    assert "created new file (allow_create=false): sitecustomize.py" in violation.read_text()
+
+
+def test_verifier_task_dir_exempt(tmp_path: Path):
+    score_task = _load_score_task()
+    task_meta, pristine, workspace, violation = _write_guard_fixture(
+        tmp_path,
+        allow_create=False,
+    )
+    task_dir = workspace / "_task"
+    task_dir.mkdir()
+    (task_dir / "config.json").write_text("{}\n")
+
+    rc = score_task.cmd_guard(argparse.Namespace(
+        task_meta=str(task_meta),
+        pristine=str(pristine),
+        workspace=str(workspace),
+        violation_out=str(violation),
+    ))
+
+    assert rc == 0
+    assert not violation.exists()
+
+
+def test_allow_create_true_outside_prefix(tmp_path: Path):
+    score_task = _load_score_task()
+    task_meta, pristine, workspace, violation = _write_guard_fixture(
+        tmp_path,
+        allow_create=True,
+    )
+    (workspace / "sitecustomize.py").write_text("print('allowed')\n")
+
+    rc = score_task.cmd_guard(argparse.Namespace(
+        task_meta=str(task_meta),
+        pristine=str(pristine),
+        workspace=str(workspace),
+        violation_out=str(violation),
+    ))
+
+    assert rc == 0
+    assert not violation.exists()
 
 
 def test_edit_guard_rejects_deleted_fixed_separator_with_duplicate_in_editable(tmp_path: Path):
