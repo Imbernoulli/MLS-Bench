@@ -4,7 +4,7 @@ Downloads pretrained diffusion models and test datasets for inverse problem benc
 Run via: mlsbench data InverseBench
 
 Creates:
-  <data_root>/inversebench/checkpoints/{inv-scatter-5m.pt, blackhole-50k.pt}
+  <data_root>/inversebench/checkpoints/{inv-scatter-5m.pt, blackhole-50k.pt, ffhq256.pt}
   <data_root>/inversebench/inv-scatter-test/
   <data_root>/inversebench/blackhole/{test/, measure/}
   <data_root>/inversebench/cache/
@@ -20,6 +20,14 @@ from pathlib import Path
 CHECKPOINTS = {
     "inv-scatter-5m.pt": "https://github.com/devzhk/InverseBench/releases/download/diffusion-prior/inv-scatter-5m.pt",
     "blackhole-50k.pt": "https://github.com/devzhk/InverseBench/releases/download/diffusion-prior/blackhole-50k.pt",
+    # Diffusion prior for the FFHQ256 inpainting eval. Required: the
+    # ai4sci-inverse-diffusion-algo task scores an `inpainting` label whose
+    # script loads problem.prior=checkpoints/ffhq256.pt. Converted from the DPS
+    # repo; published on the same InverseBench diffusion-prior release.
+    # NOTE: the inpainting TEST DATA (/data/ffhq256, ImageFolder id_list 0-9) is
+    # NOT in the public InverseBench distribution (the OSN bucket has no ffhq256)
+    # — it must be supplied separately; see the ffhq256 placeholder handling below.
+    "ffhq256.pt": "https://github.com/devzhk/InverseBench/releases/download/diffusion-prior/ffhq256.pt",
 }
 
 TEST_DATA = {
@@ -282,6 +290,7 @@ def main():
     checks = [
         ckpt_dir / "inv-scatter-5m.pt",
         ckpt_dir / "blackhole-50k.pt",
+        ckpt_dir / "ffhq256.pt",
         root / "inv-scatter-test",
         root / "blackhole" / "test",
         root / "blackhole" / "measure",
@@ -292,6 +301,20 @@ def main():
     if missing:
         print(f"ERROR: Missing: {missing}", file=sys.stderr)
         sys.exit(1)
+
+    # The FFHQ256 inpainting eval data (root/ffhq256, ImageFolder id_list 0-9) is
+    # NOT publicly distributed by InverseBench and is handled as an optional
+    # placeholder above. Warn loudly if it is empty so an image built without it
+    # doesn't silently ship a broken `inpainting` eval (FileNotFoundError / no
+    # images at /data/ffhq256).
+    ffhq_dir = root / "ffhq256"
+    if not any(ffhq_dir.iterdir()) if ffhq_dir.exists() else True:
+        print(
+            "WARNING: ffhq256/ test images are absent — the `inpainting` eval of "
+            "ai4sci-inverse-diffusion-algo will fail. Supply the FFHQ256 images "
+            "(ImageFolder, ids 0-9) before building the Harbor base image.",
+            file=sys.stderr,
+        )
     print("All InverseBench data verified.")
 
 
