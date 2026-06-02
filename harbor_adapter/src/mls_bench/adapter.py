@@ -132,6 +132,7 @@ class TaskContext:
     leaderboard_rows: list[dict] = field(default_factory=list)
     chosen_baseline: str = ""
     baseline_edit_ops: list[dict] = field(default_factory=list)
+    oracle_cmd_overrides: list[dict] = field(default_factory=list)
 
 
 @dataclass
@@ -682,10 +683,12 @@ def build_task_context(mb: MlsBenchRoot, task_id: str) -> TaskContext:
     # Pick baseline + load its edit ops (resolved relative to task_dir).
     baseline_name = ""
     edit_ops: list[dict] = []
+    oracle_cmd_overrides: list[dict] = []
     baselines = config.get("baselines") or {}
     if baselines:
         baseline_name = _pick_strongest_baseline(task_dir, config, leaderboard)
-        rel = baselines[baseline_name].get("edit_ops")
+        baseline_cfg = baselines[baseline_name]
+        rel = baseline_cfg.get("edit_ops")
         if rel:
             try:
                 ops_py = _safe_join(task_dir, rel, field="baseline edit_ops")
@@ -694,6 +697,13 @@ def build_task_context(mb: MlsBenchRoot, task_id: str) -> TaskContext:
                 raise RuntimeError(
                     f"{task_id}: could not load oracle baseline ops {rel}: {exc}"
                 ) from exc
+        elif baseline_cfg.get("cmd"):
+            labels = baseline_cfg.get("labels")
+            if labels is None:
+                oracle_cmd_overrides.append({"label": "", "cmd": baseline_cfg["cmd"]})
+            else:
+                for label in labels:
+                    oracle_cmd_overrides.append({"label": str(label), "cmd": baseline_cfg["cmd"]})
 
     return TaskContext(
         task_id=task_id,
@@ -704,7 +714,17 @@ def build_task_context(mb: MlsBenchRoot, task_id: str) -> TaskContext:
         leaderboard_rows=leaderboard,
         chosen_baseline=baseline_name,
         baseline_edit_ops=edit_ops,
+        oracle_cmd_overrides=oracle_cmd_overrides,
     )
+
+
+def _oracle_cmd_overrides_token(ctx: TaskContext) -> str:
+    payload = {
+        "task_id": ctx.task_id,
+        "baseline": ctx.chosen_baseline,
+        "overrides": ctx.oracle_cmd_overrides,
+    }
+    return hashlib.sha256(json.dumps(payload, sort_keys=True).encode()).hexdigest()
 
 
 # --------------------------------------------------------------------------- #
@@ -893,6 +913,7 @@ def render_task(
     visible_test_cmds = list(effective_config.get("test_cmds", []))
     baseline_sections, baseline_warnings = _baseline_sections(mb, ctx, config=effective_config)
     read_sections, read_warnings = _read_sections(mb, ctx, config=effective_config)
+    oracle_cmd_overrides_token = _oracle_cmd_overrides_token(ctx)
 
     template_ctx = {
         "task_id": ctx.task_id,
@@ -922,6 +943,7 @@ def render_task(
         "baseline_sections": baseline_sections,
         "read_sections": read_sections,
         "prompt_warnings": baseline_warnings + read_warnings,
+        "oracle_cmd_overrides": ctx.oracle_cmd_overrides,
     }
 
     env = Environment(
@@ -978,6 +1000,12 @@ def render_task(
     (sol_dir / "baseline_edit_ops.json").write_text(
         json.dumps(ctx.baseline_edit_ops, indent=2)
     )
+    (sol_dir / "oracle_cmd_overrides.json").write_text(
+        json.dumps(ctx.oracle_cmd_overrides, indent=2)
+    )
+    (sol_dir / "oracle_cmd_overrides.token").write_text(
+        oracle_cmd_overrides_token + "\n"
+    )
 
     # tests/ — Harbor mounts this at /tests/ only during verification.
     tests_dir = out_dir / "tests"
@@ -993,6 +1021,9 @@ def render_task(
         mb, ctx, tests_dir, task_dir,
         scaffold_dir=env_dir / "_scaffold",
         config=effective_config,
+    )
+    (tests_dir / "meta" / "oracle_cmd_overrides.token").write_text(
+        oracle_cmd_overrides_token + "\n"
     )
 
     # Atomic publish: rename `<task>.inprogress` → `<task>`. Any earlier raise

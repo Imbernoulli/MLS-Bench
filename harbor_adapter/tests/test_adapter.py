@@ -60,6 +60,53 @@ def test_non_rigorous_task_does_not_render_baseline_sections():
     assert warnings == []
 
 
+def test_mode1_oracle_cmd_overrides_rendered(tmp_path: Path):
+    from mls_bench.adapter import render_task
+
+    mb_root = tmp_path / "mini"
+    task_dir = mb_root / "tasks" / "mode1"
+    scripts = task_dir / "scripts"
+    scripts.mkdir(parents=True)
+    (mb_root / "vendor" / "pkg").mkdir(parents=True)
+    (mb_root / "vendor" / "pkg" / "main.py").write_text("VALUE = 1\n")
+    (mb_root / "vendor" / "pkg_configs" / "pkg").mkdir(parents=True)
+    (mb_root / "vendor" / "pkg_configs" / "pkg" / "config.json").write_text(
+        json.dumps({"workdir": "/workspace", "use_cuda": False})
+    )
+    (mb_root / "vendor" / "packages.yaml").write_text("{}\n")
+    for name in ("default.sh", "strong.sh"):
+        (scripts / name).write_text("#!/bin/bash\nexit 0\n")
+    config = {
+        "test_cmds": [
+            {"cmd": "scripts/default.sh", "label": "A", "compute": 0, "time": "0:01:00", "package": "pkg"}
+        ],
+        "baselines": {"strong": {"cmd": "scripts/strong.sh"}},
+        "files": [{"filename": "pkg/main.py", "edit": [{"start": 1, "end": 1}]}],
+    }
+    (task_dir / "config.json").write_text(json.dumps(config))
+    (task_dir / "task_description.md").write_text("Task\n")
+
+    mb = MlsBenchRoot(mb_root)
+    ctx = build_task_context(mb, "mode1")
+
+    assert ctx.baseline_edit_ops == []
+    assert ctx.oracle_cmd_overrides == [{"label": "", "cmd": "scripts/strong.sh"}]
+
+    out = render_task(mb, ctx, tmp_path / "out", overwrite=True)
+    solve_sh = (out / "solution" / "solve.sh").read_text()
+    test_sh = (out / "tests" / "test.sh").read_text()
+    overrides = json.loads((out / "solution" / "oracle_cmd_overrides.json").read_text())
+    solution_token = (out / "solution" / "oracle_cmd_overrides.token").read_text()
+    verifier_token = (out / "tests" / "meta" / "oracle_cmd_overrides.token").read_text()
+
+    assert overrides == [{"label": "", "cmd": "scripts/strong.sh"}]
+    assert solution_token == verifier_token
+    assert "oracle_cmd_overrides.json" in solve_sh
+    assert "--oracle-cmd-overrides" in solve_sh
+    assert "oracle_cmd_overrides.token" in test_sh
+    assert "--oracle-cmd-overrides" in test_sh
+
+
 def test_rigorous_read_sections_skip_read_only_files():
     mb = MlsBenchRoot(ROOT)
     ctx = build_task_context(mb, "causal-observational-linear-gaussian")

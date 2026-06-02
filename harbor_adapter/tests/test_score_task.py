@@ -131,6 +131,64 @@ def test_run_evals_records_elapsed_time(tmp_path: Path):
     assert summary[0]["logs"][0]["elapsed"] >= 0.0
 
 
+def test_run_evals_applies_oracle_cmd_overrides(tmp_path: Path):
+    score_task = _load_score_task()
+    task_meta = tmp_path / "meta"
+    eval_root = tmp_path / "eval"
+    workspace = tmp_path / "workspace"
+    package = workspace / "pkg"
+    scripts = eval_root / "scripts"
+    task_meta.mkdir()
+    scripts.mkdir(parents=True)
+    package.mkdir(parents=True)
+    (task_meta / "config.json").write_text(json.dumps({
+        "use_cuda": False,
+        "test_cmds": [
+            {
+                "cmd": "scripts/default.sh",
+                "label": "eval",
+                "package": "pkg",
+                "time": "0:01:00",
+            }
+        ],
+        "seeds": [123],
+    }))
+    (task_meta / "package").write_text("pkg\n")
+    (task_meta / "task_id").write_text("mode1-oracle-task\n")
+    (scripts / "default.sh").write_text("printf 'DEFAULT_SCRIPT\\n'\n")
+    (scripts / "strong.sh").write_text("printf 'STRONG_BASELINE_SCRIPT\\n'\n")
+
+    normal_out = tmp_path / "normal-out"
+    normal_args = argparse.Namespace(
+        task_meta=str(task_meta),
+        workspace=str(workspace),
+        eval_root=str(eval_root),
+        out_dir=str(normal_out),
+        oracle_cmd_overrides=None,
+    )
+    assert score_task.cmd_run_evals(normal_args) == 0
+    normal_summary = json.loads((normal_out / "eval_summary.json").read_text())
+    normal_log = Path(normal_summary[0]["logs"][0]["log"]).read_text()
+
+    oracle_out = tmp_path / "oracle-out"
+    oracle_args = argparse.Namespace(
+        task_meta=str(task_meta),
+        workspace=str(workspace),
+        eval_root=str(eval_root),
+        out_dir=str(oracle_out),
+        oracle_cmd_overrides=json.dumps([
+            {"label": "", "cmd": "scripts/strong.sh"},
+        ]),
+    )
+    assert score_task.cmd_run_evals(oracle_args) == 0
+    oracle_summary = json.loads((oracle_out / "eval_summary.json").read_text())
+    oracle_log = Path(oracle_summary[0]["logs"][0]["log"]).read_text()
+
+    assert "DEFAULT_SCRIPT" in normal_log
+    assert "STRONG_BASELINE_SCRIPT" in oracle_log
+    assert "DEFAULT_SCRIPT" not in oracle_log
+
+
 def test_package_dir_matches_case_and_separators(tmp_path: Path):
     score_task = _load_score_task()
     workspace = tmp_path / "workspace"
