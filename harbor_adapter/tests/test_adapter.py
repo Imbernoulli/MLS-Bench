@@ -107,6 +107,61 @@ def test_mode1_oracle_cmd_overrides_rendered(tmp_path: Path):
     assert "--oracle-cmd-overrides" in test_sh
 
 
+def test_baseline_with_both_edit_ops_and_cmd_emits_both(tmp_path: Path):
+    """Native MLSBench applies edit_ops AND cmd independently. A baseline with
+    BOTH (e.g. the Time-Series baselines) must yield non-empty edit_ops AND a
+    cmd override. Regression for the prior `elif` that dropped the cmd override
+    whenever edit_ops existed — which made the oracle run the original eval
+    script with the agent's large default hyperparameters, so budget_check
+    rejected the run and the TS oracle scored zero."""
+    from mls_bench.adapter import render_task
+
+    mb_root = tmp_path / "mini"
+    task_dir = mb_root / "tasks" / "both"
+    scripts = task_dir / "scripts"
+    edits = task_dir / "edits"
+    scripts.mkdir(parents=True)
+    edits.mkdir(parents=True)
+    (mb_root / "vendor" / "pkg").mkdir(parents=True)
+    (mb_root / "vendor" / "pkg" / "main.py").write_text("VALUE = 1\n")
+    (mb_root / "vendor" / "pkg_configs" / "pkg").mkdir(parents=True)
+    (mb_root / "vendor" / "pkg_configs" / "pkg" / "config.json").write_text(
+        json.dumps({"workdir": "/workspace", "use_cuda": False})
+    )
+    (mb_root / "vendor" / "packages.yaml").write_text("{}\n")
+    for name in ("default.sh", "strong.sh"):
+        (scripts / name).write_text("#!/bin/bash\nexit 0\n")
+    (edits / "strong_edit.py").write_text(
+        "OPS = [\n"
+        '    {"op": "replace", "file": "pkg/main.py", '
+        '"start_line": 1, "end_line": 1, "content": "VALUE = 2\\n"},\n'
+        "]\n"
+    )
+    config = {
+        "test_cmds": [
+            {"cmd": "scripts/default.sh", "label": "A", "compute": 0, "time": "0:01:00", "package": "pkg"}
+        ],
+        "baselines": {"strong": {"cmd": "scripts/strong.sh", "edit_ops": "edits/strong_edit.py"}},
+        "files": [{"filename": "pkg/main.py", "edit": [{"start": 1, "end": 1}]}],
+    }
+    (task_dir / "config.json").write_text(json.dumps(config))
+    (task_dir / "task_description.md").write_text("Task\n")
+
+    mb = MlsBenchRoot(mb_root)
+    ctx = build_task_context(mb, "both")
+
+    # BOTH must be present — the `elif` bug dropped the cmd override here.
+    assert ctx.baseline_edit_ops, "edit_ops should be loaded"
+    assert ctx.oracle_cmd_overrides == [{"label": "", "cmd": "scripts/strong.sh"}], \
+        "cmd override must be emitted even when the baseline also has edit_ops"
+
+    out = render_task(mb, ctx, tmp_path / "out", overwrite=True)
+    overrides = json.loads((out / "solution" / "oracle_cmd_overrides.json").read_text())
+    edit_ops = json.loads((out / "solution" / "baseline_edit_ops.json").read_text())
+    assert overrides == [{"label": "", "cmd": "scripts/strong.sh"}]
+    assert edit_ops, "baseline_edit_ops.json must be non-empty"
+
+
 def test_rigorous_read_sections_skip_read_only_files():
     mb = MlsBenchRoot(ROOT)
     ctx = build_task_context(mb, "causal-observational-linear-gaussian")

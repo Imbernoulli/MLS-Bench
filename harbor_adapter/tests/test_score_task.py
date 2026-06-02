@@ -350,3 +350,34 @@ def test_package_dir_matches_case_and_separators(tmp_path: Path):
     )
 
     assert resolved == actual
+
+
+def test_budget_scratch_config_reflects_oracle_override(tmp_path: Path):
+    """budget_check.py reads its hyperparameters from TASK_DIR/config.json's
+    test_cmds. For an oracle run the eval cmd is overridden to the strongest
+    baseline's cmd; that override must be written into the budget scratch config
+    too, else the check counts the agent model under the ORIGINAL (large)
+    eval-script hyperparameters and wrongly rejects the oracle (all-zero TS
+    oracle). Regression for that gap."""
+    score_task = _load_score_task()
+    task_meta = tmp_path / "meta"
+    task_meta.mkdir()
+    (task_meta / "config.json").write_text(json.dumps({
+        "test_cmds": [{"label": "PSM", "cmd": "scripts/psm.sh"}],
+        "baselines": {"timesnet": {"cmd": "scripts/timesnet.sh"}},
+        "files": [{"filename": "pkg/x.py", "edit": [{"start": 1, "end": 1}]}],
+    }))
+    (task_meta / "budget_check.py").write_text("# noop\n")
+
+    override = [{"label": "PSM", "cmd": "scripts/timesnet.sh"}]
+    scratch = tmp_path / "scratch"
+    score_task._copy_task_meta_for_budget(task_meta, scratch, override)
+    cfg = json.loads((scratch / "config.json").read_text())
+    assert cfg["test_cmds"] == override, "override must reach the budget config"
+    assert "baselines" in cfg and "files" in cfg, "other config fields preserved"
+
+    # No override (agent run) → original test_cmds preserved unchanged.
+    scratch2 = tmp_path / "scratch2"
+    score_task._copy_task_meta_for_budget(task_meta, scratch2)
+    cfg2 = json.loads((scratch2 / "config.json").read_text())
+    assert cfg2["test_cmds"][0]["cmd"] == "scripts/psm.sh"

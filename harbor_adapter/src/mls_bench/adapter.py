@@ -697,7 +697,16 @@ def build_task_context(mb: MlsBenchRoot, task_id: str) -> TaskContext:
                 raise RuntimeError(
                     f"{task_id}: could not load oracle baseline ops {rel}: {exc}"
                 ) from exc
-        elif baseline_cfg.get("cmd"):
+        # Native MLSBench applies edit_ops AND cmd independently (cli.py: the
+        # `if baseline_config.get("cmd")` and `if baseline_config.get("edit_ops")`
+        # blocks are separate). A baseline with BOTH — e.g. Time-Series baselines
+        # whose edit_ops point Custom.py at the baseline model and whose cmd runs
+        # that model with the right per-dataset hyperparameters — needs both. A
+        # prior `elif` here dropped the cmd override whenever edit_ops existed, so
+        # the oracle ran the original eval script with the agent's large default
+        # hyperparameters and budget_check then rejected the run (all-zero TS
+        # oracle). Emit the cmd override regardless of edit_ops.
+        if baseline_cfg.get("cmd"):
             labels = baseline_cfg.get("labels")
             if labels is None:
                 oracle_cmd_overrides.append({"label": "", "cmd": baseline_cfg["cmd"]})
