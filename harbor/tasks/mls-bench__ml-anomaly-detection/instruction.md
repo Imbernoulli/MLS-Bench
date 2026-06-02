@@ -37,18 +37,8 @@ class CustomAnomalyDetector:
 
 Available libraries: `numpy`, `scipy` (linear algebra, statistics, spatial, optimization), `scikit-learn` (PCA, KDE, NearestNeighbors, GaussianMixture, ...), `pyod` (IForest, LOF, OCSVM, ECOD, COPOD, KNN, HBOS, PCA, LODA, SUOD, ...).
 
-## Fixed Pipeline & Evaluation
-Datasets (from ADBench / ODDS):
-- **Cardio** — 1,831 samples, 21 features, ~9.6% anomalies (cardiotocography).
-- **Thyroid** — 3,772 samples, 6 features, ~2.5% anomalies.
-- **Satellite** — 6,435 samples, 36 features, ~31.6% anomalies (Landsat).
-- **Shuttle** — 49,097 samples, 9 features, ~7.2% anomalies (NASA shuttle).
-
-Protocol: 60/40 stratified train/test split (standard ADBench/ECOD protocol). Detector fits on train features without labels; scores are computed for test features.
-
-Metrics (higher is better):
-- **AUROC** — area under ROC curve (ranking quality).
-- **F1** — F1 score at the optimal contamination threshold (decision quality after thresholding).
+## Fixed Pipeline
+The training and evaluation pipeline (datasets, splitting, and metric computation) is fixed by the harness and not editable. The detector fits on unlabeled training features and produces anomaly scores on held-out test features; the contribution is the scoring rule only.
 
 
 ## Your Workspace
@@ -60,7 +50,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_anomaly.py`
 - editable lines **160–212**
@@ -331,31 +321,6 @@ or deleting existing ones — will cause your submission to score zero.
    255:         flush=True,
    256:     )
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **cardio** — wall-clock budget `00:30:00`, compute share `0.25`
-- **thyroid** — wall-clock budget `00:30:00`, compute share `0.25`
-- **satellite** — wall-clock budget `00:30:00`, compute share `0.25`
-- **shuttle** — wall-clock budget `01:00:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

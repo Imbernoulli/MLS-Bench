@@ -36,12 +36,11 @@ task. Linear layers in every transformer block are quantized; embeddings,
 LayerNorm, and the LM head stay full precision.
 
 A control baseline `finetune_then_ptq` runs a full-precision finetune on
-WikiText-2 train with the same schedule as the QAT methods (`lr=2e-5`,
-500 steps, batch 2, grad-accum 4) and then applies the same RTN
-quantize-dequantize as `no_qat`. This isolates the finetune signal from
-the QAT signal: a useful QAT method must beat `finetune_then_ptq`,
-otherwise its apparent gains over `no_qat` are just the in-domain
-finetune talking.
+the training corpus with the same schedule as the QAT methods and then
+applies the same RTN quantize-dequantize as `no_qat`. This isolates the
+finetune signal from the QAT signal: a useful QAT method must beat
+`finetune_then_ptq`, otherwise its apparent gains over `no_qat` are just
+the in-domain finetune talking.
 
 ## What You Can Modify
 
@@ -73,10 +72,10 @@ you may only edit the `# EDITABLE REGION START / END` block. It contains:
   precision.
 
 The fixed (non-editable) region implements: model load (Pythia-1.4B in
-FP32 with gradient checkpointing), WikiText-2 train data sampling
-(block-1024 random crops), the QAT training loop (`AdamW`, cosine LR with
-warmup, gradient accumulation, grad-norm clipping), real-quantization
-roundtrip after training, and WikiText-2 test perplexity evaluation.
+FP32 with gradient checkpointing), training-corpus sampling (block-1024
+random crops), the QAT training loop (`AdamW`, cosine LR with warmup,
+gradient accumulation, grad-norm clipping), real-quantization roundtrip
+after training, and held-out perplexity evaluation.
 
 ## Architecture
 
@@ -84,13 +83,10 @@ roundtrip after training, and WikiText-2 test perplexity evaluation.
   GPTNeoX architecture, 24 layers x 16 heads x 2048 hidden, native
   context length 2048). Linear layers are wrapped via the recursive
   traversal in `prepare_qat_model`.
-- Optimizer: AdamW, cosine schedule with linear warmup. Default 500 steps
-  x batch 2 x grad-accum 4 (~4000 sequences seen, seqlen 1024) — the
-  agent may shorten/lengthen via `CONFIG_OVERRIDES`.
-- Calibration / training data: WikiText-2 raw v1 train split. Random
-  1024-token crops.
-- Evaluation: WikiText-2 raw v1 test split, sliding non-overlapping
-  blocks of 1024 tokens, exponentiated mean cross-entropy loss.
+- Optimizer: AdamW, cosine schedule with linear warmup; training length
+  and batching are exposed via `CONFIG_OVERRIDES` (see the interface
+  below) and the agent may shorten/lengthen them.
+- Training data: a standard language modelling corpus, random 1024-token crops.
 
 ## Interface
 
@@ -137,32 +133,6 @@ Constraints:
 - All seeds and training hyperparameters must be deterministic given
   `--seed`.
 
-## Evaluation
-
-The algorithm is evaluated across three bit-widths:
-
-- `qat-1b-int4`: INT4, group size 128 — easy.
-- `qat-1b-int3`: INT3, group size 128 — medium (8 levels).
-- `qat-1b-int2`: INT2, group size 128 — extreme (4 levels).
-
-Primary metric: `wikitext2_ppl` — WikiText-2 perplexity after the real
-QDQ roundtrip, lower is better.
-Secondary metric: `degradation` — `wikitext2_ppl - fp16_ppl`, where
-`fp16_ppl` is the FP baseline measured before any quantization.
-
-Note on absolute PPL vs. literature (OmniQuant / EfficientQAT tables):
-QAT here finetunes on WikiText-2 train and evaluates on WikiText-2 test
-(disjoint articles, but same domain). With 500 steps x bsz 2 x ga 4 =
-4000 sequences x 1024 tokens, the FP16 finetune alone can drop test PPL
-below the FP16 baseline (cf. `finetune_then_ptq` INT4 < `no_qat` FP16),
-because the QAT train domain matches the eval domain. Published OmniQuant
-/ EfficientQAT tables on LLaMA-{7B,13B} use C4 calibration and a
-held-out WikiText eval, so their absolute W2g128 / W3g128 / W4g128
-numbers are not directly comparable to ours. The intended internal
-comparison is QAT-method vs `finetune_then_ptq`: a method that beats
-`finetune_then_ptq` is showing real QAT signal, beyond the in-domain
-finetune effect.
-
 ## Reference baselines
 
 ### no_qat
@@ -180,9 +150,9 @@ learnable per-group quantization scales trained jointly with the weights,
 giving a tighter quantization grid than STE.
 
 ### finetune_then_ptq
-Full-precision fine-tune on WikiText-2 (same schedule as QAT methods)
-followed by RTN quantization. Isolates the in-domain fine-tune signal
-from the QAT signal; a valid QAT method must outperform this baseline.
+Full-precision fine-tune on the training corpus (same schedule as QAT
+methods) followed by RTN quantization. Isolates the in-domain fine-tune
+signal from the QAT signal; a valid QAT method must outperform this baseline.
 
 
 ## Your Workspace
@@ -194,7 +164,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `llm-qat-runtime/custom_qat.py`
 - editable lines **33–176**
@@ -656,25 +626,6 @@ or deleting existing ones — will cause your submission to score zero.
    446: if __name__ == "__main__":
    447:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **qat-1b-int4** — wall-clock budget `01:15:00`, compute share `1.0`
-- **qat-1b-int3** — wall-clock budget `01:15:00`, compute share `1.0`
-- **qat-1b-int2** — wall-clock budget `01:15:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

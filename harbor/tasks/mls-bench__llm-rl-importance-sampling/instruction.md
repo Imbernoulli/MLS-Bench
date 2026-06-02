@@ -58,13 +58,10 @@ Utilities: `verl_F.masked_mean`, `verl_F.masked_whiten`, `agg_loss`, `torch`. `a
 | `first_k_tokens` | per-token ratio for first K=64 tokens, stop-grad after | DAPO-style truncated IS, arXiv:2503.14476 |
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter training), verl framework, GRPO advantage estimator.
-- **Training set**: simpleRL-Zoo MATH level 3–5 (Qwen split).
-- **Hyperparameters**: 100 PPO steps, 16 rollout samples per prompt, batch size 128, 1 H200 GPU.
-- Advantage estimator, reward manager, model, rollout setup, optimizer, and evaluation are all fixed.
-
-## Evaluation
-Math-reasoning accuracy (`mean@1`) on **GSM8K**, **MATH-500**, and **AMC 23**; primary score is the mean across the three.
+The training and evaluation pipeline (advantage estimator, reward manager,
+model, rollout setup, optimizer, and evaluation) is fixed by the harness and not
+editable. The only variable is the importance-sampling policy loss in the
+editable region.
 
 
 ## Your Workspace
@@ -76,7 +73,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `verl/verl/trainer/ppo/custom_policy_loss.py`
 - editable lines **17–72**
@@ -163,23 +160,6 @@ or deleting existing ones — will cause your submission to score zero.
     71:         "See core_algos.py for reference (compute_policy_loss_vanilla / gspo)."
     72:     )
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **deepmath-3bench-h100** — wall-clock budget `6:00:00`, compute share `2`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

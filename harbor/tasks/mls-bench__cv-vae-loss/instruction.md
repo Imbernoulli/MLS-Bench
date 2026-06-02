@@ -5,7 +5,7 @@
 ## Objective
 
 Design a training loss function for a Variational Autoencoder (VAE) that
-achieves the best reconstruction quality on CIFAR-10, under a fixed
+achieves the best reconstruction quality on small natural images, under a fixed
 `AutoencoderKL` architecture, optimizer, and evaluation protocol.
 
 ## Background
@@ -62,27 +62,9 @@ class VAELoss(nn.Module):
 
 ## Fixed Pipeline
 
-Architecture (fixed):
-
-- `AutoencoderKL` from `diffusers`, 3 blocks and 2 downsample stages, latent
-  resolution 8×8 (compression factor f = 4) for 32×32 input.
-- `latent_channels=4`, `layers_per_block=2`.
-- GroupNorm (32 groups) + SiLU activation.
-
-Channel widths and latent channels scale via environment variables across
-training scales:
-
-- Small:  `BLOCK_OUT_CHANNELS=(64, 128, 256)`,  `LATENT_CHANNELS=4`,  20,000 steps.
-- Medium: `BLOCK_OUT_CHANNELS=(96, 192, 384)`,  `LATENT_CHANNELS=8`,  30,000 steps.
-- Large:  `BLOCK_OUT_CHANNELS=(128, 256, 512)`, `LATENT_CHANNELS=16`, 30,000 steps.
-
-Training (fixed):
-
-- Optimizer: AdamW, lr = 4e-4, weight_decay = 1e-4.
-- LR schedule: 5% warmup + cosine decay.
-- Mixed precision (autocast + GradScaler).
-- Gradient clipping at 1.0.
-- EMA with rate 0.999.
+The model architecture, data pipeline, optimizer, learning-rate schedule, and
+training/evaluation protocol are fixed by the harness and not editable. The only
+editable component is the loss function.
 
 ## Baselines
 
@@ -92,20 +74,7 @@ Training (fixed):
 | `perceptual` | MSE + LPIPS (Zhang et al., CVPR 2018) + KL — adds learned perceptual similarity over VGG features. |
 | `vqgan`      | Multi-objective VQGAN-style recipe (Esser et al., CVPR 2021, arXiv:2012.09841): L1 reconstruction + LPIPS perceptual + PatchGAN adversarial loss + KL. |
 
-## Evaluation
-
-Reconstruction quality is measured on the full CIFAR-10 test set
-(10,000 images):
-
-| Metric  | Direction        | Description |
-|---------|------------------|-------------|
-| **rFID**  | lower is better  | Reconstruction FID between original and reconstructed test images (primary metric). |
-| **PSNR**  | higher is better | Peak signal-to-noise ratio in dB. |
-| **SSIM**  | higher is better | Structural similarity index. |
-
-Task scoring uses best reconstruction FID per scale; PSNR and SSIM are
-supporting diagnostics. The contribution should be the loss design only — not
-changes to architecture, data pipeline, training schedule, or evaluation.
+The contribution should be the loss design only — not changes to architecture, data pipeline, training schedule, or evaluation.
 
 
 ## Your Workspace
@@ -117,7 +86,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `diffusers-main/custom_train.py`
 - editable lines **32–76**
@@ -187,12 +156,7 @@ or deleting existing ones — will cause your submission to score zero.
     54: 
     55:     You may also use torch.fft for frequency-domain operations, or any
     56:     other approach you think will improve reconstruction quality.
-    57: 
-    58:     Evaluation metrics (for reference, you do NOT compute these):
-    59:         - rFID: Reconstruction FID (lower is better)
-    60:         - PSNR: Peak signal-to-noise ratio in dB (higher is better)
-    61:         - SSIM: Structural similarity (higher is better)
-    62:     """
+    57:     """
     63: 
     64:     def __init__(self, device):
     65:         super().__init__()
@@ -608,25 +572,6 @@ or deleting existing ones — will cause your submission to score zero.
    475:     if use_ddp:
    476:         dist.destroy_process_group()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **train_small** — wall-clock budget `1:00:00`, compute share `8.0`
-- **train_medium** — wall-clock budget `2:00:00`, compute share `8.0`
-- **train_large** — wall-clock budget `4:00:00`, compute share `8.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

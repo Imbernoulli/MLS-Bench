@@ -70,26 +70,6 @@ Available utilities:
 - `comb(n, k)` -- binomial coefficient (from scipy).
 - Constants: `K`, `ALPHA`, `HIDDEN`, `DROPOUT`, `DPRATE`.
 
-## Evaluation
-Datasets (a mix of homophilic and heterophilic graphs):
-
-| Label    | Nodes | Classes | Type         | Source                |
-|----------|-------|---------|--------------|-----------------------|
-| cora     | 2,708 | 7       | homophilic   | citation network      |
-| citeseer | 3,327 | 6       | homophilic   | citation network      |
-| texas    | 183   | 5       | heterophilic | WebKB webpage network |
-| cornell  | 183   | 5       | heterophilic | WebKB webpage network |
-
-Fixed pipeline: each dataset runs 10 random 60/20/20 train/val/test splits with
-early stopping.
-
-Metric: mean test accuracy over the 10 runs, higher-is-better.
-
-The contribution should remain a modular graph filter paired with the fixed
-classification pipeline, rather than changing the data split or evaluation
-target.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -99,7 +79,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `ChebNetII/main/custom_filter.py`
 - editable lines **211–308**
@@ -532,31 +512,6 @@ or deleting existing ones — will cause your submission to score zero.
    417:         flush=True,
    418:     )
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **cora** — wall-clock budget `00:59:00`, compute share `0.25`
-- **citeseer** — wall-clock budget `00:59:00`, compute share `0.25`
-- **texas** — wall-clock budget `00:59:00`, compute share `0.25`
-- **cornell** — wall-clock budget `00:59:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

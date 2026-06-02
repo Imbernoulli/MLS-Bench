@@ -3,7 +3,7 @@
 # Behavioral Cloning: Loss Function Design for Robot Imitation Learning
 
 ## Research Question
-Design an improved loss function for GMM-based behavioral cloning (BC) in robot manipulation. The policy outputs a Gaussian Mixture Model (GMM) distribution over actions, and the loss function receives this distribution along with expert demonstration actions. Your goal is to design a loss that maximizes imitation learning quality as measured by rollout success rate.
+Design an improved loss function for GMM-based behavioral cloning (BC) in robot manipulation. The policy outputs a Gaussian Mixture Model (GMM) distribution over actions, and the loss function receives this distribution along with expert demonstration actions. Your goal is to design a loss that maximizes imitation learning quality on robot manipulation tasks.
 
 ## Background
 The training and evaluation pipeline follows **robomimic** (Mandlekar et al., CoRL 2021, arXiv:2108.03298), the standard imitation-learning study and codebase for robot manipulation from offline human demonstrations. The default GMM-BC objective is the negative log-likelihood (NLL) of the expert action under the predicted mixture:
@@ -24,14 +24,6 @@ Interface:
 
 You may add parameters to `__init__`, define helper methods, and use any PyTorch operations. The `dist` object supports `.log_prob()`, `.sample()`, `.component_distribution`, and `.mixture_distribution`.
 
-## Evaluation
-- **Metric**: `success_rate` — rollout success rate on the task (higher is better)
-- **Tasks**: Lift (pick up cube), Can (pick-and-place can), Square (nut assembly)
-- **Dataset**: 200 proficient human demonstrations per task, low-dimensional observations
-- **Policy**: GMM with 5 modes, 2-layer MLP backbone (1024, 1024) with ReLU, tanh-squashed means
-- **Training**: 2000 epochs, Adam optimizer (lr = 1e-4), batch size 100
-- **Rollout evaluation**: 50 episodes per task, horizon 400 steps, every 50 epochs
-
 
 ## Your Workspace
 
@@ -42,7 +34,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `robomimic/custom_bc_loss.py`
 - editable lines **20–41**
@@ -106,23 +98,6 @@ or deleting existing ones — will cause your submission to score zero.
 Some reference context could not be rendered completely:
 
 - `default` has no edit_ops entry
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **tool_hang_ph** — wall-clock budget `8:00:00`, compute share `0.33`
-- **can_ph** — wall-clock budget `8:00:00`, compute share `0.33`
-- **square_ph** — wall-clock budget `8:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

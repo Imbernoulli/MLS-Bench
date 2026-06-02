@@ -28,16 +28,8 @@ class CustomClustering(BaseEstimator, ClusterMixin):
 
 Available imports (already in the FIXED section): `numpy`, `sklearn.base.BaseEstimator`, `sklearn.base.ClusterMixin`, `sklearn.preprocessing.StandardScaler`, `sklearn.metrics.*`. You may import any module from `scikit-learn`, `numpy`, or `scipy`.
 
-## Fixed Pipeline & Evaluation
-Datasets:
-- **blobs** — 5 isotropic Gaussian clusters.
-- **moons** — 2 interleaving half-circles (non-convex).
-- **digits** — `sklearn.datasets.load_digits()`, 10 classes, 64 features (high-dimensional real data).
-
-Metrics (higher is better):
-- **ARI** — Adjusted Rand Index (matches predicted clusters to ground-truth labels).
-- **NMI** — Normalized Mutual Information.
-- **Silhouette** — intrinsic compactness/separation of clusters.
+## Fixed Pipeline
+The data pipeline and evaluation harness are fixed by the harness and not editable. Cluster quality is measured by ARI (Adjusted Rand Index), NMI (Normalized Mutual Information), and Silhouette Score.
 
 
 ## Your Workspace
@@ -49,7 +41,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_clustering.py`
 - editable lines **36–109**
@@ -274,25 +266,6 @@ or deleting existing ones — will cause your submission to score zero.
    209: if __name__ == "__main__":
    210:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **blobs** — wall-clock budget `00:10:00`, compute share `0.25`
-- **moons** — wall-clock budget `00:10:00`, compute share `0.25`
-- **digits** — wall-clock budget `00:15:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

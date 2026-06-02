@@ -29,18 +29,6 @@ The DEAP library (`deap.base`, `deap.creator`, `deap.tools`) is available. You m
 - **TRAIN_METRICS**: print `TRAIN_METRICS gen=G best_fitness=F avg_fitness=A` periodically (every 50 generations).
 - Respect the function signature and return types — the evaluation harness below the editable section is fixed.
 
-## Evaluation
-Strategies are evaluated on benchmarks (all minimization, lower is better):
-
-| Benchmark | Function | Dimensions | Domain | Global Minimum |
-|-----------|----------|------------|--------|----------------|
-| rastrigin-30d | Rastrigin | 30 | [-5.12, 5.12] | 0 |
-| rosenbrock-30d | Rosenbrock | 30 | [-5, 10] | 0 |
-| ackley-30d | Ackley | 30 | [-32.768, 32.768] | 0 |
-| rastrigin-100d | Rastrigin | 100 | [-5.12, 5.12] | 0 |
-
-**Metrics**: `best_fitness` (final best value, lower is better) and `convergence_gen` (generation reaching near-final fitness).
-
 ## Baselines (paper-cited reference implementations)
 - **ga_sbx** — Genetic Algorithm with Simulated Binary Crossover and Polynomial Mutation (Deb and Agrawal, 1995); paper-default `eta_c = eta_m = 20`, mutation probability `1/n`.
 - **de** — Classical DE/rand/1/bin (Storn and Price, 1997); paper-default `F = 0.5`, `CR = 0.9`.
@@ -56,7 +44,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `deap/custom_evolution.py`
 - editable lines **87–225**
@@ -374,26 +362,6 @@ or deleting existing ones — will cause your submission to score zero.
    302: if __name__ == "__main__":
    303:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **rastrigin-30d** — wall-clock budget `01:00:00`, compute share `0.25`
-- **rosenbrock-30d** — wall-clock budget `01:00:00`, compute share `0.25`
-- **ackley-30d** — wall-clock budget `01:00:00`, compute share `0.25`
-- **rastrigin-100d** — wall-clock budget `02:00:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

@@ -3,7 +3,7 @@
 # JEPA World Model Planning: Algorithm Design
 
 ## Objective
-Design a planning algorithm that exploits a learned JEPA (Joint Embedding Predictive Architecture) world model for goal-conditioned navigation. The evaluation uses a Two Rooms environment in which the agent must navigate around walls and through doorways to reach a randomly sampled goal location.
+Design a planning algorithm that exploits a learned JEPA (Joint Embedding Predictive Architecture) world model for goal-conditioned navigation, where the agent must navigate around walls and through doorways to reach a randomly sampled goal location.
 
 ## Research Question
 Can you design a planning algorithm that outperforms standard derivative-free methods such as CEM and MPPI by better exploiting the structure of a learned JEPA world model?
@@ -51,15 +51,6 @@ def plan(self, obs_init, steps_left=None, eval_mode=True,
 - `self.cost_function(actions, obs_init)`: convenience method that calls `unroll` then `objective`.
   - Returns: `[B]` cost per sample
 
-## Evaluation
-- Environment: Two Rooms (65×65 grid with wall and door)
-- Episodes: 20 with random start and goal positions controlled by the MLS-Bench SEED
-- Max steps per episode: 200
-- Success threshold: Euclidean distance < 4.5 from goal
-- Benchmarks: three planning horizons (30, 60, 90 steps) test the algorithm across short, medium, and long-range planning
-- Metric: `success_rate` (fraction of successful episodes) per horizon, higher is better
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -69,7 +60,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `eb_jepa/custom_planner.py`
 - editable lines **323–367**
@@ -589,25 +580,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from eb_jepa/custom_planner.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **horizon-30** — wall-clock budget `6:00:00`, compute share `0.33`
-- **horizon-60** — wall-clock budget `6:00:00`, compute share `0.33`
-- **horizon-90** — wall-clock budget `6:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

@@ -51,19 +51,8 @@ class SelectivePolicy:
 
 You may implement a global threshold, a learned acceptance score, subgroup-specific thresholds, conformal mechanisms, or any compact policy fitting this interface. The base classifier and the train/calibration/test split are not editable.
 
-## Fixed Pipeline & Evaluation
-Datasets (cached high-stakes tabular data from AIF360):
-- **Adult** — Census income prediction; subgroup attributes: sex, race.
-- **COMPAS** — ProPublica recidivism risk; subgroup attributes: race, sex.
-- **Law School GPA** — admissions/outcome data, binarized at the training-set median; subgroup attributes: race, gender.
-
-Each dataset is split into train / calibration / test; the policy fits on calibration probabilities/labels/subgroups and is evaluated on test.
-
-Metrics:
-- **`selective_risk_at80`** — classification error on accepted examples at 80% target coverage (lower is better).
-- **`worst_group_selective_risk`** — worst-subgroup error among accepted examples (lower is better).
-- **`deferral_rate_gap`** — max-subgroup deferral rate minus min-subgroup deferral rate (lower is better).
-- **`auroc`** — AUROC of the acceptance score as a predictor of correctness (higher is better).
+## Fixed Pipeline
+The data pipeline, base classifier, and the train / calibration / test split are fixed by the harness and not editable. The policy fits on the calibration outputs (probabilities/labels/subgroups) and is evaluated on the test split.
 
 
 ## Your Workspace
@@ -75,7 +64,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_selective.py`
 - editable lines **253–287**
@@ -522,25 +511,6 @@ or deleting existing ones — will cause your submission to score zero.
    431: if __name__ == "__main__":
    432:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **adult** — wall-clock budget `00:30:00`, compute share `0.25`
-- **compas** — wall-clock budget `00:30:00`, compute share `0.25`
-- **law_school** — wall-clock budget `00:45:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

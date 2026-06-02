@@ -65,18 +65,7 @@ Bond type (4) + conjugated (1) + in_ring (1) + geometric features (11): angle st
 Geometric features only (same 11-dim encoding as intra-molecular geometric features): computed between ligand-pocket atom pairs within a 5 Å distance threshold.
 
 ## Fixed Pipeline
-Graph construction, feature extraction, train/test splits, optimizer, schedule, loss (regression on `-logKd/Ki`), and evaluation harness are all fixed by the scaffold. The contribution is the `AffinityModel` architecture only.
-
-## Evaluation
-The model is trained on PDBbind v2020 (general + refined) and tested on three benchmarks:
-- **PDBbind 2013 core set** (107 complexes): CASF-2013 benchmark.
-- **PDBbind 2016 core set** (285 complexes): CASF-2016 benchmark.
-- **PDBbind 2019 holdout** (4366 complexes): Temporal split.
-
-Metrics: **RMSE** (lower is better), **Rp** / Pearson correlation (higher is better).
-
-### Note on Baseline Reproduction
-The baselines (EHIGN / GIGN / SchNet / EGNN) are paper-faithful re-implementations on this task's data pipeline (PDBbind **v2020** general+refined → temporal/CASF splits, with intra/inter graph features regenerated from raw PDB/SDF). The original EHIGN and GIGN papers train on PDBbind v2016/v2019 with their own preprocessing, so absolute numbers and the relative ordering between baselines on this leaderboard may differ from the published numbers. The baseline implementations are intentionally NOT tuned to recover the published ordering; they are kept faithful to the published methods.
+The training and evaluation pipeline (data, feature extraction, model wiring, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable. The contribution is the `AffinityModel` architecture only.
 
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_pla.py` is editable. You may define helper classes, layers, or functions within this region. The region must contain an `AffinityModel` class with the specified interface.
@@ -91,7 +80,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `EHIGN_PLA/custom_pla.py`
 - editable lines **101–191**
@@ -564,30 +553,6 @@ or deleting existing ones — will cause your submission to score zero.
    457: if __name__ == '__main__':
    458:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **PDBbind2013** — wall-clock budget `00:59:00`, compute share `1.0`
-- **PDBbind2016** — wall-clock budget `00:59:00`, compute share `1.0`
-- **PDBbind2019** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

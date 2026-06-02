@@ -3,13 +3,13 @@
 # Multivariate Time Series Imputation under Random Masking
 
 ## Research Question
-What modular imputation component (mask-aware temporal modeling, cross-channel dependency learning, denoising objective, normalization) best recovers missing entries from temporal *and* cross-variable context, evaluated under a fixed 25% random-mask protocol on heterogeneous multivariate datasets?
+What modular imputation component (mask-aware temporal modeling, cross-channel dependency learning, denoising objective, normalization) best recovers missing entries from temporal *and* cross-variable context on heterogeneous multivariate datasets?
 
 ## Background
 Time series imputation under random masking is a canonical "fill-in-the-blanks" benchmark for temporal models. The Time-Series-Library protocol (Wu et al., ICLR 2023) masks a fixed fraction of observed entries uniformly at random, hands the model both the masked sequence and a binary observation mask, and scores reconstruction error only at masked positions. This isolates the model's ability to infer missing values from surrounding temporal context and from correlated channels.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Given a partially-masked input window and a binary observation mask, return a fully reconstructed sequence; only positions where `mask == 0` count toward the metric.
+Implement the `Model` class in `models/Custom.py`. Given a partially-masked input window and a binary observation mask, return a fully reconstructed sequence.
 
 ## Model Interface
 ```python
@@ -31,15 +31,8 @@ class Model(nn.Module):
             return self.imputation(x_enc, x_mark_enc, x_dec, x_mark_dec, mask)
 ```
 
-## Datasets and Fixed Protocol
-- **ETTh1** — 7 variables, hourly Electricity Transformer Temperature.
-- **Weather** — 21 variables, weather observations.
-- **ECL** — 321 variables, hourly client electricity consumption.
-
-All settings: `seq_len=96`, `mask_rate=0.25` random binary mask per (timestep, channel). Standardization, splits, and mask sampling are fixed by the Time-Series-Library imputation pipeline.
-
-## Metrics
-MSE and MAE on masked entries only — lower is better.
+## Fixed Protocol
+The training and evaluation pipeline (datasets, standardization, splits, mask sampling, and metrics) is fixed by the harness and not editable. The model receives the masked sequence together with a binary observation mask (1 = observed, 0 = masked) and is scored only at masked positions; see the Model Interface above for the exact tensor shapes.
 
 ## Reference Implementations (read-only)
 Three reference models from `models/`:
@@ -58,7 +51,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `Time-Series-Library/models/Custom.py`
 - editable: **entire file**
@@ -2153,23 +2146,6 @@ Other files you may **read** for context (do not modify):
    134:             x = self.projection(x)
    135:         return x
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **ETTh1** — wall-clock budget `01:59:00`, compute share `0.33`
-- **Weather** — wall-clock budget `01:59:00`, compute share `0.33`
-- **ECL** — wall-clock budget `01:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

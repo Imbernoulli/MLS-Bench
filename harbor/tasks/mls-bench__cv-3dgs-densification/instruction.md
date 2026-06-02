@@ -96,13 +96,10 @@ The `params` dict contains:
 
 ### Fixed Pipeline
 
-The following are FIXED across all strategies and must not be changed:
-
-- Renderer: `gsplat` CUDA rasterizer.
-- Optimizer: AdamW with per-parameter learning rates.
-- Photometric loss: `0.8 * L1 + 0.2 * SSIM` per training step.
-- Training: 30,000 steps per scene.
-- SH degree: 3 (increased gradually during training).
+The renderer is the `gsplat` CUDA rasterizer. The full training and evaluation
+pipeline (renderer, optimizer, photometric loss, schedule, and metrics) is fixed
+by the harness and not editable. Your contribution must be confined to the
+densification strategy in the editable region.
 
 ## Baselines
 
@@ -112,20 +109,7 @@ The following are FIXED across all strategies and must not be changed:
 | `taming`   | Taming-3DGS budgeted densification with max-grad blending (Mallick et al., arXiv:2406.15643), combined with the AbsGS gradient and the revised opacity formula. |
 | `edc`      | Taming densification combined with EDC long-axis splitting and recovery-aware pruning (Deng et al., arXiv:2411.10133). |
 
-## Evaluation
-
-Evaluation uses Mip-NeRF 360 scenes (Barron et al., 2022) with every 8th image
-held out for testing. Metrics:
-
-| Metric  | Direction | Description |
-|---------|-----------|-------------|
-| **PSNR**  | higher is better | Peak signal-to-noise ratio (primary metric). |
-| **SSIM**  | higher is better | Structural similarity. |
-| **LPIPS** | lower is better  | Learned perceptual similarity. |
-
-Scoring uses per-scene PSNR. The contribution should be a transferable
-densification rule, not a change to the renderer, photometric loss, optimizer,
-dataset, or evaluation protocol.
+The contribution should be a transferable densification rule, not a change to the renderer, photometric loss, optimizer, or training pipeline.
 
 
 ## Your Workspace
@@ -137,7 +121,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `gsplat/custom_strategy.py`
 - editable lines **20–90**
@@ -234,26 +218,6 @@ or deleting existing ones — will cause your submission to score zero.
     81:         """Called AFTER loss.backward(). Implement densification logic here."""
     82:         raise NotImplementedError("Implement step_post_backward")
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **garden** — wall-clock budget `1:00:00`, compute share `1.0`
-- **bicycle** — wall-clock budget `1:00:00`, compute share `1.0`
-- **bonsai** — wall-clock budget `1:00:00`, compute share `1.0`
-- **stump** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

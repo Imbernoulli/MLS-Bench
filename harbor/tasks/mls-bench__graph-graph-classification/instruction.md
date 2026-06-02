@@ -5,15 +5,16 @@
 ## Research Question
 Design a novel **graph-level readout (pooling) mechanism** that aggregates node
 representations from a fixed message-passing backbone into a graph-level
-embedding for graph classification, improving accuracy and generalization
-across diverse molecular and biological graph datasets.
+embedding for graph classification, improving classification performance and
+generalization across diverse molecular and biological graph datasets.
 
 ## Background
 Graph classification requires mapping a variable-size graph to a fixed-size
 vector for downstream prediction. The standard approach uses simple
 permutation-invariant operations (sum, mean, max) over node embeddings, but
-these discard structural information and treat all nodes equally. Notable
-prior work:
+these discard structural information and treat all nodes equally. The benchmark
+evaluates performance on standard molecular and bio/chemical graph collections
+of varying sizes and complexity. Notable prior work:
 
 - **Sum / Mean / Max readout** (basic). Xu, Hu, Leskovec & Jegelka, "How
   Powerful are Graph Neural Networks?", ICLR 2019 (arXiv:1810.00826) shows
@@ -60,20 +61,6 @@ Constraints / interface:
 - Available imports: `torch`, `torch.nn`, `torch.nn.functional`,
   `torch_geometric.nn`, `torch_geometric.utils`.
 
-## Evaluation
-Datasets:
-- **MUTAG** (188 graphs, 2 classes, molecular mutagenicity).
-- **PROTEINS** (1113 graphs, 2 classes, protein enzyme classification).
-- **NCI1** (4110 graphs, 2 classes, chemical compound activity).
-
-Fixed pipeline:
-- GNN backbone: 5-layer GIN (`hidden_dim=64`), fixed.
-- Optimizer: Adam (`lr=0.01`), cosine annealing, 350 epochs per fold.
-- Evaluation: 10-fold stratified cross-validation; report mean test accuracy
-  and macro F1.
-
-Metrics: test accuracy and macro F1, both higher-is-better.
-
 A useful method should handle batches of graphs with different sizes, preserve
 permutation invariance at the graph level, and generalize across small
 molecular graphs and larger bio/chemical graph collections.
@@ -88,7 +75,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-geometric/custom_graph_cls.py`
 - editable lines **41–81**
@@ -474,30 +461,6 @@ or deleting existing ones — will cause your submission to score zero.
    370: if __name__ == '__main__':
    371:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **MUTAG** — wall-clock budget `00:59:00`, compute share `0.33`
-- **PROTEINS** — wall-clock budget `00:59:00`, compute share `0.33`
-- **NCI1** — wall-clock budget `03:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

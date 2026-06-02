@@ -25,24 +25,6 @@ Gaussian, where ANM identifiability becomes more delicate.
 Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
 return a directed DAG compatible with the benchmark evaluation.
 
-## Evaluation Scenarios
-
-| Label           | Graph type      | Nodes | Samples | Noise       | Nonlinearity |
-|-----------------|-----------------|-------|---------|-------------|--------------|
-| SF20-GP         | Scale-Free (BA) | 20    | 2000    | Exponential | GP           |
-| ER20-Gauss      | Erdos-Renyi     | 20    | 2000    | Gaussian    | Mixed        |
-| ER12-LowSample  | Erdos-Renyi     | 12    | 150     | Laplace     | Mixed        |
-
-The settings vary nonlinearity family, graph topology, noise distribution, and
-sample regime, so the method should not depend on a single combination of
-these.
-
-## Metrics
-Computed on the directed edge set (skeleton + direction must both be correct):
-- **F1** (primary ranking metric, higher is better)
-- **SHD** (lower is better)
-- **Precision**, **Recall** (higher is better)
-
 ## Reference baselines
 - `cam`: Causal Additive Models with GAM regression. Score-based. Buhlmann,
   Peters & Ernest, "CAM: Causal additive models, high-dimensional order search
@@ -74,7 +56,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `causal-learn/bench/custom_algorithm.py`
 - editable lines **3–14**
@@ -107,25 +89,6 @@ Other files you may **read** for context (do not modify):
     13:     return np.zeros((n, n))
     14: # =====================================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **SF20-GP** — wall-clock budget `2:00:00`, compute share `0.25`
-- **ER20-Gauss** — wall-clock budget `2:00:00`, compute share `0.25`
-- **ER12-LowSample** — wall-clock budget `1:00:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

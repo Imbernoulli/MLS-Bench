@@ -52,18 +52,7 @@ The `schedule` dict provides precomputed noise-schedule tensors:
 
 ## Fixed Pipeline
 
-The following are fixed across baselines and submissions:
-
-- Dataset: CIFAR-10 (32×32, unconditional).
-- Backbone: `UNet2DModel` (diffusers) at three channel scales:
-  - Small:  `block_out_channels=(64, 128, 128, 128)`, ~9M params, batch 128.
-  - Medium: `block_out_channels=(128, 256, 256, 256)`, ~36M params, batch 128.
-  - Large:  `block_out_channels=(256, 512, 512, 512)`, ~140M params, batch 64.
-- Training: 35,000 steps per scale, AdamW lr=2e-4, EMA rate 0.9995,
-  multi-GPU DDP.
-- Inference: 50-step DDIM (Song et al., 2020, arXiv:2010.02502).
-- Metric: FID computed by clean-fid against the CIFAR-10 train set
-  (50,000 samples), lower is better.
+The training and evaluation pipeline (data, model, optimizer, schedule, sampler, and metric) is fixed by the harness and not editable. Inference uses DDIM (Song et al., 2020, arXiv:2010.02502). The contribution should be a transferable target parameterization, not a change to architecture, dataset, optimizer, noise schedule, sampling procedure, or metric computation.
 
 ## Baselines
 
@@ -72,15 +61,6 @@ The following are fixed across baselines and submissions:
 | `epsilon` | Predict `epsilon` (Ho et al., 2020, arXiv:2006.11239). DDPM default. |
 | `x0pred`  | Predict the clean image `x_0` directly. |
 | `vpred`   | Predict the velocity `v = sqrt(alpha) * epsilon - sqrt(1 - alpha) * x_0` (Salimans & Ho, ICLR 2022, arXiv:2202.00512). |
-
-## Evaluation
-
-Evaluation trains the candidate parameterization at the channel scales above
-and scores with clean-fid against CIFAR-10; lower FID is better. The
-contribution should be a transferable target parameterization, not a change
-to architecture, dataset, optimizer, noise schedule, sampling procedure, or
-metric computation.
-
 
 ## Your Workspace
 
@@ -91,7 +71,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `diffusers-main/custom_train.py`
 - editable lines **83–118**
@@ -578,25 +558,6 @@ or deleting existing ones — will cause your submission to score zero.
    471:     if use_ddp:
    472:         dist.destroy_process_group()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **train_small** — wall-clock budget `1:30:00`, compute share `1.0`
-- **train_medium** — wall-clock budget `4:00:00`, compute share `1.0`
-- **train_large** — wall-clock budget `10:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

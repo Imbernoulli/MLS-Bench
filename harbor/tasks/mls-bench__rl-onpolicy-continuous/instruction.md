@@ -35,15 +35,6 @@ Reference baselines spanning the design space:
   exploration injection, value loss) rather than capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
-## Evaluation
-Trained and evaluated on Gymnasium MuJoCo continuous-control
-environments including HalfCheetah-v4, Hopper-v4 and Walker2d-v4 within
-a fixed interaction budget. Metric: mean episodic return over
-evaluation episodes (higher is better). Strong methods should remain
-reliable across environments with different dynamics rather than tuning
-to one.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -53,7 +44,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `cleanrl/cleanrl/custom_onpolicy_continuous.py`
 - editable lines **175–221**
@@ -454,25 +445,6 @@ or deleting existing ones — will cause your submission to score zero.
    385: 
    386:     envs.close()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **halfcheetah-v4** — wall-clock budget `05:00:00`, compute share `0.33`
-- **swimmer-v4** — wall-clock budget `05:00:00`, compute share `0.33`
-- **inverteddoublependulum-v4** — wall-clock budget `04:00:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

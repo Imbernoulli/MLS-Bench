@@ -32,20 +32,8 @@ class CalibrationMethod:
 
 The method must produce valid probabilities; `groups` may be ignored by group-agnostic methods.
 
-## Fixed Pipeline & Evaluation
-Datasets (cached high-stakes tabular data from AIF360):
-- **Adult** — Census income; subgroup attributes: sex, race.
-- **COMPAS** — ProPublica recidivism risk; subgroup attributes: race, sex.
-- **Law School GPA** — admissions/outcome data binarized at the median first-year GPA; subgroup attributes: race, gender.
-
-For each dataset the test split is intentionally shifted: a domain score selects the held-out test tail, and calibration is fit on the source region and evaluated on the shifted region. Subgroups come from protected attributes exposed by the dataset loaders.
-
-Metrics:
-- **`worst_group_ece`** — worst-subgroup expected calibration error (lower is better).
-- **`brier`** — Brier score on test (lower is better).
-- **`max_subgroup_gap`** — max over subgroups of `|accuracy − mean confidence|` (lower is better).
-- **`subgroup_auroc`** — subgroup-level AUROC (higher is better; reported diagnostically).
-
+## Fixed Pipeline
+The datasets, the (intentionally shifted) train/calibration/test splits, the base classifier, the subgroup definitions, and the metric computation are fixed by the harness and not editable. Calibration is fit on the calibration set and evaluated on the shifted test set; worst-subgroup calibration error is the primary metric.
 
 ## Your Workspace
 
@@ -56,7 +44,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_subgroup_calibration.py`
 - editable lines **200–219**
@@ -414,25 +402,6 @@ or deleting existing ones — will cause your submission to score zero.
    342: if __name__ == "__main__":
    343:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **adult** — wall-clock budget `00:30:00`, compute share `0.25`
-- **compas** — wall-clock budget `00:30:00`, compute share `0.25`
-- **law_school** — wall-clock budget `00:30:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

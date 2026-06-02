@@ -37,12 +37,9 @@ Available from the `Strategy` base class:
 - `self.get_grad_embedding(X, Y)` — last-layer gradient embeddings `[len(X), emb_dim * n_classes]`.
 - `self.get_exp_grad_embedding(X, Y)` — expected (per-class) Fisher embeddings `[len(X), n_classes, emb_dim]`.
 
-## Fixed Pipeline & Evaluation
-- Datasets: 3 OpenML tabular classification datasets — **letter** recognition, **spambase**, **splice**.
-- Protocol: 20 rounds of batch active learning; model retrained after each round.
-- Metrics (higher is better):
-  - `accuracy` — test accuracy after the final round (fixed total label budget).
-  - `auc` — area under the learning curve (accuracy vs. # labeled samples) over all 20 rounds, capturing sample efficiency.
+## Fixed Pipeline
+- Protocol: multiple rounds of batch active learning; model retrained after each round.
+- The harness handles model retraining, data management, and evaluation — only the query strategy is under your control.
 
 
 ## Your Workspace
@@ -54,7 +51,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `badge/query_strategies/custom_sampling.py`
 - editable lines **28–54**
@@ -125,25 +122,6 @@ Other files you may **read** for context (do not modify):
     53: # END EDITABLE REGION
     54: # ================================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **letter** — wall-clock budget `10:00:00`, compute share `0.33`
-- **spambase** — wall-clock budget `04:00:00`, compute share `0.33`
-- **splice** — wall-clock budget `04:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

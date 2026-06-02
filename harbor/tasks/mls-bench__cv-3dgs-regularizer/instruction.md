@@ -5,8 +5,8 @@
 ## Objective
 
 Design a scalar regularizer on 3D Gaussian parameters that improves novel-view
-reconstruction quality (higher PSNR / SSIM, lower LPIPS) on Mip-NeRF 360
-scenes, without using any depth, normal, or feature-level supervision.
+reconstruction quality on held-out views, without using any depth, normal, or
+feature-level supervision.
 
 ## Background
 
@@ -34,15 +34,14 @@ Hand-designed regularizers attack different failure modes:
 - **Neighbour consistency / blob-prior penalties** — encourage parameter
   smoothness among spatially adjacent Gaussians.
 
-Each is a small, modular addition to the loss, yet can change PSNR by tenths
-to ones of a dB on standard benchmarks.
+Each is a small, modular addition to the loss, yet can measurably improve
+reconstruction quality on held-out views.
 
 ## Implementation Contract
 
 Implement `compute_regularizer(splats, step, scene_scale)` in
 `gsplat/custom_regularizer.py`. The scalar return value is added directly to
-the photometric loss at every training step, for the entire 30k-step per-scene
-optimization.
+the photometric loss at every training step of the per-scene optimization.
 
 You may add helpers and module-level constants inside the editable region and
 import additional modules. You **must** keep the public signature
@@ -73,16 +72,11 @@ weights.
 
 ## Fixed Pipeline
 
-These are FIXED across baselines and submissions:
-
-- Renderer: `gsplat` CUDA rasterizer.
-- Optimizer: AdamW with per-parameter learning rates.
-- Photometric loss: `0.8 * L1 + 0.2 * (1 - SSIM)`.
-- Densification strategy: gsplat `DefaultStrategy` (original 3DGS
-  clone / split / prune).
-- Training: 30,000 steps per scene; SH degree 3 (gradually increased).
-
-The regularizer is the only quantity you change.
+The renderer, optimizer, photometric loss, densification strategy, and the
+training/evaluation pipeline (data, schedule, and metrics) are fixed by the
+harness and not editable. The regularizer is the only quantity you change.
+`step` runs from `0` to `max_steps - 1`, so you can schedule the regularizer
+over training.
 
 ## Baselines
 
@@ -91,18 +85,6 @@ The regularizer is the only quantity you change.
 | `none`      | Returns 0 — photometric loss only. |
 | `scale_opa` | L1 on `exp(scales)` and `sigmoid(opacities)` (coefficient 1e-2 each), the default compactness regularizer in 3DGS-MCMC (Kheradmand et al., NeurIPS 2024 Spotlight, arXiv:2404.09591). |
 | `erank_opa` | `scale_opa` plus the effective-rank log-barrier regularizer of Hyung et al. (NeurIPS 2024, arXiv:2406.11672) with warmup at step 7000. Pushes the effective rank of each Gaussian toward 2 (planar) while keeping compactness pressure. |
-
-## Evaluation
-
-Evaluation runs on Mip-NeRF 360 scenes (Barron et al., 2022) with every 8th
-image held out for testing. Each scene is trained for 30k steps under the
-fixed schedule and evaluated on held-out views.
-
-| Metric  | Direction | Description |
-|---------|-----------|-------------|
-| **PSNR**  | higher is better | Peak signal-to-noise ratio (primary metric). |
-| **SSIM**  | higher is better | Structural similarity. |
-| **LPIPS** | lower is better  | Learned perceptual similarity. |
 
 ## Implementation Hints
 
@@ -126,7 +108,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `gsplat/custom_regularizer.py`
 - editable lines **37–51**
@@ -196,26 +178,6 @@ or deleting existing ones — will cause your submission to score zero.
     54: # this file and adds its return value to the photometric loss unchanged.
     55: # ============================================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **garden** — wall-clock budget `1:00:00`, compute share `1.0`
-- **bicycle** — wall-clock budget `1:00:00`, compute share `1.0`
-- **bonsai** — wall-clock budget `1:00:00`, compute share `1.0`
-- **stump** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

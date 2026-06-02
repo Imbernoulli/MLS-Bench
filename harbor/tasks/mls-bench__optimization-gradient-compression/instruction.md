@@ -35,14 +35,6 @@ class Compressor:
 - `ctx`: local context (not communicated) needed for decompression.
 - The decompressed tensor must have the same shape as the original input.
 
-## Evaluation
-Trained and evaluated on three settings with 100x compression (`compress_ratio = 0.01`):
-- **ResNet-20 / CIFAR-10** (~0.27M params): small model, standard benchmark.
-- **VGG-11-BN / CIFAR-100** (~9.8M params): larger model, harder 100-class problem.
-- **ResNet-56 / CIFAR-10** (~0.85M params): deeper model, tests scalability.
-
-Metric: **best test accuracy** (higher is better). All settings use SGD with momentum, cosine LR schedule, and 200 training epochs.
-
 ## Baselines (paper-cited reference implementations)
 - **topk_ef** — Top-K sparsification with error feedback (Stich et al., "Sparsified SGD with Memory", NeurIPS 2018; Karimireddy et al., "Error Feedback Fixes SignSGD and Other Gradient Compression Schemes", ICML 2019; arXiv:1901.09847). Keeps the `k = compress_ratio * d` largest-magnitude entries.
 - **qsgd** — Quantized SGD with stochastic uniform quantization (Alistarh, Grubic, Li, Tomioka, and Vojnovic, "QSGD: Communication-Efficient SGD via Gradient Quantization and Encoding", NeurIPS 2017; arXiv:1610.02132).
@@ -60,7 +52,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_compressor.py`
 - editable lines **182–232**
@@ -448,25 +440,6 @@ or deleting existing ones — will cause your submission to score zero.
    372: if __name__ == '__main__':
    373:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet20-cifar10** — wall-clock budget `04:00:00`, compute share `0.33`
-- **vgg11-cifar100** — wall-clock budget `06:00:00`, compute share `0.5`
-- **resnet56-cifar10** — wall-clock budget `05:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

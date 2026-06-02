@@ -35,15 +35,6 @@ Interface:
 
 You may restructure the function body, add helper computations, and use any PyTorch operations.
 
-## Evaluation
-- **Metric**: `success_rate` — rollout success rate on the task (higher is better)
-- **Tasks**: Lift, Can, Square (robot manipulation with proficient human demonstrations)
-- **Dataset**: ~200 demonstrations with (s, a, r, s', done) transitions
-- **Training**: IQL with Q-ensemble (2 critics), GMM actor (5 modes), 2000 epochs × 100 steps
-- **Hyperparameters**: discount = 0.99, target_tau = 0.01, adv_beta = 1.0, vf_quantile = 0.9
-- **Rollout evaluation**: 50 episodes per task, horizon 400 steps, every 50 epochs
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -53,7 +44,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `robomimic/custom_iql_vf.py`
 - editable lines **21–38**
@@ -114,23 +105,6 @@ or deleting existing ones — will cause your submission to score zero.
 Some reference context could not be rendered completely:
 
 - `default` has no edit_ops entry
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **tool_hang_ph** — wall-clock budget `8:00:00`, compute share `0.33`
-- **can_ph** — wall-clock budget `8:00:00`, compute share `0.33`
-- **square_ph** — wall-clock budget `8:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

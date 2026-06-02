@@ -31,17 +31,6 @@ Changes must remain local to block structure and must not alter the dataset, tok
 - `rmsnorm_post` — RMSNorm in a Post-LN block.
 - `rmsnorm_parallel` — RMSNorm with the parallel attention+MLP block (GPT-J / PaLM style).
 
-## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 12,030 iterations, micro-batch 96, gradient accumulation 6, 2-GPU DDP.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -51,7 +40,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `nanoGPT/custom_pretrain.py`
 - editable lines **22–31**
@@ -507,29 +496,6 @@ Other files you may **read** for context (do not modify):
    436:     if ddp:
    437:         dist.destroy_process_group()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **gpt-345m** — wall-clock budget `12:00:00`, compute share `4.0`
-- **lm-eval-345m** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

@@ -3,7 +3,7 @@
 # RAIN Convex-Concave
 
 ## Research Question
-Can you improve gradient-norm convergence on the exact convex-concave benchmark instances used by the official RAIN repository for `src/bilinear_func/exp_gnorm.m` and `src/delta_func/exp_gnorm.m`?
+Can you improve convergence on the convex-concave saddle-point benchmark instances used by the official RAIN repository?
 
 ## Background
 Convex-concave saddle-point problems `min_x max_y F(x, y)` are a canonical model for minimax optimization (game-theoretic equilibria, robust learning, GANs). Even simple bilinear instances `f(x, y) = xy` make naive simultaneous gradient descent-ascent diverge; extragradient (Korpelevich, 1976), optimistic methods, and noise-robust analogues are needed. The RAIN reference codebase exercises two regimes — a scalar bilinear problem and a structured `(delta, nu)`-strongly-monotone problem — both subject to additive Gaussian update noise.
@@ -17,25 +17,11 @@ Edit only the scaffold file `RAIN/optimization_convex_concave/custom_strategy.py
 
 The benchmark harness, problem definitions, update-noise model, official iteration counts, initializations, and metric computation are fixed.
 
-## Fixed Setup
-- Problems:
-  - `bilinear`: official scalar bilinear `f(x, y) = x y` with `n = 900`, `tau = 0.1`, `z0 = [10, 10]^T`, `sigma = 0.001`.
-  - `delta_nu`: official `(delta, nu)` problem with `d = 100`, `delta = 1e-2`, `nu = 5e-5`, `n = 6000`, `tau = 1`, `sigma = 0.02`, `z0 ~ N(0, I)` under the script's fixed RNG seed.
-- The harness mirrors the official scripts' additive Gaussian update noise, not the earlier generalized SFO sweep variant.
-- Evaluation uses the official per-problem iteration counts and the same gradient-norm quantities plotted by the scripts.
-- Main metric: `final_gradient_norm` (mean of the two official final gradient norms; lower is better).
-
 ## Interface Notes
 - `init_state(...)` must preserve the provided starting point in `state["z"]`.
 - `step(...)` should implement one official-style iteration of the chosen method.
 - The oracle exposes deterministic gradients and fixed-scale Gaussian update noise so the update equations can match the MATLAB scripts directly.
 - `get_hyperparameters(...)` should return the per-problem constants used by the method.
-
-## Metrics
-The harness prints (lower is better):
-- `STEP_METRICS problem=... iteration=... gradient_norm=...`
-- `RUN_METRICS problem=... final_gradient_norm=... auc_log_iteration_log_grad=...`
-- `FINAL_METRICS final_gradient_norm=...`
 
 ## Baselines (reference implementations from the RAIN repo)
 - **SEG** — Stochastic Extragradient (Korpelevich, 1976; modern stochastic analyses include Mishchenko et al., AISTATS 2020).
@@ -60,7 +46,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `RAIN/optimization_convex_concave/custom_strategy.py`
 - editable lines **24–75**
@@ -156,25 +142,6 @@ or deleting existing ones — will cause your submission to score zero.
     80:         get_hyperparameters=get_hyperparameters,
     81:     )
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **default-noise** — wall-clock budget `01:00:00`, compute share `1.0`
-- **low-noise** — wall-clock budget `01:00:00`, compute share `1.0`
-- **high-noise** — wall-clock budget `01:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

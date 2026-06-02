@@ -81,25 +81,11 @@ The template provides these fixed utilities:
 ## Environments
 Three meta-RL task families with different challenges:
 
-1. **Half-Cheetah Velocity** (`cheetah-vel`) — 30 train / 10 test tasks,
-   target velocities in `[0, 3]` m/s. Obs dim 20, action dim 6. Dense
-   reward from velocity matching. High-dim observations require strong
-   encoding.
+1. **Half-Cheetah Velocity** (`cheetah-vel`) — continuous control with dense velocity-matching reward. High-dim observations require strong encoding.
 
-2. **Sparse Point Robot** (`sparse-point-robot`) — 40 train / 10 test
-   tasks. Goals on a half-circle, sparse reward (+1 near goal, 0
-   otherwise). Obs dim 2, action dim 2. Sparse reward makes inference
-   particularly hard.
+2. **Sparse Point Robot** (`sparse-point-robot`) — 2D navigation with sparse reward (+1 near goal, 0 otherwise). Sparse reward makes inference particularly hard.
 
-3. **Point Robot** (`point-robot`) — 40 train / 10 test tasks. Goals in
-   `[-1, 1]^2`. Dense reward (negative L2 distance). Obs dim 2, action
-   dim 2. Tests basic meta-learning quality.
-
-## Evaluation
-Performance is measured by `meta_test_return` on each environment:
-average return on held-out test tasks after meta-training. The evaluation
-protocol collects exploration trajectories, calls `agent.adapt()`, then
-evaluates with a deterministic policy. Higher is better.
+3. **Point Robot** (`point-robot`) — 2D navigation with dense reward (negative L2 distance). Tests basic meta-learning quality.
 
 ## Key Design Dimensions
 - **Context encoding** — permutation-invariant (MLP + aggregation),
@@ -110,21 +96,6 @@ evaluates with a deterministic policy. Higher is better.
   reconstruction.
 - **RL algorithm** — SAC variants, on-policy gradient, or alternatives.
 
-## Note on Training Budget
-This task intentionally uses a short fixed meta-training budget (20
-outer iterations) to keep wall time per environment near 1 hour. This is
-much shorter than the 500+ iteration budgets in the PEARL/VariBAD/FOCAL
-papers, so absolute returns are not comparable to those papers; only
-relative ordering within this benchmark is meaningful.
-
-On `sparse-point-robot`, returns of 0 indicate that no goal was reached
-in the budget rather than algorithmic failure, since the reward is
-binary.
-
-The companion [`meta-rl`](../meta-rl/task_description.md) task uses the
-same budget convention.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -134,7 +105,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `oyster/custom_meta_rl.py`
 - editable lines **357–494**
@@ -655,30 +626,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from oyster/custom_meta_rl.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **cheetah-vel** — wall-clock budget `2:30:00`, compute share `0.33`
-- **sparse-point-robot** — wall-clock budget `0:59:00`, compute share `0.33`
-- **point-robot** — wall-clock budget `0:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

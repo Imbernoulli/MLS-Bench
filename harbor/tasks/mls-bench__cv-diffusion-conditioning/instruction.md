@@ -5,7 +5,7 @@
 ## Objective
 
 Design a conditioning injection method that improves class-conditional
-CIFAR-10 diffusion FID under a fixed denoiser scaling, training procedure, and
+diffusion FID under a fixed denoiser scaling, training procedure, and
 DDIM sampler.
 
 ## Background
@@ -43,18 +43,11 @@ semantics.
 
 ## Fixed Pipeline
 
-The following are fixed across baselines and submissions:
-
-- Dataset: CIFAR-10 (32×32, 10 classes).
-- Model: `UNet2DModel` (diffusers backbone) at three channel scales:
-  - Small:  `block_out_channels=(64, 128, 128, 128)`, ~9M params, batch 128.
-  - Medium: `block_out_channels=(128, 256, 256, 256)`, ~36M params, batch 128.
-  - Large:  `block_out_channels=(256, 512, 512, 512)`, ~140M params, batch 64.
-- Training: 35,000 steps per scale, AdamW lr=2e-4, EMA rate 0.9995.
-- Inference: 50-step DDIM sampling (Song et al., 2020, arXiv:2010.02502),
-  class-conditional.
-- Metric: FID computed by clean-fid against the CIFAR-10 train set
-  (50,000 samples), lower is better.
+The training and evaluation pipeline (dataset, denoiser backbone, optimizer,
+schedule, sampler, and metrics) is fixed by the harness and not editable. The
+denoising interface is `(x, timestep, class_id)` → predicted epsilon of the same
+shape as `x`, and inference uses DDIM sampling (Song et al., 2020,
+arXiv:2010.02502).
 
 ## Baselines
 
@@ -63,14 +56,6 @@ The following are fixed across baselines and submissions:
 | `concat-film` | FiLM-style conditioning (Perez et al., AAAI 2018): add class embedding to timestep embedding, inject via adaptive GroupNorm in ResBlocks. Simplest. |
 | `cross-attn`  | Cross-attention conditioning: class embedding is key / value in cross-attention layers after each ResBlock. Most expressive. |
 | `adanorm`     | DiT-style AdaLN-Zero conditioning (Peebles & Xie, ICCV 2023, arXiv:2212.09748): class embedding generates scale / shift / gate parameters for adaptive normalization, with the residual gate initialized to zero. |
-
-## Evaluation
-
-Evaluation trains the candidate conditioning at the channel scales above and
-scores generated samples with clean-fid against CIFAR-10; lower FID is better.
-The improvement should come from a transferable conditioning design, not from
-changes to the dataset, labels, loss, optimizer, sampler, or metric.
-
 
 ## Your Workspace
 
@@ -81,7 +66,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `diffusers-main/custom_train.py`
 - editable lines **195–227**
@@ -598,25 +583,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from diffusers-main/custom_train.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **train_small** — wall-clock budget `1:30:00`, compute share `1.0`
-- **train_medium** — wall-clock budget `4:00:00`, compute share `1.0`
-- **train_large** — wall-clock budget `10:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

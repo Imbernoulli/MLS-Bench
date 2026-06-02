@@ -1,6 +1,6 @@
 # MLS-Bench: quant-graph-stock
 
-# Graph-Based Multi-Stock Prediction on Chinese Equity Universes
+# Graph-Based Multi-Stock Prediction
 
 ## Research Question
 Can a relation-aware predictor exploit cross-stock structure (sector / concept membership, learned relations, attention across instruments) to deliver consistently better next-day return rankings than instrument-independent models, while keeping the data, labels, splits, and backtest fixed?
@@ -12,11 +12,7 @@ Stocks are not independent: prices co-move within sectors, react jointly to macr
 Implement a `CustomModel` in `custom_model.py` that exposes the qlib model interface (`fit(dataset)` and `predict(dataset, segment="test")`). The class is wired into `workflow_config.yaml`, where the dataset adapter / preprocessor block is editable so the model can pull in graph-structured inputs (e.g., concept membership matrices) — but instruments, date ranges, train/valid/test splits, label, and the backtest configuration are fixed.
 
 ## Fixed Pipeline
-- **Features**: Alpha360 (360 features per stock-day, reshape to `[N, 60, 6]` for sequence models).
-- **Auxiliary input**: stock-concept membership graph used by HIST and similar baselines, exposed through the dataset handler.
-- **Label**: `Ref($close, -2) / Ref($close, -1) - 1`.
-- **Universes / splits**: `csi300`, `csi100`, `csi300_recent` — fixed.
-- **Backtest**: TopkDropout, top 50 / drop 5.
+The data, label, instrument universes, train/valid/test splits, and backtest configuration are fixed by the harness and not editable. A stock-concept membership graph is exposed through the dataset handler as an auxiliary input. Each stock-day feature vector has 360 features, which sequence models reshape to `[N, 60, 6]`.
 
 ## Model Interface
 ```python
@@ -25,12 +21,6 @@ class CustomModel(qlib.model.base.Model):
     def predict(self, dataset, segment="test") -> pd.Series: ...
 ```
 `predict` returns a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index.
-
-## Evaluation Metrics
-Per universe:
-- Signal: IC, ICIR, Rank IC, Rank ICIR (higher is better).
-- Portfolio: annualized return, information ratio (higher is better); max drawdown (closer to zero is better).
-Computed by qlib's `SignalAnalysisRecord` and `PortAnaRecord`.
 
 ## Reference Implementations (read-only)
 Three reference models ship with qlib and are available as read-only context.
@@ -51,7 +41,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `qlib/custom_model.py`
 - editable lines **58–156**
@@ -316,29 +306,10 @@ Other files you may **read** for context (do not modify):
     83:               min_cost: 5
 ```
 
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **csi300** — wall-clock budget `3:00:00`, compute share `1.0`
-- **csi100** — wall-clock budget `3:00:00`, compute share `1.0`
-- **csi300_recent** — wall-clock budget `3:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+This task enforces a parameter-count cap. The check runs automatically inside
+the training script — you don't need to invoke it separately.
 
 ## Reference Baselines
 

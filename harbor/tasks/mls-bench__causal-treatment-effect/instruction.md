@@ -49,27 +49,6 @@ class CATEEstimator:
 
 scikit-learn, numpy, and scipy are available.
 
-## Evaluation
-Evaluation uses three task-local synthetic benchmarks with known ground-truth
-treatment effects. These are inspired by common causal-inference benchmark
-families, but they are **not** the official IHDP, Jobs/LaLonde, or ACIC
-datasets/settings:
-
-| Label         | Inspired by   | n    | p   | Notes                                |
-|---------------|---------------|------|-----|--------------------------------------|
-| ihdp_synth    | IHDP-like     | 747  | 25  | Nonlinear effects                    |
-| jobs_synth    | Jobs/LaLonde  | 2000 | 10  | Economic outcomes                    |
-| acic_synth    | ACIC-like     | 4000 | 50  | High-dimensional complex confounding |
-
-Each dataset is evaluated with 5-fold cross-fitting over 10 repetitions with
-different random seeds, so the estimator should be stable across train/test
-splits rather than tuned to one realization.
-
-Metrics (both lower is better):
-- **PEHE**: Precision in Estimation of Heterogeneous Effects =
-  `sqrt(mean((tau_hat - tau_true)^2))`.
-- **ATE error**: `|mean(tau_hat) - ATE_true|`.
-
 Valid contributions may combine outcome modeling, propensity modeling,
 orthogonalization, weighting, residualization, forests, neural models, or other
 modular CATE ideas, as long as they address confounding and treatment-effect
@@ -85,7 +64,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_cate.py`
 - editable lines **344–416**
@@ -579,25 +558,6 @@ or deleting existing ones — will cause your submission to score zero.
    478: if __name__ == "__main__":
    479:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **ihdp_synth** — wall-clock budget `01:00:00`, compute share `0.33`
-- **jobs_synth** — wall-clock budget `01:00:00`, compute share `0.33`
-- **acic_synth** — wall-clock budget `01:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

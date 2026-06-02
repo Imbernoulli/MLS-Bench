@@ -3,7 +3,7 @@
 # Robo-Diffusion: Policy Algorithm Design
 
 ## Objective
-Design a single model-free offline RL policy algorithm that uses a diffusion actor for action generation and improves D4RL MuJoCo control performance.
+Design a single model-free offline RL policy algorithm that uses a diffusion actor for action generation and improves offline RL control performance on continuous-control offline RL benchmarks.
 
 This task is intentionally separate from trajectory-diffusion planning. The agent should modify the policy-level actor / critic learning rule, Q / value estimation, or inference-time action selection for a Markov policy. It should not turn the solution into a trajectory planner, classifier-guided planner, or environment-specific evaluation shortcut.
 
@@ -21,17 +21,9 @@ Diffusion actors parameterize the action distribution as a denoising model condi
 - Actor-critic architecture
 
 ## What Is Fixed
-- D4RL dataset construction, environment names, and evaluation loop
-- Random seeds, episode count, vectorized environment count, and checkpoint names
-- The overall offline RL setup: train from fixed D4RL buffers, then evaluate a Markov policy that maps current observation to one action
-
-## Evaluation
-Evaluated on three D4RL MuJoCo environments:
-1. **hopper-medium-v2**
-2. **walker2d-medium-v2**
-3. **halfcheetah-medium-v2**
-
-Metrics: `normalized_score`, `episode_reward`, `training_time`. Final scores use a geometric mean over the three environment-specific normalized-score terms.
+- Dataset construction, environment names, and the evaluation loop
+- Random seeds and checkpoint names
+- The overall offline RL setup: train from fixed offline buffers, then evaluate a Markov policy that maps the current observation to one action
 
 ## Baselines
 
@@ -44,15 +36,9 @@ Decoupled actor / critic with τ-expectile IQL critic and softmax(adv * β) acti
 ### diffusion_policy — Diffusion Policy
 Pure behavior cloning with a diffusion actor (no critic, single-action sampling at inference). Reference: Chi et al., RSS 2023 / IJRR 2024 (arXiv:2303.04137).
 
-## Evaluation Protocol
+## Fixed Pipeline
 
-To keep the protocol fixed across all baselines / agents:
-
-- `gradient_steps = 1,000,000` for every method. CleanDiffuser's package configs (`configs/{dql,idql}/mujoco/mujoco.yaml`) and the DQL paper both use 2M, but at 1M the DQL default already reproduces CleanDiffuser's published numbers, so 1M is the better walltime / quality tradeoff for this benchmark. The model may shorten training inside its own edits but cannot lengthen it.
-- `num_candidates = 50` at inference for every method that uses Q-reranking (DQL, IDQL). This matches CleanDiffuser's DQL reference repro and the "DQL+selection" variant; CleanDiffuser's IDQL package config defaults to 256 but is reduced to 50 here so all reranking baselines see the same compute. `diffusion_policy` ignores `num_candidates` (sample-1 inference, no critic).
-- `num_envs = 50`, `num_episodes = 3`, `use_ema = True` at inference.
-
-Seed=42 is the primary seed; multi-seed (123, 456) is run for the `default` baseline to confirm hopper-medium-v2 is not cherry-picked.
+The dataset construction, environments, evaluation loop, and inference harness are fixed by the harness and not editable. Training runs for a fixed number of gradient steps; the model may shorten training inside its own edits but cannot exceed the configured limit. The `args.gradient_steps`, `args.num_candidates`, `args.num_envs`, `args.num_episodes`, and `args.use_ema` settings are controlled by the harness config and must not be changed outside the editable region — reference them from your code rather than hard-coding values.
 
 
 ## Your Workspace
@@ -64,7 +50,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `CleanDiffuser/pipelines/custom_policy.py`
 - editable lines **1–20**
@@ -322,23 +308,6 @@ or deleting existing ones — will cause your submission to score zero.
 Some reference context could not be rendered completely:
 
 - `default` has no edit_ops entry
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **train_hopper** — wall-clock budget `6:00:00`, compute share `1`
-- **train_walker2d** — wall-clock budget `6:00:00`, compute share `1`
-- **train_halfcheetah** — wall-clock budget `6:00:00`, compute share `1`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

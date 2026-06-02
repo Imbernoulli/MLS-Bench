@@ -48,14 +48,6 @@ compute_loss_on_batch(model, X_batch, y_batch, loss_type, l2_reg)
 - The learning rate (`self.lr`) and L2 regularization (`self.l2_reg`) are fixed.
 - Do not modify the model architecture, loss function, or evaluation code.
 
-## Evaluation
-- **Problems**:
-  - `logistic`: L2-regularized multinomial logistic regression on MNIST (convex, n=60K, 20 epochs).
-  - `mlp`: 2-layer MLP on CIFAR-10 (non-convex, n=50K, 40 epochs).
-  - `conditioned`: L2-regularized linear regression on synthetic ill-conditioned data (strongly convex, kappa=100, n=10K, 30 epochs).
-- **Metrics**: `best_test_accuracy` and `final_test_accuracy` (logistic, mlp; higher is better) and `best_test_mse` / `final_test_mse` (conditioned; lower is better).
-- All problems run in parallel with shared compute.
-
 ## Baselines (paper-cited reference implementations)
 - **svrg** — Johnson and Zhang (NeurIPS 2013); paper-default outer-loop length `m = n / b` and a single full-gradient snapshot per epoch.
 - **storm** — Cutkosky and Orabona (NeurIPS 2019; arXiv:1905.10018); paper-default momentum schedule `a_t = c / (k + t)^{2/3}` with the prescribed adaptive step size.
@@ -71,7 +63,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `opt-vr-bench/custom_vr.py`
 - editable lines **286–370**
@@ -575,25 +567,6 @@ or deleting existing ones — will cause your submission to score zero.
    488: if __name__ == "__main__":
    489:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **logistic** — wall-clock budget `00:59:00`, compute share `0.33`
-- **mlp** — wall-clock budget `00:59:00`, compute share `0.33`
-- **conditioned** — wall-clock budget `00:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

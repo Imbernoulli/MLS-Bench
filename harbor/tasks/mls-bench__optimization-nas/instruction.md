@@ -6,9 +6,9 @@
 Design and implement a novel **sample-efficient** NAS optimizer that discovers high-performing architectures in the NAS-Bench-201 search space under a **strict query budget**. Your code goes in the `NASOptimizer` class in `custom_nas_search.py`. Three reference implementations (Random Search, REA, and a BANANAS-style predictor-guided search) are provided as read-only.
 
 ## Research Question
-With only **K = 30 architecture evaluations**, how can a search strategy maximize the expected accuracy of the best-found architecture?
+With only a **strict architecture evaluation budget**, how can a search strategy maximize the expected accuracy of the best-found architecture?
 
-This is the regime in which real-world NAS is actually hard: the full benchmark contains 15,625 architectures, but the agent can only query 30 of them, so naïve enumeration is impossible and algorithmic differences are load-bearing. Sample-efficient NAS has been studied by BANANAS (White, Neiswanger, and Savani, AAAI 2021; arXiv:1910.11858), NPENAS (Wei, Niu, Chen, and Wang, IEEE TNNLS, 2022), and NAS-Bench-Suite (White et al., 2022) and consistently shows a measurable gap between random search, regularized evolution, and predictor-guided methods at K ≤ 50.
+This is the regime in which real-world NAS is actually hard: the full benchmark contains 15,625 architectures, but the agent can only query a small fraction of them, so naïve enumeration is impossible and algorithmic differences are load-bearing. Sample-efficient NAS has been studied by BANANAS (White, Neiswanger, and Savani, AAAI 2021; arXiv:1910.11858), NPENAS (Wei, Niu, Chen, and Wang, IEEE TNNLS, 2022), and NAS-Bench-Suite (White et al., 2022) and consistently shows a measurable gap between random search, regularized evolution, and predictor-guided methods at low query budgets.
 
 ## Search Space
 - NAS-Bench-201 cell: 4 nodes, 6 edges, 5 operations per edge (Dong and Yang, "NAS-Bench-201: Extending the Scope of Reproducible Neural Architecture Search", ICLR 2020; arXiv:2001.00326).
@@ -17,10 +17,8 @@ This is the regime in which real-world NAS is actually hard: the full benchmark 
 - An architecture is represented as a list of 6 integers in `[0, 4]`.
 
 ## Evaluation Protocol
-- Datasets: CIFAR-10, CIFAR-100, ImageNet16-120 (three separate settings).
-- **Query budget: `NAS_EPOCHS = 30` validation queries per dataset per seed** (the harness enforces this; exceeding it aborts the run).
-- Metric: **test accuracy of the final returned architecture** on the NAS-Bench-201 test split (one extra query at the end, not counted against the budget).
-- Seeds: `{0, 1, 2, 3, 4}`. Report mean ± std across seeds — at K = 30, variance is non-trivial.
+- **Query budget: `NAS_EPOCHS`** validation queries per run (the harness enforces this; exceeding it aborts the run).
+- After search, the harness performs one final unbudgeted test query on your returned architecture; this does not count against your budget.
 
 ## What Counts as a Contribution
 Acceptable research directions (this list is not exhaustive):
@@ -30,10 +28,10 @@ Acceptable research directions (this list is not exhaustive):
 - **Encoding choices**: adjacency vs path encoding (White, Neiswanger, Nolen, and Savani, "A Study on Encodings for Neural Architecture Search", NeurIPS 2020 showed path encoding substantially improves predictor accuracy at low K).
 
 What does **not** count:
-- Increasing the effective budget (e.g. re-querying the same architecture, wrapping queries, etc.). The harness counts every call to `api.query_val_accuracy` and will terminate after `K = 30`.
+- Increasing the effective budget (e.g. re-querying the same architecture, wrapping queries, etc.). The harness counts every call to `api.query_val_accuracy` and will terminate when the budget is exhausted.
 - Hard-coding known good architectures from NAS-Bench-201 literature.
 
-## Baselines (paper-cited reference implementations, all under the same K = 30 budget)
+## Baselines (paper-cited reference implementations)
 
 | Name | Strategy |
 |------|----------|
@@ -51,7 +49,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `naslib/custom_nas_search.py`
 - editable lines **163–234**
@@ -397,30 +395,6 @@ or deleting existing ones — will cause your submission to score zero.
    330:     # Output test metric for parser
    331:     print(f"TEST_METRICS test_accuracy={test_acc:.4f}", flush=True)
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **CIFAR-10** — wall-clock budget `00:30:00`, compute share `0.01`
-- **CIFAR-100** — wall-clock budget `00:30:00`, compute share `0.01`
-- **ImageNet16-120** — wall-clock budget `00:30:00`, compute share `0.01`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

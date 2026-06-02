@@ -19,7 +19,7 @@ Modify the three functions in `RAIN/opt_diagonal_net/custom_optimizer.py` (insid
 2. `init_state(u, v, hyperparameters)` — initialise optimizer state.
 3. `step(u, v, grad_u, grad_v, state, hyperparameters)` — perform one update step.
 
-The default template implements vanilla gradient descent. Your goal is to achieve successful recovery (test MSE < 1.0) with fewer training samples across all evaluation settings.
+The default template implements vanilla gradient descent. Your goal is to reliably recover the sparse ground truth (low test MSE) from fewer training samples.
 
 ## Interface
 - `u`, `v`: parameter vectors of shape `(d,)` as `torch.Tensor` (float64), initialised as `alpha/sqrt(2d) * ones(d)` with `alpha = 1e-3`.
@@ -43,19 +43,6 @@ with torch.no_grad():
     model.v.data.copy_(v_new)
 ```
 
-## Evaluation
-Settings exercised by the harness include:
-- **d200_k5_s01**: d=200, k=5, sigma=0.1, delta=0.5.
-- **d500_k10_s01**: d=500, k=10, sigma=0.1, delta=0.5.
-- **d500_k10_s02**: d=500, k=10, sigma=0.2, delta=0.5.
-- A larger-scale setting at d=10000, k=50.
-
-For each setting, the benchmark performs a coarse-to-fine search over training-set sizes `n ∈ {50, 75, ..., 1600}` (with the larger setting using a wider range) to find the smallest `n*` where recovery succeeds on at least 4 of 5 seeds. Recovery means test MSE < 1.0 at the time training stops.
-
-**Metric**: `score = -log2(n*)` per setting (higher is better — fewer samples needed).
-
-Training uses full-batch gradients (with noisy labels) and a shared stopping rule: training halts when both train and test MSE have plateaued (two-window comparison over 20,000 steps), or after 1,000,000 steps.
-
 ## Baselines (16 paper-default configurations)
 - **SGD** (4 configs): lr ∈ {0.005, 0.01, 0.05, 0.1}.
 - **AdaGrad** (4 configs): lr ∈ {0.005, 0.01, 0.05, 0.1}, eps=1e-6 (Duchi, Hazan, and Singer, JMLR 2011).
@@ -78,7 +65,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `RAIN/opt_diagonal_net/custom_optimizer.py`
 - editable lines **23–90**
@@ -191,26 +178,6 @@ Other files you may **read** for context (do not modify):
     95:         step=step,
     96:     )
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **d200_k5_s01** — wall-clock budget `04:00:00`, compute share `1.0`
-- **d500_k10_s01** — wall-clock budget `04:00:00`, compute share `1.0`
-- **d500_k10_s02** — wall-clock budget `04:00:00`, compute share `1.0`
-- **d10000_k50** — wall-clock budget `08:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

@@ -3,7 +3,7 @@
 # DL Residual Connection Block Design
 
 ## Research Question
-Design a residual / skip-connection block for CIFAR-style ResNets that improves test accuracy across different network depths and datasets, while keeping the broader training recipe, initialization, data pipeline, optimizer, and classifier objective fixed.
+Design a residual / skip-connection block for CIFAR-style ResNets that improves classification performance across different network depths and datasets, while keeping the broader training recipe, initialization, data pipeline, optimizer, and classifier objective fixed.
 
 ## Background
 Residual connections (He et al., "Deep Residual Learning for Image Recognition", arXiv:1512.03385) enabled training of very deep networks by providing identity shortcut paths. The basic residual block adds the input to the output of two stacked 3×3 convolutions. Several improvements have been proposed:
@@ -29,19 +29,12 @@ Constraints (the backbone relies on these):
 You may modify the internal convolution structure (number, kernel sizes, grouping), activation/normalization placement and type, the shortcut/skip design, attention mechanisms (channel or spatial), the `expansion` attribute, and any additional modules within the block.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-20 (`[3,3,3]`) on CIFAR-10, ResNet-56 (`[9,9,9]`) on CIFAR-100, ResNet-110 (`[18,18,18]`) on CIFAR-100.
+The training and evaluation pipeline (datasets, network architecture, initialization, data pipeline, optimizer, schedule, and metrics) is fixed by the harness and not editable. The contribution is the `CustomBlock` design only.
 
 ## Baselines
 - **pre_activation** — He et al., arXiv:1603.05027; BN-ReLU-Conv ordering inside the block.
 - **gated_residual** — ReZero-style learnable scalar gate per block, initialized to `0` (Bachlechner et al., arXiv:2003.04887).
 - **stochastic_depth** — Huang et al., arXiv:1603.09382; linearly decaying per-block survival probability with `p_L=0.5`.
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The block must satisfy the interface above and must not change dataset construction, optimization, global pooling, classifier heads, or the outer training loop.
-
 
 ## Your Workspace
 
@@ -52,7 +45,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_residual.py`
 - editable lines **31–61**
@@ -345,30 +338,6 @@ or deleting existing ones — will cause your submission to score zero.
    277: if __name__ == '__main__':
    278:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet20-cifar10** — wall-clock budget `02:00:00`, compute share `1.0`
-- **resnet56-cifar100** — wall-clock budget `02:00:00`, compute share `1.0`
-- **resnet110-cifar100** — wall-clock budget `04:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

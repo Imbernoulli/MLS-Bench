@@ -26,20 +26,16 @@ The `get_lr(epoch, total_epochs, base_lr, config)` function inside `pytorch-visi
 You may freely shape the LR curve (cosine, polynomial, exponential, linear, piecewise), include warmup of arbitrary length and shape, set any minimum/final LR, condition on `arch` and `dataset`, and use any epoch-dependent logic such as cyclic restarts, sharp transitions, or plateaus.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=base_lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`. The task setup uses **no** built-in PyTorch scheduler — your `get_lr` directly determines the per-epoch learning rate.
-- Training: `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Weight initialization: Kaiming normal (fixed, not editable).
-- Evaluation settings: ResNet-20 on CIFAR-10, ResNet-56 on CIFAR-100, MobileNetV2 on FashionMNIST.
+The training and evaluation pipeline (optimizer, training budget, data
+augmentation, weight initialization, and metrics) is fixed by the harness and
+not editable. The setup uses **no** built-in PyTorch scheduler — your `get_lr`
+directly determines the per-epoch learning rate, receiving `base_lr` and
+`total_epochs` as arguments.
 
 ## Baselines
 - **cosine** — Loshchilov & Hutter, arXiv:1608.03983; standard cosine annealing from `base_lr` to `0` over `total_epochs`.
 - **warmup_cosine** — Goyal et al., arXiv:1706.02677; linear warmup (commonly 5 epochs) followed by cosine annealing to `0`.
 - **one_cycle** — Smith & Topin, arXiv:1708.07120; triangular up-then-down ramp that peaks above `base_lr` and ends below it.
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The schedule must not modify model code, data augmentation, loss functions, optimizer type, weight decay, or evaluation.
-
 
 ## Your Workspace
 
@@ -50,7 +46,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_schedule.py`
 - editable lines **246–269**
@@ -501,25 +497,6 @@ or deleting existing ones — will cause your submission to score zero.
    435: if __name__ == '__main__':
    436:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet20-cifar10** — wall-clock budget `00:59:00`, compute share `1.0`
-- **resnet56-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **mobilenetv2-fmnist** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

@@ -3,7 +3,7 @@
 # CV Global Pooling / Feature Aggregation Design
 
 ## Research Question
-Design a global pooling / feature aggregation module for image classification that improves test accuracy across different CNN architectures and datasets, while preserving the surrounding backbone and classifier interface.
+Design a global pooling / feature aggregation module for image classification that improves performance across different CNN architectures and datasets, while preserving the surrounding backbone and classifier interface.
 
 ## Background
 Global pooling is the final spatial aggregation step in modern image-classification CNNs, reducing feature maps from `[B, C, H, W]` to `[B, C]` before the classifier head. The standard choice is Global Average Pooling (GAP), which computes the spatial mean per channel — simple and stable, but treats every spatial location identically and discards the distribution of activations. Alternatives include:
@@ -27,18 +27,13 @@ Constraints:
 - No access to training data or labels inside the pooling layer.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-56 on CIFAR-100, VGG-16-BN on CIFAR-100, and MobileNetV2 on FashionMNIST.
+The training and evaluation pipeline (data, augmentation, model, optimizer,
+schedule, and metrics) is fixed by the harness and not editable.
 
 ## Baselines
 - **global_max** — channel-wise max over the spatial axes (no extra parameters).
 - **gem** — Radenović et al., arXiv:1711.02512; default learnable `p` initialized to `3.0`, with stability epsilon `1e-6`.
 - **avg_max** — sum of GAP and GMP outputs (no learnable parameters).
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The pooling module must accept convolutional feature maps and return the expected channel vector, must handle variable spatial sizes, and must not change datasets, classifier targets, optimizer behavior, or test-time evaluation.
 
 
 ## Your Workspace
@@ -50,7 +45,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_pool.py`
 - editable lines **31–48**
@@ -491,30 +486,6 @@ or deleting existing ones — will cause your submission to score zero.
    425: if __name__ == '__main__':
    426:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet56-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **vgg16bn-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **mobilenetv2-fmnist** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

@@ -47,26 +47,6 @@ The editable code must keep the public interface intact:
 - `loss(batch_obs, batch_next_obs, batch_actions)`
 - `mix_advantages(ext_advantages, int_advantages, args)`
 
-## Evaluation
-The agent is trained with the same fixed PPO-style loop on multiple
-sparse-reward Atari environments, including:
-- **Tutankham-v5** — medium-difficulty visible game.
-- **Frostbite-v5** — hard-exploration visible game.
-- **PrivateEye-v5** — additional hard-exploration setting.
-
-Reported metrics:
-- `eval_return` — mean evaluation episodic return at the fixed training
-  budget.
-- `auc` — area under the evaluation-return curve across training.
-- `nonzero_rate` — fraction of evaluation episodes with non-zero
-  episodic return.
-
-Evaluation uses deterministic rollouts with a fixed per-episode step
-cap so that non-terminating Atari behavior cannot stall the benchmark.
-Higher is better for all metrics. A method should improve across
-multiple games rather than helping only one.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -76,7 +56,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `cleanrl/cleanrl/custom_intrinsic_exploration.py`
 - editable lines **179–219**
@@ -586,25 +566,6 @@ Other files you may **read** for context (do not modify):
    491:         flush=True,
    492:     )
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **tutankham-v5** — wall-clock budget `08:00:00`, compute share `1.0`
-- **frostbite-v5** — wall-clock budget `08:00:00`, compute share `1.0`
-- **private-eye-v5** — wall-clock budget `08:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

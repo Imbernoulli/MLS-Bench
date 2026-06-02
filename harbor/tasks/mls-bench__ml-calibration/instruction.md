@@ -31,19 +31,6 @@ class CalibrationMethod(BaseEstimator):
 
 Available imports: `numpy`, `scipy` (`optimize`, `interpolate`, `special`), `sklearn`. The output must remain a valid probability distribution (non-negative, sums to 1 for multiclass).
 
-## Fixed Pipeline & Evaluation
-Four classifier-dataset combinations:
-- **Random Forest on MNIST** (10-class).
-- **MLP on Fashion-MNIST** (10-class).
-- **GBM on Madelon** (binary).
-- **SVM on Breast Cancer** (binary).
-
-Metrics (all lower is better):
-- **ECE (Expected Calibration Error)** — weighted mean of `|accuracy − confidence|` across probability bins.
-- **Brier score** — mean squared error between predicted probability vector and one-hot label.
-- **NLL (Negative Log-Likelihood)** — cross-entropy between predicted probabilities and true labels.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -53,7 +40,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_calibration.py`
 - editable lines **45–102**
@@ -416,24 +403,6 @@ or deleting existing ones — will cause your submission to score zero.
    347: if __name__ == "__main__":
    348:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **rf-mnist** — wall-clock budget `00:30:00`, compute share `1.0`
-- **mlp-fashion_mnist** — wall-clock budget `00:30:00`, compute share `1.0`
-- **gbm-madelon** — wall-clock budget `00:20:00`, compute share `1.0`
-- **svm-breast_cancer** — wall-clock budget `00:10:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

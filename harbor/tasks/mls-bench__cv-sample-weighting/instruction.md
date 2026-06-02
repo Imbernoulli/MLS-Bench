@@ -28,19 +28,15 @@ The `compute_class_weights(class_counts, num_classes, config)` function inside `
 You may modify the functional form mapping class counts to weights (inverse, power-law, logarithmic, piecewise, effective-number, etc.), use any field from `config`, choose any normalization strategy (sum to `C`, sum to `1`, unnormalized), and combine multiple ideas. The computation must be pure: no access to training data, model parameters, or test labels.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation is on the balanced test set; training is on the long-tail train split.
-- Evaluation settings: ResNet-32 on CIFAR-10-LT (imbalance ratio 100), ResNet-32 on CIFAR-100-LT (imbalance ratio 100), and VGG-16-BN on CIFAR-100-LT (imbalance ratio 50).
+The training and evaluation pipeline (dataset construction, sampler, data augmentation, model, optimizer, schedule, and metrics) is fixed by the harness and not editable. `compute_class_weights` returns the only quantity you change. Evaluation reports balanced test accuracy.
 
 ## Baselines
 - **inverse_freq** — `w[c] = total_samples / (num_classes * n[c])`.
 - **effective_number** — Cui et al., arXiv:1901.05555; default `β=0.9999` (paper-recommended for long-tail CIFAR-100), with weights normalized so they sum to `num_classes`.
 - **balanced_softmax** — weighting form motivated by Ren et al., arXiv:2007.10740, derived from the empirical class prior.
 
-## Metric
-Best test accuracy (%, higher is better) on the balanced test set. The weighting rule must produce numerically stable class weights compatible with cross-entropy and must not change the dataset construction, sampler, model architecture, optimizer, or evaluation metric.
+## Implementation Contract
+The weighting rule must produce numerically stable class weights compatible with cross-entropy and must not change the dataset construction, sampler, model architecture, optimizer, or evaluation metric.
 
 
 ## Your Workspace
@@ -52,7 +48,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_weighting.py`
 - editable lines **164–195**
@@ -473,25 +469,6 @@ or deleting existing ones — will cause your submission to score zero.
    405: if __name__ == '__main__':
    406:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet32-cifar10lt** — wall-clock budget `00:59:00`, compute share `1.0`
-- **resnet32-cifar100lt** — wall-clock budget `00:59:00`, compute share `1.0`
-- **vgg16bn-cifar100lt** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

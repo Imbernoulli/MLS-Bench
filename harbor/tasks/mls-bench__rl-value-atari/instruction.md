@@ -36,14 +36,6 @@ Reference baselines spanning the design space:
   exploration, replay usage) rather than capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
-## Evaluation
-Trained and evaluated on multiple Atari games including Breakout, Pong
-and BeamRider within a fixed interaction budget using the benchmark
-Atari wrappers. Metric: mean episodic return over evaluation episodes
-(higher is better). Strong methods should improve across games rather
-than tuning to a single title.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -53,7 +45,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `cleanrl/cleanrl/custom_value_atari.py`
 - editable lines **186–249**
@@ -428,29 +420,9 @@ or deleting existing ones — will cause your submission to score zero.
    359:     envs.close()
 ```
 
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **breakout-v4** — wall-clock budget `24:00:00`, compute share `0.4`
-- **seaquest-v4** — wall-clock budget `24:00:00`, compute share `0.4`
-- **pong-v4** — wall-clock budget `24:00:00`, compute share `0.4`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Your edits must not significantly increase the model's total parameter count relative to the strongest baseline. The check runs automatically inside the eval scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

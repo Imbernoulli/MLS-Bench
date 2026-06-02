@@ -61,19 +61,6 @@ Each `Trial` records:
 
 The fidelity parameter controls evaluation cost: lower fidelity means cheaper but noisier evaluation (e.g., fewer boosting rounds, fewer CV folds, fewer MLP epochs).
 
-## Evaluation
-Evaluated on three ML model tuning benchmarks (**higher `best_val_score` is better, higher `convergence_auc` is better**):
-
-- **XGBoost** (6D: `n_estimators`, `max_depth`, `learning_rate`, `subsample`, `min_samples_split`, `min_samples_leaf`; `GradientBoostingRegressor` on California Housing; budget = 50).
-- **SVM** (3D: `C`, `gamma`, `kernel`; `SVC` on Breast Cancer; budget = 40).
-- **Neural Net** (6D: hidden layers, learning rate, alpha, batch_size, activation; MLP on Diabetes; budget = 40).
-
-Metrics:
-- **best_val_score**: best validation score found within the budget (primary metric).
-- **convergence_auc**: area under the normalized convergence curve (higher = found good configs earlier).
-
-Each benchmark runs with multiple seeds; mean metrics across seeds are reported.
-
 ## Baselines (paper-cited reference implementations)
 - **random_search** — Bergstra and Bengio (JMLR 2012).
 - **tpe** — Bergstra et al. (NIPS 2011); paper-default `gamma = 0.25`, 24 candidate configurations per suggestion.
@@ -92,7 +79,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_hpo.py`
 - editable lines **255–326**
@@ -562,25 +549,6 @@ or deleting existing ones — will cause your submission to score zero.
    454: if __name__ == "__main__":
    455:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **xgboost** — wall-clock budget `01:00:00`, compute share `0.33`
-- **svm** — wall-clock budget `01:00:00`, compute share `0.33`
-- **nn** — wall-clock budget `01:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

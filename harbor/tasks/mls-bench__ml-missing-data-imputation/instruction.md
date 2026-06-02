@@ -36,15 +36,8 @@ class CustomImputer(BaseEstimator, TransformerMixin):
 
 Available libraries: `numpy`, `scipy`, `scikit-learn` (all submodules: `sklearn.impute`, `sklearn.ensemble`, `sklearn.neighbors`, ...).
 
-## Fixed Pipeline & Evaluation
-Datasets, all with **20% MCAR (Missing Completely At Random)** corruption:
-- **Breast Cancer Wisconsin** — 569 samples, 30 features, binary classification.
-- **Wine** — 178 samples, 13 features, 3-class classification.
-- **California Housing** — 5,000 samples, 8 features, regression.
-
-Metrics:
-- **RMSE** — root mean squared error between imputed and true values on the masked entries (lower is better).
-- **downstream_score** — accuracy (breast_cancer, wine) or R² (california) of a `GradientBoosting` model trained on the imputed data (higher is better).
+## Fixed Pipeline
+The datasets, missingness corruption, and the evaluation pipeline (downstream models and metrics) are fixed by the harness and not editable. Your imputer receives `X` (a numpy array with NaN entries) and must produce a complete array of the same shape with no NaNs. Do not use test labels during imputation.
 
 
 ## Your Workspace
@@ -56,7 +49,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_imputation.py`
 - editable lines **36–131**
@@ -332,30 +325,6 @@ or deleting existing ones — will cause your submission to score zero.
    260: if __name__ == "__main__":
    261:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **breast_cancer** — wall-clock budget `00:15:00`, compute share `0.33`
-- **wine** — wall-clock budget `00:15:00`, compute share `0.33`
-- **california** — wall-clock budget `00:15:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

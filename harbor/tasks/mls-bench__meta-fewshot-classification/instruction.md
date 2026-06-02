@@ -46,10 +46,11 @@ class CustomFewShotMethod(FewShotClassifier):
 - `make_backbone(use_pooling=True/False)` — ResNet-12 with 640-dim feature vector or feature maps.
 
 ## Fixed Training & Evaluation Pipeline
-- Backbone: ResNet-12 (640-dim).
-- Episodic training: 500 tasks/epoch for 200 epochs, 5-way 5-shot tasks.
-- Evaluation: mean classification accuracy over 600 test episodes per benchmark (higher is better).
-- Benchmarks: **miniImageNet** (100 ImageNet classes), **CIFAR-FS** (100 classes from CIFAR-100), **CUB-200** (200 fine-grained bird species). All evaluated 5-way 5-shot.
+The episodic training and evaluation pipeline (backbone, data, optimizer,
+schedule, episode sampling, and the held-out benchmarks) is fixed by the
+harness and not editable. The metric is episodic classification accuracy. The
+shared backbone is created via `make_backbone(...)` and exposes 640-dim
+features.
 
 
 ## Your Workspace
@@ -61,7 +62,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `easy-few-shot-learning/custom_fewshot.py`
 - editable lines **225–286**
@@ -439,25 +440,6 @@ Other files you may **read** for context (do not modify):
    359:     print(f"TEST_METRICS accuracy={test_acc:.4f}", flush=True)
    360:     print(f"Test accuracy: {100 * test_acc:.2f}%", flush=True)
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **mini_imagenet** — wall-clock budget `23:59:59`, compute share `0.33`
-- **cifar_fs** — wall-clock budget `23:59:59`, compute share `0.33`
-- **CUB** — wall-clock budget `23:59:59`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

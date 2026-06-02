@@ -47,14 +47,7 @@ def compute_custom_kl_penalty(
 | `abs` | `|logprob − ref_logprob|` | robust |
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter), verl framework, GRPO advantage estimator.
-- **Training set**: simpleRL-Zoo MATH level 3–5 (Qwen split) plus a 5K subset of DeepMath.
-- **Hyperparameters**: 100 steps, 16 rollout samples per prompt, batch size 128, `actor.use_kl_loss=True`, `actor.kl_loss_coef=0.001`, `actor.kl_loss_type=custom`.
-- Reward manager, advantage estimator, rollout, model, optimizer, and evaluation are fixed.
-
-## Evaluation
-Math-reasoning accuracy (`mean@1`) on **GSM8K**, **MATH-500**, and **AMC 23**; primary score is the mean across the three.
-
+The RL framework, advantage estimator, frozen reference policy, reward manager, rollout, model, optimizer, and evaluation are fixed by the harness and not editable. Your estimator is selected via the `custom` KL-loss branch (the wiring at the bottom of the file dispatches `actor.kl_loss_type=custom` to your function); the per-token KL it returns is the only quantity you change.
 
 ## Your Workspace
 
@@ -65,7 +58,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `verl/verl/trainer/ppo/custom_kl_penalty.py`
 - editable lines **17–56**
@@ -151,23 +144,6 @@ or deleting existing ones — will cause your submission to score zero.
     70: 
     71: _core_algos.kl_penalty_forward = _patched_kl_penalty_forward
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **deepmath-3bench-h100** — wall-clock budget `12:00:00`, compute share `2`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

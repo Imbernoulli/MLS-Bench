@@ -1,15 +1,15 @@
 # MLS-Bench: ts-short-term-forecast
 
-# Univariate Short-Term Forecasting on the M4 Competition Dataset
+# Univariate Short-Term Forecasting
 
 ## Research Question
-Can one univariate forecasting component (seasonal decomposition, scale normalization, horizon-aware decoding, multi-scale temporal mixing) deliver consistently low SMAPE across the very different seasonal regimes — monthly, quarterly, yearly — of the M4 competition, under a fixed training and evaluation protocol?
+Can one univariate forecasting component (seasonal decomposition, scale normalization, horizon-aware decoding, multi-scale temporal mixing) deliver consistently strong performance across very different seasonal regimes under a fixed training and evaluation protocol?
 
 ## Background
-The M4 competition (Makridakis, Spiliotis & Assimakopoulos, "The M4 Competition: 100,000 time series and 61 forecasting methods", *International Journal of Forecasting*, 2018/2020) collected 100,000 short, real-world series across 6 seasonal patterns (Yearly, Quarterly, Monthly, Weekly, Daily, Hourly). It is the standard benchmark for *short, univariate, many-series* forecasting and is dominated by combinations of statistical and ML methods. The Time-Series-Library protocol (Wu et al., ICLR 2023) wraps M4 with per-pattern fixed look-back / horizon settings, SMAPE training loss, and SMAPE / MAPE / OWA scoring.
+Short, univariate, many-series forecasting is a well-studied problem dominated by combinations of statistical and ML methods. The Time-Series-Library (Wu et al., ICLR 2023) provides a standardized training and evaluation protocol with per-pattern fixed look-back / horizon settings and a SMAPE training loss.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the M4 univariate setting `enc_in == c_out == 1`.
+Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the univariate setting `enc_in == c_out == 1`.
 
 ## Model Interface
 ```python
@@ -29,16 +29,8 @@ class Model(nn.Module):
         return out[:, -self.pred_len:, :]
 ```
 
-## Datasets and Fixed Protocol
-Three M4 seasonal patterns. Per Time-Series-Library defaults:
-- **Monthly** — `seq_len=104`, `pred_len=18`, `frequency_map=12`.
-- **Quarterly** — `seq_len=52`, `pred_len=8`, `frequency_map=4`.
-- **Yearly** — `seq_len=42`, `pred_len=6`, `frequency_map=1`.
-
-All settings: `features=M`, `enc_in=1`, `loss=SMAPE`. Train/test splits are the official M4 splits.
-
-## Metrics
-SMAPE (primary) and MAPE — lower is better. Computed by the Time-Series-Library M4 evaluator on the official test horizon.
+## Fixed Protocol
+The training and evaluation pipeline (data, look-back/horizon settings, training schedule, and metrics) is fixed by the harness and not editable. The per-pattern `seq_len` and `pred_len` are supplied to your model through `configs`; the univariate setting fixes `enc_in == c_out == 1`, and the training loss / reported metric is SMAPE.
 
 ## Reference Implementations (read-only)
 Four reference models from `models/`:
@@ -58,7 +50,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `Time-Series-Library/models/Custom.py`
 - editable: **entire file**
@@ -2153,23 +2145,6 @@ Other files you may **read** for context (do not modify):
    134:             x = self.projection(x)
    135:         return x
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **m4_monthly** — wall-clock budget `00:59:00`, compute share `0.33`
-- **m4_quarterly** — wall-clock budget `00:59:00`, compute share `0.33`
-- **m4_yearly** — wall-clock budget `00:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

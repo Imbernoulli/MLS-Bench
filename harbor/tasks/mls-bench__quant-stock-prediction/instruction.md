@@ -12,10 +12,13 @@ Quantitative stock prediction in Microsoft `qlib` formulates daily forecasting a
 Implement a `CustomModel` in `custom_model.py` that exposes the standard qlib model interface (`fit(dataset)` and `predict(dataset, segment="test")`). The class is wired into the qlib `workflow_config.yaml`, which controls the dataset adapter / preprocessor block but keeps the universe, label, and date splits fixed. You may change the dataset class (e.g., to `TSDatasetH`) or processors if your model needs a different input view.
 
 ## Fixed Pipeline
-- **Features**: Alpha360 (360 features per stock-day = 6 base ratios over 60 days of history). For temporal models, reshape with `x.reshape(N, 6, 60).permute(0, 2, 1) -> [N, 60, 6]`.
-- **Label**: `Ref($close, -2) / Ref($close, -1) - 1` (return from T+1 to T+2, predicted at T).
-- **Universes / splits**: `csi300`, `csi100`, `csi300_recent` — instruments and date ranges fixed by the workflow YAML.
-- **Backtest**: TopkDropout, top 50 / drop 5, executed by the qlib workflow runner.
+The training and evaluation pipeline (universes, label, train/valid/test splits,
+and downstream backtest) is fixed by the harness and not editable.
+
+The input feature view your model receives is Alpha360: 360 features per
+stock-day (6 base ratios over 60 days of history). For temporal models, reshape
+with `x.reshape(N, 6, 60).permute(0, 2, 1) -> [N, 60, 6]` to get 60 time steps of
+6 features each.
 
 ## Model Interface
 ```python
@@ -29,15 +32,8 @@ class CustomModel(Model):
 ```
 `predict` must return a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index. Available imports inside the class: `torch`, `numpy`, `pandas`, `lightgbm`, `sklearn`, `scipy`.
 
-## Evaluation Metrics
-Reported per universe:
-- **Signal quality**: IC, ICIR, Rank IC, Rank ICIR — higher is better.
-- **Portfolio**: annualized return, information ratio — higher is better; max drawdown — closer to zero is better.
-
-All metrics are produced by qlib's standard `SignalAnalysisRecord` and `PortAnaRecord`.
-
 ## Reference Implementations (read-only)
-Three reference models ship with qlib's `examples/benchmarks/` and are available as read-only context. Defaults are taken from each method's qlib CSI300 example config.
+Three reference models ship with qlib's `examples/benchmarks/` and are available as read-only context. Defaults are taken from each method's qlib example config.
 
 - **LightGBM** — Ke et al., "LightGBM: A Highly Efficient Gradient Boosting Decision Tree", NeurIPS 2017. qlib defaults: `loss=mse`, `learning_rate=0.0421`, `num_leaves=210`, `feature_fraction=0.879`, `bagging_fraction=0.856`, `bagging_freq=5`, `lambda_l1=205.7`, `lambda_l2=580.9`.
 - **LSTM** — qlib's RNN baseline with `d_feat=6`, `hidden_size=64`, `num_layers=2`, `dropout=0.0`, Adam `lr=1e-3`, `n_epochs=200`, early-stopping patience 20.
@@ -55,7 +51,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `qlib/custom_model.py`
 - editable lines **16–103**
@@ -265,30 +261,6 @@ Other files you may **read** for context (do not modify):
     81:               close_cost: 0.0015
     82:               min_cost: 5
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **csi300** — wall-clock budget `3:00:00`, compute share `1.0`
-- **csi100** — wall-clock budget `3:00:00`, compute share `1.0`
-- **csi300_recent** — wall-clock budget `3:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

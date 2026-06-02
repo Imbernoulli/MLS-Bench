@@ -18,7 +18,7 @@ distribution, behavior-regularized policies can forget useful offline
 behavior, and naive fine-tuning often causes a Q-value collapse and a
 performance drop early in the online phase.
 
-The Adroit `cloned-v1` datasets mix expert and noisy demonstrations, so
+The offline datasets mix expert and noisy demonstrations, so
 the offline pretraining never produces a strong policy on its own and
 the online phase must improve substantially without losing what little
 competence was learned.
@@ -48,16 +48,6 @@ Reference baselines spanning the design space:
   annealing) rather than capacity.
 - Do **not** simply copy a reference implementation with minor changes.
 
-## Evaluation
-Trained and evaluated on Adroit tasks Pen, Door and Hammer using the
-D4RL `cloned-v1` datasets. The offline phase trains for 1M gradient
-steps, then the online phase trains for 1M environment-interaction
-steps. Metric: D4RL normalized score (0 = random, 100 = expert),
-evaluated throughout both phases. Higher is better. Strong methods
-should retain offline competence while benefiting from online
-fine-tuning across the manipulation tasks.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -67,7 +57,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `CORL/algorithms/finetune/custom_finetune.py`
 - editable lines **258–477**
@@ -584,30 +574,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from CORL/algorithms/finetune/custom_finetune.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **pen-cloned-v1** — wall-clock budget `24:00:00`, compute share `0.33`
-- **hammer-cloned-v1** — wall-clock budget `24:00:00`, compute share `0.33`
-- **hammer-expert-v1** — wall-clock budget `24:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

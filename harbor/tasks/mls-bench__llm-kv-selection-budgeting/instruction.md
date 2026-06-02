@@ -54,35 +54,7 @@ hook exposes the union needed by the included source-backed baselines:
 
 The canonical compression setting is `SELECTION_KV_COMPRESSION_RATIO=0.8`,
 meaning methods retain roughly 20% of prefill KV tokens unless the
-`full_attention` anchor explicitly disables compression. Final scoring
-applies a soft over-budget penalty once `mean_retained_fraction > 0.25`.
-
-## Evaluation
-
-The canonical model is aligned with `llm-kv-adaptive-quantization`:
-`Qwen/Qwen2.5-3B-Instruct`. Workloads share the same public
-text-benchmark protocol used by `llm-kv-adaptive-quantization`. Dataset
-sources, split names, prompt templates, generation limits, and scoring
-semantics stay aligned across those tasks whenever the same workload label
-is used.
-
-| Label | Source | Final score |
-|---|---|---|
-| `longbench_hotpotqa` | LongBench-E `hotpotqa_e` | LongBench QA F1 (0-100) |
-| `longbench_passage_retrieval` | LongBench-E `passage_retrieval_en_e` | LongBench retrieval (0-100) |
-| `longbench_repobench` | LongBench-E `repobench-p_e` | LongBench code similarity (0-100) |
-| `longbench_v2` | LongBench v2 `train` split | multiple-choice exact accuracy (0-100), official head-tail truncation when over context |
-| `gsm8k` | `openai/gsm8k` main test split | exact final-answer accuracy after numeric normalization (0-100) |
-
-Canonical data sources are the public upstream datasets listed above:
-`THUDM/LongBench`, `THUDM/LongBench-v2` / `zai-org/LongBench-v2`, and
-`openai/gsm8k`. The runtime resolves model and datasets from the local
-build-time or mounted Hugging Face cache only; missing assets are hard
-failures rather than implicit network downloads.
-
-`SELECTION_KV_MAX_EXAMPLES=0` means full available workload. Setting it to
-a positive integer is allowed for local smoke validation but should not be
-used for final leaderboard evidence.
+`full_attention` anchor explicitly disables compression.
 
 ## Baselines
 
@@ -121,42 +93,9 @@ cache state:
 | Field | Status | Notes |
 |---|---|---|
 | `compression_ratio` | enforced | Harness force-overrides to its own value at the call site (`PrefillSelectionCompressor.forward_hook`). Policies cannot lie about the budget. |
-| `mean_retained_fraction` | measured, enforced | Computed from `select_cache`'s actual output `n_kept / keys.shape[2]` per layer, then averaged. Drives the soft budget penalty in `score_spec.py`. |
-| `disable_compression` | enforced | If `True`, harness skips `score_tokens`/`select_cache` entirely and reports `retained = 1.0`. Used by the `full_attention` anchor. |
-| `method` | logged only | Recorded for provenance; not used in scoring. |
-| `sink_tokens`, `lag_size`, `n_future_positions`, `subspace_dim`, etc. | advisory | Used internally by the policy's own `score_tokens`. The harness does not verify that declared "sinks" are actually preserved by `select_cache`'s top-K output. Honesty here only matters for provenance and ablation reproducibility, not for scoring. |
-
-Final scoring depends only on the end-to-end measured signals
-(`final_score`, `mean_retained_fraction`, `runtime_seconds`).
-
-## Metrics
-
-The parser expects one `TEST_METRICS:` line per workload with:
-
-- `final_score`: benchmark-native final task score on a 0-100 scale
-- `mean_retained_fraction`: average retained prefill KV fraction after the
-  policy runs
-- `runtime_seconds`: workload wall-clock runtime in seconds
-
-## Canonical Ranking
-
-The leaderboard uses a single scalar computed from accuracy, runtime, and
-cache reduction under the fixed retained-fraction constraint. Each workload
-combines three normalized terms with weights `accuracy:time:reduction = 6:2:2`:
-
-- `accuracy_score`: bounded 0-100 quality normalization calibrated against
-  the visible baseline envelope
-- `time_score`: soft lower-is-better sigmoid normalization of
-  `runtime_seconds`, calibrated from the visible baseline runtime envelope
-- `reduction_score`: bounded lower-is-better normalization of
-  `mean_retained_fraction`
-
-The per-workload score is the weighted mean of those three terms, and the
-task score is the geometric mean across workloads. Rows whose
-`mean_retained_fraction_*` exceeds the fixed budget tolerance receive a
-soft upper-bound penalty, so the `full_attention` row remains a visible
-reference anchor rather than a valid compressed-cache submission.
-
+| `disable_compression` | enforced | If `True`, harness skips `score_tokens`/`select_cache` entirely and retains all tokens. Used by the `full_attention` anchor. |
+| `method` | logged only | Recorded for provenance. |
+| `sink_tokens`, `lag_size`, `n_future_positions`, `subspace_dim`, etc. | advisory | Used internally by the policy's own `score_tokens`. The harness does not verify that declared "sinks" are actually preserved by `select_cache`'s top-K output. |
 
 ## Your Workspace
 
@@ -167,7 +106,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `transformers-kv-lab/custom_selection_eval.py`
 - editable lines **40–101**
@@ -684,27 +623,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from transformers-kv-lab/custom_selection_eval.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **longbench-hotpotqa** — wall-clock budget `02:00:00`, compute share `1.0`
-- **longbench-passage-retrieval** — wall-clock budget `02:00:00`, compute share `1.0`
-- **longbench-repobench** — wall-clock budget `03:00:00`, compute share `1.0`
-- **longbench-v2** — wall-clock budget `06:00:00`, compute share `1.0`
-- **gsm8k** — wall-clock budget `04:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

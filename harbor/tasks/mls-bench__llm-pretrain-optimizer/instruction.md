@@ -3,7 +3,7 @@
 # LLM Pretraining: Optimizer & Learning Rate Schedule Optimization
 
 ## Research Question
-Design an improved optimizer and / or learning-rate schedule for GPT-style language model pretraining. The change should reduce validation loss compared to AdamW + cosine annealing under the same model and data budget.
+Design an improved optimizer and / or learning-rate schedule for GPT-style language model pretraining. The change should improve training efficiency or final model quality compared to AdamW + cosine annealing under the same model and data budget.
 
 ## Background
 The default optimizer is AdamW (fused) with weight decay only on 2D parameters and cosine LR decay with linear warmup. Studied alternatives at this layer:
@@ -35,15 +35,7 @@ You may modify:
 - `adamw_nesterov` — AdamW with Nesterov momentum.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 12,030 iterations, micro-batch 96, gradient accumulation 6, 2-GPU DDP.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
-
+The training and evaluation pipeline (model architecture, tokenizer, dataset, batch construction, training loop, and metrics) is fixed by the harness and not editable. Only the optimizer/LR-schedule regions and the listed `CONFIG_OVERRIDES` keys are editable.
 
 ## Your Workspace
 
@@ -54,7 +46,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `nanoGPT/custom_pretrain.py`
 - editable lines **171–189**
@@ -510,24 +502,6 @@ Other files you may **read** for context (do not modify):
    436:     if ddp:
    437:         dist.destroy_process_group()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **gpt-345m** — wall-clock budget `12:00:00`, compute share `4.0`
-- **lm-eval-345m** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

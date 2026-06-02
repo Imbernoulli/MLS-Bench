@@ -24,15 +24,7 @@ The `CausalSelfAttention` class in `nanoGPT/custom_pretrain.py` (the editable re
 If your attention mechanism implements its own position encoding (replacing the learned `wpe`), set `self.use_pos_emb = False` in `__init__` — the model will then skip adding position embeddings in the forward pass.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (Penedo et al., 2024, arXiv:2406.17557; HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens (D = 20 N, Chinchilla-optimal for 355M).
-- **Training**: 13,535 iterations, micro-batch 64, gradient accumulation 8, 2-GPU DDP.
-- Optimizer, schedule, dataset, tokenizer, training loop, and evaluation scripts are fixed.
-
-## Evaluation
-- **Validation loss** — cross-entropy on a held-out FineWeb shard (lower is better).
-- **Perplexity** — WikiText-2 and LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better) via the LM Evaluation Harness.
+The model (layer/head/width), training (optimizer, schedule, dataset, tokenizer, training loop), and evaluation scripts are fixed by the harness and not editable. The attention module is the only thing you change. Per-method training-hyperparameter overrides go through the editable `CONFIG_OVERRIDES` dict (allowed keys: `learning_rate`, `weight_decay`, `warmup_iters`, `min_lr`, `grad_clip`); if your attention provides its own position encoding, set `self.use_pos_emb = False` so the model skips the learned position embeddings.
 
 A strong solution should reduce validation loss / perplexity and transfer to downstream accuracy without depending on changes outside the attention module.
 
@@ -46,7 +38,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `nanoGPT/custom_pretrain.py`
 - editable lines **33–70**
@@ -502,28 +494,9 @@ Other files you may **read** for context (do not modify):
    437:         dist.destroy_process_group()
 ```
 
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **gpt-345m** — wall-clock budget `12:00:00`, compute share `4.0`
-- **lm-eval-345m** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Your edits must not significantly increase the model's total parameter count relative to the standard attention baseline.
 
 ## Reference Baselines
 

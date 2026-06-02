@@ -26,24 +26,7 @@ Implement the `ProteinEncoder` class and any helper modules in `custom_protein_e
    - Returns: `node_emb` (N, out_dim) per-node embeddings, `graph_emb` (B, out_dim) per-graph embeddings
 
 ## Fixed Pipeline
-Node-feature computation, dataset construction, batching, classifier heads, training/evaluation loops, and metric computation are all fixed. The contribution is the encoder architecture only.
-
-## Evaluation
-The encoder is evaluated on three protein function/structure prediction benchmarks:
-
-### EC Number Prediction (384-class, multiclass)
-- Predicts enzyme commission number from protein structure.
-- Metric: **accuracy** (top-1).
-
-### GO Biological Process (1943-class, multilabel)
-- Predicts Gene Ontology biological process annotations.
-- Metric: **f1_max** (maximum F1 across thresholds).
-
-### Fold Classification (1195-class, multiclass)
-- Predicts protein fold from the SCOPe/CATH hierarchy.
-- Metric: **accuracy** (top-1).
-
-Higher is better for all metrics. Test loss is also recorded by the scoring code.
+The training and evaluation pipeline (data, downstream heads, optimizer, schedule, and metrics) is fixed by the harness and not editable. The contribution is the encoder architecture only.
 
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_protein_encoder.py` is editable. You may define any helper classes, layers, or functions within this region. The region must contain a `ProteinEncoder` class with the interface described above.
@@ -58,7 +41,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `ProteinWorkshop/custom_protein_encoder.py`
 - editable lines **125–252**
@@ -576,30 +559,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from ProteinWorkshop/custom_protein_encoder.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **EC** — wall-clock budget `10:00:00`, compute share `1.0`
-- **GO-BP** — wall-clock budget `05:00:00`, compute share `1.0`
-- **Fold** — wall-clock budget `09:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

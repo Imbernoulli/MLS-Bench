@@ -40,16 +40,6 @@ Implement the `BoundOptimizer` class in `custom_pac_bayes.py`. You must implemen
 - `compute_01_risk(model, loader, device, mc_samples)`: MC estimate of 0-1 risk.
 - Available losses: `F.nll_loss`, `F.cross_entropy` on log-softmax outputs.
 
-## Evaluation
-The bound optimizer is tested on three settings:
-1. **MNIST-FCN**: 4-layer fully connected network (`784-600-600-600-10`) on MNIST.
-2. **MNIST-CNN**: 4-layer CNN (2 conv + 2 fc) on MNIST.
-3. **FashionMNIST-CNN**: same CNN architecture on FashionMNIST.
-
-**Primary metric**: `risk_certificate` (0-1 loss PAC-Bayes bound) — **lower is better** (tighter bound). Test error, KL divergence, cross-entropy-style bound, and empirical 0-1 risk are also recorded.
-
-Training uses data-dependent priors: 50% of training data trains a deterministic prior, 50% evaluates the bound (Pérez-Ortiz et al., 2021).
-
 ## Baselines (paper-cited bound formulations)
 - **mcallester** — McAllester / Maurer bound: `risk + sqrt((KL + log(2 sqrt(n) / delta)) / (2n))` (McAllester, *Machine Learning* 1999; Maurer, "A Note on the PAC-Bayesian Theorem", arXiv:cs/0411099, 2004).
 - **catoni** — Catoni's lambda bound (Catoni, IMS Lecture Notes 56, 2007); paper-default `lambda` tuned over a small grid.
@@ -65,7 +55,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `PBB/custom_pac_bayes.py`
 - editable lines **460–604**
@@ -585,25 +575,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from PBB/custom_pac_bayes.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **mnist-fcn** — wall-clock budget `0:59:00`, compute share `0.33`
-- **mnist-cnn** — wall-clock budget `0:59:00`, compute share `0.33`
-- **fmnist-cnn** — wall-clock budget `0:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

@@ -64,23 +64,7 @@ allowed denoiser evaluations, or evaluation code.
 
 ## Fixed Pipeline
 
-- Models: Stable Diffusion v1.5 and SDXL (frozen weights).
-- Sampling: fixed sampler call structure with a fixed step budget.
-- Prompts: shared evaluation prompt set across all baselines.
-
-## Evaluation
-
-Evaluation runs the text-to-image sampling pipeline on the model variants
-above. Metrics reported:
-
-- **CLIP score** (cosine similarity between generated image and text prompt;
-  higher is better).
-- **FID** computed against a reference image set (lower is better).
-
-Task scoring uses per-variant FID (lower is better). A good method should
-improve image quality without sacrificing the prompt-following behaviour
-provided by guidance.
-
+The training and evaluation pipeline (model weights, sampler call structure and step budget, prompt set, and metrics) is fixed by the harness and not editable. You implement only the guidance rule in the editable regions of the two files described above.
 
 ## Your Workspace
 
@@ -91,7 +75,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `CFGpp-main/latent_diffusion.py`
 - editable lines **621–679**
@@ -1117,25 +1101,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from CFGpp-main/latent_sdxl.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **sd15** — wall-clock budget `2:00:00`, compute share `1.0`
-- **sd20** — wall-clock budget `2:00:00`, compute share `1.0`
-- **sdxl** — wall-clock budget `4:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

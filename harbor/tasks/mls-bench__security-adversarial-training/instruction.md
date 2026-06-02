@@ -25,10 +25,10 @@ class AdversarialTrainer:
 
 `__init__`:
 - `model`: the neural network to train (`nn.Module`).
-- `eps`: `L_inf` perturbation budget (`0.3` for MNIST, `8/255` for CIFAR).
+- `eps`: `L_inf` perturbation budget.
 - `alpha`: step size for the inner PGD attack.
 - `attack_steps`: number of PGD steps for adversarial example generation.
-- `num_classes`: number of output classes (10 or 100).
+- `num_classes`: number of output classes.
 
 `train_step`:
 - `images`: clean images, shape `(N, C, H, W)`, values in `[0, 1]`.
@@ -37,20 +37,6 @@ class AdversarialTrainer:
 - Returns: dict with at least a `'loss'` key (float).
 
 The training loop, learning-rate schedule (cosine annealing), model architecture, and data loading are handled externally. You only control the adversarial training procedure within each step.
-
-## Evaluation
-After training, models are evaluated on:
-- **Clean accuracy**: accuracy on unperturbed test images.
-- **Robust accuracy (FGSM)**: accuracy under one-step FGSM attack.
-- **Robust accuracy (PGD-50)**: accuracy under a 50-step PGD attack — primary metric.
-
-Scenarios (model + dataset):
-- SmallCNN on MNIST (`eps = 0.3`)
-- PreActResNet-18 on CIFAR-10 (`eps = 8/255`)
-- VGG-11-BN on CIFAR-10 (`eps = 8/255`)
-- PreActResNet-18 on CIFAR-100 (`eps = 8/255`)
-
-Higher robust accuracy under PGD-50 across all scenarios is better.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:
@@ -70,7 +56,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `torchattacks/bench/custom_adv_train.py`
 - editable lines **10–54**
@@ -145,26 +131,6 @@ Other files you may **read** for context (do not modify):
     56: # END EDITABLE
     57: # ═══════════════════════════════════════════════════════════════════
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **SmallCNN-MNIST** — wall-clock budget `1:00:00`, compute share `1.0`
-- **PreActResNet18-C10** — wall-clock budget `3:00:00`, compute share `1.0`
-- **VGG11BN-C10** — wall-clock budget `3:00:00`, compute share `1.0`
-- **PreActResNet18-C100** — wall-clock budget `3:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 
