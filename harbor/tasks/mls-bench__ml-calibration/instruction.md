@@ -31,19 +31,6 @@ class CalibrationMethod(BaseEstimator):
 
 Available imports: `numpy`, `scipy` (`optimize`, `interpolate`, `special`), `sklearn`. The output must remain a valid probability distribution (non-negative, sums to 1 for multiclass).
 
-## Fixed Pipeline & Evaluation
-Four classifier-dataset combinations:
-- **Random Forest on MNIST** (10-class).
-- **MLP on Fashion-MNIST** (10-class).
-- **GBM on Madelon** (binary).
-- **SVM on Breast Cancer** (binary).
-
-Metrics (all lower is better):
-- **ECE (Expected Calibration Error)** — weighted mean of `|accuracy − confidence|` across probability bins.
-- **Brier score** — mean squared error between predicted probability vector and one-hot label.
-- **NLL (Negative Log-Likelihood)** — cross-entropy between predicted probabilities and true labels.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
