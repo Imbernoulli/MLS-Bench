@@ -13,6 +13,29 @@ Operations ordered: different files first, then bottom-to-top within same file.
 """
 
 OPS = [
+    # 0. inverse_scatter.py lines 425-430: make the inv-scatter SVD cache load
+    #    device-robust. The cache (U/S/Vt/matrix/matrix_inv) is precomputed once
+    #    at build time (vendor/data_scripts/InverseBench/precompute_inv_scatter_svd.py)
+    #    and shared via the mounted cache dir, so the operator never pays the
+    #    expensive float64 torch.svd/pinv at runtime. torch.load without a
+    #    map_location restores tensors onto whatever device they were saved on,
+    #    which can mismatch self.device (e.g. when the artifact was precomputed
+    #    on CPU but the run uses cuda). Pin every loaded tensor to self.device.
+    #    Different file from the other ops below, so no line-shift interaction.
+    {
+        "op": "replace",
+        "file": "InverseBench/inverse_problems/inverse_scatter.py",
+        "start_line": 425,
+        "end_line": 430,
+        "content": (
+            "            self.U = torch.load(os.path.join(path, 'U.pt'), map_location=self.device)\n"
+            "            self.Sigma = torch.load(os.path.join(path, 'S.pt'), map_location=self.device)\n"
+            "            self.V_t = torch.load(os.path.join(path, 'Vt.pt'), map_location=self.device)\n"
+            "            self.A = torch.load(os.path.join(path, 'matrix.pt'), map_location=self.device)\n"
+            "            if os.path.exists(path + '/matrix_inv.pt'):\n"
+            "                self.A_inv = torch.load(os.path.join(path, 'matrix_inv.pt'), map_location=self.device)\n"
+        ),
+    },
     # 1. Patch dataset.py line 5: make sigpy import optional (replace 1 line with 4)
     {
         "op": "replace",
