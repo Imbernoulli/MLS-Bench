@@ -1,5 +1,5 @@
 #!/bin/bash
-# Oracle solution: applies the strongest baseline edit_ops for quant-stock-prediction
+# Oracle solution: applies the strongest baseline for quant-stock-prediction
 # (lstm) to the workspace, then exits.
 #
 # Verification (run by Harbor verifier) will diff the workspace against
@@ -16,9 +16,14 @@ import json, sys
 from pathlib import Path
 
 # Harbor mounts the task's solution/ dir at /solution/ when running the oracle
-# agent. baseline_edit_ops.json lives here; the agent NEVER has access to it.
+# agent. baseline_edit_ops.json, oracle_cmd_overrides.json, and a matching
+# token live here; the agent NEVER has access to them. During verification,
+# test.sh passes --oracle-cmd-overrides only if the solution token matches the
+# verifier-only token in /tests/meta.
 ops_json = Path("/solution/baseline_edit_ops.json")
 ops = json.loads(ops_json.read_text())
+overrides_json = Path("/solution/oracle_cmd_overrides.json")
+overrides = json.loads(overrides_json.read_text()) if overrides_json.exists() else []
 
 workdir = Path("/workspace")
 for op in ops:
@@ -60,4 +65,5 @@ for op in ops:
         sys.exit(2)
 
 print(f"applied {len(ops)} baseline edit ops (lstm) to {workdir}")
+print(f"prepared {len(overrides)} oracle cmd override(s) for verifier")
 PY
