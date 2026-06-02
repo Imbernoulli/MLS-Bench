@@ -56,7 +56,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_imputation.py`
 - editable lines **36–131**
@@ -332,23 +332,6 @@ or deleting existing ones — will cause your submission to score zero.
    260: if __name__ == "__main__":
    261:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **breast_cancer** — wall-clock budget `00:15:00`, compute share `0.33`
-- **wine** — wall-clock budget `00:15:00`, compute share `0.33`
-- **california** — wall-clock budget `00:15:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 
