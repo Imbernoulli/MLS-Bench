@@ -82,6 +82,14 @@ if sample_sh.exists():
 sample_py = Path("sample.py")
 if sample_py.exists():
     text = sample_py.read_text()
+    zip_helper = (
+        "    def _zip_npy_to_npz(npy_path, npz_path):\n"
+        "        with zipfile.ZipFile(npz_path, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:\n"
+        "            zf.write(npy_path, 'arr_0.npy')\n"
+        "        with suppress(OSError):\n"
+        "            os.remove(npy_path)\n"
+        "\n"
+    )
     if "import zipfile\n" not in text:
         text = text.replace("import os\n", "import os\nimport zipfile\n", 1)
     if "from contextlib import suppress\n" not in text:
@@ -100,33 +108,6 @@ if sample_py.exists():
         "    final_nfe = None\n",
         1,
     )
-    text = text.replace(
-        "    args.num_samples = len(dataloader.dataset)\n"
-        "    num = 0\n",
-        "    args.num_samples = len(dataloader.dataset)\n"
-        "\n"
-        "    def _zip_npy_to_npz(npy_path, npz_path):\n"
-        "        with zipfile.ZipFile(npz_path, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:\n"
-        "            zf.write(npy_path, 'arr_0.npy')\n"
-        "        with suppress(OSError):\n"
-        "            os.remove(npy_path)\n"
-        "\n"
-        "    num = 0\n",
-        1,
-    )
-    if "_zip_npy_to_npz(" in text and "def _zip_npy_to_npz(" not in text:
-        helper = (
-            "    def _zip_npy_to_npz(npy_path, npz_path):\n"
-            "        with zipfile.ZipFile(npz_path, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:\n"
-            "            zf.write(npy_path, 'arr_0.npy')\n"
-            "        with suppress(OSError):\n"
-            "            os.remove(npy_path)\n"
-            "\n"
-        )
-        marker = "    num = 0\n"
-        if marker not in text:
-            raise RuntimeError("sample.py patch failed: cannot insert _zip_npy_to_npz helper")
-        text = text.replace(marker, helper + marker, 1)
     text = text.replace(
         "        all_images.append(gathered_samples.detach().cpu().numpy())\n"
         "        if \"inpaint\" in args.dataset:\n"
@@ -204,6 +185,11 @@ if sample_py.exists():
         "            _zip_npy_to_npz(label_tmp_path, out_path)\n",
         1,
     )
+    if "_zip_npy_to_npz(" in text and "def _zip_npy_to_npz(" not in text:
+        marker = "    num = 0\n"
+        if marker not in text:
+            raise RuntimeError("sample.py patch failed: cannot insert _zip_npy_to_npz helper")
+        text = text.replace(marker, zip_helper + marker, 1)
     write_if_changed(sample_py, text)
 
 
