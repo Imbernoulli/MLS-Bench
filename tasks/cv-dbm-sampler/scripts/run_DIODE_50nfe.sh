@@ -16,5 +16,6 @@ if [ -f "$sample_dir/fid.json" ]; then
     echo "FID: $(python3 -c "import json; print(json.load(open(\"$sample_dir/fid.json\"))['fid'])")"
 fi
 
-find workdir/ -name "samples_*.npz" -delete 2>/dev/null || true
+# Do not delete global workdir samples here; DBM verifier commands can run in
+# parallel and a broad cleanup can remove another command's active samples.
 rm -rf "$sample_dir"

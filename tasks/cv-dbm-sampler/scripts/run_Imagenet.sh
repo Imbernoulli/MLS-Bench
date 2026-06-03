@@ -31,8 +31,6 @@ if [ -n "$RES_JSON" ]; then
     echo "Accuracy: $(python3 -c "import json; print(json.load(open('$RES_JSON'))['accu'])")"
 fi
 
-# Clean up sample NPZ files once FID has been computed — each agent iteration
-# would otherwise keep a ~2 GB (10k × 256x256x3 uint8) NPZ on Vepfs.
-find workdir/ -name "samples_*.npz" -delete 2>/dev/null || true
-find workdir/ -name "labels_*.npz" -delete 2>/dev/null || true
+# Do not delete global workdir samples here; DBM verifier commands can run in
+# parallel and a broad cleanup can remove another command's active samples.
 rm -rf "$sample_dir"
