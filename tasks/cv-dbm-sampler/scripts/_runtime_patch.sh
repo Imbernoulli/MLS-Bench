@@ -114,6 +114,19 @@ if sample_py.exists():
         "    num = 0\n",
         1,
     )
+    if "_zip_npy_to_npz(" in text and "def _zip_npy_to_npz(" not in text:
+        helper = (
+            "    def _zip_npy_to_npz(npy_path, npz_path):\n"
+            "        with zipfile.ZipFile(npz_path, 'w', compression=zipfile.ZIP_STORED, allowZip64=True) as zf:\n"
+            "            zf.write(npy_path, 'arr_0.npy')\n"
+            "        with suppress(OSError):\n"
+            "            os.remove(npy_path)\n"
+            "\n"
+        )
+        marker = "    num = 0\n"
+        if marker not in text:
+            raise RuntimeError("sample.py patch failed: cannot insert _zip_npy_to_npz helper")
+        text = text.replace(marker, helper + marker, 1)
     text = text.replace(
         "        all_images.append(gathered_samples.detach().cpu().numpy())\n"
         "        if \"inpaint\" in args.dataset:\n"
@@ -372,6 +385,13 @@ if imagenet_py.exists():
         1,
     )
     write_if_changed(imagenet_py, text)
+
+
+imagenet_dataset_py = Path("datasets/imagenet_inpaint.py")
+if imagenet_dataset_py.exists():
+    text = imagenet_dataset_py.read_text()
+    text = text.replace("lmdb.open(lmdb_path, map_size=1e12)", "lmdb.open(lmdb_path, map_size=int(1e12))")
+    write_if_changed(imagenet_dataset_py, text)
 
 
 fid_util_py = Path("evaluation/fid_util.py")

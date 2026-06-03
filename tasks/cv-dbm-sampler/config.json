@@ -7,16 +7,16 @@
       "label": "Imagenet",
       "group": 1,
       "compute": 4.0,
-      "mem": 1024,
+      "mem": 384,
       "time": "4:00:00",
       "package": "dbim-codebase"
     },
     {
       "cmd": "scripts/run_DIODE_50nfe.sh",
       "label": "DIODE_50nfe",
-      "group": 1,
+      "group": 2,
       "compute": 4.0,
-      "mem": 1024,
+      "mem": 384,
       "time": "4:00:00",
       "package": "dbim-codebase",
       "agent_skip": true
@@ -24,18 +24,18 @@
     {
       "cmd": "scripts/run_DIODE.sh",
       "label": "DIODE",
-      "group": 1,
+      "group": 3,
       "compute": 4.0,
-      "mem": 1024,
+      "mem": 384,
       "time": "4:00:00",
       "package": "dbim-codebase"
     },
     {
       "cmd": "scripts/run_e2h.sh",
       "label": "edges2handbags",
-      "group": 1,
+      "group": 4,
       "compute": 4.0,
-      "mem": 1024,
+      "mem": 384,
       "time": "4:00:00",
       "package": "dbim-codebase"
     }

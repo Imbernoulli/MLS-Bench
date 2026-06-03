@@ -1,3 +1,5 @@
+set -euo pipefail
+
 export eta=0.0
 export ds=diode
 export num_samples=10000
@@ -16,6 +18,5 @@ if [ -f "$sample_dir/fid.json" ]; then
     echo "FID: $(python3 -c "import json; print(json.load(open(\"$sample_dir/fid.json\"))['fid'])")"
 fi
 
-# Do not delete global workdir samples here; DBM verifier commands can run in
-# parallel and a broad cleanup can remove another command's active samples.
+find workdir/ -name "samples_*.npz" -delete 2>/dev/null || true
 rm -rf "$sample_dir"

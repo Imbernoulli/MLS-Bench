@@ -1,3 +1,5 @@
+set -euo pipefail
+
 # Seed the piq FID cache with a pre-shipped copy of pt_inception weights.
 # Compute nodes have no network so torch.hub can't download it on first FID call.
 # The .pth ships under assets/ (the data mount) and we stage it to TORCH_HOME.
@@ -31,6 +33,6 @@ if [ -n "$RES_JSON" ]; then
     echo "Accuracy: $(python3 -c "import json; print(json.load(open('$RES_JSON'))['accu'])")"
 fi
 
-# Do not delete global workdir samples here; DBM verifier commands can run in
-# parallel and a broad cleanup can remove another command's active samples.
+find workdir/ -name "samples_*.npz" -delete 2>/dev/null || true
+find workdir/ -name "labels_*.npz" -delete 2>/dev/null || true
 rm -rf "$sample_dir"
