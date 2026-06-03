@@ -3,26 +3,8 @@
   "rigorous_codebase": true,
   "test_cmds": [
     {
-      "cmd": "scripts/run_e2h.sh",
-      "label": "edges2handbags",
-      "group": 3,
-      "compute": 4.0,
-      "mem": 384,
-      "time": "4:00:00",
-      "package": "dbim-codebase"
-    },
-    {
       "cmd": "scripts/run_Imagenet.sh",
       "label": "Imagenet",
-      "group": 2,
-      "compute": 4.0,
-      "mem": 384,
-      "time": "4:00:00",
-      "package": "dbim-codebase"
-    },
-    {
-      "cmd": "scripts/run_DIODE.sh",
-      "label": "DIODE",
       "group": 1,
       "compute": 4.0,
       "mem": 384,
@@ -32,12 +14,30 @@
     {
       "cmd": "scripts/run_DIODE_50nfe.sh",
       "label": "DIODE_50nfe",
-      "group": 4,
+      "group": 2,
       "compute": 4.0,
       "mem": 384,
       "time": "4:00:00",
       "package": "dbim-codebase",
       "agent_skip": true
+    },
+    {
+      "cmd": "scripts/run_DIODE.sh",
+      "label": "DIODE",
+      "group": 3,
+      "compute": 4.0,
+      "mem": 384,
+      "time": "4:00:00",
+      "package": "dbim-codebase"
+    },
+    {
+      "cmd": "scripts/run_e2h.sh",
+      "label": "edges2handbags",
+      "group": 4,
+      "compute": 4.0,
+      "mem": 384,
+      "time": "4:00:00",
+      "package": "dbim-codebase"
     }
   ],
   "baselines": {
