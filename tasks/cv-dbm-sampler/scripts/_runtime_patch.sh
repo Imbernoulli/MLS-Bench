@@ -387,6 +387,30 @@ imagenet_dataset_py = Path("datasets/imagenet_inpaint.py")
 if imagenet_dataset_py.exists():
     text = imagenet_dataset_py.read_text()
     text = text.replace("lmdb.open(lmdb_path, map_size=1e12)", "lmdb.open(lmdb_path, map_size=int(1e12))")
+    readonly_lmdb_replacement = (
+        '    existing_lmdb_data = getattr(data_set, "lmdb_data", None)\n'
+        "    if existing_lmdb_data is not None:\n"
+        "        try:\n"
+        "            existing_lmdb_data.close()\n"
+        "        except Exception:\n"
+        "            pass\n"
+        "    data_set.lmdb_data = lmdb.open(lmdb_path, readonly=True, max_readers=256, lock=False, readahead=False, meminit=False)"
+    )
+    for readonly_lmdb_open in (
+        "    data_set.lmdb_data = lmdb.open(lmdb_path, readonly=True, max_readers=256, lock=False, readahead=False, meminit=False)",
+        "    data_set.lmdb_data = lmdb.open(lmdb_path, readonly=True, max_readers=1, lock=False, readahead=False, meminit=False)",
+    ):
+        if readonly_lmdb_open in text:
+            text = text.replace(readonly_lmdb_open, readonly_lmdb_replacement, 1)
+            break
+    text = text.replace(
+        '                txn.put(_path.encode("ascii"), data)\n'
+        '    existing_lmdb_data = getattr(data_set, "lmdb_data", None)\n',
+        '                txn.put(_path.encode("ascii"), data)\n'
+        "        env.close()\n"
+        '    existing_lmdb_data = getattr(data_set, "lmdb_data", None)\n',
+        1,
+    )
     write_if_changed(imagenet_dataset_py, text)
 
 
