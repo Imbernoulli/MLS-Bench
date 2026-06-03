@@ -20,6 +20,12 @@ export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:T
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
 
+_dbim_patch_lock="${DBIM_RUNTIME_PATCH_LOCK:-.dbim_runtime_patch.lock}"
+{
+if command -v flock >/dev/null 2>&1; then
+    flock 9
+fi
+
 python3 - <<'PY'
 from pathlib import Path
 
@@ -69,7 +75,10 @@ if sample_sh.exists():
 sample_py = Path("sample.py")
 if sample_py.exists():
     text = sample_py.read_text()
-    text = text.replace("import os\n", "import os\nimport zipfile\nfrom contextlib import suppress\n", 1)
+    if "import zipfile\n" not in text:
+        text = text.replace("import os\n", "import os\nimport zipfile\n", 1)
+    if "from contextlib import suppress\n" not in text:
+        text = text.replace("import zipfile\n", "import zipfile\nfrom contextlib import suppress\n", 1)
     text = text.replace(
         "    all_images = []\n"
         "    all_labels = []\n",
@@ -291,19 +300,16 @@ def get_fid(args):
 imagenet_py = Path("evaluation/compute_metrices_imagenet.py")
 if imagenet_py.exists():
     text = imagenet_py.read_text()
-    text = text.replace(
-        "import os\n"
-        "import argparse\n"
-        "import random\n",
-        "import os\n"
-        "import argparse\n"
-        "import random\n"
-        "import atexit\n"
-        "import shutil\n"
-        "import tempfile\n"
-        "import zipfile\n",
-        1,
-    )
+    if "import atexit\n" not in text:
+        text = text.replace(
+            "import random\n",
+            "import random\n"
+            "import atexit\n"
+            "import shutil\n"
+            "import tempfile\n"
+            "import zipfile\n",
+            1,
+        )
     if "def load_npz_array_mmap(" not in text:
         text = text.replace(
             "ADM_IMG256_FID_TRAIN_REF_CKPT = \"https://openaipublic.blob.core.windows.net/diffusion/jul-2021/ref_batches/imagenet/256/VIRTUAL_imagenet256_labeled.npz\"\n",
@@ -387,3 +393,4 @@ if karras_py.exists():
     )
     write_if_changed(karras_py, text)
 PY
+} 9>"${_dbim_patch_lock}"
