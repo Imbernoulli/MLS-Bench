@@ -7,7 +7,7 @@
       "label": "edges2handbags",
       "group": 1,
       "compute": 4.0,
-      "mem": 96,
+      "mem": 192,
       "time": "4:00:00",
       "package": "dbim-codebase"
     },
@@ -16,7 +16,7 @@
       "label": "Imagenet",
       "group": 2,
       "compute": 4.0,
-      "mem": 96,
+      "mem": 192,
       "time": "4:00:00",
       "package": "dbim-codebase"
     },
@@ -25,7 +25,7 @@
       "label": "DIODE",
       "group": 3,
       "compute": 4.0,
-      "mem": 96,
+      "mem": 192,
       "time": "4:00:00",
       "package": "dbim-codebase"
     },
@@ -34,7 +34,7 @@
       "label": "DIODE_50nfe",
       "group": 4,
       "compute": 4.0,
-      "mem": 96,
+      "mem": 192,
       "time": "4:00:00",
       "package": "dbim-codebase",
       "agent_skip": true

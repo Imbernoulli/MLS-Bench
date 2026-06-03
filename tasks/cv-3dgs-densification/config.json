@@ -8,7 +8,7 @@
       "label": "garden",
       "group": 1,
       "compute": 1.0,
-      "mem": 64,
+      "mem": 128,
       "time": "1:00:00",
       "package": "gsplat"
     },
@@ -17,7 +17,7 @@
       "label": "bicycle",
       "group": 2,
       "compute": 1.0,
-      "mem": 64,
+      "mem": 128,
       "time": "1:00:00",
       "package": "gsplat"
     },
@@ -26,7 +26,7 @@
       "label": "bonsai",
       "group": 3,
       "compute": 1.0,
-      "mem": 64,
+      "mem": 128,
       "time": "1:00:00",
       "package": "gsplat"
     },
@@ -35,7 +35,7 @@
       "label": "stump",
       "group": 4,
       "compute": 1.0,
-      "mem": 64,
+      "mem": 128,
       "time": "1:00:00",
       "package": "gsplat",
       "hidden": true
