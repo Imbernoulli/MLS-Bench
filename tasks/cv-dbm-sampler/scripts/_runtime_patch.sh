@@ -3,19 +3,21 @@
 #
 # The upstream DBIM scripts were written for large multi-GPU jobs. On Mangrove
 # H20 pods the default verifier memory limit is tighter, so keep the scientific
-# metric unchanged while lowering peak CPU/GPU memory in sampling and FID.
+# metric unchanged while lowering peak CPU RSS in sample materialization and FID
+# statistics. Keep GPU-throughput defaults at upstream values unless an env var
+# explicitly overrides them.
 
-export DBIM_SAMPLE_BATCH_SIZE="${DBIM_SAMPLE_BATCH_SIZE:-8}"
-export DBIM_FID_BATCH_SIZE="${DBIM_FID_BATCH_SIZE:-128}"
-export DBIM_LPIPS_BATCH_SIZE="${DBIM_LPIPS_BATCH_SIZE:-16}"
-export DBIM_IMAGENET_ACCU_BATCH_SIZE="${DBIM_IMAGENET_ACCU_BATCH_SIZE:-64}"
-export DBIM_IMAGENET_FID_BATCH_SIZE="${DBIM_IMAGENET_FID_BATCH_SIZE:-64}"
-export DBIM_REF_FID_BATCH_SIZE="${DBIM_REF_FID_BATCH_SIZE:-128}"
-export DBIM_FID_DATAPARALLEL="${DBIM_FID_DATAPARALLEL:-0}"
+export DBIM_SAMPLE_BATCH_SIZE="${DBIM_SAMPLE_BATCH_SIZE:-16}"
+export DBIM_FID_BATCH_SIZE="${DBIM_FID_BATCH_SIZE:-1024}"
+export DBIM_LPIPS_BATCH_SIZE="${DBIM_LPIPS_BATCH_SIZE:-128}"
+export DBIM_IMAGENET_ACCU_BATCH_SIZE="${DBIM_IMAGENET_ACCU_BATCH_SIZE:-256}"
+export DBIM_IMAGENET_FID_BATCH_SIZE="${DBIM_IMAGENET_FID_BATCH_SIZE:-256}"
+export DBIM_REF_FID_BATCH_SIZE="${DBIM_REF_FID_BATCH_SIZE:-512}"
+export DBIM_FID_DATAPARALLEL="${DBIM_FID_DATAPARALLEL:-1}"
 export DBIM_SKIP_LPIPS="${DBIM_SKIP_LPIPS:-1}"
 export DBIM_SKIP_IS="${DBIM_SKIP_IS:-1}"
 export DBIM_DISABLE_SAMPLE_LPIPS="${DBIM_DISABLE_SAMPLE_LPIPS:-1}"
-export DBIM_NUM_WORKERS="${DBIM_NUM_WORKERS:-0}"
+export DBIM_NUM_WORKERS="${DBIM_NUM_WORKERS:-8}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
 export MKL_NUM_THREADS="${MKL_NUM_THREADS:-1}"
@@ -39,7 +41,7 @@ def write_if_changed(path: Path, text: str) -> None:
 sample_sh = Path("scripts/sample.sh")
 if sample_sh.exists():
     text = sample_sh.read_text()
-    text = text.replace("BS=16\n", 'BS=${DBIM_SAMPLE_BATCH_SIZE:-8}\n', 1)
+    text = text.replace("BS=16\n", 'BS=${DBIM_SAMPLE_BATCH_SIZE:-16}\n', 1)
     old_gpu = (
         "export CUDA_VISIBLE_DEVICES=0,1,2,3,4,5,6,7\n"
         'run_args="--nproc_per_node 8 \\\n'
@@ -263,7 +265,7 @@ def get_fid(args):
         torch.device("cuda"),
         use_dataparallel=os.environ.get("DBIM_FID_DATAPARALLEL", "0") == "1",
     )
-    evaluator = Evaluator(model, batch_size=int(os.environ.get("DBIM_FID_BATCH_SIZE", "128")))
+    evaluator = Evaluator(model, batch_size=int(os.environ.get("DBIM_FID_BATCH_SIZE", "1024")))
 
     print("computing/reading reference batch statistics...")
     ref_stats = _cached_or_stream_fid_statistics(evaluator, args.ref_batch)
@@ -286,11 +288,11 @@ def get_fid(args):
     )
     text = text.replace(
         "Evaluator(model, batch_size=1024)",
-        'Evaluator(model, batch_size=int(os.environ.get("DBIM_FID_BATCH_SIZE", "128")))',
+        'Evaluator(model, batch_size=int(os.environ.get("DBIM_FID_BATCH_SIZE", "1024")))',
     )
     text = text.replace(
         "batch_size=128, shuffle=False, num_workers=1",
-        'batch_size=int(os.environ.get("DBIM_LPIPS_BATCH_SIZE", "16")), '
+        'batch_size=int(os.environ.get("DBIM_LPIPS_BATCH_SIZE", "128")), '
         "shuffle=False, num_workers=1",
         1,
     )
@@ -353,14 +355,14 @@ if imagenet_py.exists():
     text = text.replace(
         "accu = compute_accu(opt, numpy_arr, numpy_label_arr)",
         'accu = compute_accu(opt, numpy_arr, numpy_label_arr, '
-        'batch_size=int(os.environ.get("DBIM_IMAGENET_ACCU_BATCH_SIZE", "64")))',
+        'batch_size=int(os.environ.get("DBIM_IMAGENET_ACCU_BATCH_SIZE", "256")))',
         1,
     )
     text = text.replace(
         "fid = fid_util.compute_fid_from_numpy(numpy_arr, ref_mu, ref_sigma, mode=opt.mode)",
         'fid = fid_util.compute_fid_from_numpy('
         'numpy_arr, ref_mu, ref_sigma, '
-        'batch_size=int(os.environ.get("DBIM_IMAGENET_FID_BATCH_SIZE", "64")), '
+        'batch_size=int(os.environ.get("DBIM_IMAGENET_FID_BATCH_SIZE", "256")), '
         "mode=opt.mode)",
         1,
     )
@@ -373,7 +375,7 @@ if fid_util_py.exists():
     text = text.replace(
         "mu, sigma = collect_features(dataset, mode, batch_size=512, num_workers=num_workers)",
         'mu, sigma = collect_features('
-        'dataset, mode, batch_size=int(os.environ.get("DBIM_REF_FID_BATCH_SIZE", "128")), '
+        'dataset, mode, batch_size=int(os.environ.get("DBIM_REF_FID_BATCH_SIZE", "512")), '
         "num_workers=num_workers)",
         1,
     )

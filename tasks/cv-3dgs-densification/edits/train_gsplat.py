@@ -299,12 +299,9 @@ def train(args):
     _dl_generator = torch.Generator().manual_seed(args.seed)
     def _worker_init_fn(worker_id):
         np.random.seed(args.seed + worker_id)
-    num_workers = int(os.environ.get("GSPLAT_DATALOADER_WORKERS", "0"))
-    pin_memory = os.environ.get("GSPLAT_PIN_MEMORY", "0") == "1"
     trainloader = torch.utils.data.DataLoader(
-        trainset, batch_size=1, shuffle=True, num_workers=num_workers,
-        pin_memory=pin_memory, generator=_dl_generator,
-        worker_init_fn=_worker_init_fn if num_workers > 0 else None,
+        trainset, batch_size=1, shuffle=True, num_workers=4, pin_memory=True,
+        generator=_dl_generator, worker_init_fn=_worker_init_fn,
     )
     data_iter = iter(trainloader)
     best_psnr = 0.0
