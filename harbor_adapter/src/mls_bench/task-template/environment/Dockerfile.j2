@@ -27,3 +27,7 @@ ENV BATCH_SIZE_MULTIPLIER={{ batch_size_multiplier }}
 {% if scaffold_files -%}
 COPY _scaffold/ {{ workdir }}/
 {%- endif %}
+
+# Keep the Kubernetes main container alive for Harbor's post-verifier artifact
+# download. Verifier commands run via exec, so this does not affect eval logic.
+CMD ["sh", "-c", "sleep infinity"]

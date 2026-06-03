@@ -81,11 +81,45 @@ def set_seed(seed):
 
 
 def _knn_dists(points, K=4):
-    """Compute K-nearest-neighbor distances using PyTorch (no sklearn needed)."""
-    # points: [N, 3]
-    dists = torch.cdist(points.unsqueeze(0), points.unsqueeze(0)).squeeze(0)  # [N, N]
-    dists, _ = dists.topk(K + 1, dim=-1, largest=False)  # include self (dist=0)
-    return dists[:, 1:]  # exclude self, shape [N, K]
+    """Compute KNN distances without materializing an O(N^2) matrix."""
+    # points: [N, 3] on CPU. Mip-NeRF 360 scenes can have enough COLMAP points
+    # that full torch.cdist(points, points) OOMs the verifier pod before
+    # training starts.
+    n_points = int(points.shape[0])
+    if n_points <= 1:
+        return torch.ones((n_points, K), dtype=points.dtype)
+
+    n_neighbors = min(K + 1, n_points)
+    points_np = points.detach().cpu().numpy().astype(np.float32, copy=False)
+
+    try:
+        from sklearn.neighbors import NearestNeighbors
+
+        nbrs = NearestNeighbors(
+            n_neighbors=n_neighbors,
+            algorithm="auto",
+            leaf_size=64,
+            n_jobs=1,
+        )
+        nbrs.fit(points_np)
+        dists_np, _ = nbrs.kneighbors(points_np, return_distance=True)
+        dists = torch.from_numpy(dists_np[:, 1:]).to(dtype=points.dtype)
+    except Exception as exc:
+        print(f"KNN sklearn path failed ({exc}); falling back to chunked cdist", flush=True)
+        chunk = max(1, int(os.environ.get("GSPLAT_KNN_CHUNK", "256")))
+        out = []
+        for start in range(0, n_points, chunk):
+            query = points[start:start + chunk]
+            block = torch.cdist(query.unsqueeze(0), points.unsqueeze(0)).squeeze(0)
+            vals, _ = block.topk(n_neighbors, dim=-1, largest=False)
+            out.append(vals[:, 1:].cpu())
+            del block, vals
+        dists = torch.cat(out, dim=0).to(dtype=points.dtype)
+
+    if dists.shape[1] < K:
+        pad = dists[:, -1:].expand(-1, K - dists.shape[1])
+        dists = torch.cat([dists, pad], dim=1)
+    return dists
 
 
 def init_splats(parser, device, init_opa=0.1, init_scale=1.0, sh_degree=3):
@@ -200,13 +234,13 @@ def evaluate(splats, valset, device, sh_degree, result_dir, step):
         height, width = pixels.shape[1:3]
 
         colors, _, _ = render_view(splats, camtoworld, K, width, height, sh_degree)
-        colors = torch.clamp(colors, 0.0, 1.0)
+        colors = torch.nan_to_num(colors, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
 
         pixels_p = pixels.permute(0, 3, 1, 2)
         colors_p = colors.permute(0, 3, 1, 2)
-        metrics["psnr"].append(psnr_fn(colors_p, pixels_p))
-        metrics["ssim"].append(ssim_fn(colors_p, pixels_p))
-        metrics["lpips"].append(lpips_fn(colors_p, pixels_p))
+        metrics["psnr"].append(float(psnr_fn(colors_p, pixels_p).detach().cpu()))
+        metrics["ssim"].append(float(ssim_fn(colors_p, pixels_p).detach().cpu()))
+        metrics["lpips"].append(float(lpips_fn(colors_p, pixels_p).detach().cpu()))
 
         # Save first 5 comparison images
         if i < 5:
@@ -218,7 +252,11 @@ def evaluate(splats, valset, device, sh_degree, result_dir, step):
                 canvas,
             )
 
-    stats = {k: torch.stack(v).mean().item() for k, v in metrics.items()}
+        del colors, colors_p, pixels, pixels_p, camtoworld, K
+        if device.type == "cuda":
+            torch.cuda.empty_cache()
+
+    stats = {k: float(np.mean(v)) for k, v in metrics.items()}
     stats["num_gs"] = len(splats["means"])
     return stats
 

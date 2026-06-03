@@ -5,6 +5,8 @@ export doob_scale=1.0
 export sampler=dbim
 export nfe=50
 
+source "$(dirname "${BASH_SOURCE[0]}")/_runtime_patch.sh"
+
 export sample_dir=${OUTPUT_DIR:-output}/$ds-$nfe-$sampler-$eta-seed${SEED:-42}
 rm -rf "$sample_dir"
 mkdir -p "$sample_dir"
