@@ -234,7 +234,7 @@ def evaluate(splats, valset, device, sh_degree, result_dir, step):
         height, width = pixels.shape[1:3]
 
         colors, _, _ = render_view(splats, camtoworld, K, width, height, sh_degree)
-        colors = torch.nan_to_num(colors, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+        colors = colors.clamp(0.0, 1.0)
 
         pixels_p = pixels.permute(0, 3, 1, 2)
         colors_p = colors.permute(0, 3, 1, 2)
@@ -336,10 +336,7 @@ def train(args):
             state=strategy_state, step=step, info=info,
         )
 
-        # A800 numerical guard. Rasterization can emit NaN/Inf for out-of-view
-        # Gaussians on sparse scenes (bicycle 54k init, bonsai); torch.clamp by
-        # itself propagates NaN through — use nan_to_num first, then clamp.
-        colors = torch.nan_to_num(colors, nan=0.0, posinf=1.0, neginf=0.0).clamp(0.0, 1.0)
+        colors = colors.clamp(0.0, 1.0)
 
         # Loss: 0.8 * L1 + 0.2 * SSIM
         l1loss = F.l1_loss(colors, pixels)

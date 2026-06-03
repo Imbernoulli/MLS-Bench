@@ -48,7 +48,11 @@ if sample_sh.exists():
         '          --master_port 29511"\n'
     )
     new_gpu = (
-        "if command -v nvidia-smi >/dev/null 2>&1; then\n"
+        'case "${CUDA_VISIBLE_DEVICES:-}" in\n'
+        '    ""|"all"|"none"|"void"|"-1") ;;\n'
+        '    *) NGPU=$(printf "%s\\n" "$CUDA_VISIBLE_DEVICES" | tr "," "\\n" | sed "/^[[:space:]]*$/d" | wc -l) ;;\n'
+        "esac\n"
+        'if [ -z "${NGPU:-}" ] && command -v nvidia-smi >/dev/null 2>&1; then\n'
         "    NGPU=$(nvidia-smi --list-gpus 2>/dev/null | grep -c '^GPU ')\n"
         "fi\n"
         'if [ -z "${NGPU:-}" ] || [ "$NGPU" -lt 1 ]; then\n'
