@@ -14,9 +14,9 @@ export DBIM_IMAGENET_ACCU_BATCH_SIZE="${DBIM_IMAGENET_ACCU_BATCH_SIZE:-256}"
 export DBIM_IMAGENET_FID_BATCH_SIZE="${DBIM_IMAGENET_FID_BATCH_SIZE:-256}"
 export DBIM_REF_FID_BATCH_SIZE="${DBIM_REF_FID_BATCH_SIZE:-512}"
 export DBIM_FID_DATAPARALLEL="${DBIM_FID_DATAPARALLEL:-1}"
-export DBIM_SKIP_LPIPS="${DBIM_SKIP_LPIPS:-1}"
-export DBIM_SKIP_IS="${DBIM_SKIP_IS:-1}"
-export DBIM_DISABLE_SAMPLE_LPIPS="${DBIM_DISABLE_SAMPLE_LPIPS:-1}"
+export DBIM_SKIP_LPIPS="${DBIM_SKIP_LPIPS:-0}"
+export DBIM_SKIP_IS="${DBIM_SKIP_IS:-0}"
+export DBIM_DISABLE_SAMPLE_LPIPS="${DBIM_DISABLE_SAMPLE_LPIPS:-0}"
 export DBIM_NUM_WORKERS="${DBIM_NUM_WORKERS:-8}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True}"
 export OMP_NUM_THREADS="${OMP_NUM_THREADS:-1}"
@@ -194,14 +194,14 @@ if evaluate_sh.exists():
     text = evaluate_sh.read_text()
     text = text.replace(
         "    python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n",
-        '    if [[ "${DBIM_SKIP_LPIPS:-1}" != "1" ]]; then\n'
+        '    if [[ "${DBIM_SKIP_LPIPS:-0}" != "1" ]]; then\n'
         "        python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n"
         "    fi\n",
         1,
     )
     text = text.replace(
         '    python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n',
-        '    if [[ "${DBIM_SKIP_IS:-1}" != "1" ]]; then\n'
+        '    if [[ "${DBIM_SKIP_IS:-0}" != "1" ]]; then\n'
         '        python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n'
         "    fi\n",
         1,
@@ -389,7 +389,7 @@ if karras_py.exists():
         'if loss_norm == "lpips":\n'
         '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
         'if loss_norm == "lpips" and '
-        '__import__("os").environ.get("DBIM_DISABLE_SAMPLE_LPIPS", "1") != "1":\n'
+        '__import__("os").environ.get("DBIM_DISABLE_SAMPLE_LPIPS", "0") != "1":\n'
         '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
         1,
     )
