@@ -355,6 +355,18 @@ def _extract_val_zip(zip_path: Path, val_dir: Path) -> None:
         members = zf.infolist()
         for i, info in enumerate(members):
             name = info.filename
+            # Skip macOS AppleDouble cruft. The mlx-vision/imagenet-1k val.zip was
+            # packed on macOS, so it carries __MACOSX/.../._<image>.JPEG sidecars
+            # (212-byte non-image metadata files that nonetheless end in .JPEG).
+            # If extracted, val holds ~100k entries (50k real + 50k ._*), and
+            # since they end in .JPEG, torchvision.ImageFolder picks them up. The
+            # ImageNet FID reference is generated from the FULL val on first run,
+            # so it reads a ._* sidecar and dies with PIL.UnidentifiedImageError
+            # -> best_fid_Imagenet missing -> cv-dbm-sampler scores 0. Keep only
+            # the real images so val == the canonical clean 50k.
+            base = name.rsplit("/", 1)[-1]
+            if name.startswith("__MACOSX") or "__MACOSX/" in name or base.startswith("._"):
+                continue
             # All entries start with "val/"; strip exactly one prefix copy.
             if name.startswith("val/"):
                 name = name[len("val/"):]
