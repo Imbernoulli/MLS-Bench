@@ -360,6 +360,14 @@ def _extract_val_zip(zip_path: Path, val_dir: Path) -> None:
                 name = name[len("val/"):]
             if not name or name.endswith("/"):
                 continue
+            # Skip macOS AppleDouble junk this HF mirror's zip carries beside
+            # every real image (a __MACOSX/ tree + ._<img>.JPEG stubs). They are
+            # 212-byte non-images; ImageFolder would ingest them (they end in
+            # .JPEG) and the first-run full-val FID-reference pass crashes on the
+            # first one (PIL.UnidentifiedImageError) -> best_fid_Imagenet missing.
+            _base = name.rsplit("/", 1)[-1]
+            if "__MACOSX" in name.split("/") or _base.startswith("._") or _base == ".DS_Store":
+                continue
             target = val_dir / name
             target.parent.mkdir(parents=True, exist_ok=True)
             with zf.open(info) as src, target.open("wb") as out:
@@ -387,6 +395,27 @@ def _val_dir_ready(val_dir: Path, min_synsets: int = 1000, min_images: int = 50_
     return True
 
 
+def _prune_macos_junk(val_dir: Path) -> None:
+    """Remove macOS AppleDouble junk left by an unfiltered val.zip extraction
+    (a ``__MACOSX/`` tree + ``._*.JPEG`` stubs beside every real image). Repairs
+    a val/ dir that was staged before the extraction filter was added."""
+    if not val_dir.exists():
+        return
+    macosx = val_dir / "__MACOSX"
+    had_macosx = macosx.exists()
+    if had_macosx:
+        shutil.rmtree(macosx, ignore_errors=True)
+    removed = 0
+    for junk in val_dir.rglob("._*"):
+        try:
+            junk.unlink()
+            removed += 1
+        except OSError:
+            pass
+    if had_macosx or removed:
+        print(f"[ImageNet] pruned macOS junk (__MACOSX={had_macosx}, ._* files={removed})", flush=True)
+
+
 def prepare_imagenet(datasets_dir: Path):
     """Download ILSVRC2012 val split (only what cv-dbm-sampler needs).
 
@@ -404,6 +433,12 @@ def prepare_imagenet(datasets_dir: Path):
     train_dir = out_dir / "train"
     val_dir = out_dir / "val"
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    # Repair: an earlier unfiltered extraction may have left macOS AppleDouble
+    # junk (__MACOSX/ + ._*.JPEG) under val/. ImageFolder ingests these
+    # 212-byte non-images and the full-val FID-reference pass crashes on the
+    # first one. Prune before the readiness check so a dirty val gets repaired.
+    _prune_macos_junk(val_dir)
 
     # --- val split ---------------------------------------------------------
     if _val_dir_ready(val_dir):

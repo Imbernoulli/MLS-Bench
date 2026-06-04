@@ -4,6 +4,201 @@ Applied to a fresh copy of the package before any task/baseline edits.
 Keeps the upstream repo unmodified (vendor/external_packages/ is read-only).
 """
 
+# Replacement for datasets/imagenet_inpaint.py lines 24-67 (the two functions
+# `lmdb_loader` and `_build_lmdb_dataset`). Fixes three coupled problems with
+# the upstream ImageNet LMDB pipeline:
+#
+#   * (1b) Key/path mismatch -> every txn.get() returns None -> the whole
+#     Imagenet eval crashes (`cannot convert 'NoneType' object to bytes`) and
+#     the gmean score collapses to 0. Upstream keys the LMDB by the *absolute
+#     build-time path* (datasets.ImageFolder(root).imgs), but queries it with
+#     the relative runtime path (assets/datasets/ImageNet/val/<synset>/<file>).
+#     The two only match by luck; a snapshot built under a different prefix /
+#     machine never matches. We key BOTH sides by the prefix-independent
+#     "<synset>/<filename>" (the last two path components), and rebuild the
+#     cache if an existing LMDB does not resolve under that scheme.
+#   * (1a) Fork-safety: an lmdb env opened pre-fork and shared across
+#     DataLoader workers / torchrun ranks returns corrupt buffers
+#     (PIL.UnidentifiedImageError). We open the env lazily per process and copy
+#     bytes out inside the transaction.
+#   * Concurrent first-run build race: 4 ranks x N workers all entering the
+#     build branch at once corrupts the LMDB. We serialize the build behind an
+#     exclusive file lock.
+_IMAGENET_LOADER_SRC = '''class _ForkSafeLmdb:
+    """Lazily open the LMDB env once per process (keyed by PID).
+
+    An lmdb env opened in the parent and shared across fork()ed DataLoader
+    workers / torchrun ranks hands back corrupt buffers (UnidentifiedImageError)
+    because the children inherit the parent's mmap + reader-slot state. Opening
+    lazily per process makes reads fork-safe. Exposes .begin() (all the loader
+    needs) and is picklable (the live env is dropped on pickle so it re-opens
+    in the worker process).
+    """
+
+    def __init__(self, lmdb_path):
+        self._lmdb_path = lmdb_path
+        self._env = None
+        self._pid = None
+
+    def _ensure(self):
+        pid = os.getpid()
+        if self._env is None or self._pid != pid:
+            self._env = lmdb.open(
+                self._lmdb_path, readonly=True, max_readers=256,
+                lock=False, readahead=False, meminit=False,
+            )
+            self._pid = pid
+        return self._env
+
+    def begin(self, *args, **kwargs):
+        return self._ensure().begin(*args, **kwargs)
+
+    def __getstate__(self):
+        return {"_lmdb_path": self._lmdb_path, "_env": None, "_pid": None}
+
+    def __setstate__(self, state):
+        self.__dict__.update(state)
+
+
+def _canonical_lmdb_key(path):
+    """Prefix-independent LMDB key: '<synset>/<filename>' (last two path parts).
+
+    Upstream keys the LMDB by the absolute build-time path returned by
+    datasets.ImageFolder(root).imgs. That breaks whenever the LMDB is built
+    under one path prefix and queried under another (relative-vs-absolute, a
+    different mount, or a pre-staged snapshot from another machine), making
+    every txn.get() return None. Keying by the last two components makes build
+    and query agree regardless of prefix.
+    """
+    p = str(path).replace("\\\\", "/").rstrip("/")
+    parts = p.split("/")
+    return "/".join(parts[-2:]) if len(parts) >= 2 else p
+
+
+def _is_real_image(path):
+    """Reject macOS AppleDouble junk (``__MACOSX/`` dirs, ``._*`` stubs,
+    ``.DS_Store``). The mlx-vision/imagenet-1k val.zip was packaged on macOS and
+    ships a 212-byte ``._<img>.JPEG`` stub beside every real JPEG; ImageFolder
+    otherwise ingests them (they end in .JPEG) and the first-run full-val FID
+    reference pass crashes on the first one (PIL.UnidentifiedImageError) ->
+    best_fid_Imagenet missing -> the whole gmean score collapses to 0."""
+    parts = str(path).replace("\\\\", "/").split("/")
+    base = parts[-1]
+    if base.startswith("._") or base == ".DS_Store":
+        return False
+    return "__MACOSX" not in parts
+
+
+def _drop_macos_junk(data_set):
+    """Strip macOS AppleDouble entries from an ImageFolder so neither the LMDB
+    build nor the full-val FID reference pass ever touches a non-image file."""
+    imgs = [(p, c) for (p, c) in data_set.imgs if _is_real_image(p)]
+    data_set.imgs = imgs
+    data_set.samples = imgs
+    if hasattr(data_set, "targets"):
+        data_set.targets = [c for (_p, c) in imgs]
+
+
+def lmdb_loader(path, lmdb_data):
+    # Copy bytes out *inside* the transaction (buffers=True returns a memoryview
+    # backed by the mmap; using it after the txn closes / across a fork yields
+    # corrupt data). Try the canonical key first, fall back to the raw path for
+    # back-compat with old full-path-keyed LMDBs.
+    with lmdb_data.begin(write=False, buffers=True) as txn:
+        bytedata = txn.get(_canonical_lmdb_key(path).encode())
+        if bytedata is None:
+            bytedata = txn.get(str(path).encode())
+        if bytedata is None:
+            raise KeyError(
+                "LMDB has no entry for %r (canonical key %r). The cached "
+                "*_faster_imagefolder.lmdb(.pt) was built under a different "
+                "path layout; delete it so it is rebuilt."
+                % (path, _canonical_lmdb_key(path))
+            )
+        bytedata = bytes(bytedata)
+    img = Image.open(io.BytesIO(bytedata))
+    return img.convert("RGB")
+
+
+def _lmdb_resolves(lmdb_path, probe_path):
+    """True iff the existing LMDB resolves probe_path under the canonical key."""
+    env = lmdb.open(lmdb_path, readonly=True, max_readers=1, lock=False,
+                    readahead=False, meminit=False)
+    try:
+        with env.begin(write=False) as txn:
+            return txn.get(_canonical_lmdb_key(probe_path).encode()) is not None
+    finally:
+        env.close()
+
+
+def _build_lmdb_dataset(root, transform=None, target_transform=None, loader=lmdb_loader):
+    """
+    You can create this dataloader using:
+    train_data = _build_lmdb_dataset(traindir, transform=train_transform)
+    valid_data = _build_lmdb_dataset(validdir, transform=val_transform)
+    """
+    import fcntl
+
+    root = str(root)
+    if root.endswith("/"):
+        root = root[:-1]
+    pt_path = os.path.join(root + "_faster_imagefolder.lmdb.pt")
+    lmdb_path = os.path.join(root + "_faster_imagefolder.lmdb")
+
+    # Serialize the (slow, single-writer) build across torchrun ranks and
+    # DataLoader workers via an exclusive file lock: only the lock holder
+    # builds; the rest block, then load the finished artifact. Prevents the
+    # concurrent-build races that corrupt the LMDB under num_workers>0 / DDP.
+    lock_path = root + "_faster_imagefolder.lmdb.build.lock"
+    lock_dir = os.path.dirname(os.path.abspath(lock_path))
+    if lock_dir:
+        os.makedirs(lock_dir, exist_ok=True)
+    lock_file = open(lock_path, "w")
+    fcntl.flock(lock_file, fcntl.LOCK_EX)
+    try:
+        have_cache = os.path.isfile(pt_path) and os.path.isdir(lmdb_path)
+        if have_cache:
+            data_set = torch.load(pt_path, weights_only=False)
+            _drop_macos_junk(data_set)
+            # Stale-cache guard: a snapshot built under a foreign path prefix
+            # has keys that never match our queries. Probe the first image; if
+            # it does not resolve, drop the cache and rebuild from disk.
+            if data_set.imgs and not _lmdb_resolves(lmdb_path, data_set.imgs[0][0]):
+                import shutil
+                shutil.rmtree(lmdb_path, ignore_errors=True)
+                try:
+                    os.remove(pt_path)
+                except OSError:
+                    pass
+                have_cache = False
+        if not have_cache:
+            data_set = datasets.ImageFolder(root, None, None, None)
+            _drop_macos_junk(data_set)
+            torch.save(data_set, pt_path, pickle_protocol=4)
+            env = lmdb.open(lmdb_path, map_size=int(1e12))
+            with env.begin(write=True) as txn:
+                for _path, class_index in data_set.imgs:
+                    with open(_path, "rb") as f:
+                        data = f.read()
+                    txn.put(_canonical_lmdb_key(_path).encode("ascii"), data)
+            env.sync()
+            env.close()
+    finally:
+        fcntl.flock(lock_file, fcntl.LOCK_UN)
+        lock_file.close()
+
+    # Per-process lazy env (fork-safe). data_set.lmdb_data.begin(...) is all the
+    # loader uses.
+    data_set.lmdb_data = _ForkSafeLmdb(lmdb_path)
+    # reset transform and target_transform
+    data_set.samples = data_set.imgs
+    data_set.transform = transform
+    data_set.target_transform = target_transform
+    data_set.loader = lambda path: loader(path, data_set.lmdb_data)
+
+    return data_set
+'''
+
 OPS = [
     # 1. Make Inception model path absolute relative to the repo's assets dir.
     {
@@ -36,6 +231,29 @@ OPS = [
             "            logger.log(f\"sampled {num} images\")\n"
             "        if num >= args.num_samples:\n"
             "            break\n"
+        ),
+    },
+    # 4b. Only compute the scored metric (FID). Upstream evaluate.sh also runs
+    #     LPIPS/SSIM (e2h/diode) and Inception Score (imagenet), none of which
+    #     are in score_spec.py or parsed by parser.py. They are pure overhead and
+    #     LPIPS/SSIM `assert ref_batch.shape == sample_batch.shape` crashes when
+    #     num_samples != the reference-set size (which it is here), making the
+    #     command exit non-zero. Drop the `--metric lpips` and `--metric is`
+    #     calls. Replaces lines 47-54 (the trailing metric if/elif block).
+    #     NOTE: listed BEFORE the line-44 op below so same-file pre_edit ops
+    #     apply bottom-to-top (pristine line numbers).
+    {
+        "op": "replace",
+        "file": "dbim-codebase/scripts/evaluate.sh",
+        "start_line": 47,
+        "end_line": 54,
+        "content": (
+            'if [[ $DATASET_NAME == "e2h" || $DATASET_NAME == "diode" ]]; then\n'
+            "    python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric fid\n"
+            'elif [[ $DATASET_NAME == "imagenet_inpaint_center" ]]; then\n'
+            "    LABEL_PATH=${SAMPLE_DIR}/${LABEL_NAME}\n"
+            "    python evaluation/compute_metrices_imagenet.py --ckpt $SAMPLE_PATH --label $LABEL_PATH --dataset-dir $DATA_DIR\n"
+            "fi\n"
         ),
     },
     # 4. Make the evaluator find whatever sample file was actually written,
@@ -77,14 +295,17 @@ OPS = [
             ' ${CHURN_STEP_RATIO:+ --churn_step_ratio="${CHURN_STEP_RATIO}"} \\\n'
         ),
     },
-    # 6b. lmdb max_readers=1 crashes when DataLoader forks into 2x num_workers per
-    #     rank (~16 readers). Bump to 256 so distributed sampling works.
+    # 6b. Replace the ImageNet LMDB loader + builder with a prefix-independent,
+    #     fork-safe, race-free version. See _IMAGENET_LOADER_SRC above for the
+    #     full rationale (fixes the all-keys-miss crash that zeroed the Imagenet
+    #     FID, plus DataLoader fork corruption and concurrent-build races).
+    #     Replaces lines 24-67 (functions `lmdb_loader` and `_build_lmdb_dataset`).
     {
         "op": "replace",
         "file": "dbim-codebase/datasets/imagenet_inpaint.py",
-        "start_line": 60,
-        "end_line": 60,
-        "content": "    data_set.lmdb_data = lmdb.open(lmdb_path, readonly=True, max_readers=256, lock=False, readahead=False, meminit=False)\n",
+        "start_line": 24,
+        "end_line": 67,
+        "content": _IMAGENET_LOADER_SRC,
     },
     # 6d. Enforce NFE budget on the denoiser inside karras_sample.
     # Agents were cheating (double-denoise / Heun corrector -> 6-9 actual calls
