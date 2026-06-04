@@ -3,7 +3,7 @@
 ## Objective
 
 Design a sampling algorithm for text-to-image diffusion models that achieves
-high generation quality with a fixed budget of NFE = 20 denoiser evaluations.
+high generation quality with a fixed budget of NFE = 50 denoiser evaluations.
 
 ## Background
 
@@ -52,7 +52,7 @@ the marked editable regions of two files:
    `self.initialize_latent(size=...)`, `self.predict_noise()`,
    `self.scheduler.alphas_cumprod[t]`.
 
-The contribution must respect a fixed budget of **NFE = 20** denoiser calls
+The contribution must respect a fixed budget of **NFE = 50** denoiser calls
 per sample.
 
 ## Baselines
@@ -67,17 +67,15 @@ per sample.
 
 - Models: Stable Diffusion v1.5 and SDXL (frozen weights).
 - Prompt set: shared evaluation prompts across all baselines.
-- NFE budget: 20 denoiser calls per sample.
+- NFE budget: 50 denoiser calls per sample.
 
 ## Evaluation
 
-Evaluation runs text-to-image sampling on the model variants above. Metrics
-reported:
+Evaluation runs text-to-image sampling on the model variants above. The
+task-visible metric and official score use **FID** computed against a reference
+image set (lower is better). The generation script may compute CLIP diagnostics
+internally, but CLIP is not part of the task score or agent-visible feedback.
 
-- **CLIP score** (cosine similarity between generated image and text prompt;
-  higher is better).
-- **FID** computed against a reference image set (lower is better).
-
-Task scoring uses per-variant FID (lower is better). The method should
-improve image quality across variants without changing prompts, model weights,
-allowed function-evaluation budget, or metric computation.
+The method should improve image quality across variants without changing
+prompts, model weights, allowed function-evaluation budget, or metric
+computation.

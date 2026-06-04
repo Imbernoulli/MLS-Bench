@@ -76,7 +76,7 @@ training scales:
 
 Training (fixed):
 
-- Optimizer: AdamW, lr = 4e-4, weight_decay = 1e-4.
+- Optimizer: AdamW, lr = 2e-4, weight_decay = 1e-4.
 - LR schedule: 5% warmup + cosine decay.
 - Mixed precision (autocast + GradScaler).
 - Gradient clipping at 1.0.

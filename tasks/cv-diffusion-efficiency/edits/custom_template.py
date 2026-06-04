@@ -3,7 +3,7 @@ class BaseDDIMCFGpp(StableDiffusion):
     # TODO: Implement your improved sampling method here.
     #
     # You should implement an improved sampling algorithm that achieves better
-    # image-text alignment (CLIP score) with a fixed budget of NFE=20 steps.
+    # image-text alignment (CLIP score) with a fixed budget of NFE=50 steps.
     #
     # Key methods you need to implement:
     # - __init__: Initialize the solver
@@ -42,7 +42,6 @@ class BaseDDIMCFGpp(StableDiffusion):
         # Consider different update rules, adaptive step sizes, or combining multiple
         # methods to achieve better performance.
         raise NotImplementedError("You need to implement the sample method")
-
 
 
 

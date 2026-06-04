@@ -93,6 +93,16 @@ _ALL_METRICS = """\
         print(f"GENERATION_METRICS method={args.method} cfg_guidance={args.cfg_guidance} NFE={args.NFE} seed={args.seed} clip_score={clip_score:.4f}", flush=True)
 """
 
+_KDIFF_X_TO_DENOISED_PATCH = """    def kdiffusion_x_to_denoised(self, x, sigma, uc, c, cfg_guidance, t):
+        xc = self.calculate_input(x, sigma)
+        noise_uc, noise_c = self.predict_noise(xc, t, uc, c)
+        noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+        denoised = self.calculate_denoised(x, noise_pred, sigma)
+        # Preserve tuple-unpack compatibility while preventing sampler code from
+        # accessing the pure unconditional denoised prediction.
+        return denoised, denoised
+"""
+
 OPS = [
     # Bottom-to-top: higher line numbers first so earlier ops don't shift later ones
     {
@@ -108,5 +118,12 @@ OPS = [
         "start_line": 1,
         "end_line": 10,
         "content": _ALL_IMPORTS,
+    },
+    {
+        "op": "replace",
+        "file": "CFGpp-main/latent_diffusion.py",
+        "start_line": 235,
+        "end_line": 241,
+        "content": _KDIFF_X_TO_DENOISED_PATCH,
     },
 ]

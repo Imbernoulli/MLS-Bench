@@ -283,7 +283,7 @@ if __name__ == '__main__':
     max_steps = int(os.environ.get('MAX_STEPS', 10000))
     eval_interval = int(os.environ.get('EVAL_INTERVAL', 10000))
     batch_size = int(os.environ.get('BATCH_SIZE', 128))
-    lr = float(os.environ.get('LR', 1e-4))
+    lr = float(os.environ.get('LR', 2e-4))
     ema_rate = float(os.environ.get('EMA_RATE', 0.999))
 
     # ── DDP setup ──────────────────────────────────────────────────────────
@@ -401,7 +401,7 @@ if __name__ == '__main__':
             ref_grads = torch.autograd.grad(ref_loss, last_layer, retain_graph=True)[0].detach()
             g_grads = torch.autograd.grad(g_loss, last_layer, retain_graph=True)[0].detach()
             disc_weight = torch.clamp(
-                ref_grads.norm(p=2) / g_grads.norm(p=2).clamp(min=1e-8), 0.0, 1e4)
+                ref_grads.norm(p=2) / g_grads.norm(p=2).clamp(min=1e-8), 0.0, 10.0)
             loss = loss + disc_weight * g_loss
             metrics['g_loss'] = g_loss.item()
             metrics['disc_w'] = disc_weight.item()

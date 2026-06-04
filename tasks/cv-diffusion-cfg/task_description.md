@@ -69,12 +69,10 @@ allowed denoiser evaluations, or evaluation code.
 ## Evaluation
 
 Evaluation runs the text-to-image sampling pipeline on the model variants
-above. Metrics reported:
+above. The task-visible metric and official score use **FID** computed against
+a reference image set (lower is better). The generation script may compute
+CLIP diagnostics internally, but CLIP is not part of the task score or
+agent-visible feedback.
 
-- **CLIP score** (cosine similarity between generated image and text prompt;
-  higher is better).
-- **FID** computed against a reference image set (lower is better).
-
-Task scoring uses per-variant FID (lower is better). A good method should
-improve image quality without sacrificing the prompt-following behaviour
-provided by guidance.
+A good method should improve image quality without sacrificing the
+prompt-following behaviour provided by guidance.

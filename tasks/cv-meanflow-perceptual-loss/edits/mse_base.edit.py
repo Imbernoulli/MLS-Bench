@@ -21,8 +21,8 @@ OPS = [
     {
         "op": "replace",
         "file": _FILE,
-        "start_line": 384,
-        "end_line": 401,
+        "start_line": 445,
+        "end_line": 462,
         "content": _MSE_BASE,
     },
 ]

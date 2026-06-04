@@ -3,7 +3,7 @@
 
 WORKDIR_BASE="${OUTPUT_DIR:-examples/workdir}"
 METHOD=${METHOD:-"ddim_cfg++"}
-CFG_GUIDANCE=${CFG_GUIDANCE:-0.6}
+CFG_GUIDANCE=${CFG_GUIDANCE:-1.0}
 SEED=${SEED:-42}
 NUM_IMAGES=${NUM_IMAGES:-10000}
 if [ -z "${NGPU:-}" ]; then
@@ -35,7 +35,7 @@ torchrun --nproc_per_node=$NGPU --master_port=$MASTER_PORT batch_eval.py \
     --model sd20 \
     --method "$METHOD" \
     --cfg_guidance "$CFG_GUIDANCE" \
-    --NFE 20 \
+    --NFE 50 \
     --seed "$SEED" \
-    --num_images "$NUM_IMAGES" \
+    --num_images 3000 \
     --workdir "$WORKDIR_BASE/eval_sd20_${SEED}"
