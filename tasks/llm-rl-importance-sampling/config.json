@@ -8,7 +8,15 @@
       "compute": 2,
       "mem": 200,
       "time": "6:00:00",
-      "package": "verl"
+      "package": "verl",
+      "h200": {
+        "compute": 1,
+        "env": {
+          "TP_SIZE": "1",
+          "MAX_TOKEN_LEN_PER_GPU": "20480",
+          "GPU_MEM_UTIL": "0.5"
+        }
+      }
     }
   ],
   "rigorous_codebase": true,

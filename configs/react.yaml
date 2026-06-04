@@ -10,6 +10,10 @@ seeds: [42, 123, 456]
 
 # Supported values: docker, apptainer, local
 container_runtime: docker
+# GPU hardware scaler vs the H100 baseline the tasks are tuned on. Keep 1.0 for
+# H100; set 0.5 for H200 (~2x H100) to run the llm-pretrain / llm-rl tasks more
+# efficiently (fewer GPUs, larger per-GPU batch / TP=1) with the macro-batch —
+# and the result — unchanged. Other tasks are left as-is.
 compute_scale: 1.0
 
 thinking:

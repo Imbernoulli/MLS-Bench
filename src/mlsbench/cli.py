@@ -1771,6 +1771,7 @@ def _run_single_baseline(
         use_cuda=use_cuda_override,
         platform=run_config.get("platform", ""),
         gpu_devices=run_config.get("gpu_devices", ""),
+        compute_scale=run_config.get("compute_scale", 1.0),
         global_config=run_config,
         allow_web_search=run_config.get("allow_web_search", False),
         tavily_api_key=(run_config.get("providers", {}).get("tavily", {}) or {}).get("api_key", ""),
