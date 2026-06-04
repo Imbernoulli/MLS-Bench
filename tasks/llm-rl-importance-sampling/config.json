@@ -8,7 +8,11 @@
       "compute": 2,
       "mem": 200,
       "time": "6:00:00",
-      "package": "verl"
+      "package": "verl",
+      "h200": {
+        "cmd": "scripts/train_1gpu.sh",
+        "compute": 1
+      }
     }
   ],
   "rigorous_codebase": true,

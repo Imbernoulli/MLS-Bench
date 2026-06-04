@@ -8,7 +8,14 @@
       "group": 1,
       "compute": 4.0,
       "time": "12:00:00",
-      "package": "nanoGPT"
+      "package": "nanoGPT",
+      "h200": {
+        "compute": 2.0,
+        "env": {
+          "BATCH_SIZE": "32",
+          "GRAD_ACCUM": "16"
+        }
+      }
     },
     {
       "cmd": "scripts/lm_eval_345m.sh",
