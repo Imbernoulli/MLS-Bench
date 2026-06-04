@@ -10,8 +10,12 @@
       "time": "12:00:00",
       "package": "verl",
       "h200": {
-        "cmd": "scripts/train_1gpu.sh",
-        "compute": 1
+        "compute": 1,
+        "env": {
+          "TP_SIZE": "1",
+          "MAX_TOKEN_LEN_PER_GPU": "20480",
+          "GPU_MEM_UTIL": "0.5"
+        }
       }
     }
   ],
