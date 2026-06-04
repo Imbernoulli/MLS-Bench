@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prepare data for ProteinWorkshop (ai4bio-protein-structure-repr).
 
-Drives the existing preprocessing script
-``scripts/preprocess_protein_workshop.py`` inside the ProteinWorkshop
+Drives the co-located preprocessing script
+``preprocess_protein_workshop.py`` inside the ProteinWorkshop
 Apptainer image (which has graphein + torch_geometric + proteinworkshop
 installed). The script downloads PDB files, converts to PyG graphs, and
 aggregates {train, val, test}.pt for each of the three datasets used by
@@ -212,7 +212,7 @@ def run_inside_docker(workshop_dir: Path, project_root: Path, script: Path, pkg_
 
 def run_inside_image(workshop_dir: Path) -> bool:
     project_root = Path(__file__).resolve().parents[3]
-    script = project_root / "scripts" / "preprocess_protein_workshop.py"
+    script = Path(__file__).resolve().parent / "preprocess_protein_workshop.py"
     if not script.exists():
         print(f"ERROR: missing {script}", file=sys.stderr)
         return False
