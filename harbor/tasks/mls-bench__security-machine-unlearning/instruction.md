@@ -8,7 +8,7 @@ How can we design a stronger unlearning update rule that removes information abo
 ## Background
 Machine unlearning methods approximate the effect of retraining without the deleted data. The central tradeoff is clear: aggressive forgetting reduces utility, while conservative updates leave measurable traces of the forgotten examples. Approximate-unlearning approaches range from continued retain-only finetuning, to gradient ascent on the forget loss (NegGrad / "Eternal Sunshine of the Spotless Net": Golatkar, Achille, Soatto, CVPR 2020, arXiv:1911.04933), to incompetent-teacher distillation (Bad-T: Chundawat et al., AAAI 2023, arXiv:2205.08096), and selective student-teacher scrubbing (SCRUB: Kurmanji et al., NeurIPS 2023, arXiv:2302.09880).
 
-The harness pretrains a standard vision model (ResNet-20, VGG-16-BN, or MobileNetV2) on the full training set for 80 epochs using SGD with cosine annealing. After pretraining, a single class is designated as the forget set. The unlearning method then runs for 20 epochs, receiving both retain-set and forget-set minibatches each step, with an Adam optimizer (`lr = 0.001`).
+The harness first pretrains a standard vision model on an image-classification training set. After pretraining, a single class is designated as the forget set. The unlearning method then runs for a fixed number of epochs, receiving both retain-set and forget-set minibatches each step, with an Adam optimizer (`lr = 0.001`).
 
 ## Task
 Implement a better unlearning rule in `bench/unlearning/custom_unlearning.py`. The fixed harness trains an initial model, defines a forget split, and then applies your update rule for a fixed number of unlearning steps using retain and forget minibatches.
@@ -31,21 +31,6 @@ class UnlearningMethod:
 
 The architecture, initial training, forget split, and evaluation probes are fixed.
 
-## Evaluation
-Benchmarks:
-
-- `resnet20-cifar10-class0`: ResNet-20 on CIFAR-10, forgetting class 0.
-- `vgg16bn-cifar100-class0`: VGG-16-BN on CIFAR-100, forgetting class 0.
-- `mobilenetv2-fmnist-class0`: MobileNetV2 on FashionMNIST, forgetting class 0.
-
-Reported metrics:
-- `retain_acc`: accuracy on non-forget test data.
-- `forget_acc`: accuracy on forget-class test data (lower is better).
-- `forget_mia_auc`: membership inference attack AUC on forget set (lower is better).
-- `unlearn_score`: `(retain_acc + (1 - forget_acc) + (1 - forget_mia_auc)) / 3`.
-
-Primary metric: `unlearn_score` (higher is better).
-
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:
 
@@ -64,7 +49,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/bench/unlearning/custom_unlearning.py`
 - editable: **entire file**
@@ -106,25 +91,6 @@ Other files you may **read** for context (do not modify):
     24: # END EDITABLE
     25: # ============================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet20-cifar10-class0** — wall-clock budget `1:30:00`, compute share `1.0`
-- **vgg16bn-cifar100-class0** — wall-clock budget `1:30:00`, compute share `1.0`
-- **mobilenetv2-fmnist-class0** — wall-clock budget `1:30:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

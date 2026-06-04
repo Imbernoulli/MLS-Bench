@@ -43,14 +43,8 @@ def evolve_one_generation(population, fitnesses, X_train, y_train,
 
 Available helpers from the skeleton: `safe_evaluate(tree, X)`, `generate_tree('grow'|'full', max_depth, n_features)`, `Tree.copy/size/depth/get_all_nodes()`. Reference code that may be read for context: `gplearn/gplearn/genetic.py`, `gplearn/gplearn/_program.py`, `gplearn/gplearn/fitness.py`. The output must remain an executable symbolic expression, not a black-box predictor.
 
-## Fixed Pipeline & Evaluation
-Benchmarks (standard symbolic-regression problems):
-- **Nguyen-7** — univariate, transcendental: `log(x+1) + log(x^2+1)`, `x ∈ [0, 2]`.
-- **Nguyen-10** — bivariate, trigonometric: `2 * sin(x) * cos(y)`, `(x, y) ∈ [-1, 1]^2`.
-- **Koza-3** — univariate polynomial: `x^6 - 2*x^4 + x^2`, `x ∈ [-1, 1]`.
-
-Metric: **R²** on a held-out test set (higher is better; max 1.0). RMSE and discovered expression details are reported as feedback.
-
+## Fixed Pipeline
+The datasets, train/test splits, training loop, and evaluation harness are all fixed and provided by the scaffold.
 
 ## Your Workspace
 
@@ -61,7 +55,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `gplearn/custom_sr.py`
 - editable lines **228–306**
@@ -463,25 +457,6 @@ Other files you may **read** for context (do not modify):
    382: if __name__ == '__main__':
    383:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **nguyen7** — wall-clock budget `01:00:00`, compute share `0.33`
-- **nguyen10** — wall-clock budget `01:00:00`, compute share `0.33`
-- **koza3** — wall-clock budget `01:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

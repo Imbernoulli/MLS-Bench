@@ -32,15 +32,8 @@ class Model(nn.Module):
         return out[:, -self.pred_len:, :]
 ```
 
-## Datasets and Fixed Protocol
-- **ETTh1** — 7 → 1, hourly Electricity Transformer Temperature (Zhou et al., AAAI 2021).
-- **Weather** — 21 → 1, 21 weather observations.
-- **ECL** — 321 → 1, hourly electricity consumption of 321 clients.
-
-All settings: `features=MS`, `seq_len=96`, `label_len=48`, `pred_len=96`. Standardization, splits, and the target column are fixed by the Time-Series-Library data loaders.
-
-## Metrics
-MSE and MAE on the target variable only (the harness extracts `outputs[:, :, -1:]` before scoring). Lower is better.
+## Fixed Protocol
+The evaluation pipeline (datasets, splits, normalization, look-back window, horizon, target column, and metrics) is fixed by the harness and not editable. All inputs use `features=MS` mode; the harness extracts `outputs[:, :, -1:]` so only the final (target) channel is scored. The model receives `configs.seq_len`, `configs.pred_len`, `configs.enc_in`, and `configs.c_out`.
 
 ## Reference Implementations (read-only)
 Four reference models from `models/`:
@@ -60,7 +53,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `Time-Series-Library/models/Custom.py`
 - editable: **entire file**
@@ -2073,23 +2066,6 @@ Other files you may **read** for context (do not modify):
    134:             x = self.projection(x)
    135:         return x
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **ETTh1** — wall-clock budget `00:59:00`, compute share `0.33`
-- **Weather** — wall-clock budget `00:59:00`, compute share `0.33`
-- **ECL** — wall-clock budget `00:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

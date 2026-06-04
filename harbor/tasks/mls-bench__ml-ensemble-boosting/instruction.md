@@ -42,12 +42,8 @@ class BoostingStrategy:
 
 Available context: true labels, current ensemble predictions, sample weights, fitted learner (`learner.predict(X)`), round index, config dict with dataset metadata. Available imports in the FIXED section: `numpy`, `sklearn.tree`, `sklearn.metrics`, `sklearn.datasets`, `sklearn.model_selection`.
 
-## Fixed Pipeline & Evaluation
-- 200 boosting rounds, base learner = `DecisionTree(max_depth=3)`, learning rate `0.1`, 80/20 train/test split.
-- Datasets:
-  - **Breast Cancer Wisconsin** — classification, 569 samples, 30 features → metric `test_accuracy` (higher is better).
-  - **Diabetes** — regression, 442 samples, 10 features → metric `test_rmse` (lower is better).
-  - **California Housing** — regression, 20,640 samples, 8 features → metric `test_rmse` (lower is better).
+## Fixed Pipeline
+The training and evaluation pipeline (number of boosting rounds, the shallow decision-tree weak learner, learning-rate shrinkage, datasets, and metrics) is fixed by the harness and not editable. Your strategy is evaluated on both classification and regression tabular tasks. Dataset metadata (including `learning_rate`) is provided to your class via the `config` dict.
 
 
 ## Your Workspace
@@ -59,7 +55,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `scikit-learn/custom_boosting.py`
 - editable lines **147–256**
@@ -523,25 +519,6 @@ or deleting existing ones — will cause your submission to score zero.
    448: if __name__ == "__main__":
    449:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **breast_cancer** — wall-clock budget `00:30:00`, compute share `0.0`
-- **diabetes** — wall-clock budget `00:30:00`, compute share `0.0`
-- **california_housing** — wall-clock budget `00:30:00`, compute share `0.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

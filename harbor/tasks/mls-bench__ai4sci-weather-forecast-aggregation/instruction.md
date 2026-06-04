@@ -44,15 +44,7 @@ The input contains 48 variables: 3 surface constants (land-sea mask, orography, 
 You have access to standard PyTorch modules (`nn.Linear`, `nn.MultiheadAttention`, `nn.LayerNorm`, etc.) and `torch.nn.functional`. The FIXED section imports `torch`, `torch.nn`, and `torch.nn.functional as F`.
 
 ## Fixed Pipeline
-ClimaX backbone, per-variable patch tokenization, fine-tuning recipe (initialized from pretrained ClimaX weights), data pipeline, ERA5 reanalysis at 5.625° resolution, optimizer/schedule, and the latitude-weighted RMSE metric are all fixed.
-
-## Evaluation
-The model is fine-tuned from pretrained ClimaX weights on ERA5 reanalysis data at 5.625-degree resolution and evaluated on three forecasting targets:
-- **z500-3day**: Geopotential height at 500 hPa, 3-day lead time.
-- **t850-5day**: Temperature at 850 hPa, 5-day lead time.
-- **wind10m-7day**: 10 m wind speed, 7-day lead time.
-
-Metric: Latitude-weighted RMSE (lower is better). The metric accounts for the convergence of meridians at the poles by weighting errors by the cosine of latitude.
+The training and evaluation pipeline (backbone, tokenization, data, optimizer, schedule, and metric) is fixed by the harness and not editable.
 
 ## Reference Baselines
 - **cross_attention**: ClimaX default aggregation. A learnable query token attends to all V variable tokens at each spatial location via multi-head cross-attention, producing one token per location.
@@ -69,7 +61,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `ClimaX/custom_forecast.py`
 - editable lines **310–351**
@@ -591,25 +583,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from ClimaX/custom_forecast.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **z500-3day** — wall-clock budget `08:00:00`, compute share `1.0`
-- **t850-5day** — wall-clock budget `08:00:00`, compute share `1.0`
-- **wind10m-7day** — wall-clock budget `08:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

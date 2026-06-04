@@ -1,27 +1,20 @@
 # MLS-Bench: quant-concept-drift
 
-# Concept Drift Adaptation in Stock Prediction on CSI300
+# Concept Drift Adaptation in Stock Prediction
 
 ## Research Question
-Can a stock-return predictor be made robust to *temporal* distribution shift (concept drift) — that is, to changes over time in the joint distribution of features and returns — while still using the standard CSI300 universe, Alpha360 features, and the fixed qlib backtest?
+Can a stock-return predictor be made robust to *temporal* distribution shift (concept drift) — that is, to changes over time in the joint distribution of features and returns — while using a standard universe, engineered features, and a fixed qlib backtest?
 
 ## Background
 Financial markets are non-stationary: regime changes, macro shocks, and microstructure shifts mean that a model trained on one period often degrades on later periods even with the same features and label definition. This is the "concept drift" or *temporal covariate shift* problem. Two main families of approaches address it: (i) sequence models with explicit multi-pattern routing (e.g., TRA, KDD 2021), which learn distinct sub-predictors and a router that assigns time slices to predictors; and (ii) domain-adaptation-style training that aligns feature distributions across time windows (e.g., AdaRNN, CIKM 2021).
 
-This task isolates *temporal drift adaptation* on a single universe (CSI300), evaluated under three different temporal regimes — it is **not** about cross-universe transfer.
+This task isolates *temporal drift adaptation* on a fixed stock universe, evaluated under multiple temporal regimes — it is **not** about cross-universe transfer.
 
 ## Objective
 Implement a `CustomModel` in `custom_model.py` that exposes the qlib `Model` interface (`fit(dataset)`, `predict(dataset, segment="test")`). The class is wired into `workflow_config.yaml`, where the dataset adapter / processor block is editable so methods like TRA can request a different dataset view (e.g., `TSDatasetH`, custom processors). Instruments, date ranges, train/valid/test splits, and the backtest are fixed by the workflow.
 
 ## Fixed Pipeline
-- **Universe**: CSI300 (instruments fixed by the workflow YAML).
-- **Features**: Alpha360.
-- **Label**: `Ref($close, -2) / Ref($close, -1) - 1`.
-- **Temporal regimes** (three different fixed splits, all CSI300):
-  - `csi300` — long-horizon split with a 2017–2020 test window.
-  - `csi300_shifted` — shifted split with a 2016–2018 test window.
-  - `csi300_recent` — most recent 2019–2020 test regime.
-- **Backtest**: TopkDropout, top 50 / drop 5.
+The stock universe, engineered features, label definition, train/valid/test splits, and the qlib backtest are fixed by the workflow and not editable (outside the editable dataset-adapter / processor block of `workflow_config.yaml` noted above).
 
 ## Model Interface
 ```python
@@ -30,13 +23,6 @@ class CustomModel(qlib.model.base.Model):
     def predict(self, dataset, segment="test") -> pd.Series: ...
 ```
 `predict` returns a `pd.Series` indexed by `(datetime, instrument)`.
-
-## Evaluation Metrics
-Per regime:
-- Signal: IC, ICIR, Rank IC, Rank ICIR (higher is better).
-- Portfolio: annualized return, information ratio (higher is better); max drawdown (closer to zero is better).
-
-Computed by qlib's `SignalAnalysisRecord` and `PortAnaRecord`.
 
 ## Reference Implementations (read-only)
 Three reference models ship with qlib's `examples/benchmarks/`:
@@ -55,7 +41,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `qlib/custom_model.py`
 - editable lines **16–103**
@@ -266,30 +252,6 @@ Other files you may **read** for context (do not modify):
     82:               close_cost: 0.0015
     83:               min_cost: 5
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **csi300** — wall-clock budget `3:00:00`, compute share `1.0`
-- **csi300_shifted** — wall-clock budget `3:00:00`, compute share `1.0`
-- **csi300_recent** — wall-clock budget `3:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

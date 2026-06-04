@@ -42,23 +42,7 @@ You must design:
 The PPO rollout loop, value functions, optimizer, environment
 interface, and registration plumbing are fixed.
 
-## Evaluation
-Evaluated on Safety-Gymnasium navigation environments including:
-- **SafetyPointGoal1-v0** — point robot navigating to goals while
-  avoiding hazards.
-- **SafetyCarGoal1-v0** — non-holonomic car robot with the same goal
-  structure.
-- **SafetyPointButton1-v0** — point robot pressing goal buttons while
-  avoiding hazards.
-
-Each environment trains for the benchmark's fixed step budget.
-Metrics:
-- Episode return (`reward`) — higher is better.
-- Episode cost (`cost`) — lower is better, with a target threshold of
-  25.0 per the Safety-Gymnasium convention used in `omnisafe`.
-
-A method should achieve high return only when the cost constraint is
-controlled across all environments.
+The agent is evaluated on safe-navigation environments where a robot must reach goals while avoiding hazards. A method should achieve high return while keeping the cost (safety violation count) below the configured cost limit across all environments.
 
 
 ## Your Workspace
@@ -70,7 +54,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/custom_lag.py`
 - editable lines **20–20**
@@ -239,25 +223,6 @@ Other files you may **read** for context (do not modify):
    148: 
    149:         return ep_ret, ep_cost, ep_len
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **SafetyPointGoal1-v0** — wall-clock budget `6:00:00`, compute share `0.33`
-- **SafetyCarGoal1-v0** — wall-clock budget `6:00:00`, compute share `0.33`
-- **SafetyPointButton1-v0** — wall-clock budget `6:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

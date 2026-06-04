@@ -3,12 +3,12 @@
 # Climate Physics Emulation: Neural Network Architecture
 
 ## Research Question
-Design an improved neural network architecture for emulating sub-grid atmospheric physics processes in climate models. Your architecture should achieve lower Normalized MSE (NMSE) than the default MLP baseline on the ClimSim low-resolution dataset.
+Design an improved neural network architecture for emulating sub-grid atmospheric physics processes in climate models.
 
 ## Background
 Global climate models divide the atmosphere into grid cells, but many critical physical processes (radiation, convection, cloud formation) occur at scales smaller than these grid cells. Traditionally, these sub-grid processes are approximated by parameterization schemes — handcrafted physics-based approximations. Neural network emulators can learn these mappings from high-resolution simulation data, potentially improving both accuracy and computational efficiency.
 
-ClimSim (Yu et al., "ClimSim: A large multi-scale dataset for hybrid physics-ML climate emulation", NeurIPS 2023 Datasets & Benchmarks; arXiv:2306.08754) provides data from the E3SM-MMF multi-scale climate model, where each sample maps an atmospheric column state to the corresponding sub-grid physics tendencies computed by the high-resolution physics module.
+The data comes from a multi-scale climate model where each sample maps an atmospheric column state to the corresponding sub-grid physics tendencies computed by the high-resolution physics module (Yu et al., "ClimSim: A large multi-scale dataset for hybrid physics-ML climate emulation", NeurIPS 2023 D&B; arXiv:2306.08754).
 
 ## Task
 Modify the `Custom` model class in `custom_emulator.py` to implement a better neural network architecture. The model must:
@@ -36,13 +36,7 @@ Modify the `Custom` model class in `custom_emulator.py` to implement a better ne
   net shortwave, longwave down, snow/rain precipitation, direct/diffuse solar.
 
 ## Fixed Pipeline
-Dataset loading, input/output normalization, train/val/test splits, optimizer choice and schedule, loss function, and the multi-budget evaluation harness are all fixed by the scaffold. Only the `Custom` architecture is editable.
-
-## Evaluation
-- **Primary metric**: Normalized MSE (NMSE = MSE / Var(target), lower is better).
-- **Secondary metrics**: R² (higher is better), RMSE, plus separate `ml_nmse` (multi-level) and `sl_nmse` (single-level) breakdowns.
-- **Training budgets**: 30 epochs (short), 100 epochs (medium), 200 epochs (long).
-- All three training budgets are run; improvements should be consistent across all three.
+The training and evaluation pipeline (data, normalization, splits, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable. Only the `Custom` architecture is editable.
 
 ## Reference Baselines
 - **cnn**: 1D convolutional network with residual blocks operating on vertical atmospheric profiles. Multi-level variables are treated as spatial sequences over 60 vertical levels; single-level scalars are broadcast and concatenated. Inspired by the ClimSim CNN baseline (Yu et al., NeurIPS 2023 D&B).
@@ -60,7 +54,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `ClimSim/custom_emulator.py`
 - editable lines **86–118**
@@ -415,30 +409,6 @@ Other files you may **read** for context (do not modify):
    336:           f"rmse={final_rmse:.6f}, ml_nmse={ml_nmse:.6f}, sl_nmse={sl_nmse:.6f}",
    337:           flush=True)
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **short-30ep** — wall-clock budget `02:00:00`, compute share `0.33`
-- **medium-100ep** — wall-clock budget `03:00:00`, compute share `0.33`
-- **long-200ep** — wall-clock budget `06:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

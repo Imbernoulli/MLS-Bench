@@ -27,20 +27,13 @@ You may use any combination of cross-entropy variants, margin losses, confidence
 The evaluation loss reported during training (`test_loss`) is computed with standard cross-entropy regardless of the custom loss; the custom loss only affects training.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip` (CIFAR-style).
-- Evaluation settings include ResNet-56 on CIFAR-100 (deep residual, 100 classes), VGG-16-BN on CIFAR-100 (deep non-residual with BatchNorm, 100 classes), and MobileNetV2 on FashionMNIST (lightweight inverted-residual, 10 classes).
+The model architectures, optimizer, learning-rate schedule, data pipeline, augmentation, and the evaluation loss are fixed by the harness and not editable. The custom loss affects training only.
 
 ## Baselines
 The included baselines provide reference implementations of:
 - **label_smoothing** — Szegedy et al., arXiv:1512.00567.
-- **focal_loss** — Lin et al., arXiv:1708.02002, with default focusing parameter `gamma=2.0`.
-- **poly_loss** — Leng et al., arXiv:2204.12511, Poly-1 form with default leading coefficient `eps=2.0` (the value reported in the paper for image classification).
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The custom loss must remain differentiable, accept raw logits and integer class labels, and must not change datasets, model definitions, optimizer setup, or test-time evaluation.
-
+- **focal_loss** — Lin et al., arXiv:1708.02002.
+- **poly_loss** — Leng et al., arXiv:2204.12511, Poly-1 form.
 
 ## Your Workspace
 
@@ -51,7 +44,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_loss.py`
 - editable lines **246–266**
@@ -502,25 +495,6 @@ or deleting existing ones — will cause your submission to score zero.
    435: if __name__ == '__main__':
    436:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet56-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **vgg16bn-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **mobilenetv2-fmnist** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

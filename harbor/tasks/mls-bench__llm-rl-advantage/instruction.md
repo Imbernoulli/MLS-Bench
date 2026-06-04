@@ -36,7 +36,7 @@ def compute_custom_advantage(
 
 - `token_level_rewards` — per-token rewards; for outcome rewards the scalar is at the last valid token (`.sum(dim=-1)` for per-sequence score).
 - `response_mask` — binary validity mask.
-- `index` — group / prompt identifier; same index = same prompt (16 responses per prompt).
+- `index` — group / prompt identifier; same index = same prompt (multiple sampled responses share a prompt).
 - `config` — `AlgoConfig` with `gamma`, `lam`, `norm_adv_by_std_in_grpo`, etc.
 - `old_log_probs`, `ref_log_probs` — per-token log-probs under the rollout / reference policy. Per-token KL ≈ `old_log_probs − ref_log_probs`.
 - Both returned tensors are `(bs, response_length)` and must be masked by `response_mask`.
@@ -49,20 +49,7 @@ Available utilities: `verl_F.masked_whiten(values, mask)`, `verl_F.masked_mean(v
 - `reinforce_plus_plus_baseline` — group mean + token-level batch whitening.
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter training).
-- **Framework**: verl.
-- **Training set**: simpleRL-Zoo MATH level 3–5 (Qwen split), ~8K problems.
-- **RL hyperparameters**: 100 steps, 16 rollout samples per prompt, batch size 128, 1 H200 GPU per experiment.
-- The reward manager, model, rollout config, optimizer, KL-loss setting, and evaluation data are all fixed.
-
-## Evaluation
-Math-reasoning accuracy (`mean@1`) on:
-- **GSM8K** — grade-school math (1,319 problems).
-- **MATH-500** — 500-problem subset of MATH competition problems.
-- **AMC 23** — AMC 2022–2023 competition-math subset.
-
-Higher is better.
-
+The training and evaluation pipeline (framework, policy model, reward manager, rollout config, optimizer, KL-loss setting, RL hyperparameters, training set, and evaluation data) is fixed by the harness and not editable. Your function is invoked through the verl advantage-estimator registry described in the interface contract above.
 
 ## Your Workspace
 
@@ -73,7 +60,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `verl/verl/trainer/ppo/custom_advantage.py`
 - editable lines **17–72**
@@ -160,23 +147,6 @@ or deleting existing ones — will cause your submission to score zero.
     71:         "See core_algos.py for reference implementations (GRPO, RLOO, REINFORCE++, etc.)."
     72:     )
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **deepmath-3bench-h100** — wall-clock budget `12:00:00`, compute share `2`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

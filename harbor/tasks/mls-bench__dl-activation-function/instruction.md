@@ -3,7 +3,7 @@
 # DL Activation Function Design
 
 ## Research Question
-Design an activation function for deep convolutional neural networks that improves test accuracy across different architectures (ResNet, VGG) and datasets (CIFAR-10, CIFAR-100, FashionMNIST), while keeping the model definitions, optimizer, initialization, and data pipeline fixed.
+Design an activation function for deep convolutional neural networks that improves generalization performance across different architectures and datasets, while keeping the model definitions, optimizer, initialization, and data pipeline fixed.
 
 ## Background
 Activation functions introduce nonlinearity into neural networks and critically affect training dynamics, gradient flow, sparsity, and generalization. Classic and modern choices include:
@@ -27,20 +27,12 @@ The activation is used in:
 - MobileNetV2: replaces the ReLU6 baseline used in inverted residuals.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Weight initialization: standard Kaiming normal (fixed).
-- Evaluation settings: ResNet-20 on CIFAR-10, VGG-16-BN on CIFAR-100, MobileNetV2 on FashionMNIST.
+The model definitions, optimizer, schedule, data augmentation, weight initialization, and training loop are fixed by the harness and not editable. Test accuracy is the evaluation metric.
 
 ## Baselines
 - **gelu** — Hendrycks & Gimpel, arXiv:1606.08415; `nn.GELU` (no learnable parameters).
 - **silu** — Ramachandran et al. / Elfwing et al., arXiv:1710.05941; `nn.SiLU`, equivalent to Swish with `beta=1` (no learnable parameters).
 - **mish** — Misra, arXiv:1908.08681; `x * tanh(softplus(x))` (no learnable parameters).
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The activation must be differentiable, shape-preserving, and must not change normalization layers, residual blocks, classifier heads, datasets, or the training loop.
-
 
 ## Your Workspace
 
@@ -51,7 +43,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_activation.py`
 - editable lines **32–49**
@@ -495,30 +487,6 @@ or deleting existing ones — will cause your submission to score zero.
    428: if __name__ == '__main__':
    429:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet20-cifar10** — wall-clock budget `01:59:00`, compute share `1.0`
-- **vgg16bn-cifar100** — wall-clock budget `01:59:00`, compute share `1.0`
-- **mobilenetv2-fmnist** — wall-clock budget `01:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

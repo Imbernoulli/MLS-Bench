@@ -17,17 +17,10 @@ Edit the scaffold file `pytorch-examples/optimization_parity/custom_strategy.py`
 2. `make_dataset(secret, config, seed)`
 3. `get_optimizer_config(config)`
 
-The benchmark is evaluated on three configurations: `(N=32, K=8)`, `(N=50, K=8)`, and `(N=64, K=8)`, all with `W = 512`.
-
 ## Fixed Setup
-- Task: `y = (sum_{i in S} x_i) mod 2` for a hidden secret subset `S` of size `K = 8`.
+- Task: `y = (sum_{i in S} x_i) mod 2` for a hidden secret subset `S`.
 - Inputs: binary vectors `x in {0, 1}^N`.
-- Model: `Linear(N, W) -> ReLU -> Linear(W, 1) -> Sigmoid` with `W = 512`.
-- Optimizer type: `AdamW`.
-- Loss: binary cross-entropy.
-- Batch size: 128.
-- Training budget: up to 100,000 steps, reshuffling every epoch.
-- Evaluation: 10 hidden secrets × 10 random epoch-orderings per secret = 100 runs; report mean held-out test accuracy.
+- The model architecture, optimizer family (`AdamW`), loss, batch size, training loop, and evaluation protocol are fixed by the harness and not editable. All sizes are provided to your functions via the `config` (`TaskConfig`) object.
 
 ## Interface Notes
 - `init_model(...)` must not depend on the hidden secret.
@@ -36,9 +29,6 @@ The benchmark is evaluated on three configurations: `(N=32, K=8)`, `(N=50, K=8)`
 - `y` must have shape `[num_examples]` (or `[num_examples, 1]`) with binary labels.
 - Training dataset size must stay `<= 12_800_000` examples.
 - `get_optimizer_config(...)` must return `lr`, `wd`, `beta1`, and `beta2`.
-
-## Metric
-The leaderboard metric is `test_accuracy` (also emitted as `score`), the mean test accuracy across all 100 training runs. Higher is better.
 
 ## Baselines (variants of the reference setup)
 - **default** — single-pass training over freshly sampled examples with default AdamW settings (`lr = 1e-3`, `wd = 1e-2`, `(beta1, beta2) = (0.9, 0.999)`), the baseline analysed by Barak et al. (NeurIPS 2022; arXiv:2207.08799).
@@ -55,7 +45,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-examples/optimization_parity/custom_strategy.py`
 - editable lines **220–255**
@@ -572,25 +562,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from pytorch-examples/optimization_parity/custom_strategy.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **n32-k8** — wall-clock budget `0:59:00`, compute share `1.0`
-- **n50-k8** — wall-clock budget `0:59:00`, compute share `1.0`
-- **n64-k8** — wall-clock budget `0:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

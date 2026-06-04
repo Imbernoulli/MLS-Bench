@@ -65,17 +65,6 @@ Available PyG modules (pre-installed): any of `GCNConv`, `SAGEConv`, `GATConv`,
 (e.g. `negative_sampling`, `to_undirected`, `degree`),
 `torch_geometric.nn`, `torch_geometric.transforms`.
 
-## Evaluation
-Datasets:
-
-| Label         | Nodes   | Edges     | Features | Split / metric set      |
-|---------------|---------|-----------|----------|-------------------------|
-| Cora          | 2,708   | 10,556    | 1,433    | 85/5/10 link split; AUC, MRR, Hits@20 |
-| CiteSeer      | 3,327   | 9,104     | 3,703    | 85/5/10 link split; AUC, MRR, Hits@20 |
-| ogbl-collab   | 235,868 | 1,285,465 | 128      | Official OGB split; Hits@50, MRR      |
-
-All metrics are higher-is-better.
-
 The scientific contribution may improve the encoder, the edge decoder, or the
 structural features used for candidate edges. The method should avoid assuming
 a fixed feature dimension or graph size and should work for undirected
@@ -91,7 +80,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-geometric-lp/custom_linkpred.py`
 - editable lines **127–210**
@@ -608,30 +597,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from pytorch-geometric-lp/custom_linkpred.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **Cora** — wall-clock budget `00:59:00`, compute share `0.33`
-- **CiteSeer** — wall-clock budget `00:59:00`, compute share `0.33`
-- **ogbl-collab** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

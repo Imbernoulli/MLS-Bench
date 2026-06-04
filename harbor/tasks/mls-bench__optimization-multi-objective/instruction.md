@@ -59,18 +59,6 @@ Available DEAP utilities:
 - `compute_crowding_distance(individuals)` -> sets `.fitness.crowding_dist`.
 - `get_nondominated(population)` -> first non-dominated front.
 
-## Evaluation
-Evaluated on benchmark problems (run with multiple seeds):
-- **ZDT1** (2D objectives, convex front, 30 variables, 200 generations).
-- **ZDT3** (2D objectives, disconnected front, 30 variables, 200 generations).
-- **DTLZ2** (3D objectives, spherical front, 12 variables, 250 generations).
-- **DTLZ1** (3D objectives, linear front with many local fronts, 7 variables, 400 generations).
-
-Three metrics are reported:
-- **Hypervolume (HV)**: volume of objective space dominated by the Pareto front approximation. **Higher is better.**
-- **Inverted Generational Distance (IGD)**: average distance from true Pareto front points to nearest found solution. **Lower is better.**
-- **Spread**: uniformity of the Pareto front approximation. **Lower is better.**
-
 ## Baselines (paper-cited reference implementations)
 - **nsga2** — Deb et al. (*IEEE TEC* 2002); paper-default SBX `eta_c = 20`, polynomial mutation `eta_m = 20`, `p_m = 1/n_var`.
 - **moead** — Zhang and Li (*IEEE TEC* 2007); paper-default Tchebycheff aggregation, neighborhood size `T = 20`.
@@ -89,7 +77,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `deap/custom_moea.py`
 - editable lines **297–441**
@@ -606,26 +594,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from deap/custom_moea.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **zdt1** — wall-clock budget `01:00:00`, compute share `0.25`
-- **zdt3** — wall-clock budget `01:00:00`, compute share `0.25`
-- **dtlz2** — wall-clock budget `01:00:00`, compute share `0.25`
-- **dtlz1** — wall-clock budget `01:00:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

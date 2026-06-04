@@ -36,14 +36,6 @@ class DPMechanism:
 - Focus on algorithmic innovation in the DP mechanism: clipping strategies, noise schedules, gradient processing.
 - Available imports: `torch`, `math`, `numpy` (via the FIXED section), `scipy.optimize`.
 
-## Evaluation
-Trained and evaluated on three datasets at `epsilon = 3.0`, `delta = 1e-5`:
-- **MNIST** (28x28 grayscale digits, 10 classes)
-- **Fashion-MNIST** (28x28 grayscale clothing, 10 classes)
-- **CIFAR-10** (32x32 color images, 10 classes)
-
-Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded.
-
 ## Baselines (paper-cited reference implementations)
 - **standard_dpsgd** — Abadi et al. (CCS 2016; arXiv:1607.00133): fixed `C` and constant `σ` calibrated up-front.
 - **automatic_clipping** — Bu, Wang, Zha, and Karypis, "Automatic Clipping: Differentially Private Deep Learning Made Easier and Stronger" (NeurIPS 2023; arXiv:2206.07136): per-sample normalization removes the clipping-norm hyperparameter.
@@ -60,7 +52,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `opacus/custom_dpsgd.py`
 - editable lines **152–233**
@@ -577,25 +569,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from opacus/custom_dpsgd.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **mnist** — wall-clock budget `0:59:00`, compute share `0.5`
-- **fmnist** — wall-clock budget `0:59:00`, compute share `0.5`
-- **cifar10** — wall-clock budget `0:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

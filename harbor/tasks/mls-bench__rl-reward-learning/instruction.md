@@ -36,16 +36,6 @@ Reference baselines spanning the design space:
   Adversarial reward learning with a state-only reward decomposition
   that yields a reward robust to dynamics changes.
 
-## Evaluation
-Trained and evaluated on Gymnasium MuJoCo locomotion environments
-including HalfCheetah-v4, Hopper-v4 and Walker2d-v4 using
-pre-generated expert demonstrations bundled with the benchmark. The
-PPO policy is trained with the learned reward signal and evaluated
-under the true environment reward. Metric: mean episodic return over
-evaluation episodes (higher is better). Strong methods should learn
-rewards that generalize across state distributions and task dynamics.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -55,7 +45,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `imitation/custom_irl.py`
 - editable lines **231–357**
@@ -574,30 +564,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from imitation/custom_irl.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **halfcheetah-v4** — wall-clock budget `12:00:00`, compute share `0.33`
-- **hopper-v4** — wall-clock budget `12:00:00`, compute share `0.33`
-- **walker2d-v4** — wall-clock budget `12:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

@@ -79,6 +79,15 @@ chmod -R a-w "${PRIVATE_META}" "${PRIVATE_ROOT}/score_task.py"
 chmod go-rwx "${PRIVATE_ROOT}" || true
 trap 'rm -rf "${PRIVATE_ROOT}"' EXIT
 
+ORACLE_CMD_OVERRIDES_ARGS=()
+if [ -r /solution/oracle_cmd_overrides.json ] \
+        && [ -r /solution/oracle_cmd_overrides.token ] \
+        && [ -r "${PRIVATE_META}/oracle_cmd_overrides.token" ] \
+        && cmp -s /solution/oracle_cmd_overrides.token "${PRIVATE_META}/oracle_cmd_overrides.token"; then
+    ORACLE_CMD_OVERRIDES_JSON="$(cat /solution/oracle_cmd_overrides.json)"
+    ORACLE_CMD_OVERRIDES_ARGS=(--oracle-cmd-overrides "${ORACLE_CMD_OVERRIDES_JSON}")
+fi
+
 # Step 1: edit-range diff guard. The pristine baseline is the
 # per-task-rendered tree under tests/meta/pristine/ (mounted only at verify
 # time), so the agent had no opportunity to tamper with it.
@@ -107,7 +116,8 @@ fi
     --task-meta "${PRIVATE_META}" \
     --workspace "${WORKDIR}" \
     --eval-root /tests/eval \
-    --out-dir /logs/verifier
+    --out-dir /logs/verifier \
+    "${ORACLE_CMD_OVERRIDES_ARGS[@]}"
 
 # Step 3: aggregate metrics → combined_score → reward.txt.
 "${PYTHON_BIN}" -I "${PRIVATE_ROOT}/score_task.py" score \

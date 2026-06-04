@@ -3,7 +3,7 @@
 # Multivariate Long-Term Time Series Forecasting
 
 ## Research Question
-What forecasting component (sequence modeling, decomposition, cross-variable attention, normalization) generalizes across heterogeneous multivariate datasets at a fixed 96-step look-back / 96-step horizon, under the Time-Series-Library training and evaluation pipeline?
+What forecasting component (sequence modeling, decomposition, cross-variable attention, normalization) generalizes across heterogeneous multivariate datasets at a fixed look-back / horizon, under the Time-Series-Library training and evaluation pipeline?
 
 ## Background
 Long-term multivariate forecasting predicts the next horizon for all channels of a multivariate series given a fixed look-back window. Recent work has explored very different inductive biases: pure linear projections after trend/seasonal decomposition (DLinear); channel-independent Transformer over patches (PatchTST); inverted attention treating variates as tokens (iTransformer); MLP-based multi-scale decomposition (TimeMixer); and explicit endogenous/exogenous separation (TimeXer). The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes splits, normalization, and metric computation so that architectural contributions can be compared head-to-head.
@@ -32,15 +32,8 @@ class Model(nn.Module):
         return out[:, -self.pred_len:, :]
 ```
 
-## Datasets and Fixed Protocol
-- **ETTh1** — 7 variables, hourly Electricity Transformer Temperature (Zhou et al., AAAI 2021).
-- **Weather** — 21 variables, weather observations.
-- **ECL** — 321 variables, hourly client electricity consumption.
-
-All settings: `features=M` (multivariate input → multivariate output), `seq_len=96`, `label_len=48`, `pred_len=96`. Standardization, splits, and evaluation are fixed by the Time-Series-Library data pipeline.
-
-## Metrics
-MSE and MAE on all channels — lower is better.
+## Fixed Protocol
+The training and evaluation pipeline (datasets, standardization, splits, look-back/horizon lengths, training loop, and metrics) is fixed by the Time-Series-Library harness and not editable. Your `Model` reads all shape and length settings (`seq_len`, `label_len`, `pred_len`, `enc_in`, `c_out`, etc.) from the `configs` object passed to `__init__`; do not hardcode them.
 
 ## Reference Implementations (read-only)
 Five reference models from `models/`:
@@ -61,7 +54,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `Time-Series-Library/models/Custom.py`
 - editable: **entire file**
@@ -2075,23 +2068,6 @@ Other files you may **read** for context (do not modify):
    134:             x = self.projection(x)
    135:         return x
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **ETTh1** — wall-clock budget `00:59:00`, compute share `0.33`
-- **Weather** — wall-clock budget `00:59:00`, compute share `0.33`
-- **ECL** — wall-clock budget `00:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

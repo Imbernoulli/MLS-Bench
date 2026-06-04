@@ -8,7 +8,7 @@ Design a molecular representation model for predicting chemical properties (toxi
 ## Background
 Molecular property prediction is a core task in drug discovery and materials science. Given a molecule (as a SMILES string → molecular graph + optional 3D coordinates), the model must predict one or more chemical properties. Key challenges include:
 - **Molecular representation**: How to encode atoms, bonds, and 3D geometry into informative features.
-- **Multi-task learning**: Some datasets have multiple targets with missing labels (e.g., Tox21 has 12 assays).
+- **Multi-task learning**: Some datasets have multiple targets with missing labels across multiple assays.
 - **Scaffold generalization**: The scaffold split ensures the model generalizes to structurally novel molecules.
 
 Existing approaches include:
@@ -57,24 +57,15 @@ One-hot encodings of: atomic_num (118), degree (6), formal_charge (5), num_Hs (5
 One-hot encodings of: bond_type (4), stereo (3), conjugated (1), in_ring (1).
 
 ## Fixed Pipeline
-SMILES preprocessing, conformer generation, scaffold splitting, training loop, optimizer schedule, normalization for regression targets, masked loss for missing labels, and test-time augmentation are all fixed by the scaffold.
-
-## Evaluation
-The model is tested on three MoleculeNet classification benchmarks with scaffold splits (metric: ROC-AUC, higher is better):
-- **BBBP**: Blood-brain barrier penetration (2,039 molecules, 1 task).
-- **BACE**: Beta-secretase 1 inhibition (1,513 molecules, 1 task).
-- **Tox21**: Toxicity across 12 assays (7,831 molecules, 12 tasks, multi-task with missing labels).
-
-ROC-AUC is averaged over valid labels per task and across tasks.
+The training and evaluation pipeline (data preparation, splitting, training loop, optimizer schedule, target normalization, masked loss, test-time augmentation, and metrics) is fixed by the scaffold and not editable.
 
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_molprop.py` is editable. You may define helper classes, layers, or functions within this region. The region must contain a `MoleculeModel` class with the specified interface.
 
 ## Available Resources
-- 3D conformers from LMDB (Uni-Mol pipeline: coordinates normalized, polar H removed).
-- Uni-Mol vocabulary tokens and edge types available in batch.
-- Uni-Mol pre-trained weights available inside the container at the path used by the `unimol` baseline.
-- Test-time augmentation: predictions averaged over 11 conformers at val/test time.
+- 3D conformers and pre-computed distances/edge types are provided in the batch.
+- Uni-Mol vocabulary tokens and edge types are available in the batch.
+- Uni-Mol pre-trained weights are available inside the container at the path used by the `unimol` baseline.
 
 
 ## Your Workspace
@@ -86,7 +77,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `Uni-Mol/custom_molprop.py`
 - editable lines **115–207**
@@ -603,23 +594,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from Uni-Mol/custom_molprop.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **BBBP** — wall-clock budget `01:30:00`, compute share `0.5`
-- **BACE** — wall-clock budget `01:30:00`, compute share `0.5`
-- **Tox21** — wall-clock budget `02:00:00`, compute share `0.5`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

@@ -28,19 +28,10 @@ Reference baselines spanning the design space:
   distributional critic with default 51 atoms over `[-10, 10]`.
 
 ## Constraints
-- Network architecture dimensions are FIXED and cannot be modified.
-- Total parameter count is enforced at runtime; the contribution must
-  be algorithmic (head design, target construction, TD loss,
-  exploration, replay usage) rather than encoder capacity.
+- The shared encoder architecture is FIXED and cannot be modified; the
+  contribution must be algorithmic (head design, target construction, TD
+  loss, exploration, replay usage) rather than encoder capacity.
 - Do **not** simply copy a reference implementation with minor changes.
-
-## Evaluation
-Trained and evaluated on Gymnasium discrete-control tasks including
-CartPole-v1, LunarLander-v2 and Acrobot-v1 within a fixed interaction
-budget. Metric: mean episodic return over greedy evaluation episodes
-(higher is better). Strong methods should remain stable across tasks
-with different reward scales and episode lengths.
-
 
 ## Your Workspace
 
@@ -51,7 +42,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `cleanrl/cleanrl/custom_value_discrete.py`
 - editable lines **174–242**
@@ -395,30 +386,6 @@ or deleting existing ones — will cause your submission to score zero.
    328: 
    329:     envs.close()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **cartpole-v1** — wall-clock budget `02:00:00`, compute share `0.33`
-- **lunarlander-v2** — wall-clock budget `02:00:00`, compute share `0.33`
-- **acrobot-v1** — wall-clock budget `02:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

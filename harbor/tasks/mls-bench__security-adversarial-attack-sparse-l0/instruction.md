@@ -11,11 +11,11 @@ Sparse adversarial attacks differ from dense `L_p` attacks in that the perturbat
 Representative sparse-attack algorithms include the Jacobian Saliency Map Attack JSMA (Papernot et al., 2016, arXiv:1511.07528), the differential-evolution One-Pixel attack (Su et al., 2019, arXiv:1710.08864), the geometry-inspired SparseFool (Modas et al., CVPR 2019, arXiv:1811.02248), the random-search Sparse-RS framework (Croce et al., AAAI 2022, arXiv:2006.12834), and Pixle, a fast pixel-rearrangement black-box attack (Pomponi et al., 2022, arXiv:2202.02236).
 
 ## Objective
-Implement a stronger sparse attack in `bench/custom_attack.py`. The method should maximize attack success rate (ASR) under a strict `L0` perturbation budget:
+Implement a stronger sparse attack in `bench/custom_attack.py`. The method should maximize attack success rate under a strict `L0` perturbation budget:
 
 - Threat model: full model access for custom attack implementation (gradients permitted).
 - Norm constraint: number of modified spatial pixels is bounded.
-- Budget: `L0(x_adv, x) <= pixels`, where `pixels = 24` (the canonical Sparse-RS CIFAR-10 L0 budget, Croce et al., AAAI 2022). A pixel is counted as modified if any of its channels changes.
+- Budget: `L0(x_adv, x) <= pixels`, where `pixels` is passed as a parameter. A pixel is counted as modified if any of its channels changes.
 
 ## Editable Interface
 You must implement:
@@ -26,32 +26,17 @@ Inputs:
 - `images`: tensor of shape `(N, C, H, W)`, values in `[0, 1]`.
 - `labels`: tensor of shape `(N,)`.
 - `pixels`: maximum number of modified spatial pixels per sample.
-- `n_classes`: 10 (CIFAR-10).
+- `n_classes`: number of classes in the target dataset.
 
 Output:
 - `adv_images`: same shape as `images`, also in `[0, 1]`.
 
-## Evaluation Protocol
-Each evaluation script:
-1. Loads one adversarially-robust pretrained model.
-2. Collects up to 150 samples that are initially classified correctly.
-3. Runs your `run_attack`.
-4. Checks `L0` validity (`<= pixels` modified spatial pixels) and `[0, 1]` range.
-5. Reports `clean_acc`, `robust_acc`, and `asr = 1 - robust_acc`.
-
-Important:
-- ASR denominator is the number of initially correct samples.
-- Invalid adversarial outputs (shape mismatch, non-finite values, or violated budget) are treated as failure.
-
-## Evaluation Scenarios
-Three CIFAR-10 settings, each an adversarially-robust target model from the
-RobustBench L2 model zoo (this is the canonical Sparse-RS L0 threat model,
-Croce et al., AAAI 2022, Table 2 / App. A.5 — on standard undefended models
-a strong L0 attack trivially saturates):
-
-- `Rebuffi-R18-L2`: l2-AT PreActResNet-18 (Rebuffi et al., 2021) — the exact model the Sparse-RS paper evaluates L0 against.
-- `Augustin-L2`: l2-robust model (Augustin et al., 2020).
-- `Engstrom-L2`: l2-robust model (Engstrom et al., 2019).
+## Evaluation
+Each evaluation run loads an adversarially-robust pretrained model, collects
+correctly-classified samples, runs your `run_attack`, and checks `L0` validity
+(`<= pixels` modified spatial pixels) and `[0, 1]` range. Invalid adversarial
+outputs (shape mismatch, non-finite values, or violated budget) are treated as
+failure.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; reference implementations are in `torchattacks`:
@@ -74,7 +59,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `torchattacks/bench/custom_attack.py`
 - editable lines **3–26**
@@ -119,25 +104,6 @@ Other files you may **read** for context (do not modify):
     26: # END EDITABLE REGION
     27: # =====================================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **Rebuffi-R18-L2** — wall-clock budget `4:00:00`, compute share `0.5`
-- **Augustin-L2** — wall-clock budget `4:00:00`, compute share `0.5`
-- **Engstrom-L2** — wall-clock budget `4:00:00`, compute share `0.5`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

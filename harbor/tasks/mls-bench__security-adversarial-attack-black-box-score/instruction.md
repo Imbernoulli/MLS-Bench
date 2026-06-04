@@ -3,7 +3,7 @@
 # Score-Based Query Black-Box Attack under Linf Constraint
 
 ## Research Question
-Can you design a stronger score-based query black-box attack that improves attack success rate (ASR) under a fixed query budget and `L_inf` perturbation constraint?
+Can you design a stronger score-based query black-box attack under a fixed query budget and `L_inf` perturbation constraint?
 
 ## Background
 Score-based query black-box attacks assume the attacker can query the victim model and observe its logits (or softmax scores) but cannot access gradients or weights. The attacker must search the input space using only forward queries while staying inside an `L_inf` ball around the clean image. This regime models realistic threat scenarios such as MLOps APIs that expose only prediction confidences.
@@ -16,8 +16,6 @@ Implement a better black-box attack in `bench/custom_attack.py`:
 - Threat model: query black-box (no gradient access, only model logits).
 - Constraint: `||x_adv - x||_inf <= eps`.
 - Budget: `n_queries` is a per-sample query budget.
-- Primary metric: maximize `ASR` under the fixed budget.
-- Tie-break: for similar ASR, lower `avg_queries` is better.
 
 ## Editable Interface
 You must implement:
@@ -28,7 +26,7 @@ Inputs:
 - `model`: black-box wrapper that returns logits only.
 - `images`: tensor of shape `(N, C, H, W)`, in `[0, 1]`.
 - `labels`: tensor of shape `(N,)`.
-- `n_classes`: 10 for CIFAR-10, 100 for CIFAR-100.
+- `n_classes`: number of classes in the target dataset.
 
 Output:
 - `adv_images`: tensor with same shape as `images`, values in `[0, 1]`.
@@ -48,17 +46,7 @@ Wrapper behavior and evaluation logic are fixed. Improvements should be confined
 - Different batch partitioning is treated as equivalent total budget usage.
 
 ## Evaluation Scenarios
-Each scenario is a (model, dataset) pair drawn from {ResNet20, VGG11-BN, MobileNetV2} x {CIFAR-10, CIFAR-100}, using publicly available pretrained checkpoints.
-
-## Metrics
-Reported metrics line format:
-
-`ATTACK_METRICS asr=... clean_acc=... robust_acc=... avg_queries=...`
-
-- `asr`: attack success rate (higher is better) — primary metric.
-- `clean_acc`: accuracy of the model on the unperturbed batch (sanity check).
-- `robust_acc`: `1 - asr`.
-- `avg_queries`: average number of model queries consumed per sample (lower is better, used as tie-break).
+The evaluation is run across multiple (model, dataset) pairs using publicly available pretrained image classifiers.
 
 
 ## Your Workspace
@@ -70,7 +58,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `torchattacks/bench/custom_attack.py`
 - editable lines **7–56**
@@ -147,27 +135,6 @@ Other files you may **read** for context (do not modify):
     59: # END EDITABLE REGION
     60: # =====================================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **ResNet20-C10** — wall-clock budget `2:00:00`, compute share `0.5`
-- **VGG11BN-C10** — wall-clock budget `2:00:00`, compute share `0.5`
-- **MobileNetV2-C10** — wall-clock budget `2:00:00`, compute share `0.5`
-- **ResNet20-C100** — wall-clock budget `2:00:00`, compute share `0.5`
-- **MobileNetV2-C100** — wall-clock budget `2:00:00`, compute share `0.5`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

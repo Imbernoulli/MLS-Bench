@@ -3,7 +3,7 @@
 # LLM Pretraining: Learning Rate Schedule Optimization
 
 ## Research Question
-Design an improved learning-rate schedule for GPT-style language model pretraining. The change should reduce validation loss compared to standard cosine annealing with linear warmup, under the same model, data, optimizer, and total update budget.
+Design an improved learning-rate schedule for GPT-style language model pretraining. The change should improve language modeling performance compared to standard cosine annealing with linear warmup, under the same model, data, optimizer, and total update budget.
 
 ## Background
 The default schedule is **linear warmup → cosine decay to a small `min_lr`**. Several alternative shapes have been studied as drop-in replacements at the schedule layer:
@@ -30,15 +30,7 @@ The `get_lr` function in `nanoGPT/custom_pretrain.py`:
 - `wsd_sqrt` — WSD with `1 − sqrt(progress)` decay.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 12,030 iterations, micro-batch 96, gradient accumulation 6, 2-GPU DDP.
-- Architecture, dataset, optimizer implementation, batch construction, and evaluation are fixed.
-
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
+The training and evaluation pipeline (model architecture, dataset, tokenizer, optimizer, batch construction, total update budget, and metrics) is fixed by the harness and not editable. You implement only the `get_lr` schedule in the editable regions.
 
 
 ## Your Workspace
@@ -50,7 +42,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `nanoGPT/custom_pretrain.py`
 - editable lines **191–201**
@@ -505,24 +497,6 @@ Other files you may **read** for context (do not modify):
    436:     if ddp:
    437:         dist.destroy_process_group()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **gpt-345m** — wall-clock budget `12:00:00`, compute share `4.0`
-- **lm-eval-345m** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

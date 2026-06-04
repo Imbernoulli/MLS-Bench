@@ -31,7 +31,7 @@ def normalize_rewards(
 ) -> torch.Tensor:                      # (bs, response_length) normalized
 ```
 - Outcome rewards live at the last valid token; use `.sum(dim=-1)` to recover per-sequence scalars.
-- Samples sharing `index[i]` come from the same prompt (16 rollouts per prompt).
+- Samples sharing `index[i]` come from the same prompt (a GRPO-style group of rollouts).
 - Output shape must equal input shape; multiply by `response_mask` to preserve "outcome reward at last token" semantics where appropriate.
 - Wrap in `torch.no_grad()`.
 - Available utilities: `verl_F.masked_whiten`, `verl_F.masked_mean`, `defaultdict`, `torch`, `numpy`.
@@ -46,13 +46,7 @@ def normalize_rewards(
 | `length_aware` | divide scalar by `√(response_length)` before broadcast (DAPO length-bias fix) |
 
 ## Fixed Pipeline
-- **Policy**: Qwen2.5-0.5B (full-parameter), verl, GRPO advantage estimator, n=16 rollouts per prompt.
-- **Training set**: simpleRL-Zoo MATH level 3–5 (Qwen split) + 5K DeepMath problems.
-- **Hyperparameters**: 100 steps, batch size 128, max response length 16,384 tokens, `test_freq=25`, `total_epochs=1`.
-- Reward source, advantage estimator, model, rollout setup, optimizer, KL-loss setting, and evaluation data are fixed.
-
-## Evaluation
-Math-reasoning accuracy (`mean@1`) on **GSM8K**, **MATH-500**, and **AMC 23**; primary score is the mean across the three.
+The training and evaluation pipeline (policy model, training stack, advantage estimator, grouped rollout setup, reward source, optimizer, and evaluation data) is fixed by the harness and not editable. Your normalization runs upstream of the fixed advantage estimator.
 
 
 ## Your Workspace
@@ -64,7 +58,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `verl/verl/trainer/ppo/custom_reward_normalization.py`
 - editable lines **17–72**
@@ -151,23 +145,6 @@ or deleting existing ones — will cause your submission to score zero.
     71:         scores = token_level_scores * response_mask
     72:         return scores
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **deepmath-3bench-h100** — wall-clock budget `12:00:00`, compute share `2`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

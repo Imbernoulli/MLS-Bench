@@ -61,28 +61,6 @@ def custom_attention_forward(q, k, v, causal=True, sm_scale=None):
 Correctness constraint: max absolute difference from reference (PyTorch
 SDPA) must be `< 1e-2`.
 
-## Evaluation
-
-Benchmarked on multiple causal configurations aligned with the FA3 paper
-(total tokens = 16384):
-
-| Config | Batch | SeqLen | Heads | HeadDim |
-|---|---|---|---|---|
-| `hdim64_seq4k` | 4 | 4096 | 32 | 64 |
-| `hdim128_seq8k` | 2 | 8192 | 16 | 128 |
-| `hdim256_seq16k` | 1 | 16384 | 8 | 256 |
-
-All configurations use FP16, causal masking, on H100 80GB SXM5.
-
-Metrics (per configuration):
-
-- `tflops`: achieved TFLOPs/s (higher is better) — primary metric
-- `latency_ms`: kernel latency in milliseconds (lower is better)
-- `correct`: binary (1 if `max_diff < 1e-2`, else 0) — hard constraint
-
-FLOP formula (FA2/FA3 convention):
-`4 * batch * seqlen^2 * nheads * headdim / 2` (causal).
-
 ## Hints
 
 - The default template provides a basic flash attention kernel. Key
@@ -117,7 +95,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `flash-attention/custom_triton_bench.py`
 - editable lines **29–119**
@@ -379,25 +357,6 @@ or deleting existing ones — will cause your submission to score zero.
    246: if __name__ == "__main__":
    247:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **hdim64_seq4k** — wall-clock budget `0:01:00`, compute share `1.0`
-- **hdim128_seq8k** — wall-clock budget `0:01:00`, compute share `1.0`
-- **hdim256_seq16k** — wall-clock budget `0:01:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

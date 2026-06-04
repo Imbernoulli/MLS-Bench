@@ -31,9 +31,6 @@ span several paradigms:
   discrete denoising diffusion (Vignac, Krawczuk, Siraudin, Wang, Cevher &
   Frossard, ICLR 2023; arXiv:2209.14734).
 
-Evaluation uses Maximum Mean Discrepancy (MMD) between graph statistics
-(degree, clustering, orbits) of generated and reference graphs.
-
 ## What You Can Modify
 The `GraphGenerator` class in `custom_graphgen.py`. This class must implement:
 
@@ -55,28 +52,10 @@ The optimizer should be created in `__init__` and stepped in `train_step`.
 Available imports inside the editable region: `torch`, `torch.nn`,
 `torch.nn.functional`, `torch.optim`, `numpy`, `math`.
 
-## Evaluation
-Datasets:
-- `community_small`: 100 synthetic 2-community graphs (12-20 nodes).
-- `ego_small`: 200 ego graphs from Citeseer (4-18 nodes).
-- `enzymes`: 587 protein structure graphs from BRENDA (10-125 nodes).
-
-Fixed pipeline (shared by all baselines and the agent):
-- 500 epochs, batch size 32, single GPU. (This is reduced from the 3000 epochs
-  used in some published setups so that all methods fit the per-task compute
-  budget; the same schedule is used for every method.)
-- Multiple seeds for statistical reliability.
-
-Metrics (all lower is better):
-- `mmd_degree`: MMD of degree distributions.
-- `mmd_clustering`: MMD of clustering-coefficient distributions.
-- `mmd_orbit`: MMD of 4-orbit count distributions.
-- `mmd_avg`: average of the three MMD metrics.
-
+## Implementation Contract
 Suitable contributions may be autoregressive, latent-variable, diffusion-like,
-energy-based, score-based, or otherwise structured, provided they can train
-within the fixed budget and sample valid undirected graphs without relying on
-the evaluation labels.
+energy-based, score-based, or otherwise structured, provided they can sample
+valid undirected graphs without relying on the evaluation labels.
 
 
 ## Your Workspace
@@ -88,7 +67,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-geometric/custom_graphgen.py`
 - editable lines **446–590**
@@ -605,30 +584,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from pytorch-geometric/custom_graphgen.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **community_small** — wall-clock budget `00:59:00`, compute share `0.33`
-- **ego_small** — wall-clock budget `00:59:00`, compute share `0.33`
-- **enzymes** — wall-clock budget `00:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

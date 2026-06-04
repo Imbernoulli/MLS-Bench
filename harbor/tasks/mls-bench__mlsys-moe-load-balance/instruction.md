@@ -73,46 +73,6 @@ Constraints:
 - Every logical expert must have at least one replica
 - `logcnt.sum(-1)` must equal `num_replicas` for every layer
 
-## Evaluation
-
-Four MoE deployments derived from real architectures plus one stress
-configuration:
-
-| Config | E (experts) | G (groups) | N (nodes) | D (GPUs) | R (replicas) | zipf · skew |
-|---|---|---|---|---|---|---|
-| `deepseek-v3`  | 256 | 8  | 8  | 64  | 320 | 0.7 · 0.85 |
-| `qwen3-moe`    | 128 | 8  | 4  | 32  | 160 | 0.5 · 0.70 |
-| `deepseek-v2`  | 160 | 8  | 4  | 32  | 192 | 0.6 · 0.75 |
-| `stress-skew`  | 256 | 32 | 16 | 128 | 384 | 1.0 · 0.95 |
-
-`stress-skew` is a synthetic stress test: 16-node hierarchy is the
-largest in the suite, the replication budget is tighter (1.5x rather than
-2x), `groups_per_node = 2` makes Stage 1 group-to-node packing
-non-trivial, and the workload follows a long-tail Zipf distribution.
-
-Per configuration, four metrics are reported:
-
-- `balance` — `mean_gpu_load / max_gpu_load`, averaged over layers and
-  trials. Higher is better, capped at 1.0 (perfect per-GPU balance).
-- `balance_node` — `mean_node_load / max_node_load`, the same ratio at
-  node granularity. Higher is better, capped at 1.0.
-- `locality` — traffic-weighted node locality of replicas. For each
-  (layer, expert) pair the harness counts how many distinct nodes hold a
-  replica; the score is `1 / nodes_per_expert` averaged over experts
-  (weighted by per-layer expert traffic) and over layers. A hierarchical
-  scheme that keeps every expert's replicas on a single node scores 1.0;
-  a flat scheme that scatters replicas across all nodes uniformly scores
-  `1 / num_nodes`. This metric directly captures the inter-node
-  communication cost that pure load-balance metrics ignore.
-- `runtime_ms` — median wall time of the placement algorithm over 20
-  timed iterations, averaged across 10 workload trials. Lower is better.
-
-The combined per-config score weights all four terms equally; the task
-score is the geometric mean across the four configs. All three
-balance/locality metrics are required: a flat scheme that scatters
-replicas to maximize per-GPU balance will lose `locality`; a method that
-co-locates replicas without addressing skew will lose `balance`.
-
 ## Reference baselines
 
 ### greedy
@@ -142,7 +102,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `eplb/custom_eplb.py`
 - editable lines **62–209**
@@ -605,26 +565,6 @@ or deleting existing ones — will cause your submission to score zero.
    447: if __name__ == "__main__":
    448:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **deepseek-v3** — wall-clock budget `01:00:00`, compute share `1.0`
-- **qwen3-moe** — wall-clock budget `01:00:00`, compute share `1.0`
-- **deepseek-v2** — wall-clock budget `01:00:00`, compute share `1.0`
-- **stress-skew** — wall-clock budget `01:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

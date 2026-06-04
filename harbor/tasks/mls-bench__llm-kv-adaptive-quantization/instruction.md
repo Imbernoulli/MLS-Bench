@@ -61,24 +61,7 @@ or a backend selector.
 - The parser or final-score definitions
 - The underlying `Transformers` model implementation
 
-## Evaluation
-
-The visible model is `Qwen/Qwen2.5-3B-Instruct`. Workloads share the same
-public text-benchmark protocol with `llm-kv-selection-budgeting`; dataset
-sources, split names, prompt templates, generation limits, and scoring
-semantics stay aligned across those tasks whenever a workload label is
-shared.
-
-| Label | Source | Final score |
-|---|---|---|
-| `longbench_hotpotqa` | LongBench-E `hotpotqa_e` | LongBench QA F1 (0-100) |
-| `longbench_passage_retrieval` | LongBench-E `passage_retrieval_en_e` | LongBench retrieval score (0-100) |
-| `longbench_repobench` | LongBench-E `repobench-p_e` | LongBench code similarity (0-100) |
-| `needlebench_niah` | RULER/NeedleBench-style needle in public essay text | exact phrase retrieval accuracy (0-100) |
-| `gsm8k` | `openai/gsm8k` main test split | exact final-answer accuracy after numeric normalization (0-100) |
-
-For NIAH the canonical needle is:
-`The best thing to do in San Francisco is eat a sandwich and sit in Dolores Park on a sunny day.`
+## Output Contract
 
 The parser expects one `TEST_METRICS:` line per workload with:
 
@@ -112,27 +95,6 @@ backend.
   subspace dimension `60`, `squat_lambda=0.001`, `quant_group_size=64`,
   `shared_svd=True`, K/V group size `32`, residual block length `32`.
 
-## Canonical Ranking
-
-The leaderboard uses the standard mature MLS-Bench text-task pattern:
-
-- each workload emits a benchmark-native `final_score_*` quality column
-- each workload also emits a hardware-independent `kv_compression_ratio_*`
-  efficiency column
-- quality uses the repository standard bounded-power normalization with the
-  worst current baseline as the floor, `100` as the bound, and the best
-  current baseline as the reference point
-- efficiency uses bounded-power normalization on `kv_compression_ratio` with
-  the worst current baseline as the floor, `4x` compression as the
-  reference, and `8x` compression as the bound
-- `runtime_seconds_*` is an emitted diagnostic column but does not enter
-  the final score (this tensor-replay harness is not a runtime-native
-  packed-cache speed benchmark)
-- each workload score is a weighted mean with quality weight `6` and KV
-  efficiency weight `4`
-- the task score is the geometric mean across the LongBench-E workloads,
-  NIAH, and GSM8K
-
 ## Notes
 
 - The harness runs deterministic greedy generation over `Transformers`
@@ -151,7 +113,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `transformers-kv-lab/custom_quant_eval.py`
 - editable lines **41–172**
@@ -670,27 +632,6 @@ Other files you may **read** for context (do not modify):
 
 [truncated: showing at most 500 lines / 60000 bytes from transformers-kv-lab/custom_quant_eval.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **longbench-hotpotqa** — wall-clock budget `02:00:00`, compute share `1.0`
-- **longbench-passage-retrieval** — wall-clock budget `02:00:00`, compute share `1.0`
-- **longbench-repobench** — wall-clock budget `03:00:00`, compute share `1.0`
-- **needlebench-niah** — wall-clock budget `02:00:00`, compute share `1.0`
-- **gsm8k** — wall-clock budget `09:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

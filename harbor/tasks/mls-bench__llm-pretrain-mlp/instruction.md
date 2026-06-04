@@ -31,15 +31,9 @@ The `MLP` class in `nanoGPT/custom_pretrain.py`:
 - `relu_squared` — Primer-EZ squared-ReLU activation.
 
 ## Fixed Pipeline
-- **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).
-- **Dataset**: FineWeb 10B (HuggingFace `HuggingFaceFW/fineweb` `sample-10BT`), GPT-2 tokenizer, ~7.1B training tokens.
-- **Training**: 12,030 iterations, micro-batch 96, gradient accumulation 6, 2-GPU DDP.
+The training and evaluation pipeline (data, model backbone, optimizer, schedule, precision, and metrics) is fixed by the harness and not editable, apart from the per-method `CONFIG_OVERRIDES` knobs noted below.
 
-## Evaluation
-- **Validation loss** — cross-entropy on FineWeb (lower is better, primary).
-- **Perplexity** — WikiText-2, LAMBADA (lower is better).
-- **Downstream accuracy** — ARC-Easy, HellaSwag, PIQA, WinoGrande (higher is better).
-
+The editable region exposes a `CONFIG_OVERRIDES = {}` dict whose allowed keys are `learning_rate`, `weight_decay`, `warmup_iters`, `min_lr`, and `grad_clip`; use it to override training hyperparameters for your method.
 
 ## Your Workspace
 
@@ -50,7 +44,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `nanoGPT/custom_pretrain.py`
 - editable lines **72–86**
@@ -506,28 +500,9 @@ Other files you may **read** for context (do not modify):
    437:         dist.destroy_process_group()
 ```
 
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **gpt-345m** — wall-clock budget `12:00:00`, compute share `4.0`
-- **lm-eval-345m** — wall-clock budget `1:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Your MLP implementation must not significantly increase total model parameter count relative to the standard 4× GELU baseline. Keep hidden dimension sizing comparable; if you use a gating mechanism (e.g., GLU variants), reduce the hidden width accordingly (commonly to ⌊8d/3⌋).
 
 ## Reference Baselines
 

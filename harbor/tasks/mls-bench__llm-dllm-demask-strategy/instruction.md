@@ -5,8 +5,8 @@
 ## Research Question
 Design a better demasking (decoding) strategy for masked diffusion language models. The strategy must generalize across **different decoding regimes**:
 
-- **Block-based semi-autoregressive decoding** for downstream-task accuracy (LLaDA on MATH/HumanEval, following the KLASS protocol).
-- **Fully-parallel decoding** for open-ended text generation (Dream on prefix-conditioned C4 continuation, measured by perplexity / diversity).
+- **Block-based semi-autoregressive decoding** for downstream-task accuracy.
+- **Fully-parallel decoding** for open-ended text generation.
 
 ## Background
 Masked diffusion LMs generate by starting from a fully masked generation region and iteratively unmasking over `steps` denoising iterations. A demasking strategy decides at each step:
@@ -23,7 +23,7 @@ Reference papers:
 - KLASS (Kim et al., NeurIPS 2025 Spotlight; arXiv:2511.05664) — "KLASS: KL-Guided Fast Inference in Masked Diffusion Models"; KL-adaptive stability sampling for unmasking multiple tokens per step.
 
 ## Fixed Pipeline
-- Pretrained models (LLaDA-8B-Instruct, Dream-v0-Instruct-7B), prompts, evaluation data, and task runners are fixed.
+- The pretrained models, prompts, evaluation data, and task runners are fixed by the harness and not editable.
 - Block scheduling constraint: `gen_length % block_length == 0`. When equal, decoding is fully parallel.
 - Blocks are processed sequentially (no early-decoding into later blocks).
 - The same `DemaskDecoder` must work in both semi-autoregressive and fully-parallel regimes.
@@ -50,26 +50,6 @@ class DemaskDecoder:
 - `topk_margin` — Dream's `topk_margin`: top-k by (top1 prob − top2 prob).
 - `klass` — KLASS: KL-adaptive stability + confidence thresholds (KLASS paper, default `kl_threshold=0.01`, `conf_threshold=0.9`, `history_length=2`).
 
-## Evaluation
-| Label | Task | Model | gen_len | steps | block_len | Metrics |
-|-------|------|-------|---------|-------|-----------|---------|
-| `llada-math` | MATH-500 | LLaDA-8B-Instruct | 256 | 256 | 64 | accuracy + avg_steps |
-| `llada-humaneval` | HumanEval (164) | LLaDA-8B-Instruct | 256 | 256 | 64 | accuracy + avg_steps |
-| `dream-text` | C4 prefix-continuation (256 samples, 32-tok prefix → 224-tok continuation) | Dream-v0-Instruct-7B | 224 | 256 | 224 | gen_ppl + MAUVE + entropy + rep2 + avg_steps |
-
-### Metrics
-| Metric | Direction | Where | Description |
-|--------|-----------|-------|-------------|
-| `accuracy` | ↑ | math/humaneval | exact-match (MATH) or pass@1 (HumanEval) |
-| `gen_ppl` | ↓ | text | conditional perplexity via GPT-2-Large |
-| `mauve` | ↑ | text | distributional similarity to C4 reference text |
-| `entropy` | ↑ | text | bigram entropy (lexical diversity) |
-| `rep2` | ↓ | text | repeated bigram ratio |
-| `avg_steps` | ↓ | all | actual model forward passes used |
-
-For MATH/HumanEval we use the KLASS protocol's `data/math_test.json`, prompts, and `utils.py` for answer extraction (`extract_math_answer`, `compare_answers`). The text-generation setting follows MDLM/ReMDM-style prefix-conditioned C4 continuation.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -79,7 +59,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `LLaDA/custom_demask_eval.py`
 - editable lines **59–151**
@@ -585,25 +565,6 @@ or deleting existing ones — will cause your submission to score zero.
    490: if __name__ == "__main__":
    491:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **llada-math** — wall-clock budget `02:59:00`, compute share `1.0`
-- **llada-humaneval** — wall-clock budget `00:59:00`, compute share `1.0`
-- **dream-text** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

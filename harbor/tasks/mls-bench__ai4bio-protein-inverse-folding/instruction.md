@@ -51,17 +51,7 @@ Helper functions available in the FIXED section above the editable region:
 - `knn_graph(X_ca, mask, k)`: Build k-nearest neighbor graph from CA coordinates.
 
 ## Fixed Pipeline
-Datasets, train/validation/test splits, the training loop, padding/masking, optimizer schedule, loss (per-residue cross-entropy), and evaluation harness are all supplied by the scaffold and not part of the contribution.
-
-## Evaluation
-The model is evaluated on three benchmarks:
-- **CATH 4.2**: Standard protein design benchmark (single-chain, ~18k train / 608 test).
-- **CATH 4.3**: Updated CATH with more diverse structures (~21k train / 1120 test).
-- **TS50**: 50 de novo designed proteins for out-of-distribution generalization (trained on CATH 4.2).
-
-Primary metric: **Recovery** (fraction of correctly predicted amino acids, higher is better).
-Secondary metric: **Perplexity** (exponential of per-residue cross-entropy loss, lower is better).
-
+The training and evaluation pipeline (data, splits, training loop, padding/masking, optimizer, schedule, loss, and metrics) is fixed by the harness and not part of the contribution. Evaluation reports amino-acid sequence recovery.
 
 ## Your Workspace
 
@@ -72,7 +62,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `ProteinInvBench/custom_invfold.py`
 - editable lines **86–238**
@@ -582,30 +572,6 @@ or deleting existing ones — will cause your submission to score zero.
    493: if __name__ == '__main__':
    494:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **CATH4.2** — wall-clock budget `04:00:00`, compute share `1.0`
-- **CATH4.3** — wall-clock budget `04:00:00`, compute share `1.0`
-- **TS50** — wall-clock budget `08:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

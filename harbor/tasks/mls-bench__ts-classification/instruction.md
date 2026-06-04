@@ -1,12 +1,12 @@
 # MLS-Bench: ts-classification
 
-# Multivariate Time Series Classification on UEA Datasets
+# Multivariate Time Series Classification
 
 ## Research Question
-Can a single classification component (temporal encoder + channel-interaction + padding-aware pooling) generalize across heterogeneous multivariate time series — spectral chemistry signals, MEG brain recordings, accelerometer handwriting traces — when training and evaluation are held to a fixed protocol?
+Can a single classification component (temporal encoder + channel-interaction + padding-aware pooling) generalize across heterogeneous multivariate time series when training and evaluation are held to a fixed protocol?
 
 ## Background
-The UEA Multivariate Time Series Classification archive (Bagnall et al., "The UEA multivariate time series classification archive, 2018", arXiv 1811.00075) is the standard benchmark for multivariate TSC. Datasets vary widely in sequence length, channel count, number of classes, sampling rate, and noise characteristics, making it a stress test for "general-purpose" temporal encoders. The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes train/test splits, padding to a common per-dataset length, RAdam optimization, cross-entropy loss, and accuracy reporting.
+Standard multivariate time series classification benchmarks cover diverse signal types — datasets vary widely in sequence length, channel count, number of classes, sampling rate, and noise characteristics, making them a stress test for "general-purpose" temporal encoders. The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes train/test splits, padding to a common per-dataset length, RAdam optimization, cross-entropy loss, and accuracy reporting.
 
 ## Objective
 Implement the `Model` class in `models/Custom.py`. Given a padded input window plus a binary padding mask, return class logits.
@@ -30,22 +30,15 @@ class Model(nn.Module):
             return self.classification(x_enc, x_mark_enc)
 ```
 
-## Datasets and Fixed Protocol
-- **EthanolConcentration** — spectral data classification (4 classes).
-- **FaceDetection** — MEG brain-imaging binary classification.
-- **Handwriting** — accelerometer-based character recognition (26 classes).
-
-All from the UEA archive. Train/test splits are dataset-provided. Optimization: RAdam, CrossEntropyLoss, early-stopping `patience=10`, framework defaults for batch size and `train_epochs`.
-
-## Metric
-Test accuracy — higher is better.
+## Fixed Protocol
+The training and evaluation pipeline (data, splits, optimizer, loss, early stopping, batch size, and epochs) is fixed by the harness and not editable. Classification accuracy is the evaluation metric.
 
 ## Reference Implementations (read-only)
 Three reference models from `models/`:
 
-- **DLinear** — Zeng et al., AAAI 2023 (arXiv 2205.13504). For classification, the trend+seasonal linear projections feed a global pooling + linear classifier head. TS-Lib classification defaults: `e_layers=2`, `d_model=128`, RAdam `lr=1e-3`, `batch_size=16`. Source: https://github.com/cure-lab/LTSF-Linear.
-- **TimesNet** — Wu et al., ICLR 2023 (arXiv 2210.02186). TS-Lib classification defaults: `e_layers=2`, `d_model=64`, `d_ff=64`, `top_k=3`, `num_kernels=6`, RAdam `lr=1e-3`. Source: https://github.com/thuml/Time-Series-Library.
-- **PatchTST** — Nie et al., ICLR 2023 (arXiv 2211.14730). TS-Lib classification defaults: `e_layers=3`, `n_heads=4`, `d_model=128`, `d_ff=256`, `patch_len=16`, `stride=8`. Source: https://github.com/yuqinie98/PatchTST.
+- **DLinear** — Zeng et al., AAAI 2023 (arXiv 2205.13504). For classification, the trend+seasonal linear projections feed a global pooling + linear classifier head. Source: https://github.com/cure-lab/LTSF-Linear.
+- **TimesNet** — Wu et al., ICLR 2023 (arXiv 2210.02186). Source: https://github.com/thuml/Time-Series-Library.
+- **PatchTST** — Nie et al., ICLR 2023 (arXiv 2211.14730). Source: https://github.com/yuqinie98/PatchTST.
 
 
 ## Your Workspace
@@ -57,7 +50,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `Time-Series-Library/models/Custom.py`
 - editable: **entire file**
@@ -2156,23 +2149,6 @@ Other files you may **read** for context (do not modify):
    134:             x = self.projection(x)
    135:         return x
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **EthanolConcentration** — wall-clock budget `00:59:00`, compute share `0.33`
-- **FaceDetection** — wall-clock budget `00:59:00`, compute share `0.33`
-- **Handwriting** — wall-clock budget `00:59:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
 
 ## Parameter Budget
 

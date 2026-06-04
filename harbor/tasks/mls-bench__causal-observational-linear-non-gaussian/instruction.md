@@ -15,30 +15,12 @@ The original identifiability result is due to Shimizu, Hoyer, Hyvarinen &
 Kerminen, "A Linear Non-Gaussian Acyclic Model for Causal Discovery,"
 JMLR 7, 2006.
 
-The benchmark uses synthetic Erdos-Renyi and scale-free DAGs with signed linear
-edge weights and independent non-Gaussian noise. The method should handle
-moderate-to-large node counts and avoid assuming a single fixed noise
-distribution or graph family.
+The method should handle moderate-to-large variable counts and avoid assuming a single fixed noise distribution or graph family. Data is generated from synthetic DAGs with signed linear edge weights and independent non-Gaussian noise.
 
 ## Task
 Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
 return a directed DAG (skeleton + correct edge orientation) compatible with the
 benchmark evaluation.
-
-## Evaluation Scenarios
-
-| Label  | Graph type      | Nodes | Samples | Noise       |
-|--------|-----------------|-------|---------|-------------|
-| ER30   | Erdos-Renyi     | 30    | 1000    | Laplace     |
-| ER50   | Erdos-Renyi     | 50    | 2000    | Exponential |
-| SF100  | Scale-Free (BA) | 100   | 1000    | Uniform     |
-
-## Metrics
-Computed on the directed edge set (skeleton + direction must both be correct):
-- **F1** (primary ranking metric, higher is better)
-- **SHD** (lower is better)
-- **Precision** (higher is better)
-- **Recall** (higher is better)
 
 ## Reference baselines
 - `icalingam`: ICA-based LiNGAM. Shimizu, Hoyer, Hyvarinen & Kerminen,
@@ -66,7 +48,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `causal-learn/bench/custom_algorithm.py`
 - editable lines **3–14**
@@ -99,25 +81,6 @@ Other files you may **read** for context (do not modify):
     13:     return np.zeros((n, n))
     14: # =====================================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **ER30** — wall-clock budget `2:00:00`, compute share `0.25`
-- **ER50** — wall-clock budget `2:00:00`, compute share `0.25`
-- **SF100** — wall-clock budget `3:00:00`, compute share `0.25`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

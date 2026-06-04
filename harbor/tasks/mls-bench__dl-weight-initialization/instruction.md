@@ -27,19 +27,12 @@ The `initialize_weights(model, config)` function inside `pytorch-vision/custom_i
 You may iterate over `model.named_modules()` or `model.named_parameters()` and design per-layer or depth-dependent strategies, treat residual shortcut projections separately from main-path convs, set `BatchNorm2d` weight/bias differently, and use any data-independent logic. No access to training data and no calibration passes.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-56 on CIFAR-100, VGG-16-BN on CIFAR-100, MobileNetV2 on FashionMNIST.
+The training and evaluation pipeline (data, augmentation, model definitions, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable.
 
 ## Baselines
 - **kaiming_normal** — He et al., arXiv:1502.01852; conv weights from `N(0, sqrt(2/fan_out))`, zero biases, BatchNorm `(weight=1, bias=0)`.
 - **fixup** — Zhang et al., arXiv:1901.09321; scales the first residual conv by `L^(-1/(2m-2))` with `m=2` and zero-initializes the last conv per residual block.
 - **orthogonal** — Saxe et al., arXiv:1312.6120; orthogonal init for conv and linear layers (gain `sqrt(2)` for ReLU), zero biases, BatchNorm `(weight=1, bias=0)`.
-
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The initialization must be data-independent and must not run calibration passes, alter the model graph, change optimizer hyperparameters, or modify evaluation behavior.
-
 
 ## Your Workspace
 
@@ -50,7 +43,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_init.py`
 - editable lines **228–261**
@@ -491,25 +484,6 @@ or deleting existing ones — will cause your submission to score zero.
    425: if __name__ == '__main__':
    426:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet56-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **vgg16bn-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **mobilenetv2-fmnist** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

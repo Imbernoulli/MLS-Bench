@@ -140,7 +140,7 @@
   "InverseBench/inverse_problems/base.py": "172c361f8bf0dab8959d182c1e31ba845f54b08f89ea1c942f670f6a82445c31",
   "InverseBench/inverse_problems/blackhole.py": "824ab7a9971ded0b54f3f1746f009d30de172b0cbea42f53e4fe062217b81b5e",
   "InverseBench/inverse_problems/image_restore.py": "9413a157613ee4f36bc5fa9546fcb1738e9936f3cf15e998a47911ff9c3e43d1",
-  "InverseBench/inverse_problems/inverse_scatter.py": "634dff051c6bfb034fd55cd67584b2d7fab7df28c2c3352ae257ef53ac1d333f",
+  "InverseBench/inverse_problems/inverse_scatter.py": "2f225fe826ffebb6b763817f5582314cb72166e0d468abdf7c8682548d08a1e4",
   "InverseBench/inverse_problems/multi_coil_mri.py": "a7576bd6d5dd7b224305385af4a61054ac3144da4e0f1be721af0b071d528289",
   "InverseBench/inverse_problems/navier_stokes.py": "1af1593830323d4cc2de8a174bb7253ae3f2648a3ab2ce32a432cf0b74cb5344",
   "InverseBench/main.py": "f8a5cc6bd16fc8caea4d23e33c98c082cc636583e9f4df7b1b5096fb210d5a13",

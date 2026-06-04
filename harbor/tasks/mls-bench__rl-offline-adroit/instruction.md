@@ -36,20 +36,11 @@ Reference baselines spanning the design space:
   use 256 units. A `_mlp()` factory function is provided in the FIXED
   section for convenience. You may define custom network classes but
   hidden widths must remain 256.
-- **Total parameter count is enforced.** The training loop checks that
-  total trainable parameters do not exceed 1.2x the largest baseline
-  architecture, so the contribution must be algorithmic (loss,
-  regularization, target construction, training procedure) rather than
+- **Keep the contribution algorithmic, not capacity-driven.** The
+  improvement should come from the algorithm (loss, regularization,
+  target construction, training procedure) rather than from adding model
   capacity.
 - Do **not** simply copy a reference implementation with minor changes.
-
-## Evaluation
-Trained and evaluated on Adroit tasks Pen (rotation), Door (opening) and
-Hammer (nailing) using the D4RL `human-v1` datasets. Metric: D4RL
-normalized score (0 = random performance, 100 = expert), averaged over
-evaluation rollouts. Higher is better. Strong methods should work across
-the manipulation tasks rather than overfitting to a single dataset.
-
 
 ## Your Workspace
 
@@ -60,7 +51,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `CORL/algorithms/offline/custom_adroit.py`
 - editable lines **214–416**
@@ -577,30 +568,6 @@ or deleting existing ones — will cause your submission to score zero.
 
 [truncated: showing at most 500 lines / 60000 bytes from CORL/algorithms/offline/custom_adroit.py]
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **pen-human-v1** — wall-clock budget `12:00:00`, compute share `0.33`
-- **hammer-human-v1** — wall-clock budget `12:00:00`, compute share `0.33`
-- **door-cloned-v1** — wall-clock budget `12:00:00`, compute share `0.33`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-## Parameter Budget
-
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
 
 ## Reference Baselines
 

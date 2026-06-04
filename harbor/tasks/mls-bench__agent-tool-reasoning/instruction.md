@@ -6,12 +6,10 @@
 Design a better search/reasoning strategy for an LLM-based tool-use agent on multi-step API tasks. The strategy controls how the agent explores the action space (which tool to call next, when to backtrack, when to give up) and trades off task success against the number of LLM queries spent.
 
 ## Background
-StableToolBench (Guo et al., 2024, arXiv:2403.07714) is a stabilized version of ToolBench (Qin et al., 2023, arXiv:2307.16789, the ToolLLM paper). It evaluates LLM agents on multi-step tool use over RapidAPI tools, replacing unstable real APIs with a virtual API server (cache + simulator) and a GPT-4-based judge that produces a Solvable Pass Rate / Stable Pass Rate. Given a user query and a set of tool APIs, the agent decides which tools to call, with what arguments, and in what order to arrive at a final answer.
+StableToolBench (Guo et al., 2024, arXiv:2403.07714) is a stabilized version of ToolBench (Qin et al., 2023, arXiv:2307.16789, the ToolLLM paper) for multi-step tool use over RapidAPI tools, replacing unstable real APIs with a virtual API server (cache + simulator). Given a user query and a set of tool APIs, the agent decides which tools to call, with what arguments, and in what order to arrive at a final answer.
 
 ## Fixed Pipeline
-- Benchmark subset, tool environment (virtual API server), agent backbones, and answer judge are all fixed and must not be modified.
-- The agent backbones include both DeepSeek and Qwen models; the same `search()` policy is run across all backbones.
-- Datasets, prompts, and per-call decoding parameters are fixed.
+The tool environment, agent backbones, answer judge, prompts, and per-call decoding parameters are fixed by the harness and not editable. Your `search()` policy is run unchanged across all backbones.
 
 ## What you can modify
 The `search(self, root_node)` method in `custom_search.py`. You have access to:
@@ -27,15 +25,6 @@ The `search(self, root_node)` method in `custom_search.py`. You have access to:
 - **DFS with ranking**: generate multiple children, use LLM to rank them, expand best first; backtracks on failure (extra LLM calls for ranking).
 - **DFSDT** (Qin et al., ToolLLM, 2023): generate one child, recurse depth-first; on failure or "Finish by Giving Up", backtrack a fixed number of steps and expand a new node.
 
-## Evaluation
-Per-task feedback reports:
-- **pass_rate** — fraction of queries with a valid final answer (higher is better).
-- **avg_queries** — average LLM queries per task (lower is better, efficiency signal).
-- **give_up_rate** — fraction of queries where the agent gives up (lower is better).
-
-The score emphasizes answer quality (pass rate / Stable Pass Rate from the GPT-4 judge); query count and give-up rate serve as efficiency and diagnostic signals. The same `search()` policy is evaluated across multiple agent backbones on the I1-instruction subset.
-
-
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -45,7 +34,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `stabletoolbench/toolbench/inference/Algorithms/custom_search.py`
 - editable lines **368–439**
@@ -504,25 +493,6 @@ Other files you may **read** for context (do not modify):
    441:     # EDITABLE REGION END
    442:     # ==================================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **I1-instruction-deepseek** — wall-clock budget `6:00:00`, compute share `0`
-- **I1-instruction-qwen72b** — wall-clock budget `6:00:00`, compute share `0`
-- **I1-instruction-qwen7b** — wall-clock budget `6:00:00`, compute share `0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

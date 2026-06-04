@@ -39,18 +39,10 @@ Implement the `CustomScoring` class in `custom_scoring.py`. You must implement:
 - Training data provides: `batch_list` (pocket→ligand mapping), `act_list` (pIC50 activities), `uniprot_poc/mol` (for false-negative masking), `pocket_lig_smiles/lig_smiles` (for duplicate masking).
 
 ## Fixed Pipeline
-The backbone encoders, data loaders, training loop, and evaluation scripts are fixed. Backbone parameters are loaded from pretrained weights and fine-tuned jointly with the scoring module.
-
-## Evaluation
-The model is evaluated on three virtual screening benchmarks (zero-shot, no target-specific training):
-1. **DUD-E** (102 targets): Active compounds vs property-matched decoys.
-2. **LIT-PCBA** (15 targets): Realistic screening with confirmed actives/inactives.
-3. **DEKOIS 2.0** (81 targets): Challenging decoy benchmark.
-
-Metrics (averaged across targets): **AUROC**, **BEDROC** (α=80.5), **EF** at 0.5%/1%/5%. Higher is better for all of them.
+The data pipeline, training loop, and evaluation scripts are fixed by the harness and not editable.
 
 ## Editable Region
-The entire `custom_scoring.py` file is editable. You may define any helper classes or functions within this file. The backbone encoders and training loop are fixed; backbone parameters are loaded from pretrained weights and fine-tuned jointly with the scoring module.
+The entire `custom_scoring.py` file is editable. You may define any helper classes or functions within this file. The backbone encoders and training loop are fixed.
 
 
 ## Your Workspace
@@ -62,7 +54,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `HypSeek/unimol/custom_scoring.py`
 - editable: **entire file**
@@ -250,26 +242,6 @@ Other files you may **read** for context (do not modify):
    168:             return poc_scores + prot_scores
    169:         return poc_scores
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **train** — wall-clock budget `12:00:00`, compute share `1.0`
-- **dude** — wall-clock budget `01:00:00`, compute share `1.0`
-- **lit-pcba** — wall-clock budget `01:00:00`, compute share `1.0`
-- **dekois** — wall-clock budget `01:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

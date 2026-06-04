@@ -3,7 +3,7 @@
 # Robo-Diffusion: Guided Sampling Strategy Design
 
 ## Objective
-Design one improved guidance mechanism for a fixed trajectory-level diffusion planner on offline D4RL MuJoCo benchmarks. This task is narrower than `robo-diffusion-policy`: the research question is how to condition or guide the reverse diffusion process, not how to redesign the whole planner or the model-free actor-critic training loop.
+Design one improved guidance mechanism for a fixed trajectory-level diffusion planner on offline locomotion benchmarks. This task is narrower than `robo-diffusion-policy`: the research question is how to condition or guide the reverse diffusion process, not how to redesign the whole planner or the model-free actor-critic training loop.
 
 ## Background
 Diffusion-based decision-making models support two main guidance paradigms:
@@ -33,33 +33,21 @@ You can modify any of the following inside the editable regions of `custom_guida
 - New guidance strategies: hybrid CG+CFG, adaptive `w_cfg(t)`, late-only guidance, gradient-clipping schedules, novel classifier targets.
 
 ## What Is Fixed
-- Dataset and environment loop (D4RL MuJoCo, `env.get_dataset()`, `gym.vector.make`, normalization, reward collection).
-- Environment names, seeds, and final D4RL score computation.
-- Evaluation protocol: 10 envs × 10 episodes, `env.get_normalized_score`.
+- Dataset and environment loop (`env.get_dataset()`, `gym.vector.make`, normalization, reward collection).
+- Environment names, seeds, and reward computation.
 - Top-level training hyperparameters in `mujoco.yaml`: `diffusion_gradient_steps=100000`, `batch_size=256`, `model_dim=32`, `solver=ddpm`, `diffusion_steps=20`, `sampling_steps=20`.
-
-## Evaluation
-You will be evaluated on three D4RL (Fu et al., 2020, arXiv:2004.07219) MuJoCo environments:
-1. **hopper-medium-v2**
-2. **walker2d-medium-v2**
-3. **halfcheetah-medium-v2**
-
-Primary metric:
-- **Normalized Score**: D4RL normalized score (higher is better), reported per env. The task aggregator is the geometric mean across the three envs.
-
-Reported in the leaderboard alongside the per-env training wall-clock.
 
 ## Baselines
 Four baselines are provided in `edits/`:
 
 ### 1. `default` — Diffuser (Classifier Guidance, CG)
-- Unmodified template. `JannerUNet1d` + `CumRewClassifier`, `w_cg = {0.3, 0.007, 0.0001}` for hopper / walker2d / halfcheetah.
+- Unmodified template. `JannerUNet1d` + `CumRewClassifier`, guidance weight `w_cg` set per environment.
 - Inference uses 64 candidates re-ranked by classifier log-prob.
 - Reference: Janner et al., 2022, Diffuser, arXiv:2205.09991.
 
 ### 2. `cfg` — minimal CFG ablation of the default
 - **Same** `JannerUNet1d` backbone, **same** `DiscreteDiffusionSDE`, **same** obs+act trajectory diffusion as `default`.
-- Replaces `CumRewClassifier` with an `MLPCondition` over normalized return, trained with label dropout. Sampling uses `condition_cfg=target_return`, `w_cfg = {4.4, 6.0, 3.2}` (Decision Diffuser paper values), `w_cg = 0`. No candidate re-ranking.
+- Replaces `CumRewClassifier` with an `MLPCondition` over normalized return, trained with label dropout. Sampling uses `condition_cfg=target_return`, `w_cfg` set per environment (Decision Diffuser paper values), `w_cg = 0`. No candidate re-ranking.
 
 ### 3. `no_guidance` — unconditional ablation
 - `JannerUNet1d` trained without any classifier or condition network.
@@ -87,7 +75,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `CleanDiffuser/pipelines/custom_guidance.py`
 - editable lines **1–28**
@@ -329,23 +317,6 @@ or deleting existing ones — will cause your submission to score zero.
 Some reference context could not be rendered completely:
 
 - `default` has no edit_ops entry
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **train_hopper** — wall-clock budget `4:00:00`, compute share `1`
-- **train_walker2d** — wall-clock budget `4:00:00`, compute share `1`
-- **train_halfcheetah** — wall-clock budget `4:00:00`, compute share `1`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

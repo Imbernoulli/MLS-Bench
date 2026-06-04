@@ -27,14 +27,6 @@ Implement the `Custom` class in `algo/custom.py`. You must implement:
 
 The pretrained denoiser, the forward-operator definitions, and the evaluation problems are fixed; the algorithm only chooses how to combine these pieces.
 
-## Evaluation
-The algorithm is tested on three scientific inverse problems:
-1. **Inverse Scattering** (optical tomography): Recover permittivity from scattered EM fields. Metrics: PSNR, SSIM.
-2. **Black Hole Imaging** (radio astronomy): Reconstruct black hole images from sparse interferometric observations (EHT data). Metrics: PSNR, blur-PSNR (f=15), closure-phase chi-squared.
-3. **FFHQ256 Image Inpainting** (computer vision): Recover an FFHQ-256 face image from a masked observation (box mask) with additive Gaussian noise (σ=0.05). The forward operator is a fixed pixel-wise mask. Metrics: PSNR, SSIM, LPIPS.
-
-Higher PSNR/SSIM is better; lower LPIPS and chi-squared are better.
-
 ## Editable Region
 The entire `algo/custom.py` file is editable. You may define any helper classes/functions within this file.
 
@@ -48,7 +40,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `InverseBench/algo/custom.py`
 - editable: **entire file**
@@ -144,25 +136,6 @@ Other files you may **read** for context (do not modify):
     73:                          device=device)
     74:         return x
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **inv-scatter** — wall-clock budget `00:59:00`, compute share `1.0`
-- **blackhole** — wall-clock budget `00:59:00`, compute share `1.0`
-- **inpainting** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

@@ -29,21 +29,6 @@ class MembershipDefense:
 
 The optimizer (SGD + CosineAnnealing), architecture, data pipeline, and attack implementation are fixed.
 
-## Evaluation
-Benchmarks:
-
-- `resnet20-cifar10`: ResNet-20 on CIFAR-10.
-- `vgg16bn-cifar100`: VGG-16-BN on CIFAR-100.
-- `mobilenetv2-fmnist`: MobileNetV2 on FashionMNIST.
-
-Reported metrics:
-- `test_acc`
-- `mia_auc`
-- `privacy_gap`
-- `privacy_score`
-
-Primary metric: `privacy_score = test_acc - max(mia_auc - 0.5, 0)` (higher is better).
-
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:
 
@@ -62,7 +47,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_membership_defense.py`
 - editable: **entire file**
@@ -111,25 +96,6 @@ Other files you may **read** for context (do not modify):
     31: # END EDITABLE
     32: # ============================================================
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet20-cifar10** — wall-clock budget `00:59:00`, compute share `1.0`
-- **vgg16bn-cifar100** — wall-clock budget `00:59:00`, compute share `1.0`
-- **mobilenetv2-fmnist** — wall-clock budget `00:59:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 

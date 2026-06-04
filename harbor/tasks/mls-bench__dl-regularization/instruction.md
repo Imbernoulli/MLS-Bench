@@ -3,7 +3,7 @@
 # DL Regularization Strategy Design
 
 ## Research Question
-Design an additional regularization term for deep convolutional image classifiers that improves generalization (test accuracy) across different architectures and datasets, while the main cross-entropy objective, optimizer, and outer training loop remain fixed.
+Design an additional regularization term for deep convolutional image classifiers that improves generalization across different architectures and datasets, while the main cross-entropy objective, optimizer, and outer training loop remain fixed.
 
 ## Background
 Beyond standard weight decay (L2 penalty applied through the optimizer), many regularization techniques have been proposed to improve generalization in deep networks:
@@ -27,21 +27,17 @@ Inputs:
 
 Design directions: weight-based (L1/L2 norms, orthogonality, spectral norms, weight correlation), output-based (entropy, confidence penalty, label-smoothing-style penalties, logit penalties), activation-based (sparsity, diversity via forward hooks), epoch-dependent (warm-up schedules, annealing, curriculum), or architecture-aware (different penalties for conv vs linear, depth-dependent scaling). The returned term must be differentiable.
 
-Note: standard L2 weight decay (`5e-4`) is **already** applied via the optimizer. Your regularization term is *additional*.
+Note: standard L2 weight decay is **already** applied via the optimizer. Your regularization term is *additional*.
 
 ## Fixed Pipeline
-- Optimizer: SGD with `lr=0.1`, `momentum=0.9`, `weight_decay=5e-4`.
-- Schedule: cosine annealing over `200` epochs.
-- Data augmentation: `RandomCrop(32, pad=4)` + `RandomHorizontalFlip`.
-- Evaluation settings: ResNet-56 on CIFAR-100, VGG-16-BN on CIFAR-100, MobileNetV2 on FashionMNIST.
+The training and evaluation pipeline (data, augmentation, model architectures, base loss, optimizer, schedule, and metrics) is fixed by the harness and not editable.
 
 ## Baselines
 - **dropblock** — Ghiasi et al., arXiv:1810.12890; loss-based DropBlock-inspired co-activation penalty.
 - **confidence_penalty** — Pereyra et al., arXiv:1701.06548; default penalty weight `beta=0.1` (within the `[0.1, 1.0]` range explored in the paper).
 - **orthogonal_reg** — Brock et al., arXiv:1609.07093; soft orthogonality penalty `||W^T W − I||_F^2` on conv weights with default coefficient `1e-4`.
 
-## Metric
-Best test accuracy (%, higher is better) achieved during training. The regularizer must remain differentiable, computationally reasonable, and must not alter the dataset, architecture, base loss, optimizer, scheduler, or evaluation procedure.
+The regularizer must remain differentiable, computationally reasonable, and must not alter the dataset, architecture, base loss, optimizer, scheduler, or evaluation procedure.
 
 
 ## Your Workspace
@@ -53,7 +49,7 @@ You are working inside `/workspace`. The package source tree
 
 You may **only** modify these files, and **only within the listed line ranges
 (inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
-or deleting existing ones — will cause your submission to score zero.
+or deleting existing ones — will cause your submission to be invalid.
 
 - `pytorch-vision/custom_reg.py`
 - editable lines **246–273**
@@ -512,25 +508,6 @@ or deleting existing ones — will cause your submission to score zero.
    443: if __name__ == '__main__':
    444:     main()
 ```
-
-
-
-
-## How You Will Be Evaluated
-
-After you finish, evaluation runs a fixed set of scripts and aggregates the
-metrics they emit. These scripts are **not** in your workspace — you cannot
-read or modify them. The labels below indicate what each evaluation tests:
-
-- **resnet56-cifar100** — wall-clock budget `02:00:00`, compute share `1.0`
-- **vgg16bn-cifar100** — wall-clock budget `02:00:00`, compute share `1.0`
-- **mobilenetv2-fmnist** — wall-clock budget `02:00:00`, compute share `1.0`
-
-
-Scoring uses the same `combined_score` aggregation as the MLS-Bench
-leaderboard. Multiple seeds are averaged.
-
-
 
 ## Reference Baselines
 
