@@ -58,7 +58,7 @@ allowed denoiser evaluations, or evaluation code.
 |------------|-------------|
 | `cfg`      | Standard classifier-free guidance (Ho & Salimans, arXiv:2207.12598): renoise with the guided noise prediction. |
 | `cfgpp`    | CFG++ (Chung et al., ICLR 2025, arXiv:2406.08070): renoise with the unconditional noise prediction, keeping the trajectory on the data manifold. |
-| `zeroinit` | CFG++ with zero-initialization (skip the first K = 2 sampling steps before applying guidance). |
+| `zeroinit` | Zero-init + rescaled standard CFG: skip guidance for the first K = 2 sampling steps, then renoise with the guided prediction. |
 
 ## Fixed Pipeline
 

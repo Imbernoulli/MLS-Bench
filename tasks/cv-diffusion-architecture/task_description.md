@@ -56,7 +56,7 @@ The following are fixed across baselines and submissions:
 - Channel scales:
   - Small:  `block_out_channels=(64, 128, 128, 128)`, ~9M params, batch 128.
   - Medium: `block_out_channels=(128, 256, 256, 256)`, ~36M params, batch 128.
-  - Large:  `block_out_channels=(256, 512, 512, 512)`, ~140M params, batch 64.
+  - Large:  `block_out_channels=(160, 320, 320, 320)`, ~55M params, batch 128.
 
 ## Baselines
 

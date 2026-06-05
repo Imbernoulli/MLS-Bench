@@ -57,9 +57,12 @@ gradients dominate the velocity target.
 ## Fixed Pipeline
 
 - Dataset: CIFAR-10 (32×32).
-- Model: SmallDiT (~512 hidden, ~8 layers, ~40M params).
-- Training: 10,000 steps, batch size 128.
-- Inference: 10-step Euler sampler.
+- Models: DiT backbones at the configured scales:
+  - Small:  hidden_size=512, depth=8, num_heads=8.
+  - Medium: hidden_size=640, depth=10, num_heads=10.
+  - Large:  hidden_size=768, depth=12, num_heads=12.
+- Training: 40,000 steps, batch size 256.
+- Inference: 5-step Euler sampler.
 - Metric: FID computed by clean-fid against the CIFAR-10 train set, lower is
   better.
 

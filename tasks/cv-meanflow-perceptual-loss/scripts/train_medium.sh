@@ -1,6 +1,6 @@
 #!/bin/bash
-# Train perceptual loss flow matching on CIFAR-10 — Medium DiT (~100M params)
-# hidden_size=768, depth=12, num_heads=12
+# Train perceptual loss flow matching on CIFAR-10 — Medium DiT
+# hidden_size=640, depth=10, num_heads=10
 
 export TORCH_HOME="${TORCH_HOME:-/data/torch_cache}"
 mkdir -p "$TORCH_HOME"

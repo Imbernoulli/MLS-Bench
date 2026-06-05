@@ -1,6 +1,6 @@
 #!/bin/bash
-# Train class-conditional DDPM on CIFAR-10 — Large (~140M params)
-# UNet2DModel: block_out_channels=(256,512,512,512), layers_per_block=2
+# Train class-conditional DDPM on CIFAR-10 — Large (~55M params)
+# UNet2DModel: block_out_channels=(160,320,320,320), layers_per_block=2
 # 8-GPU DDP training
 
 export TORCH_HOME="${TORCH_HOME:-/data/pretrained}"
