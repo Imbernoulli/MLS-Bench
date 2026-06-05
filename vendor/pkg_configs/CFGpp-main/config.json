@@ -38,7 +38,14 @@
     "python -c \"import torch, diffusers, clip; print('CFGpp local deps OK')\""
   ],
 
-  "host_data_prepare_requirements": ["pytorch-fid"],
+  "host_data_prepare_requirements": [
+    "huggingface-hub==0.23.3",
+    "numpy==1.24.3",
+    "torch==2.2.2",
+    "torchvision==0.17.2",
+    "pillow==9.5.0",
+    "pytorch-fid==0.3.0"
+  ],
   "data_bind": [
     "{data_root}/huggingface_cache:/data/huggingface",
     "{data_root}/coco_val2014:/data/coco_val2014",

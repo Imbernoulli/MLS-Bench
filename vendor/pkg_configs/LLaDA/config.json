@@ -15,6 +15,9 @@
     "LLADA_INSTRUCT_PATH": "/data/llada-instruct",
     "PYTHONPATH": "/workspace/LLaDA:${PYTHONPATH}"
   },
+  "host_data_prepare_requirements": [
+    "huggingface_hub>=0.20"
+  ],
   "data_deps": [
     {
       "name": "llada-instruct",

@@ -1,6 +1,9 @@
 {
   "base_image": "pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel",
   "verify_existing_data": true,
+  "host_data_prepare_requirements": [
+    "gdown"
+  ],
   "data_deps": [
     {
       "name": "hypseek-pretrain",

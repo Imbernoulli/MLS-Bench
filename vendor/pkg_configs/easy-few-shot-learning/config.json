@@ -12,6 +12,10 @@
     "{data_root}/CUB:/data/CUB",
     "{data_root}/cifar_fs:/data/cifar_fs"
   ],
+  "host_data_prepare_requirements": [
+    "numpy",
+    "Pillow"
+  ],
   "data_deps": [
     {
       "name": "mini_imagenet",

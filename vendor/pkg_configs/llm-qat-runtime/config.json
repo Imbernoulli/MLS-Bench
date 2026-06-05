@@ -14,6 +14,10 @@
     "HF_DATASETS_CACHE": "/data/wikitext2",
     "PYTHONPATH": "/workspace/llm-qat-runtime:${PYTHONPATH}"
   },
+  "host_data_prepare_requirements": [
+    "huggingface_hub",
+    "datasets"
+  ],
   "data_deps": [
     {
       "name": "pythia-1.4b",

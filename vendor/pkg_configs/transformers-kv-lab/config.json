@@ -21,6 +21,10 @@
     "TORCH_HOME": "/data/huggingface/torch",
     "XDG_CACHE_HOME": "/data/huggingface"
   },
+  "host_data_prepare_requirements": [
+    "huggingface_hub",
+    "datasets"
+  ],
   "data_deps": [
     {
       "name": "transformers-kv-lab-hf-cache",

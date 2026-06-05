@@ -18,6 +18,9 @@
   "writable_tmpfs": true,
   "no_home": true,
   "workdir": "/workspace",
+  "host_data_prepare_requirements": [
+    "huggingface_hub"
+  ],
   "data_deps": [
     {
       "name": "tslib_datasets",
