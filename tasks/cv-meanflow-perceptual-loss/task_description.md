@@ -4,7 +4,7 @@
 
 Design an auxiliary training loss for CIFAR-10 flow matching that improves
 sample FID under a fixed DiT backbone, MeanFlow training objective, and
-ten-step Euler sampler.
+5-step Euler sampler.
 
 ## Background
 
@@ -61,7 +61,8 @@ gradients dominate the velocity target.
   - Small:  hidden_size=512, depth=8, num_heads=8.
   - Medium: hidden_size=640, depth=10, num_heads=10.
   - Large:  hidden_size=768, depth=12, num_heads=12.
-- Training: 40,000 steps, batch size 256.
+- Training: 40,000 steps, batch size 256, 1,000-step LR warmup, EMA rate
+  0.999, and multi-GPU DDP.
 - Inference: 5-step Euler sampler.
 - Metric: FID computed by clean-fid against the CIFAR-10 train set, lower is
   better.
@@ -77,7 +78,7 @@ gradients dominate the velocity target.
 ## Evaluation
 
 Evaluation trains on CIFAR-10 at the configured scales / budgets and samples
-with the fixed ten-step Euler sampler. Scoring uses FID per scale; lower is
+with the fixed 5-step Euler sampler. Scoring uses FID per scale; lower is
 better.
 
 A useful method should improve visual sample quality without destabilizing the
