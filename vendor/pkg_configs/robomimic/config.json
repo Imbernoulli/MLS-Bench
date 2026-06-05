@@ -18,6 +18,9 @@
     "PYTHONPATH": "/workspace/robomimic:${PYTHONPATH}",
     "DATASET_ROOT": "/data/datasets"
   },
+  "host_data_prepare_requirements": [
+    "huggingface_hub"
+  ],
   "data_deps": [
     {
       "name": "transport-ph",
