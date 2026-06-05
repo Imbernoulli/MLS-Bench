@@ -33,6 +33,7 @@
   },
   "host_data_prepare_requirements": [
     "datasets<3.0",
+    "huggingface-hub<1.0",
     "lm-eval>=0.4.0",
     "tiktoken"
   ],

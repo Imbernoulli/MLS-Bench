@@ -15,6 +15,10 @@
     "HF_DATASETS_CACHE": "/data/longctx",
     "PYTHONPATH": "/workspace/sparse-attn-eval:${PYTHONPATH}"
   },
+  "host_data_prepare_requirements": [
+    "huggingface_hub==0.26.2",
+    "datasets==3.1.0"
+  ],
   "data_deps": [
     {
       "name": "qwen2.5-1.5b-instruct",

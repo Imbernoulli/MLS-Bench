@@ -21,6 +21,10 @@
   "data_bind": [
     "{data_root}/huggingface_cache:/data/huggingface"
   ],
+  "host_data_prepare_requirements": [
+    "huggingface_hub==0.26.2",
+    "datasets==3.1.0"
+  ],
   "data_deps": [
     {
       "name": "LLaDA-8B-Instruct",

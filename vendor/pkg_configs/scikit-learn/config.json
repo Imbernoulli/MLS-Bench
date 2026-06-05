@@ -23,6 +23,13 @@
   "env": {
     "SKLEARN_DATA_HOME": "/data/sklearn"
   },
+  "host_data_prepare_requirements": [
+    "scikit-learn==1.5.2",
+    "numpy",
+    "scipy",
+    "pandas",
+    "aif360==0.6.1"
+  ],
   "data_deps": [
     {
       "name": "sklearn_datasets",

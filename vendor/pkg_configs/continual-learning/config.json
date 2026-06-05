@@ -3,6 +3,9 @@
   "install_cmds": [
     "pip install numpy torchvision matplotlib tqdm"
   ],
+  "host_data_prepare_requirements": [
+    "torchvision"
+  ],
   "data_deps": [
     {
       "name": "continual_learning_datasets",

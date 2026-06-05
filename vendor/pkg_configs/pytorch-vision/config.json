@@ -11,6 +11,9 @@
   "env": {
     "PYTHONPATH": "/workspace/pytorch-vision:${PYTHONPATH}"
   },
+  "host_data_prepare_requirements": [
+    "torchvision==0.20.1"
+  ],
   "data_deps": [
     {
       "name": "pytorch-vision-data",

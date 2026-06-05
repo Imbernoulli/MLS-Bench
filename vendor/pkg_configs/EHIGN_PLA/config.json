@@ -1,5 +1,9 @@
 {
   "base_image": "pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel",
+  "host_data_prepare_requirements": [
+    "torch",
+    "gdown"
+  ],
   "data_deps": [
     {
       "name": "ehign-pla",
