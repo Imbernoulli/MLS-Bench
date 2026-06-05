@@ -70,7 +70,6 @@ class BaseAgent(ABC):
             use_cuda=use_cuda_override,
             platform=global_config.get("platform", ""),
             gpu_devices=global_config.get("gpu_devices", ""),
-            compute_scale=global_config.get("compute_scale", 1.0),
             global_config=global_config,
             allow_web_search=global_config.get("allow_web_search", False),
             tavily_api_key=(global_config.get("providers", {}).get("tavily", {}) or {}).get("api_key", ""),

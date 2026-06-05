@@ -37,6 +37,11 @@ import sys
 from collections import defaultdict
 from pathlib import Path
 
+try:
+    import pwd
+except ImportError:  # pragma: no cover - non-POSIX fallback
+    pwd = None
+
 import yaml
 from packaging.requirements import Requirement
 
@@ -345,6 +350,14 @@ def docker_run_instruction_lines(cmd: str) -> list[str]:
 def resolve_docker_extra_files(pkg_config: dict, data_root: str | Path = "") -> list[dict]:
     """Resolve pkg_config extra_files into Docker named build contexts."""
     entries: list[dict] = []
+    for extra_pkg in pkg_config.get("extra_packages", []):
+        src = find_ext_pkg_dir(extra_pkg).resolve()
+        entries.append({
+            "context_name": f"mls_pkg_{normalize(extra_pkg)}",
+            "context_path": str(src.parent),
+            "copy_src": src.name,
+            "dst": f"/workspace/{extra_pkg}",
+        })
     for idx, ef in enumerate(pkg_config.get("extra_files", [])):
         src_str = expand_path_template(ef["src"], data_root)
         src = Path(src_str).expanduser().resolve()
@@ -406,12 +419,63 @@ def find_conda_exe() -> str | None:
     if conda_exe:
         return conda_exe
 
-    candidates = [
+    # Prefer explicit environment hints before heuristic path probing.
+    hinted = [
         os.environ.get("CONDA_EXE", ""),
-        str(Path.home() / "miniconda3" / "condabin" / "conda"),
-        str(Path.home() / "anaconda3" / "condabin" / "conda"),
+        os.environ.get("MAMBA_EXE", ""),
     ]
+    conda_prefix = os.environ.get("CONDA_PREFIX", "")
+    if conda_prefix:
+        hinted.extend([
+            str(Path(conda_prefix) / "condabin" / "conda"),
+            str(Path(conda_prefix).parent / "condabin" / "conda"),
+        ])
+    for candidate in hinted:
+        if candidate and Path(candidate).exists():
+            return candidate
+
+    def owner_home(p: Path) -> Path | None:
+        if pwd is None:
+            return None
+        try:
+            owner = pwd.getpwuid(p.resolve().stat().st_uid)
+            return Path(owner.pw_dir).expanduser()
+        except Exception:
+            return None
+
+    # Probe around the running interpreter so HOME mismatches do not break
+    # conda discovery (e.g. non-login shells, service users).
+    interpreter = Path(sys.executable).resolve()
+    around_python: list[str] = []
+    for parent in [interpreter.parent, *interpreter.parents]:
+        around_python.append(str(parent / "condabin" / "conda"))
+        around_python.append(str(parent / "bin" / "conda"))
+
+    home_candidates: list[Path] = []
+    for candidate in [Path.home(), owner_home(PROJECT_ROOT), owner_home(Path.cwd())]:
+        if candidate and candidate not in home_candidates:
+            home_candidates.append(candidate)
+
+    ancestor_roots: list[Path] = []
+    for base in [PROJECT_ROOT.resolve(), Path.cwd().resolve()]:
+        for parent in [base, *base.parents]:
+            if parent not in ancestor_roots:
+                ancestor_roots.append(parent)
+
+    candidates = [
+        *[str(home / "miniconda3" / "condabin" / "conda") for home in home_candidates],
+        *[str(home / "anaconda3" / "condabin" / "conda") for home in home_candidates],
+        *[str(root / "miniconda3" / "condabin" / "conda") for root in ancestor_roots],
+        *[str(root / "anaconda3" / "condabin" / "conda") for root in ancestor_roots],
+        "/opt/conda/condabin/conda",
+        "/usr/local/conda/condabin/conda",
+        *around_python,
+    ]
+    seen: set[str] = set()
     for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
         if candidate and Path(candidate).exists():
             return candidate
     return None
@@ -720,6 +784,26 @@ def _resolve_local_path_map(
     for bind in resolve_data_binds(pkg_config, data_root):
         host_path, container_path = bind.split(":", 1)
         path_map[container_path] = str(Path(host_path).expanduser().resolve())
+    # Map package-level extra mounts (extra_packages / extra_files) so local
+    # runtime can resolve container paths like /workspace/LIBERO to real host
+    # sources even when the task workspace only copies the main package.
+    for extra_pkg in pkg_config.get("extra_packages", []):
+        try:
+            extra_src = find_ext_pkg_dir(extra_pkg).resolve()
+        except FileNotFoundError:
+            logger.warning("extra_packages source not found, skipping: %s", extra_pkg)
+            continue
+        path_map[f"{workdir}/{extra_pkg}"] = str(extra_src)
+    for ef in pkg_config.get("extra_files", []):
+        dst = str(ef.get("dst", "")).strip()
+        if not dst:
+            continue
+        src_str = expand_path_template(str(ef.get("src", "")), data_root)
+        src = Path(src_str).expanduser().resolve()
+        if not src.exists():
+            logger.warning("extra_files src not found, skipping: %s", src)
+            continue
+        path_map[dst] = str(src)
     return path_map
 
 
@@ -836,6 +920,12 @@ def build_local_package(
     build_env.setdefault("PIP_NO_USER_CONFIG", "1")
 
     use_conda = _has_conda_support(global_config)
+    if pkg_config.get("local_requires_conda", False) and not use_conda:
+        raise RuntimeError(
+            f"Package '{pkg_name}' requires conda-backed local runtime, "
+            "but no conda executable was found. Ensure conda is installed and "
+            "discoverable via PATH/CONDA_EXE, or use apptainer/docker runtime."
+        )
     if use_conda:
         # Create per-package conda env (like building a Docker image)
         ensure_conda_env(pkg_name, pkg_config, force=force, env=build_env)
@@ -1073,6 +1163,9 @@ def generate_def_file(pkg_config: dict, pkg_dir: Path, data_root: str | Path = "
 
     pkg_workdir = f"{workdir}/{pkg_dir.name}"
     files_section = f"    {pkg_dir.resolve()} {workdir}/{pkg_dir.name}\n"
+    for extra_pkg in pkg_config.get("extra_packages", []):
+        extra_src = find_ext_pkg_dir(extra_pkg).resolve()
+        files_section += f"    {extra_src} {workdir}/{extra_pkg}\n"
     for ef in pkg_config.get("extra_files", []):
         src_str = expand_path_template(ef["src"], data_root)
         src = Path(src_str).expanduser().resolve()
@@ -1771,7 +1864,6 @@ def _run_single_baseline(
         use_cuda=use_cuda_override,
         platform=run_config.get("platform", ""),
         gpu_devices=run_config.get("gpu_devices", ""),
-        compute_scale=run_config.get("compute_scale", 1.0),
         global_config=run_config,
         allow_web_search=run_config.get("allow_web_search", False),
         tavily_api_key=(run_config.get("providers", {}).get("tavily", {}) or {}).get("api_key", ""),
@@ -2200,10 +2292,20 @@ def _prepare_data_command(
     data_root: str,
     global_config: dict | None,
 ) -> tuple[list[str], dict[str, str] | None]:
+    def cmd_base(python_exe: str) -> list[str]:
+        cmd = [python_exe, str(script_path), "--data-root", str(data_root)]
+        # Provide vendored LIBERO root to OpenVLA-OFT data scripts so they can
+        # initialize a stable LIBERO config without host-specific paths.
+        if script_path.name == "prepare_data.py" and "openvla-oft" in str(script_path):
+            libero_root = (PROJECT_ROOT / "vendor" / "external_packages" / "LIBERO").resolve()
+            if libero_root.exists():
+                cmd.extend(["--libero-root", str(libero_root)])
+        return cmd
+
     runtime = (global_config or {}).get("container_runtime", "")
     if runtime != "local":
         _ensure_host_data_prepare_requirements(pkg_name, pkg_config)
-        return [sys.executable, str(script_path), "--data-root", str(data_root)], None
+        return cmd_base(sys.executable), None
 
     pkg_dir = find_ext_pkg_dir(pkg_name)
     run_env = _build_local_env(pkg_config, pkg_dir, data_root)
@@ -2219,7 +2321,7 @@ def _prepare_data_command(
 
     python_cmd = "python" if _has_conda_support(global_config or {}) else sys.executable
     cmd = wrap_with_conda(
-        [python_cmd, str(script_path), "--data-root", str(data_root)],
+        cmd_base(python_cmd),
         global_config,
         pkg_name=pkg_name,
     )
@@ -2271,6 +2373,7 @@ def prepare_data_for_package(
     for dep in deps:
         name = dep.get("name", "?")
         host_path = expand_path_template(dep.get("host_path", ""), data_root)
+        host_path = str(Path(host_path).expanduser().resolve())
         container_path = dep.get("container_path", "")
         prepare = dep.get("prepare", "")
         desc = dep.get("description", "")
