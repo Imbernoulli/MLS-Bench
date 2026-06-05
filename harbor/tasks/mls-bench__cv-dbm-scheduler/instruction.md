@@ -78,7 +78,7 @@ You may **only** modify these files, and **only within the listed line ranges
 or deleting existing ones — will cause your submission to be invalid.
 
 - `dbim-codebase/ddbm/karras_diffusion.py`
-- editable lines **310–320**
+- editable lines **310–321**
 
 
 
@@ -86,21 +86,22 @@ or deleting existing ones — will cause your submission to be invalid.
 ## Readable Context
 
 
-### `dbim-codebase/ddbm/karras_diffusion.py`  [EDITABLE — lines 310–320 only]
+### `dbim-codebase/ddbm/karras_diffusion.py`  [EDITABLE — lines 310–321 only]
 
 ```python
-Lines 301-311:
-   301:         x_0.clamp(-1, 1),
-   302:         [x.clamp(-1, 1) for x in path],
-   303:         nfe,
-   304:         [x.clamp(-1, 1) for x in pred_x0],
-   305:         sigmas,
-   306:         noise,
-   307:     )
-   308: 
-   309: 
+Lines 310-321:
    310: def get_sigmas_uniform(n, t_min, t_max, device="cpu"):
    311:     """
+   312:     Requirements:
+   313:     1. Length: Must return a 1D PyTorch tensor of exactly length `n + 1`.
+   314:     2. Monotonic: The sequence must strictly decrease from `t_max` to `t_min`.
+   315:     3. Terminal Value: The final element (index `n`) must exactly equal `t_min`.
+   316:     4. Device: Move the tensor to the requested `device`.
+   317:     """
+   318:     # For this task, n will typically be 5 (NFE=5).
+   319:     # Implement your novel schedule formulation here...
+   320:     raise NotImplementedError("Custom scheduler not implemented yet.")
+   321: 
 ```
 
 ## Reference Baselines

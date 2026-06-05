@@ -6,6 +6,7 @@ dpm3m_sde anchor.
 """
 
 _SD_FILE = "CFGpp-main/latent_diffusion.py"
+_SDXL_FILE = "CFGpp-main/latent_sdxl.py"
 
 _DPM3M_SDE_SD = '''@register_solver("ddim_cfg++")
 class BaseDDIMCFGpp(StableDiffusion):
@@ -95,6 +96,93 @@ class BaseDDIMCFGpp(StableDiffusion):
         return img.detach().cpu()
 '''
 
+_DPM3M_SDE_SDXL = '''@register_solver("ddim_cfg++")
+class BaseDDIMCFGpp(SDXL):
+    """DPM-Solver++(3M) SDE with Karras schedule for SDXL."""
+    quantize = True
+
+    def reverse_process(self,
+                        null_prompt_embeds,
+                        prompt_embeds,
+                        cfg_guidance,
+                        add_cond_kwargs,
+                        shape=(1024, 1024),
+                        callback_fn=None,
+                        **kwargs):
+        t_fn = lambda sigma: sigma.log().neg()
+
+        total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+        sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+
+        latent_dim = (1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor)
+        x = self.initialize_latent(method="random_kdiffusion",
+                                   latent_dim=latent_dim,
+                                   sigmas=sigmas).to(torch.float16)
+
+        eta = 1.2
+        denoised_1, denoised_2 = None, None
+        h_1, h_2 = None, None
+
+        pbar = tqdm(self.scheduler.timesteps, desc="SDXL-DPM++3M-SDE")
+        for i, _ in enumerate(pbar):
+            sigma = sigmas[i]
+            new_t = self.sigma_to_t(sigma).to(self.device)
+            c_in = (1 / (sigma ** 2 + 1)).sqrt()
+            c_out = -sigma
+
+            with torch.no_grad():
+                noise_uc, noise_c = self.predict_noise(
+                    x * c_in, new_t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+                noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+
+            denoised = x + c_out * noise_pred
+
+            if sigmas[i + 1] == 0:
+                x = denoised
+            else:
+                t, s = t_fn(sigmas[i]), t_fn(sigmas[i + 1])
+                h = s - t
+                h_eta = h * (eta + 1)
+
+                x = torch.exp(-h_eta) * x + (-h_eta).expm1().neg() * denoised
+
+                if denoised_1 is not None:
+                    phi_2 = h_eta.neg().expm1() / h_eta + 1
+
+                    if denoised_2 is None:
+                        r = h_1 / h
+                        d = (denoised - denoised_1) / r
+                        x = x + phi_2 * d
+                    else:
+                        r0 = h_1 / h
+                        r1 = h_2 / h_1
+                        d1_0 = (denoised - denoised_1) / r0
+                        d1_1 = (denoised_1 - denoised_2) / r1
+                        d1 = d1_0 + (d1_0 - d1_1) * r0 / (r0 + r1)
+                        d2 = (d1_0 - d1_1) / (r0 + r1)
+                        phi_3 = phi_2 / h_eta - 0.5
+                        x = x + phi_2 * d1 + phi_3 * d2
+
+                if eta > 0:
+                    noise = torch.randn_like(x)
+                    x = x + noise * sigmas[i + 1] * (-2 * h * eta).expm1().neg().sqrt()
+
+                denoised_2 = denoised_1
+                denoised_1 = denoised
+                h_2 = h_1
+                h_1 = h
+
+            if callback_fn is not None:
+                callback_kwargs = {'z0t': denoised.detach(),
+                                    'zt': x.detach(),
+                                    'decode': self.decode}
+                callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+                denoised = callback_kwargs["z0t"]
+                x = callback_kwargs["zt"]
+
+        return x
+'''
+
 OPS = [
     {
         "op": "replace",
@@ -102,5 +190,12 @@ OPS = [
         "start_line": 621,
         "end_line": 679,
         "content": _DPM3M_SDE_SD,
+    },
+    {
+        "op": "replace",
+        "file": _SDXL_FILE,
+        "start_line": 713,
+        "end_line": 755,
+        "content": _DPM3M_SDE_SDXL,
     },
 ]

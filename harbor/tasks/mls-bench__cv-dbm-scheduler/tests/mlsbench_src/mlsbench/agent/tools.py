@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import threading
 import time as _time
 from collections import defaultdict
@@ -225,6 +226,79 @@ WEB_EXTRACT_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
+# compute_scale
+# ---------------------------------------------------------------------------
+
+def scale_test_cmd_entries(
+    entries: list[dict], scale: float, task_name: str = ""
+) -> list[dict]:
+    """Apply the host GPU `compute_scale` to a list of test_cmd entries.
+
+    `scale` is the perf factor vs the H100 baseline the tasks are tuned on
+    (1.0 = H100; 0.5 = H200 ~= 2x H100). Returns deep-copied entries with the
+    `h200` helper key stripped, so the result is always safe to hand to the
+    container builders / GPU packers. Per entry:
+
+    - `h200` override block present (llm-pretrain / llm-rl): apply its `cmd` and
+      `compute`, and merge its `env` over the entry's (the task's H200 config).
+      The fewer-GPUs change is paired with a larger per-GPU batch / TP=1 so the
+      macro-batch — and thus the result — stays constant.
+    - no override, `compute <= 1` (fractional / single-GPU): multiply `compute`
+      by `scale` for denser packing (the original behaviour; never changes a
+      single job's result). Offered for all such tasks but only really needed
+      for the two families above.
+    - no override, `compute > 1`: left untouched and warned. Cutting a multi-GPU
+      data-parallel job's GPU count alone would change its global batch / result,
+      so we don't do it silently.
+
+    The standalone scheduler (scheduler.py) mirrors the compute-number transform
+    independently to keep its GPU inference dependency-free.
+    """
+    scale = float(scale or 1.0)
+    scaled: list[dict] = []
+    for entry in entries:
+        entry = copy.deepcopy(entry)
+        override = entry.pop("h200", None)
+        if scale == 1.0:
+            scaled.append(entry)
+            continue
+        if override:
+            if "cmd" in override:
+                entry["cmd"] = override["cmd"]
+            entry["compute"] = override.get(
+                "compute", float(entry.get("compute", 1) or 1) * scale
+            )
+            if override.get("env"):
+                merged = dict(entry.get("env", {}))
+                merged.update(override["env"])
+                entry["env"] = merged
+        else:
+            # Sub-1 (fractional / single-GPU) jobs scale for denser packing —
+            # the original compute_scale behaviour, which never changes a single
+            # job's result. A multi-GPU data-parallel job (compute > 1) without
+            # an h200 block is left untouched + warned, since cutting its GPU
+            # count alone would change its global batch / result.
+            compute = float(entry.get("compute", 1) or 1)
+            if compute <= 1.0:
+                # Write even when `compute` was implicit (default 1.0) so this
+                # matches scheduler._scaled_compute, which scales the default.
+                entry["compute"] = compute * scale
+            else:
+                print(
+                    f"[compute_scale] WARNING: {task_name or 'task'} test_cmd "
+                    f"'{entry.get('label', entry.get('cmd', ''))}' has compute="
+                    f"{compute} but no 'h200' override; left at {compute} GPUs "
+                    f"(not scaled by {scale}). Cutting a data-parallel job's GPU "
+                    f"count alone changes its global batch/result; compute_scale "
+                    f"is only really needed for llm-pretrain / llm-rl. Add an "
+                    f"'h200' block to adapt it.",
+                    file=sys.stderr,
+                )
+        scaled.append(entry)
+    return scaled
+
+
+# ---------------------------------------------------------------------------
 # WorkspaceTools
 # ---------------------------------------------------------------------------
 
@@ -255,6 +329,7 @@ class WorkspaceTools:
         use_cuda: bool | None = None,
         platform: str = "",
         gpu_devices: str = "",
+        compute_scale: float = 1.0,
         global_config: dict | None = None,
         allow_web_search: bool = False,
         tavily_api_key: str = "",
@@ -277,6 +352,11 @@ class WorkspaceTools:
         self._use_cuda_override = use_cuda   # None = defer to pkg config
         self._platform = platform             # e.g. "linux/amd64" for Rosetta
         self.gpu_devices = gpu_devices
+        # GPU perf/packing scaler vs the H100 baseline the tasks are tuned on.
+        # <1 means each GPU is faster/bigger (e.g. 0.5 for H200 ~= 2x H100).
+        # Only retunes llm-pretrain / llm-rl tasks (which declare an `h200`
+        # block); see scale_test_cmd_entries.
+        self.compute_scale = float(compute_scale or 1.0)
         self.global_config = dict(global_config or {})
         self.allow_web_search = bool(allow_web_search)
         self.tavily_api_key = tavily_api_key or ""
@@ -482,19 +562,25 @@ class WorkspaceTools:
     # ------------------------------------------------------------------
 
     def _build_test_cmd_entries(self) -> list[dict]:
-        """Build normalised list of test_cmd entries from config."""
+        """Build normalised list of test_cmd entries from config.
+
+        Applies the host `compute_scale` via scale_test_cmd_entries: the
+        llm-pretrain / llm-rl tasks (which carry an `h200` block) switch to their
+        original H200 config; everything else keeps its baseline GPU count except
+        fractional jobs, which pack denser.
+        """
         entries = self.config_task.get("test_cmds", [])
-        if entries:
-            return entries
-        # Backward compat: old single-string test_cmd
-        cmd = self.config_task.get("test_cmd", "train.sh")
-        return [{
-            "cmd": cmd,
-            "label": "test",
-            "package": self.config_task.get("package", ""),
-            "use_cuda": self.config_task.get("use_cuda", False),
-            "workdir": self.config_task.get("workdir", "/app"),
-        }]
+        if not entries:
+            # Backward compat: old single-string test_cmd
+            cmd = self.config_task.get("test_cmd", "train.sh")
+            entries = [{
+                "cmd": cmd,
+                "label": "test",
+                "package": self.config_task.get("package", ""),
+                "use_cuda": self.config_task.get("use_cuda", False),
+                "workdir": self.config_task.get("workdir", "/app"),
+            }]
+        return scale_test_cmd_entries(entries, self.compute_scale, task_name=self.task_name)
 
     # ------------------------------------------------------------------
     # Path resolution
@@ -938,14 +1024,7 @@ class WorkspaceTools:
         workdir = pkg_config.get("workdir", "/app")
         install_cmds = pkg_config.get("install_cmds", [])
 
-        files_section = f"    {pkg_dir.resolve()} {workdir}/{pkg_dir.name}\n"
-        for extra_pkg in pkg_config.get("extra_packages", []):
-            extra_src = self._find_ext_pkg_dir(extra_pkg).resolve()
-            files_section += f"    {extra_src} {workdir}/{extra_pkg}\n"
-        for ef in pkg_config.get("extra_files", []):
-            src = Path(str(ef["src"]).replace("{project_root}", str(self.project_root))).expanduser().resolve()
-            if src.exists():
-                files_section += f"    {src} {ef['dst']}\n"
+        files_section = f"    {pkg_dir.resolve()} {workdir}"
         post_section = "\n".join(f"    {line}" for line in install_cmds)
         env_section = "\n".join(
             f"    export {k}={v}" for k, v in pkg_config.get("env", {}).items()
@@ -987,8 +1066,6 @@ class WorkspaceTools:
 
         lines = ["# syntax=docker/dockerfile:1.4", f"FROM {base_image}"]
         lines.append(f"COPY {pkg_dir.name} {pkg_workdir}")
-        for extra_pkg in pkg_config.get("extra_packages", []):
-            lines.append(f"COPY --from=mls_pkg_{self._normalize_pkg_name(extra_pkg)} {extra_pkg} /workspace/{extra_pkg}")
         for ef in docker_extra_files:
             lines.append(f"COPY --from={ef['context_name']} {ef['copy_src']} {ef['dst']}")
         lines.append(f"WORKDIR {pkg_workdir}")
@@ -1117,14 +1194,6 @@ class WorkspaceTools:
             global_config=global_cfg,
         )
 
-    def _ensure_local_runtime_ready(self, pkg_name: str, pkg_config: dict) -> None:
-        """Ensure local runtime dependencies are prepared for a package."""
-        from mlsbench.cli import build_local_package
-        global_cfg = self._effective_global_config()
-        pkg_dir = self._find_ext_pkg_dir(pkg_name)
-        # Reuses local build fingerprint; no-op when already prepared.
-        build_local_package(pkg_name, pkg_config, pkg_dir, global_cfg, force=False)
-
     def _effective_global_config(self) -> dict:
         """Return the active run config, falling back to configs/config.yaml."""
         if self.global_config:
@@ -1154,7 +1223,6 @@ class WorkspaceTools:
         if self.container_runtime == "local":
             with self._build_lock:
                 self._ensure_data(pkg_dir.name, pkg_config)
-                self._ensure_local_runtime_ready(pkg_dir.name, pkg_config)
             return pkg_dir, pkg_config
 
         if self.container_runtime == "docker":
@@ -1266,7 +1334,7 @@ class WorkspaceTools:
             # `python pkg/script.py` work correctly in local mode.
             path_map.setdefault(workdir.rstrip("/"), str(pkg_host_dir.parent.resolve()))
 
-        from mlsbench.cli import expand_path_template, find_ext_pkg_dir, resolve_data_binds
+        from mlsbench.cli import resolve_data_binds
         global_cfg = self._effective_global_config()
         data_root = global_cfg.get("data_root", str(self.project_root / "vendor" / "data"))
         resolved_data_root = str(Path(data_root).expanduser().resolve())
@@ -1277,26 +1345,6 @@ class WorkspaceTools:
         for bind in resolve_data_binds(pkg_config, data_root):
             host_path, container_path = bind.split(":", 1)
             path_map[container_path] = str(Path(host_path).expanduser())
-        # Package-level extra mounts (extra_packages / extra_files). These are
-        # present in container runtimes but not automatically copied into local
-        # workspaces, so map them explicitly to host sources.
-        for extra_pkg in pkg_config.get("extra_packages", []):
-            try:
-                extra_src = find_ext_pkg_dir(extra_pkg).resolve()
-            except FileNotFoundError:
-                print(f"[local] warning: extra_packages source not found: {extra_pkg}")
-                continue
-            path_map[f"{workdir.rstrip('/')}/{extra_pkg}"] = str(extra_src)
-        for ef in pkg_config.get("extra_files", []):
-            dst = str(ef.get("dst", "")).strip()
-            if not dst:
-                continue
-            src_str = expand_path_template(str(ef.get("src", "")), data_root)
-            src = Path(src_str).expanduser().resolve()
-            if not src.exists():
-                print(f"[local] warning: extra_files source not found: {src}")
-                continue
-            path_map[dst] = str(src)
         # Task-level data_deps (same format as pkg config data_deps)
         if self.config_task.get("data_deps"):
             task_data_cfg = {"data_deps": self.config_task["data_deps"]}
@@ -1330,6 +1378,9 @@ class WorkspaceTools:
         label = cmd_entry.get("label", "")
         if label:
             run_env["ENV"] = label
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (cmd_entry.get("env") or {}).items():
+            run_env[k] = str(v)
         if gpu_devices:
             run_env["CUDA_VISIBLE_DEVICES"] = gpu_devices
             run_env["NVIDIA_VISIBLE_DEVICES"] = gpu_devices
@@ -1454,6 +1505,9 @@ class WorkspaceTools:
         label = cmd_entry.get("label", "")
         if label:
             env_vars.append(f"ENV={label}")
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (cmd_entry.get("env") or {}).items():
+            env_vars.append(f"{k}={v}")
         for ev in env_vars:
             apptainer_cmd.extend(["--env", ev])
 
@@ -1561,6 +1615,9 @@ class WorkspaceTools:
         label = cmd_entry.get("label", "")
         if label:
             docker_cmd.extend(["-e", f"ENV={label}"])
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (cmd_entry.get("env") or {}).items():
+            docker_cmd.extend(["-e", f"{k}={v}"])
 
         # Bind mounts
         wtd = self.workspace_task_dir
@@ -2375,6 +2432,7 @@ class WorkspaceTools:
         seed: int,
         label: str,
         gpu_devices: str | None = None,
+        env: dict | None = None,
     ) -> list[str]:
         """Build ``docker exec`` environment arguments for one command."""
         args: list[str] = []
@@ -2388,6 +2446,9 @@ class WorkspaceTools:
         if gpu_devices:
             args.extend(["-e", f"CUDA_VISIBLE_DEVICES={gpu_devices}"])
             args.extend(["-e", f"NVIDIA_VISIBLE_DEVICES={gpu_devices}"])
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (env or {}).items():
+            args.extend(["-e", f"{k}={v}"])
         return args
 
     def _run_docker_exec(
@@ -2488,7 +2549,7 @@ class WorkspaceTools:
                 label = entry.get("label", "test")
                 cmd = entry["cmd"]
                 entry_gpu = session_devices[idx] if idx < len(session_devices) else None
-                exec_env_args = self._docker_exec_env_args(seed, label, gpu_devices=entry_gpu)
+                exec_env_args = self._docker_exec_env_args(seed, label, gpu_devices=entry_gpu, env=entry.get("env"))
 
                 budget_script = self.project_root / "tasks" / self.task_name / "budget_check.py"
                 if budget_script.exists():

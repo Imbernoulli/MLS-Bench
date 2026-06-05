@@ -10,11 +10,19 @@ class Parser(OutputParser):
     def parse(self, cmd_label: str, raw_output: str) -> ParseResult:
         metrics = {}
         feedback = ""
-        # Match "FID: <number>" or "FID score: <number>"
-        fid_match = re.search(r"FID(?:\s*score)?:\s*([\d.]+)", raw_output, re.IGNORECASE)
+        # Extract the FID value. Require a decimal point and take the LAST match:
+        # when the FID reference statistics are generated on the fly (precomputed
+        # assets/stats/fid_imagenet_256_val.npz missing), the inception feature
+        # loop prints a tqdm bar "FID:   0%|...", "FID:   1%|..." etc. A greedy
+        # "[\d.]+" matched the integer "0" from that progress bar instead of the
+        # real "FID: 5.55" result line, zeroing best_fid_Imagenet. tqdm
+        # percentages are integers; the real FID is always fractional, so
+        # \d+\.\d+ skips the bar and matches the result line.
+        _fid_vals = re.findall(r"FID(?:\s*score)?:\s*(\d+\.\d+)", raw_output, re.IGNORECASE)
         # Also match dict format: {'fid': np.float64(<number>), ...}
-        if not fid_match:
-            fid_match = re.search(r"'fid':\s*(?:np\.float64\()?([\d.]+)", raw_output)
+        if not _fid_vals:
+            _fid_vals = re.findall(r"'fid':\s*(?:np\.float64\()?(\d+\.\d+)", raw_output)
+        fid_str = _fid_vals[-1] if _fid_vals else None
         
         # NFE budget enforcement: reject if the karras_sample wrapper reports
         # ACTUAL_NFE > EXPECTED_NFE (agent double-denoised / Heun-corrected
@@ -36,8 +44,8 @@ class Parser(OutputParser):
                 f"result is REJECTED and not recorded."
             )
             # Do not write metrics — leaderboard row stays empty
-        elif fid_match:
-            fid_val = round(float(fid_match.group(1)), 3)
+        elif fid_str:
+            fid_val = round(float(fid_str), 3)
             # Key by env label so both envs' FIDs survive in the leaderboard
             # (a bare "fid" key makes the second env overwrite the first).
             # Mirror to best_fid_<label> for score_spec compatibility.

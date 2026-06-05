@@ -37,7 +37,7 @@
   "alphaflow-main/configs/sampling/recflow.yaml": "5cb3f1b4ec80f9329abbd7d3db50c8369528c0d52e735f4bdb826693c85ecd0e",
   "alphaflow-main/configs/train.yaml": "6db257947308f1e59faf9f4a02cbaaea805f0242e298e1ae2b353e82e44fd4f8",
   "alphaflow-main/configs/training/base.yaml": "111a282d6d6440f2c1aba13b1b81d67b65f87444cf3e9cff080d26f5c64d873b",
-  "alphaflow-main/custom_train_perceptual.py": "9579f22387a75d5bf8e48a13e7df8bf264ce1e1af9f71caade5a1e7602d7af14",
+  "alphaflow-main/custom_train_perceptual.py": "29e69435fa3f462d89448b3516235986386e5492597e0cb8a444971581ac6ba3",
   "alphaflow-main/environment.yml": "d7a1021f81502aa05e92a6885596447b331d62df38e93cf0cbd52d6325f8bf69",
   "alphaflow-main/figures/teaser.jpg": "d6d5e8fffadd66803a2041353fcd2843afa0062750af6ce005d4244bdd9fd824",
   "alphaflow-main/infra/ctrl.py": "9392ff53e3d6ec730ee0727fc2f553af2c1bdfdb6709f38521bcf64c43bbdc8b",

@@ -3,6 +3,9 @@
 Replaces the custom template with CFG++ implementation for both
 SD v1.5 (latent_diffusion.py) and SDXL (latent_sdxl.py).
 The key is using noise_uc (unconditional) for renoising instead of noise_pred.
+
+Includes Imagen Rescaled CFG (Lin et al 2024, phi=0.7) applied to
+the CFG-combined noise_pred before Tweedie.
 """
 
 _SD_FILE = "CFGpp-main/latent_diffusion.py"
@@ -27,6 +30,9 @@ class BaseDDIMCFGpp(StableDiffusion):
                prompt=["",""],
                callback_fn=None,
                **kwargs):
+        # CFG++ natural scale per paper (Chung et al 2024): manifold-constrained
+        # renoising works best at low guidance. Hardcoded as method design.
+        cfg_guidance = 0.6
 
         # Text embedding
         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
@@ -44,6 +50,13 @@ class BaseDDIMCFGpp(StableDiffusion):
             with torch.no_grad():
                 noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+
+                # Imagen Rescaled CFG (Lin et al 2024)
+                rescale_phi = 0.7
+                std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+                std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+                noise_pred_rescaled = noise_pred * (std_c / std_pred)
+                noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
 
             # tweedie
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
@@ -76,6 +89,8 @@ class BaseDDIMCFGpp(SDXL):
                         shape=(1024, 1024),
                         callback_fn=None,
                         **kwargs):
+        # CFG++ natural scale — hardcoded as method design (see SD variant above)
+        cfg_guidance = 0.6
         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
 
         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
@@ -87,6 +102,13 @@ class BaseDDIMCFGpp(SDXL):
             with torch.no_grad():
                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+
+                # Imagen Rescaled CFG (Lin et al 2024)
+                rescale_phi = 0.7
+                std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+                std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+                noise_pred_rescaled = noise_pred * (std_c / std_pred)
+                noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
 
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
 

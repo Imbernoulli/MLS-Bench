@@ -1,8 +1,19 @@
-"""CFG baseline edit — Standard classifier-free guidance.
+"""CFG baseline edit — Standard CFG + Imagen Rescaled CFG (Lin et al 2024).
 
-Replaces the custom template with standard CFG implementation for both
-SD v1.5 (latent_diffusion.py) and SDXL (latent_sdxl.py).
-The key is using noise_pred for renoising.
+Standard classifier-free guidance at cfg_guidance=7.5 plus the Imagen-style
+std-normalized rescaling of the CFG-combined noise prediction (Lin, Liu,
+Chen, Xu, Nie 2024, "Common Diffusion Noise Schedules and Sample Steps
+are Flawed"). The rescale fixes the std-inflation problem of vanilla CFG
+at high guidance, which causes over-saturated outputs at cfg=7.5.
+
+Implementation:
+    noise_pred = noise_uc + cfg * (noise_c - noise_uc)   # vanilla CFG
+    std_c    = noise_c.std(per-sample)
+    std_pred = noise_pred.std(per-sample)
+    rescaled = noise_pred * (std_c / std_pred)
+    noise_pred = phi * rescaled + (1 - phi) * noise_pred  # phi = 0.7
+
+Still renoises with `noise_pred` (standard CFG flavor, not CFG++).
 """
 
 _SD_FILE = "CFGpp-main/latent_diffusion.py"
@@ -46,6 +57,13 @@ class BaseDDIMCFGpp(StableDiffusion):
             with torch.no_grad():
                 noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+
+                # Imagen Rescaled CFG (Lin et al 2024)
+                rescale_phi = 0.7
+                std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+                std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+                noise_pred_rescaled = noise_pred * (std_c / std_pred)
+                noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
 
             # tweedie
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
@@ -92,6 +110,13 @@ class BaseDDIMCFGpp(SDXL):
             with torch.no_grad():
                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+
+                # Imagen Rescaled CFG (Lin et al 2024)
+                rescale_phi = 0.7
+                std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+                std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+                noise_pred_rescaled = noise_pred * (std_c / std_pred)
+                noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
 
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
 

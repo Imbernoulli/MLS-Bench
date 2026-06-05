@@ -27,8 +27,11 @@ class Parser(OutputParser):
             if "TEST_METRICS:" not in line:
                 continue
 
-            fid_match = re.search(r"fid=([\d.]+)", line)
-            best_match = re.search(r"best_fid=([\d.]+)", line)
+            # Match nan/inf too (mse-only training can diverge): \b avoids
+            # matching the "fid=" inside "best_fid=". Without this a divergent
+            # run prints fid=nan, the regex misses, and no metric is recorded.
+            fid_match = re.search(r"\bfid=([\d.]+|nan|[-+]?inf)", line, re.IGNORECASE)
+            best_match = re.search(r"best_fid=([\d.]+|nan|[-+]?inf)", line, re.IGNORECASE)
 
             if fid_match:
                 fid = float(fid_match.group(1))

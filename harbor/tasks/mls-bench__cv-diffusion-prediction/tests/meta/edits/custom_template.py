@@ -364,7 +364,7 @@ if __name__ == '__main__':
         net = DDP(net, device_ids=[local_rank])
     net_raw = net.module if use_ddp else net
 
-    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
+    optimizer = torch.optim.AdamW(net.parameters(), lr=lr, betas=(0.95, 0.999), weight_decay=1e-6, eps=1e-8)
     scaler = torch.amp.GradScaler()
 
     num_params = sum(p.numel() for p in net_raw.parameters())

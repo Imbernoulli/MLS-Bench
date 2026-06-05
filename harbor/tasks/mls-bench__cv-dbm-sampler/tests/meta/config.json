@@ -25,15 +25,6 @@
       "compute": 4.0,
       "time": "4:00:00",
       "package": "dbim-codebase"
-    },
-    {
-      "cmd": "scripts/run_DIODE_50nfe.sh",
-      "label": "DIODE_50nfe",
-      "group": 1,
-      "compute": 4.0,
-      "time": "4:00:00",
-      "package": "dbim-codebase",
-      "agent_skip": true
     }
   ],
   "baselines": {

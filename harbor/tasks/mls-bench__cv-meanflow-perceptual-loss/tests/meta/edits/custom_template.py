@@ -260,6 +260,20 @@ def compute_fid(net, device, num_samples=2048, num_steps=10, img_size=32, batch_
         return stats["mu"], stats["sigma"]
     _feat.get_reference_statistics = _patched_ref
 
+    # cleanfid.fid (aliased `cleanfid` here) did `from .features import
+    # build_feature_extractor, get_reference_statistics` at import time, so
+    # cleanfid.compute_fid resolves those names from the fid module's own
+    # globals, NOT from cleanfid.features. Patching only cleanfid.features
+    # (above) is therefore a no-op for compute_fid -> it would hit the default
+    # download path (InceptionV3W -> /tmp, stats -> CMU URL) and fail on a
+    # no-network compute node, so no FID is produced and the task scores 0.
+    # Patch the fid module's names too so the staged /data/cleanfid weights +
+    # reference stats are actually used.
+    _orig_build_fid = getattr(cleanfid, "build_feature_extractor", None)
+    _orig_ref_fid = getattr(cleanfid, "get_reference_statistics", None)
+    cleanfid.build_feature_extractor = _patched_build
+    cleanfid.get_reference_statistics = _patched_ref
+
     net.eval()
     gen_dir = tempfile.mkdtemp()
 
@@ -290,6 +304,10 @@ def compute_fid(net, device, num_samples=2048, num_steps=10, img_size=32, batch_
     # Restore original functions
     _feat.build_feature_extractor = _orig_build
     _feat.get_reference_statistics = _orig_ref
+    if _orig_build_fid is not None:
+        cleanfid.build_feature_extractor = _orig_build_fid
+    if _orig_ref_fid is not None:
+        cleanfid.get_reference_statistics = _orig_ref_fid
 
     net.train()
     return score
@@ -300,6 +318,26 @@ def compute_fid(net, device, num_samples=2048, num_steps=10, img_size=32, batch_
 # ============================================================================
 
 if __name__ == '__main__':
+    use_ddp = 'RANK' in os.environ
+    if use_ddp:
+        import torch.distributed as dist
+        from torch.nn.parallel import DistributedDataParallel as DDP
+        from torch.utils.data.distributed import DistributedSampler
+
+        backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+        dist.init_process_group(backend)
+        rank = dist.get_rank()
+        world_size = dist.get_world_size()
+        local_rank = int(os.environ.get('LOCAL_RANK', 0))
+    else:
+        dist = None
+        DDP = None
+        DistributedSampler = None
+        rank = 0
+        world_size = 1
+        local_rank = 0
+    is_main = rank == 0
+
     # ── Config ──────────────────────────────────────────────────────────────
     seed = int(os.environ.get('SEED', 42))
     data_dir = os.environ.get('DATA_DIR', '/data/cifar10')
@@ -310,10 +348,16 @@ if __name__ == '__main__':
     lr = float(os.environ.get('LR', 2e-4))
     num_fid_samples = int(os.environ.get('NUM_FID_SAMPLES', 2048))
     num_eval_steps = int(os.environ.get('NUM_EVAL_STEPS', 10))
+    ema_decay = float(os.environ.get('EMA_DECAY', 0.0))
 
-    torch.manual_seed(seed)
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    os.makedirs(output_dir, exist_ok=True)
+    torch.manual_seed(seed + rank)
+    device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
+    if torch.cuda.is_available():
+        torch.cuda.set_device(device)
+    if is_main:
+        os.makedirs(output_dir, exist_ok=True)
+    if use_ddp:
+        dist.barrier()
 
     # ── Data ────────────────────────────────────────────────────────────────
     transform = transforms.Compose([
@@ -322,8 +366,9 @@ if __name__ == '__main__':
         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
     ])
     dataset = datasets.CIFAR10(data_dir, train=True, transform=transform, download=False)
+    sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True) if use_ddp else None
     loader = torch.utils.data.DataLoader(
-        dataset, batch_size=batch_size, shuffle=True,
+        dataset, batch_size=batch_size, shuffle=(sampler is None), sampler=sampler,
         num_workers=4, pin_memory=True, drop_last=True
     )
     data_iter = iter(loader)
@@ -334,11 +379,26 @@ if __name__ == '__main__':
     num_heads   = int(os.environ.get('MODEL_NUM_HEADS', 8))
     net = SmallDiT(img_size=32, patch_size=4, in_channels=3,
                    hidden_size=hidden_size, depth=depth, num_heads=num_heads).to(device)
+    ema_net = None
+    if ema_decay > 0:
+        import copy
+        ema_net = copy.deepcopy(net)
+        ema_net.eval()
+        for p in ema_net.parameters():
+            p.requires_grad_(False)
+    if use_ddp:
+        ddp_kwargs = {"find_unused_parameters": True}
+        if device.type == 'cuda':
+            ddp_kwargs["device_ids"] = [local_rank]
+        net = DDP(net, **ddp_kwargs)
     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
     scaler = torch.amp.GradScaler()
 
-    num_params = sum(p.numel() for p in net.parameters())
-    print(f"Model parameters: {num_params/1e6:.1f}M")
+    raw_net = net.module if hasattr(net, 'module') else net
+    num_params = sum(p.numel() for p in raw_net.parameters())
+    if is_main:
+        ema_msg = f", ema={ema_decay}" if ema_net is not None else ""
+        print(f"Model parameters: {num_params/1e6:.1f}M | GPUs: {world_size}{ema_msg}")
 
     # ── LPIPS perceptual loss model ──────────────────────────────────────────
     lpips_fn = lpips.LPIPS(net='vgg').to(device)
@@ -354,6 +414,8 @@ if __name__ == '__main__':
         try:
             x, _ = next(data_iter)
         except StopIteration:
+            if sampler is not None:
+                sampler.set_epoch(step)
             data_iter = iter(loader)
             x, _ = next(data_iter)
 
@@ -372,8 +434,9 @@ if __name__ == '__main__':
 
         # Compute mean velocity target
         with torch.amp.autocast(device_type='cuda'):
+            raw_net = net.module if hasattr(net, 'module') else net
             mean_vel_target = compute_mean_velocity_target(
-                net, x_t, t, t_next, dt, velocity, device
+                raw_net, x_t, t, t_next, dt, velocity, device
             )
 
             # Predict mean velocity
@@ -398,6 +461,11 @@ if __name__ == '__main__':
             # frequency-domain losses, or any combination thereof.
             raise NotImplementedError("Implement the loss function")
 
+        warmup_steps = 1000
+        cur_lr = lr * step / warmup_steps if step <= warmup_steps else lr
+        for pg in optimizer.param_groups:
+            pg['lr'] = cur_lr
+
         optimizer.zero_grad()
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
@@ -405,27 +473,45 @@ if __name__ == '__main__':
         scaler.step(optimizer)
         scaler.update()
 
-        if step % 200 == 0:
+        if ema_net is not None:
+            with torch.no_grad():
+                raw_net = net.module if hasattr(net, 'module') else net
+                for p_ema, p_net in zip(ema_net.parameters(), raw_net.parameters()):
+                    p_ema.lerp_(p_net, 1 - ema_decay)
+
+        if step % 200 == 0 and is_main:
             dt_elapsed = time.time() - t0
-            print(f"step {step}/{max_steps} | loss {loss.item():.4f} | {dt_elapsed:.1f}s", flush=True)
+            print(f"step {step}/{max_steps} | loss {loss.item():.4f} | lr {cur_lr:.2e} | {dt_elapsed:.1f}s", flush=True)
             t0 = time.time()
 
         if step % eval_interval == 0 or step == max_steps:
-            print(f"Computing FID at step {step}...", flush=True)
-            fid = compute_fid(net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
-            print(f"TRAIN_METRICS: step={step}, loss={loss.item():.4f}, fid={fid:.2f}", flush=True)
-            if fid < best_fid:
-                best_fid = fid
+            if is_main:
+                eval_net = ema_net if ema_net is not None else (net.module if hasattr(net, 'module') else net)
+                eval_label = " (EMA)" if ema_net is not None else ""
+                print(f"Computing FID at step {step}{eval_label}...", flush=True)
+                fid = compute_fid(eval_net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
+                print(f"TRAIN_METRICS: step={step}, loss={loss.item():.4f}, fid={fid:.2f}", flush=True)
+                if fid < best_fid:
+                    best_fid = fid
+            if use_ddp:
+                dist.barrier()
 
     # ── Save checkpoint ──────────────────────────────────────────────────────
-    print(f"Saving checkpoint to {output_dir}/checkpoint.pth", flush=True)
-    torch.save({
-        'step': max_steps,
-        'model_state_dict': net.state_dict(),
-        'optimizer_state_dict': optimizer.state_dict(),
-        'best_fid': best_fid,
-    }, os.path.join(output_dir, 'checkpoint.pth'))
+    if is_main:
+        print(f"Saving checkpoint to {output_dir}/checkpoint.pth", flush=True)
+        save_net = ema_net if ema_net is not None else (net.module if hasattr(net, 'module') else net)
+        torch.save({
+            'step': max_steps,
+            'model_state_dict': save_net.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'best_fid': best_fid,
+        }, os.path.join(output_dir, 'checkpoint.pth'))
 
     # ── Final eval ───────────────────────────────────────────────────────────
-    fid = compute_fid(net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
-    print(f"TEST_METRICS: fid={fid:.2f}, best_fid={best_fid:.2f}", flush=True)
+    if is_main:
+        eval_net = ema_net if ema_net is not None else (net.module if hasattr(net, 'module') else net)
+        fid = compute_fid(eval_net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
+        print(f"TEST_METRICS: fid={fid:.2f}, best_fid={best_fid:.2f}", flush=True)
+    if use_ddp:
+        dist.barrier()
+        dist.destroy_process_group()

@@ -42,14 +42,17 @@ class BaseDDIMCFGpp(StableDiffusion):
             at_prev = self.alpha(t - self.skip)
 
             with torch.no_grad():
-                noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
-                noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+                if cfg_guidance == 1.0:
+                    noise_pred = self.predict_noise(zt, t, None, c)[1]
+                else:
+                    noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
+                    noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
 
             # Tweedie: estimate clean image
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
 
-            # DDIM update: first-order, use unconditional noise for CFG++
-            zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_uc
+            # DDIM update: standard CFG renoising
+            zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_pred
 
             if callback_fn is not None:
                 callback_kwargs = {'z0t': z0t.detach(),
@@ -90,8 +93,8 @@ class BaseDDIMCFGpp(SDXL):
 
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
 
-            # DDIM: first-order, use noise_uc for CFG++
-            zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_uc
+            # DDIM: standard CFG renoising
+            zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
 
             if callback_fn is not None:
                 callback_kwargs = {'z0t': z0t.detach(),

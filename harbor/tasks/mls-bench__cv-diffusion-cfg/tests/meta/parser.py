@@ -1,6 +1,7 @@
 """Task-specific output parser for cv-diffusion-cfg.
 
-Extracts per-model CLIP score and FID from generation output.
+Extracts per-model FID from generation output. CLIP score is intentionally
+discarded because task scoring uses FID only.
 
 Expected format:
     GENERATION_METRICS model=sd15 method=ddim_cfg++ cfg_guidance=0.6 NFE=10 seed=42 fid=25.1234 clip_score=0.3245
@@ -38,8 +39,7 @@ class Parser(OutputParser):
         return ParseResult(feedback=feedback, metrics=metrics)
 
     def _parse_generation_metrics(self, output: str) -> tuple[str, dict]:
-        """Extract GENERATION_METRICS lines and return feedback + metrics."""
-        model_clip: dict[str, float] = {}
+        """Extract GENERATION_METRICS lines and return FID feedback + metrics."""
         model_fid: dict[str, float] = {}
         gen_lines: list[str] = []
 
@@ -49,13 +49,9 @@ class Parser(OutputParser):
             gen_lines.append(line.strip())
 
             model_match = re.search(r"model=(\w+)", line)
-            clip_match = re.search(r"clip_score=([\d.\-]+)", line)
             fid_match = re.search(r"fid=([\d.\-]+)", line)
 
             model = model_match.group(1) if model_match else "unknown"
-
-            if clip_match:
-                model_clip[model] = float(clip_match.group(1))
 
             if fid_match:
                 model_fid[model] = float(fid_match.group(1))
@@ -63,33 +59,20 @@ class Parser(OutputParser):
         metrics: dict = {}
         feedback = ""
 
-        if model_clip or model_fid:
+        if model_fid:
             # Per-model metrics
-            for m, cs in model_clip.items():
-                metrics[f"clip_score_{m}"] = cs
             for m, fid in model_fid.items():
                 metrics[f"fid_{m}"] = fid
 
             # Average metrics
-            if model_clip:
-                avg_clip = sum(model_clip.values()) / len(model_clip)
-                metrics["clip_score"] = avg_clip
-
-            if model_fid:
-                avg_fid = sum(model_fid.values()) / len(model_fid)
-                metrics["fid"] = avg_fid
+            avg_fid = sum(model_fid.values()) / len(model_fid)
+            metrics["fid"] = avg_fid
 
             # Feedback
-            feedback = "Generation results:\n" + "\n".join(gen_lines)
-            for m in sorted(set(list(model_clip.keys()) + list(model_fid.keys()))):
-                feedback += f"\n  {m}:"
-                if m in model_clip:
-                    feedback += f" CLIP={model_clip[m]:.4f}"
-                if m in model_fid:
-                    feedback += f" FID={model_fid[m]:.4f}"
-            if model_clip:
-                feedback += f"\n\nAverage CLIP score: {avg_clip:.4f}"
-            if model_fid:
-                feedback += f"\nAverage FID: {avg_fid:.4f}"
+            cleaned_lines = [re.sub(r"\s*clip_score=[\d.\-]+", "", ln) for ln in gen_lines]
+            feedback = "Generation results:\n" + "\n".join(cleaned_lines)
+            for m in sorted(model_fid.keys()):
+                feedback += f"\n  {m}: FID={model_fid[m]:.4f}"
+            feedback += f"\nAverage FID: {avg_fid:.4f}"
 
         return feedback, metrics

@@ -46,17 +46,17 @@
   "files": [
     {
       "filename": "dbim-codebase/ddbm/karras_diffusion.py",
-      "_comment": "Only show the editable template (get_sigmas_karras, L301-311). All sibling schedulers and sampler implementations in this file are hidden \u2014 agent learns allowed APIs only from the baseline variants (karras/uniform/cosine/loglinear).",
+      "_comment": "Only show the editable template (get_sigmas_uniform, L310-321 after pre_edit + mid_edit line shifts). All sibling schedulers and sampler implementations in this file are hidden \u2014 agent learns allowed APIs only from the baseline variants (karras/uniform/cosine/loglinear).",
       "read": [
         {
-          "start": 301,
-          "end": 311
+          "start": 310,
+          "end": 321
         }
       ],
       "edit": [
         {
           "start": 310,
-          "end": 320
+          "end": 321
         }
       ]
     }

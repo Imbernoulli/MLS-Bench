@@ -1,8 +1,15 @@
-"""Zero-init baseline edit — CFG++ with zero-initialization for first K steps.
+"""Zero-init + Rescaled CFG baseline — zero-init K=2 + Imagen std-rescale.
 
-Replaces the custom template with zero-init implementation for both
-SD v1.5 (latent_diffusion.py) and SDXL (latent_sdxl.py).
-The key idea: for the first K steps (K=2), skip the update and keep zt unchanged.
+Combines two known techniques:
+1. Zero-init: skip guidance (w=0) for the first K=2 timesteps, then
+   apply cfg_guidance=7.5 for the rest. Avoids over-correction in the
+   high-noise regime where (noise_c - noise_uc) is unstable.
+2. Imagen Rescaled CFG (Lin et al 2024): normalize noise_pred std to
+   match noise_c std, then mix with phi=0.7 against the un-rescaled
+   noise_pred. Fixes the over-saturation problem of vanilla CFG at
+   high guidance.
+
+Renoises with `noise_pred` (standard CFG flavor).
 """
 
 _SD_FILE = "CFGpp-main/latent_diffusion.py"
@@ -12,7 +19,7 @@ _ZEROINIT_SD = """\
 @register_solver("ddim_cfg++")
 class BaseDDIMCFGpp(StableDiffusion):
     \"\"\"
-    DDIM solver for SD with CFG++ and Zero-init.
+    DDIM solver for SD with CFG and Zero-init for first K steps.
     \"\"\"
     def __init__(self,
                  solver_config: Dict,
@@ -27,6 +34,10 @@ class BaseDDIMCFGpp(StableDiffusion):
                prompt=["",""],
                callback_fn=None,
                **kwargs):
+        # Zero-init natural scale: standard CFG strength (7.5). The zero-init
+        # trick only delays the first K steps; the rest runs at normal scale.
+        # Hardcoded as method design.
+        cfg_guidance = 7.5
 
         # Text embedding
         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
@@ -36,27 +47,34 @@ class BaseDDIMCFGpp(StableDiffusion):
         zt = zt.requires_grad_()
 
         # Zero-init parameter
-        K = 2  # Skip first K steps
+        K = 2  # First K steps use guidance=0
 
         # Sampling
         pbar = tqdm(self.scheduler.timesteps, desc="SD")
         for step, t in enumerate(pbar):
-            # Zero-init: skip first K steps
-            if step < K:
-                continue
-
             at = self.alpha(t)
             at_prev = self.alpha(t - self.skip)
 
             with torch.no_grad():
                 noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
-                noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+
+                # Zero-init: w=0 for first K steps, then normal CFG
+                w = 0.0 if step < K else cfg_guidance
+                noise_pred = noise_uc + w * (noise_c - noise_uc)
+
+                # Imagen Rescaled CFG (Lin et al 2024) — only when guidance is active
+                if w > 0:
+                    rescale_phi = 0.7
+                    std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+                    std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+                    noise_pred_rescaled = noise_pred * (std_c / std_pred)
+                    noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
 
             # tweedie
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
 
-            # add noise - CFG++: use noise_uc to stay on manifold
-            zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_uc
+            # add noise - standard CFG renoising
+            zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_pred
 
             if callback_fn is not None:
                 callback_kwargs = {'z0t': z0t.detach(),
@@ -83,27 +101,37 @@ class BaseDDIMCFGpp(SDXL):
                         shape=(1024, 1024),
                         callback_fn=None,
                         **kwargs):
+        # Zero-init natural scale — hardcoded as method design
+        cfg_guidance = 7.5
         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
 
-        K = 2  # Skip first K steps
+        K = 2  # First K steps use guidance=0
 
         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
         for step, t in enumerate(pbar):
-            if step < K:
-                continue
-
             next_t = t - self.skip
             at = self.scheduler.alphas_cumprod[t]
             at_next = self.scheduler.alphas_cumprod[next_t]
 
             with torch.no_grad():
                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
-                noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+
+                # Zero-init: w=0 for first K steps, then normal CFG
+                w = 0.0 if step < K else cfg_guidance
+                noise_pred = noise_uc + w * (noise_c - noise_uc)
+
+                # Imagen Rescaled CFG (Lin et al 2024)
+                if w > 0:
+                    rescale_phi = 0.7
+                    std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+                    std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+                    noise_pred_rescaled = noise_pred * (std_c / std_pred)
+                    noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
 
             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
 
-            # CFG++: use noise_uc to stay on manifold
-            zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_uc
+            # Standard CFG renoising
+            zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
 
             if callback_fn is not None:
                 callback_kwargs = {'z0t': z0t.detach(),

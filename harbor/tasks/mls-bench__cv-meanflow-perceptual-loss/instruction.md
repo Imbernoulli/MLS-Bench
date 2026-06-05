@@ -64,11 +64,11 @@ gradients dominate the velocity target.
 | `lpips_grad`     | MSE + Charbonnier-smoothed L1 on velocity + LPIPS + Sobel gradient + multiscale L1 on `x_denoised`, with a `(1 − t)^2` perceptual schedule and a `t ≤ 0.1` mask (spatial-domain perceptual recipe). |
 | `lpips_spectral` | `lpips_grad` stack augmented with an FFT-magnitude L1 term on `x_denoised` (spatial + frequency-domain recipe). |
 
+
 A useful method should improve visual sample quality without destabilizing the
 velocity target. Auxiliary losses must be applied only where `x_denoised` is
 numerically meaningful. Do not change the architecture, data pipeline,
-sampler, or metric computation.
-
+sampler, number of evaluation steps, or metric computation.
 
 ## Your Workspace
 
@@ -82,7 +82,7 @@ You may **only** modify these files, and **only within the listed line ranges
 or deleting existing ones — will cause your submission to be invalid.
 
 - `alphaflow-main/custom_train_perceptual.py`
-- editable lines **384–401**
+- editable lines **445–462**
 
 
 Other files you may **read** for context (do not modify):
@@ -92,7 +92,7 @@ Other files you may **read** for context (do not modify):
 ## Readable Context
 
 
-### `alphaflow-main/custom_train_perceptual.py`  [EDITABLE — lines 384–401 only]
+### `alphaflow-main/custom_train_perceptual.py`  [EDITABLE — lines 445–462 only]
 
 ```python
      1: """Custom Flow Matching Training Script — Perceptual Loss Variant
@@ -357,176 +357,250 @@ Other files you may **read** for context (do not modify):
    260:         return stats["mu"], stats["sigma"]
    261:     _feat.get_reference_statistics = _patched_ref
    262: 
-   263:     net.eval()
-   264:     gen_dir = tempfile.mkdtemp()
-   265: 
-   266:     generated = 0
-   267:     idx = 0
-   268:     while generated < num_samples:
-   269:         bs = min(batch_size, num_samples - generated)
-   270:         imgs = sample_images(net, bs, num_steps, device, img_size)
-   271:         imgs_uint8 = ((imgs * 0.5 + 0.5) * 255).clamp(0, 255).byte().cpu()
-   272:         for j in range(bs):
-   273:             from PIL import Image
-   274:             img_np = imgs_uint8[j].permute(1, 2, 0).numpy()
-   275:             Image.fromarray(img_np).save(os.path.join(gen_dir, f'{idx:05d}.png'))
-   276:             idx += 1
-   277:         generated += bs
-   278: 
-   279:     score = cleanfid.compute_fid(
-   280:         gen_dir,
-   281:         dataset_name="cifar10",
-   282:         dataset_res=32,
-   283:         dataset_split="train",
-   284:         device=device,
-   285:         batch_size=batch_size,
-   286:         verbose=False,
-   287:     )
-   288:     shutil.rmtree(gen_dir)
-   289: 
-   290:     # Restore original functions
-   291:     _feat.build_feature_extractor = _orig_build
-   292:     _feat.get_reference_statistics = _orig_ref
-   293: 
-   294:     net.train()
-   295:     return score
-   296: 
-   297: 
-   298: # ============================================================================
-   299: # Training Script
-   300: # ============================================================================
-   301: 
-   302: if __name__ == '__main__':
-   303:     # ── Config ──────────────────────────────────────────────────────────────
-   304:     seed = int(os.environ.get('SEED', 42))
-   305:     data_dir = os.environ.get('DATA_DIR', '/data/cifar10')
-   306:     output_dir = os.environ.get('OUTPUT_DIR', '/tmp/output')
-   307:     max_steps = int(os.environ.get('MAX_STEPS', 1000))
-   308:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1000))
-   309:     batch_size = int(os.environ.get('BATCH_SIZE', 128))
-   310:     lr = float(os.environ.get('LR', 2e-4))
-   311:     num_fid_samples = int(os.environ.get('NUM_FID_SAMPLES', 2048))
-   312:     num_eval_steps = int(os.environ.get('NUM_EVAL_STEPS', 10))
-   313: 
-   314:     torch.manual_seed(seed)
-   315:     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-   316:     os.makedirs(output_dir, exist_ok=True)
-   317: 
-   318:     # ── Data ────────────────────────────────────────────────────────────────
-   319:     transform = transforms.Compose([
-   320:         transforms.RandomHorizontalFlip(),
-   321:         transforms.ToTensor(),
-   322:         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
-   323:     ])
-   324:     dataset = datasets.CIFAR10(data_dir, train=True, transform=transform, download=False)
-   325:     loader = torch.utils.data.DataLoader(
-   326:         dataset, batch_size=batch_size, shuffle=True,
-   327:         num_workers=4, pin_memory=True, drop_last=True
-   328:     )
-   329:     data_iter = iter(loader)
-   330: 
-   331:     # ── Model ────────────────────────────────────────────────────────────────
-   332:     hidden_size = int(os.environ.get('MODEL_HIDDEN_SIZE', 512))
-   333:     depth       = int(os.environ.get('MODEL_DEPTH', 8))
-   334:     num_heads   = int(os.environ.get('MODEL_NUM_HEADS', 8))
-   335:     net = SmallDiT(img_size=32, patch_size=4, in_channels=3,
-   336:                    hidden_size=hidden_size, depth=depth, num_heads=num_heads).to(device)
-   337:     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
-   338:     scaler = torch.amp.GradScaler()
-   339: 
-   340:     num_params = sum(p.numel() for p in net.parameters())
-   341:     print(f"Model parameters: {num_params/1e6:.1f}M")
-   342: 
-   343:     # ── LPIPS perceptual loss model ──────────────────────────────────────────
-   344:     lpips_fn = lpips.LPIPS(net='vgg').to(device)
-   345:     lpips_fn.eval()
-   346:     for p in lpips_fn.parameters():
-   347:         p.requires_grad_(False)
-   348: 
-   349:     # ── Training loop ────────────────────────────────────────────────────────
-   350:     best_fid = float('inf')
-   351:     t0 = time.time()
+   263:     # cleanfid.fid (aliased `cleanfid` here) did `from .features import
+   264:     # build_feature_extractor, get_reference_statistics` at import time, so
+   265:     # cleanfid.compute_fid resolves those names from the fid module's own
+   266:     # globals, NOT from cleanfid.features. Patching only cleanfid.features
+   267:     # (above) is therefore a no-op for compute_fid -> it would hit the default
+   268:     # download path (InceptionV3W -> /tmp, stats -> CMU URL) and fail on a
+   269:     # no-network compute node, so no FID is produced and the task scores 0.
+   270:     # Patch the fid module's names too so the staged /data/cleanfid weights +
+   271:     # reference stats are actually used.
+   272:     _orig_build_fid = getattr(cleanfid, "build_feature_extractor", None)
+   273:     _orig_ref_fid = getattr(cleanfid, "get_reference_statistics", None)
+   274:     cleanfid.build_feature_extractor = _patched_build
+   275:     cleanfid.get_reference_statistics = _patched_ref
+   276: 
+   277:     net.eval()
+   278:     gen_dir = tempfile.mkdtemp()
+   279: 
+   280:     generated = 0
+   281:     idx = 0
+   282:     while generated < num_samples:
+   283:         bs = min(batch_size, num_samples - generated)
+   284:         imgs = sample_images(net, bs, num_steps, device, img_size)
+   285:         imgs_uint8 = ((imgs * 0.5 + 0.5) * 255).clamp(0, 255).byte().cpu()
+   286:         for j in range(bs):
+   287:             from PIL import Image
+   288:             img_np = imgs_uint8[j].permute(1, 2, 0).numpy()
+   289:             Image.fromarray(img_np).save(os.path.join(gen_dir, f'{idx:05d}.png'))
+   290:             idx += 1
+   291:         generated += bs
+   292: 
+   293:     score = cleanfid.compute_fid(
+   294:         gen_dir,
+   295:         dataset_name="cifar10",
+   296:         dataset_res=32,
+   297:         dataset_split="train",
+   298:         device=device,
+   299:         batch_size=batch_size,
+   300:         verbose=False,
+   301:     )
+   302:     shutil.rmtree(gen_dir)
+   303: 
+   304:     # Restore original functions
+   305:     _feat.build_feature_extractor = _orig_build
+   306:     _feat.get_reference_statistics = _orig_ref
+   307:     if _orig_build_fid is not None:
+   308:         cleanfid.build_feature_extractor = _orig_build_fid
+   309:     if _orig_ref_fid is not None:
+   310:         cleanfid.get_reference_statistics = _orig_ref_fid
+   311: 
+   312:     net.train()
+   313:     return score
+   314: 
+   315: 
+   316: # ============================================================================
+   317: # Training Script
+   318: # ============================================================================
+   319: 
+   320: if __name__ == '__main__':
+   321:     use_ddp = 'RANK' in os.environ
+   322:     if use_ddp:
+   323:         import torch.distributed as dist
+   324:         from torch.nn.parallel import DistributedDataParallel as DDP
+   325:         from torch.utils.data.distributed import DistributedSampler
+   326: 
+   327:         backend = 'nccl' if torch.cuda.is_available() else 'gloo'
+   328:         dist.init_process_group(backend)
+   329:         rank = dist.get_rank()
+   330:         world_size = dist.get_world_size()
+   331:         local_rank = int(os.environ.get('LOCAL_RANK', 0))
+   332:     else:
+   333:         dist = None
+   334:         DDP = None
+   335:         DistributedSampler = None
+   336:         rank = 0
+   337:         world_size = 1
+   338:         local_rank = 0
+   339:     is_main = rank == 0
+   340: 
+   341:     # ── Config ──────────────────────────────────────────────────────────────
+   342:     seed = int(os.environ.get('SEED', 42))
+   343:     data_dir = os.environ.get('DATA_DIR', '/data/cifar10')
+   344:     output_dir = os.environ.get('OUTPUT_DIR', '/tmp/output')
+   345:     max_steps = int(os.environ.get('MAX_STEPS', 1000))
+   346:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1000))
+   347:     batch_size = int(os.environ.get('BATCH_SIZE', 128))
+   348:     lr = float(os.environ.get('LR', 2e-4))
+   349:     num_fid_samples = int(os.environ.get('NUM_FID_SAMPLES', 2048))
+   350:     num_eval_steps = int(os.environ.get('NUM_EVAL_STEPS', 10))
+   351:     ema_decay = float(os.environ.get('EMA_DECAY', 0.0))
    352: 
-   353:     for step in range(1, max_steps + 1):
-   354:         try:
-   355:             x, _ = next(data_iter)
-   356:         except StopIteration:
-   357:             data_iter = iter(loader)
-   358:             x, _ = next(data_iter)
-   359: 
-   360:         x = x.to(device)
-   361:         B = x.shape[0]
-   362: 
-   363:         # Sample trajectory params
-   364:         t, t_next, dt, alpha = sample_traj_params(B, step, max_steps, device)
-   365: 
-   366:         # Add noise: x_t = (1-t)*x + t*noise
-   367:         noise = torch.randn_like(x)
-   368:         x_t = (1 - t) * x + t * noise
-   369: 
-   370:         # Instantaneous velocity target: v = noise - x
-   371:         velocity = noise - x
-   372: 
-   373:         # Compute mean velocity target
-   374:         with torch.amp.autocast(device_type='cuda'):
-   375:             mean_vel_target = compute_mean_velocity_target(
-   376:                 net, x_t, t, t_next, dt, velocity, device
-   377:             )
-   378: 
-   379:             # Predict mean velocity
-   380:             pred_mean_vel = net(x_t, sigma=t, sigma_next=t_next)
-   381: 
-   382:             # TODO: Implement your loss function here.
-   383:             #
-   384:             # You have access to:
-   385:             #   pred_mean_vel : [B, C, H, W] — model's predicted mean velocity
-   386:             #   mean_vel_target: [B, C, H, W] — ground-truth mean velocity target
-   387:             #   x              : [B, C, H, W] — clean image (normalized to [-1, 1])
-   388:             #   x_t            : [B, C, H, W] — noisy image at timestep t
-   389:             #   t              : [B, 1, 1, 1] — current timestep
-   390:             #   t_next         : [B, 1, 1, 1] — target timestep
-   391:             #   dt             : [B, 1, 1, 1] — step size
-   392:             #   alpha          : float         — discrete path weight
-   393:             #   lpips_fn       : LPIPS model (VGG backbone), expects input in [-1, 1]
-   394:             #   device         : torch.device
-   395:             #
-   396:             # Your loss must assign a scalar `loss` (the value that will be
-   397:             # back-propagated). You may also use perceptual (LPIPS) losses,
-   398:             # frequency-domain losses, or any combination thereof.
-   399:             raise NotImplementedError("Implement the loss function")
-   400: 
-   401:         optimizer.zero_grad()
-   402:         scaler.scale(loss).backward()
-   403:         scaler.unscale_(optimizer)
-   404:         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
-   405:         scaler.step(optimizer)
-   406:         scaler.update()
-   407: 
-   408:         if step % 200 == 0:
-   409:             dt_elapsed = time.time() - t0
-   410:             print(f"step {step}/{max_steps} | loss {loss.item():.4f} | {dt_elapsed:.1f}s", flush=True)
-   411:             t0 = time.time()
+   353:     torch.manual_seed(seed + rank)
+   354:     device = torch.device(f'cuda:{local_rank}' if torch.cuda.is_available() else 'cpu')
+   355:     if torch.cuda.is_available():
+   356:         torch.cuda.set_device(device)
+   357:     if is_main:
+   358:         os.makedirs(output_dir, exist_ok=True)
+   359:     if use_ddp:
+   360:         dist.barrier()
+   361: 
+   362:     # ── Data ────────────────────────────────────────────────────────────────
+   363:     transform = transforms.Compose([
+   364:         transforms.RandomHorizontalFlip(),
+   365:         transforms.ToTensor(),
+   366:         transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
+   367:     ])
+   368:     dataset = datasets.CIFAR10(data_dir, train=True, transform=transform, download=False)
+   369:     sampler = DistributedSampler(dataset, num_replicas=world_size, rank=rank, shuffle=True) if use_ddp else None
+   370:     loader = torch.utils.data.DataLoader(
+   371:         dataset, batch_size=batch_size, shuffle=(sampler is None), sampler=sampler,
+   372:         num_workers=4, pin_memory=True, drop_last=True
+   373:     )
+   374:     data_iter = iter(loader)
+   375: 
+   376:     # ── Model ────────────────────────────────────────────────────────────────
+   377:     hidden_size = int(os.environ.get('MODEL_HIDDEN_SIZE', 512))
+   378:     depth       = int(os.environ.get('MODEL_DEPTH', 8))
+   379:     num_heads   = int(os.environ.get('MODEL_NUM_HEADS', 8))
+   380:     net = SmallDiT(img_size=32, patch_size=4, in_channels=3,
+   381:                    hidden_size=hidden_size, depth=depth, num_heads=num_heads).to(device)
+   382:     ema_net = None
+   383:     if ema_decay > 0:
+   384:         import copy
+   385:         ema_net = copy.deepcopy(net)
+   386:         ema_net.eval()
+   387:         for p in ema_net.parameters():
+   388:             p.requires_grad_(False)
+   389:     if use_ddp:
+   390:         ddp_kwargs = {"find_unused_parameters": True}
+   391:         if device.type == 'cuda':
+   392:             ddp_kwargs["device_ids"] = [local_rank]
+   393:         net = DDP(net, **ddp_kwargs)
+   394:     optimizer = torch.optim.AdamW(net.parameters(), lr=lr, weight_decay=1e-4)
+   395:     scaler = torch.amp.GradScaler()
+   396: 
+   397:     raw_net = net.module if hasattr(net, 'module') else net
+   398:     num_params = sum(p.numel() for p in raw_net.parameters())
+   399:     if is_main:
+   400:         ema_msg = f", ema={ema_decay}" if ema_net is not None else ""
+   401:         print(f"Model parameters: {num_params/1e6:.1f}M | GPUs: {world_size}{ema_msg}")
+   402: 
+   403:     # ── LPIPS perceptual loss model ──────────────────────────────────────────
+   404:     lpips_fn = lpips.LPIPS(net='vgg').to(device)
+   405:     lpips_fn.eval()
+   406:     for p in lpips_fn.parameters():
+   407:         p.requires_grad_(False)
+   408: 
+   409:     # ── Training loop ────────────────────────────────────────────────────────
+   410:     best_fid = float('inf')
+   411:     t0 = time.time()
    412: 
-   413:         if step % eval_interval == 0 or step == max_steps:
-   414:             print(f"Computing FID at step {step}...", flush=True)
-   415:             fid = compute_fid(net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
-   416:             print(f"TRAIN_METRICS: step={step}, loss={loss.item():.4f}, fid={fid:.2f}", flush=True)
-   417:             if fid < best_fid:
-   418:                 best_fid = fid
-   419: 
-   420:     # ── Save checkpoint ──────────────────────────────────────────────────────
-   421:     print(f"Saving checkpoint to {output_dir}/checkpoint.pth", flush=True)
-   422:     torch.save({
-   423:         'step': max_steps,
-   424:         'model_state_dict': net.state_dict(),
-   425:         'optimizer_state_dict': optimizer.state_dict(),
-   426:         'best_fid': best_fid,
-   427:     }, os.path.join(output_dir, 'checkpoint.pth'))
-   428: 
-   429:     # ── Final eval ───────────────────────────────────────────────────────────
-   430:     fid = compute_fid(net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
-   431:     print(f"TEST_METRICS: fid={fid:.2f}, best_fid={best_fid:.2f}", flush=True)
+   413:     for step in range(1, max_steps + 1):
+   414:         try:
+   415:             x, _ = next(data_iter)
+   416:         except StopIteration:
+   417:             if sampler is not None:
+   418:                 sampler.set_epoch(step)
+   419:             data_iter = iter(loader)
+   420:             x, _ = next(data_iter)
+   421: 
+   422:         x = x.to(device)
+   423:         B = x.shape[0]
+   424: 
+   425:         # Sample trajectory params
+   426:         t, t_next, dt, alpha = sample_traj_params(B, step, max_steps, device)
+   427: 
+   428:         # Add noise: x_t = (1-t)*x + t*noise
+   429:         noise = torch.randn_like(x)
+   430:         x_t = (1 - t) * x + t * noise
+   431: 
+   432:         # Instantaneous velocity target: v = noise - x
+   433:         velocity = noise - x
+   434: 
+   435:         # Compute mean velocity target
+   436:         with torch.amp.autocast(device_type='cuda'):
+   437:             raw_net = net.module if hasattr(net, 'module') else net
+   438:             mean_vel_target = compute_mean_velocity_target(
+   439:                 raw_net, x_t, t, t_next, dt, velocity, device
+   440:             )
+   441: 
+   442:             # Predict mean velocity
+   443:             pred_mean_vel = net(x_t, sigma=t, sigma_next=t_next)
+   444: 
+   445:             # TODO: Implement your loss function here.
+   446:             #
+   447:             # You have access to:
+   448:             #   pred_mean_vel : [B, C, H, W] — model's predicted mean velocity
+   449:             #   mean_vel_target: [B, C, H, W] — ground-truth mean velocity target
+   450:             #   x              : [B, C, H, W] — clean image (normalized to [-1, 1])
+   451:             #   x_t            : [B, C, H, W] — noisy image at timestep t
+   452:             #   t              : [B, 1, 1, 1] — current timestep
+   453:             #   t_next         : [B, 1, 1, 1] — target timestep
+   454:             #   dt             : [B, 1, 1, 1] — step size
+   455:             #   alpha          : float         — discrete path weight
+   456:             #   lpips_fn       : LPIPS model (VGG backbone), expects input in [-1, 1]
+   457:             #   device         : torch.device
+   458:             #
+   459:             # Your loss must assign a scalar `loss` (the value that will be
+   460:             # back-propagated). You may also use perceptual (LPIPS) losses,
+   461:             # frequency-domain losses, or any combination thereof.
+   462:             raise NotImplementedError("Implement the loss function")
+   463: 
+   464:         warmup_steps = 1000
+   465:         cur_lr = lr * step / warmup_steps if step <= warmup_steps else lr
+   466:         for pg in optimizer.param_groups:
+   467:             pg['lr'] = cur_lr
+   468: 
+   469:         optimizer.zero_grad()
+   470:         scaler.scale(loss).backward()
+   471:         scaler.unscale_(optimizer)
+   472:         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+   473:         scaler.step(optimizer)
+   474:         scaler.update()
+   475: 
+   476:         if ema_net is not None:
+   477:             with torch.no_grad():
+   478:                 raw_net = net.module if hasattr(net, 'module') else net
+   479:                 for p_ema, p_net in zip(ema_net.parameters(), raw_net.parameters()):
+   480:                     p_ema.lerp_(p_net, 1 - ema_decay)
+   481: 
+   482:         if step % 200 == 0 and is_main:
+   483:             dt_elapsed = time.time() - t0
+   484:             print(f"step {step}/{max_steps} | loss {loss.item():.4f} | lr {cur_lr:.2e} | {dt_elapsed:.1f}s", flush=True)
+   485:             t0 = time.time()
+   486: 
+   487:         if step % eval_interval == 0 or step == max_steps:
+   488:             if is_main:
+   489:                 eval_net = ema_net if ema_net is not None else (net.module if hasattr(net, 'module') else net)
+   490:                 eval_label = " (EMA)" if ema_net is not None else ""
+   491:                 print(f"Computing FID at step {step}{eval_label}...", flush=True)
+   492:                 fid = compute_fid(eval_net, device, num_samples=num_fid_samples, num_steps=num_eval_steps)
+   493:                 print(f"TRAIN_METRICS: step={step}, loss={loss.item():.4f}, fid={fid:.2f}", flush=True)
+   494:                 if fid < best_fid:
+   495:                     best_fid = fid
+   496:             if use_ddp:
+   497:                 dist.barrier()
+   498: 
+   499:     # ── Save checkpoint ──────────────────────────────────────────────────────
+   500:     if is_main:
+
+[truncated: showing at most 500 lines / 60000 bytes from alphaflow-main/custom_train_perceptual.py]
 ```
+
+
+
 
 ## Reference Baselines
 
@@ -542,18 +616,18 @@ a baseline reproduction.
 In `alphaflow-main/custom_train_perceptual.py`:
 
 ```python
-Lines 384–388:
-   381: 
-   382:             # TODO: Implement your loss function here.
-   383:             #
-   384:             # Pure MSE on mean velocity prediction.
-   385:             # No inverse-loss reweighting (which would amplify easy samples
-   386:             # and destabilise training around step 35k).
-   387:             loss_mse_unscaled = ((pred_mean_vel - mean_vel_target) ** 2).flatten(1).mean(1)
-   388:             loss = loss_mse_unscaled.mean()
-   389:         scaler.scale(loss).backward()
-   390:         scaler.unscale_(optimizer)
-   391:         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+Lines 445–449:
+   442:             # Predict mean velocity
+   443:             pred_mean_vel = net(x_t, sigma=t, sigma_next=t_next)
+   444: 
+   445:             # Pure MSE on mean velocity prediction.
+   446:             # No inverse-loss reweighting (which would amplify easy samples
+   447:             # and destabilise training around step 35k).
+   448:             loss_mse_unscaled = ((pred_mean_vel - mean_vel_target) ** 2).flatten(1).mean(1)
+   449:             loss = loss_mse_unscaled.mean()
+   450: 
+   451:         warmup_steps = 1000
+   452:         cur_lr = lr * step / warmup_steps if step <= warmup_steps else lr
 ```
 
 ### `lpips_grad` baseline — editable region  [READ-ONLY — reference implementation]
@@ -561,40 +635,40 @@ Lines 384–388:
 In `alphaflow-main/custom_train_perceptual.py`:
 
 ```python
-Lines 384–410:
-   381: 
-   382:             # TODO: Implement your loss function here.
-   383:             #
-   384:             # MSE on velocity + Charbonnier smooth-L1 pixel loss on velocity
-   385:             err = pred_mean_vel - mean_vel_target
-   386:             loss_mse_unscaled = (err ** 2).flatten(1).mean(1)
-   387:             loss_charb = torch.sqrt(err ** 2 + 1e-6).flatten(1).mean(1)
-   388: 
-   389:             # Auxiliary perceptual losses on denoised image (mask t<=0.1 edge case)
-   390:             x_denoised = x_t - t * pred_mean_vel
-   391:             t_flat = t.view(B)
-   392:             mask = (t_flat > 0.1)
-   393:             perceptual_w = ((1.0 - t_flat) ** 2) * mask.float()
-   394: 
-   395:             loss_lpips = torch.zeros(B, device=device)
-   396:             loss_grad = torch.zeros(B, device=device)
-   397:             loss_multi = torch.zeros(B, device=device)
-   398:             if mask.any():
-   399:                 xd = x_denoised[mask].clamp(-1, 1).float()
-   400:                 xc = x[mask].clamp(-1, 1).float()
-   401:                 loss_lpips[mask] = lpips_fn(xd, xc).view(-1).float()
-   402:                 loss_grad[mask] = compute_gradient_loss(xd, xc).float()
-   403:                 loss_multi[mask] = compute_multiscale_loss(xd, xc).float()
-   404: 
-   405:             loss_total = (
-   406:                 loss_mse_unscaled
-   407:                 + 0.1 * loss_charb
-   408:                 + perceptual_w * (0.5 * loss_lpips + 0.3 * loss_grad + 0.2 * loss_multi)
-   409:             )
-   410:             loss = loss_total.mean()
-   411:         scaler.scale(loss).backward()
-   412:         scaler.unscale_(optimizer)
-   413:         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+Lines 445–471:
+   442:             # Predict mean velocity
+   443:             pred_mean_vel = net(x_t, sigma=t, sigma_next=t_next)
+   444: 
+   445:             # MSE on velocity + Charbonnier smooth-L1 pixel loss on velocity
+   446:             err = pred_mean_vel - mean_vel_target
+   447:             loss_mse_unscaled = (err ** 2).flatten(1).mean(1)
+   448:             loss_charb = torch.sqrt(err ** 2 + 1e-6).flatten(1).mean(1)
+   449: 
+   450:             # Auxiliary perceptual losses on denoised image (mask t<=0.1 edge case)
+   451:             x_denoised = x_t - t * pred_mean_vel
+   452:             t_flat = t.view(B)
+   453:             mask = (t_flat > 0.1)
+   454:             perceptual_w = ((1.0 - t_flat) ** 2) * mask.float()
+   455: 
+   456:             loss_lpips = torch.zeros(B, device=device)
+   457:             loss_grad = torch.zeros(B, device=device)
+   458:             loss_multi = torch.zeros(B, device=device)
+   459:             if mask.any():
+   460:                 xd = x_denoised[mask].clamp(-1, 1).float()
+   461:                 xc = x[mask].clamp(-1, 1).float()
+   462:                 loss_lpips[mask] = lpips_fn(xd, xc).view(-1).float()
+   463:                 loss_grad[mask] = compute_gradient_loss(xd, xc).float()
+   464:                 loss_multi[mask] = compute_multiscale_loss(xd, xc).float()
+   465: 
+   466:             loss_total = (
+   467:                 loss_mse_unscaled
+   468:                 + 0.1 * loss_charb
+   469:                 + perceptual_w * (0.5 * loss_lpips + 0.3 * loss_grad + 0.2 * loss_multi)
+   470:             )
+   471:             loss = loss_total.mean()
+   472: 
+   473:         warmup_steps = 1000
+   474:         cur_lr = lr * step / warmup_steps if step <= warmup_steps else lr
 ```
 
 ### `lpips_spectral` baseline — editable region  [READ-ONLY — reference implementation]
@@ -602,48 +676,48 @@ Lines 384–410:
 In `alphaflow-main/custom_train_perceptual.py`:
 
 ```python
-Lines 384–418:
-   381: 
-   382:             # TODO: Implement your loss function here.
-   383:             #
-   384:             # MSE on velocity
-   385:             err = pred_mean_vel - mean_vel_target
-   386:             loss_mse_unscaled = (err ** 2).flatten(1).mean(1)
-   387: 
-   388:             # Auxiliary perceptual losses on denoised image (mask t<=0.1 edge case)
-   389:             x_denoised = x_t - t * pred_mean_vel
-   390:             t_flat = t.view(B)
-   391:             mask = (t_flat > 0.1)
-   392:             perceptual_w = ((1.0 - t_flat) ** 2) * mask.float()
-   393: 
-   394:             loss_lpips = torch.zeros(B, device=device)
-   395:             loss_grad = torch.zeros(B, device=device)
-   396:             loss_multi = torch.zeros(B, device=device)
-   397:             loss_spec = torch.zeros(B, device=device)
-   398:             if mask.any():
-   399:                 xd = x_denoised[mask].clamp(-1, 1).float()
-   400:                 xc = x[mask].clamp(-1, 1).float()
-   401:                 loss_lpips[mask] = lpips_fn(xd, xc).view(-1).float()
-   402:                 loss_grad[mask] = compute_gradient_loss(xd, xc).float()
-   403:                 loss_multi[mask] = compute_multiscale_loss(xd, xc).float()
-   404:                 # FFT magnitude L1: per-channel rfft2, abs, L1 of difference
-   405:                 fd = torch.fft.rfft2(xd, dim=(-2, -1)).abs()
-   406:                 fc = torch.fft.rfft2(xc, dim=(-2, -1)).abs()
-   407:                 loss_spec[mask] = (fd - fc).abs().mean(dim=(1, 2, 3)).float()
-   408: 
-   409:             loss_total = (
-   410:                 loss_mse_unscaled
-   411:                 + perceptual_w * (
-   412:                     0.5 * loss_lpips
-   413:                     + 0.3 * loss_grad
-   414:                     + 0.2 * loss_multi
-   415:                     + 0.2 * loss_spec
-   416:                 )
-   417:             )
-   418:             loss = loss_total.mean()
-   419:         scaler.scale(loss).backward()
-   420:         scaler.unscale_(optimizer)
-   421:         torch.nn.utils.clip_grad_norm_(net.parameters(), 1.0)
+Lines 445–479:
+   442:             # Predict mean velocity
+   443:             pred_mean_vel = net(x_t, sigma=t, sigma_next=t_next)
+   444: 
+   445:             # MSE on velocity
+   446:             err = pred_mean_vel - mean_vel_target
+   447:             loss_mse_unscaled = (err ** 2).flatten(1).mean(1)
+   448: 
+   449:             # Auxiliary perceptual losses on denoised image (mask t<=0.1 edge case)
+   450:             x_denoised = x_t - t * pred_mean_vel
+   451:             t_flat = t.view(B)
+   452:             mask = (t_flat > 0.1)
+   453:             perceptual_w = ((1.0 - t_flat) ** 2) * mask.float()
+   454: 
+   455:             loss_lpips = torch.zeros(B, device=device)
+   456:             loss_grad = torch.zeros(B, device=device)
+   457:             loss_multi = torch.zeros(B, device=device)
+   458:             loss_spec = torch.zeros(B, device=device)
+   459:             if mask.any():
+   460:                 xd = x_denoised[mask].clamp(-1, 1).float()
+   461:                 xc = x[mask].clamp(-1, 1).float()
+   462:                 loss_lpips[mask] = lpips_fn(xd, xc).view(-1).float()
+   463:                 loss_grad[mask] = compute_gradient_loss(xd, xc).float()
+   464:                 loss_multi[mask] = compute_multiscale_loss(xd, xc).float()
+   465:                 # FFT magnitude L1: per-channel rfft2, abs, L1 of difference
+   466:                 fd = torch.fft.rfft2(xd, dim=(-2, -1)).abs()
+   467:                 fc = torch.fft.rfft2(xc, dim=(-2, -1)).abs()
+   468:                 loss_spec[mask] = (fd - fc).abs().mean(dim=(1, 2, 3)).float()
+   469: 
+   470:             loss_total = (
+   471:                 loss_mse_unscaled
+   472:                 + perceptual_w * (
+   473:                     0.5 * loss_lpips
+   474:                     + 0.3 * loss_grad
+   475:                     + 0.2 * loss_multi
+   476:                     + 0.2 * loss_spec
+   477:                 )
+   478:             )
+   479:             loss = loss_total.mean()
+   480: 
+   481:         warmup_steps = 1000
+   482:         cur_lr = lr * step / warmup_steps if step <= warmup_steps else lr
 ```
 
 

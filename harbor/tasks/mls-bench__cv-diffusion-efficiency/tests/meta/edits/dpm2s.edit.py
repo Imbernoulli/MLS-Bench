@@ -1,9 +1,7 @@
-"""DPM++ 2S baseline edit — Second-order singlestep sampler.
+"""DPM++ 2S Ancestral baseline — from CFGpp-main/latent_diffusion.py dpm++_2s_a.
 
-Replaces the custom template with DPM++ 2S implementation for both
-SD v1.5 (latent_diffusion.py) and SDXL (latent_sdxl.py).
-DPM++ 2S uses Heun's method. With NFE=20, timesteps are halved to 10,
-with 2 model evaluations per step.
+Standard CFG version with karras sigma schedule and ancestral sampling.
+Reference: vendor/external_packages/CFGpp-main/latent_diffusion.py line 393.
 """
 
 _SD_FILE = "CFGpp-main/latent_diffusion.py"
@@ -12,10 +10,7 @@ _SDXL_FILE = "CFGpp-main/latent_sdxl.py"
 _DPM2S_SD = """\
 @register_solver("ddim_cfg++")
 class BaseDDIMCFGpp(StableDiffusion):
-    \"\"\"
-    DPM++ 2S sampler with CFG++.
-    Second-order singlestep (Heun's method) - higher quality per step.
-    \"\"\"
+    \"\"\"DPM++ 2S Ancestral sampler with standard CFG.\"\"\"
     def __init__(self,
                  solver_config: Dict,
                  model_key:str="runwayml/stable-diffusion-v1-5",
@@ -29,60 +24,56 @@ class BaseDDIMCFGpp(StableDiffusion):
                prompt=["",""],
                callback_fn=None,
                **kwargs):
+        t_fn = lambda sigma: sigma.log().neg()
+        sigma_fn = lambda t: t.neg().exp()
 
-        # Text embedding
         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
 
-        # Initialize zT
-        zt = self.initialize_latent()
-        zt = zt.requires_grad_()
+        total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+        sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
 
-        # Halve timesteps: 2 model evals per step to stay within NFE budget
-        timesteps = self.scheduler.timesteps[::2]
-        double_skip = 2 * self.skip
+        x = self.initialize_latent(method="random_kdiffusion",
+                                   latent_dim=(1, 4, 64, 64),
+                                   sigmas=sigmas).to(torch.float16)
 
-        # Sampling
-        pbar = tqdm(timesteps, desc="DPM++2S")
-        for step, t in enumerate(pbar):
-            at = self.alpha(t)
-            at_prev = self.alpha(t - double_skip)
+        pbar = tqdm(self.scheduler.timesteps, desc="DPM++2S")
+        for i, _ in enumerate(pbar):
+            sigma = sigmas[i]
+            new_t = self.timestep(sigma).to(self.device)
 
             with torch.no_grad():
-                noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
-                noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+                denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, new_t)
 
-            # Tweedie: estimate clean image
-            z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-
-            # First prediction (Euler step to next timestep)
-            zt_euler = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_uc
-
-            # DPM++ 2S: Heun's method for second-order accuracy
-            if step < len(timesteps) - 1:
-                # Evaluate at the predicted point (endpoint of Euler step)
-                with torch.no_grad():
-                    noise_uc_2, noise_c_2 = self.predict_noise(zt_euler, t - double_skip, uc, c)
-                    noise_pred_2 = noise_uc_2 + cfg_guidance * (noise_c_2 - noise_uc_2)
-
-                z0t_2 = (zt_euler - (1-at_prev).sqrt() * noise_pred_2) / at_prev.sqrt()
-
-                # Average the two estimates (Heun's method)
-                z0t_avg = 0.5 * (z0t + z0t_2)
-                zt = at_prev.sqrt() * z0t_avg + (1-at_prev).sqrt() * noise_uc
+            sigma_down, sigma_up = self.get_ancestral_step(sigmas[i], sigmas[i + 1])
+            if sigma_down == 0:
+                d = self.to_d(x, sigmas[i], denoised)
+                x = denoised + d * sigma_down
             else:
-                # Last step: just use first-order
-                zt = zt_euler
+                t, t_next = t_fn(sigmas[i]), t_fn(sigma_down)
+                r = 1 / 2
+                h = t_next - t
+                s = t + r * h
+                x_2 = (sigma_fn(s) / sigma_fn(t)) * x - (-h * r).expm1() * denoised
+
+                with torch.no_grad():
+                    sigma_s = sigma_fn(s)
+                    t_2 = self.timestep(sigma_s).to(self.device)
+                    denoised_2, _ = self.kdiffusion_x_to_denoised(x_2, sigma_s, uc, c, cfg_guidance, t_2)
+
+                x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_2
+
+            if sigmas[i + 1] > 0:
+                x = x + torch.randn_like(x) * sigma_up
 
             if callback_fn is not None:
-                callback_kwargs = {'z0t': z0t.detach(),
-                                    'zt': zt.detach(),
+                callback_kwargs = {'z0t': denoised.detach(),
+                                    'zt': x.detach(),
                                     'decode': self.decode}
-                callback_kwargs = callback_fn(step, t, callback_kwargs)
-                z0t = callback_kwargs["z0t"]
-                zt = callback_kwargs["zt"]
+                callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+                denoised = callback_kwargs["z0t"]
+                x = callback_kwargs["zt"]
 
-        # Decode final latent
-        img = self.decode(z0t)
+        img = self.decode(x)
         img = (img / 2 + 0.5).clamp(0, 1)
         return img.detach().cpu()
 """
@@ -90,6 +81,8 @@ class BaseDDIMCFGpp(StableDiffusion):
 _DPM2S_SDXL = """\
 @register_solver("ddim_cfg++")
 class BaseDDIMCFGpp(SDXL):
+    quantize = True
+
     def reverse_process(self,
                         null_prompt_embeds,
                         prompt_embeds,
@@ -98,43 +91,66 @@ class BaseDDIMCFGpp(SDXL):
                         shape=(1024, 1024),
                         callback_fn=None,
                         **kwargs):
+        t_fn = lambda sigma: sigma.log().neg()
+        sigma_fn = lambda t: t.neg().exp()
+
+        alphas = self.scheduler.alphas_cumprod[self.scheduler.timesteps.int().cpu()].cpu()
+        sigmas = (1-alphas).sqrt() / alphas.sqrt()
+
         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
+        x = zt * sigmas[0]
 
-        timesteps = self.scheduler.timesteps.int()[::2]
-        double_skip = 2 * self.skip
+        pbar = tqdm(self.scheduler.timesteps[:-1].int(), desc='SDXL-DPM++2S')
+        for i, _ in enumerate(pbar):
+            at = alphas[i]
+            sigma = sigmas[i]
+            c_in = at.sqrt()
+            c_out = -sigma
 
-        pbar = tqdm(timesteps, desc='SDXL-DPM++2S')
-        for step, t in enumerate(pbar):
-            at = self.scheduler.alphas_cumprod[t]
-            at_next = self.scheduler.alphas_cumprod[t - double_skip]
+            new_t = self.sigma_to_t(sigma).to(self.device)
 
             with torch.no_grad():
-                noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+                noise_uc, noise_c = self.predict_noise(x * c_in, new_t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
 
-            z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-            zt_euler = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_uc
+            denoised = x + c_out * noise_pred
 
-            if step < len(timesteps) - 1:
+            sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1])
+            if sigma_down == 0:
+                d = (x - denoised) / sigma
+                x = denoised + d * sigma_down
+            else:
+                t, t_next = t_fn(sigmas[i]), t_fn(sigma_down)
+                r = 1 / 2
+                h = t_next - t
+                s = t + r * h
+                x_2 = (sigma_fn(s) / sigma_fn(t)) * x - (-h * r).expm1() * denoised
+
+                sigma_s = sigma_fn(s)
+                at_s_idx = min(int((sigma_s**2 / (1 + sigma_s**2)) * len(alphas)), len(alphas)-1)
+                c_in_2 = (1 / (1 + sigma_s**2)).sqrt()
+                c_out_2 = -sigma_s
+                t_2 = self.sigma_to_t(sigma_s).to(self.device)
+
                 with torch.no_grad():
-                    noise_uc_2, noise_c_2 = self.predict_noise(zt_euler, t - double_skip, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+                    noise_uc_2, noise_c_2 = self.predict_noise(x_2 * c_in_2, t_2, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
                     noise_pred_2 = noise_uc_2 + cfg_guidance * (noise_c_2 - noise_uc_2)
 
-                z0t_2 = (zt_euler - (1-at_next).sqrt() * noise_pred_2) / at_next.sqrt()
-                z0t_avg = 0.5 * (z0t + z0t_2)
-                zt = at_next.sqrt() * z0t_avg + (1-at_next).sqrt() * noise_uc
-            else:
-                zt = zt_euler
+                denoised_2 = x_2 + c_out_2 * noise_pred_2
+                x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_2
+
+            if sigmas[i + 1] > 0:
+                x = x + torch.randn_like(x) * sigma_up
 
             if callback_fn is not None:
-                callback_kwargs = {'z0t': z0t.detach(),
-                                    'zt': zt.detach(),
+                callback_kwargs = {'z0t': denoised.detach(),
+                                    'zt': x.detach(),
                                     'decode': self.decode}
-                callback_kwargs = callback_fn(step, t, callback_kwargs)
-                z0t = callback_kwargs["z0t"]
-                zt = callback_kwargs["zt"]
+                callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+                denoised = callback_kwargs["z0t"]
+                x = callback_kwargs["zt"]
 
-        return z0t
+        return x
 """
 
 OPS = [

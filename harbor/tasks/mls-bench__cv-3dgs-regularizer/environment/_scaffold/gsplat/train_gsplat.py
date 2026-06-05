@@ -79,11 +79,22 @@ def set_seed(seed):
 
 
 def _knn_dists(points, K=4):
-    """Compute K-nearest-neighbor distances using PyTorch (no sklearn needed)."""
+    """Compute K-nearest-neighbor distances using PyTorch (no sklearn needed).
+
+    Chunked over query rows so peak memory is O(chunk x N) instead of the
+    O(N x N) of a single torch.cdist, which materializes a [N, N] float matrix
+    (~170 GB for N=2e5 SfM points -> OOM-kills the process at init before
+    training even starts). Results are identical to the unchunked version."""
     # points: [N, 3]
-    dists = torch.cdist(points.unsqueeze(0), points.unsqueeze(0)).squeeze(0)  # [N, N]
-    dists, _ = dists.topk(K + 1, dim=-1, largest=False)  # include self (dist=0)
-    return dists[:, 1:]  # exclude self, shape [N, K]
+    N = points.shape[0]
+    chunk = 2048
+    out = torch.empty(N, K, dtype=points.dtype, device=points.device)
+    for i in range(0, N, chunk):
+        block = points[i:i + chunk]  # [b, 3]
+        d = torch.cdist(block.unsqueeze(0), points.unsqueeze(0)).squeeze(0)  # [b, N]
+        d, _ = d.topk(K + 1, dim=-1, largest=False)  # include self (dist=0)
+        out[i:i + chunk] = d[:, 1:]  # exclude self
+    return out  # [N, K]
 
 
 def init_splats(parser, device, init_opa=0.1, init_scale=1.0, sh_degree=3):

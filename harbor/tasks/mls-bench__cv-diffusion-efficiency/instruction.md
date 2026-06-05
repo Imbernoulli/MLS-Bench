@@ -82,7 +82,7 @@ You may **only** modify these files, and **only within the listed line ranges
 or deleting existing ones — will cause your submission to be invalid.
 
 - `CFGpp-main/latent_diffusion.py`
-- editable lines **621–679**
+- editable lines **622–678**
 - `CFGpp-main/latent_sdxl.py`
 - editable lines **713–755**
 
@@ -92,7 +92,7 @@ or deleting existing ones — will cause your submission to be invalid.
 ## Readable Context
 
 
-### `CFGpp-main/latent_diffusion.py`  [EDITABLE — lines 621–679 only]
+### `CFGpp-main/latent_diffusion.py`  [EDITABLE — lines 622–678 only]
 
 ```python
      1: """

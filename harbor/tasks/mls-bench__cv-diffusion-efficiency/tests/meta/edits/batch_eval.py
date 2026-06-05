@@ -79,6 +79,11 @@ def compute_fid(gen_dir, ref_stats_path, device, batch_size=50):
             return self.transform(img)
 
     dataset = ImageDataset(gen_dir)
+    if len(dataset) < 2:
+        raise RuntimeError(
+            f"compute_fid: only {len(dataset)} generated image(s) under {gen_dir}; "
+            "image generation likely failed. Refusing to compute a degenerate FID."
+        )
     dataloader = DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=4)
 
     all_acts = []
@@ -109,12 +114,23 @@ def main():
     parser.add_argument("--model", choices=["sd15", "sd20", "sdxl"], required=True)
     parser.add_argument("--method", type=str, default="ddim_cfg++")
     parser.add_argument("--cfg_guidance", type=float, default=0.6)
-    parser.add_argument("--NFE", type=int, default=10)
+    parser.add_argument("--NFE", type=int, default=50)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--workdir", type=Path, required=True)
     parser.add_argument("--num_images", type=int, default=NUM_IMAGES)
     args = parser.parse_args()
 
+    # Clear stale images before generating: compute_fid globs EVERY .png in
+    # workdir, so leftover shards from a prior run (a crashed/partial run, or a
+    # run with a different GPU count -> different shard indices) would silently
+    # contaminate the FID set and skew the score. Rank 0 wipes; others wait.
+    if rank == 0:
+        import shutil
+        if args.workdir.exists():
+            shutil.rmtree(args.workdir)
+        args.workdir.mkdir(parents=True, exist_ok=True)
+    if world_size > 1 and dist.is_initialized():
+        dist.barrier()
     args.workdir.mkdir(parents=True, exist_ok=True)
     set_seed(args.seed + rank)
     solver_config = munchify({"num_sampling": args.NFE})
