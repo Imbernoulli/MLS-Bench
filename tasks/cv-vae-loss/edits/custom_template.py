@@ -417,16 +417,27 @@ if __name__ == '__main__':
         # 2) Discriminator update — every step after disc_start (FP32, no AMP)
         if has_disc and disc_factor > 0:
             criterion.disc_opt.zero_grad()
-            x_real = x.float().detach().requires_grad_(True)
-            logits_real = criterion.disc(x_real)
+            logits_real = criterion.disc(x.float())
             logits_fake_d = criterion.disc(recon.float().detach())
             d_loss = (F.relu(1 + logits_fake_d) + F.relu(1 - logits_real)).mean()
-            # Gradient penalty (diffusers-style)
+            # Gradient penalty. The 2nd-order create_graph backward is computed
+            # with the discriminator's BatchNorm in EVAL mode: running stats make
+            # the discriminator a per-sample function, so the double-backward is
+            # well-defined and numerically stable. In TRAIN mode BatchNorm couples
+            # the batch and the GP's create_graph pass intermittently overflows to
+            # NaN at large scale, poisoning the discriminator and propagating NaN
+            # for the rest of training (the stochastic GAN NaN at ~step 5k-6k).
+            _disc_was_training = criterion.disc.training
+            criterion.disc.eval()
+            x_real = x.float().detach().requires_grad_(True)
+            logits_real_gp = criterion.disc(x_real)
             gp_grads = torch.autograd.grad(
-                outputs=logits_real, inputs=x_real,
-                grad_outputs=torch.ones_like(logits_real),
+                outputs=logits_real_gp, inputs=x_real,
+                grad_outputs=torch.ones_like(logits_real_gp),
                 create_graph=True, retain_graph=True, only_inputs=True,
             )[0]
+            if _disc_was_training:
+                criterion.disc.train()
             gp = 10.0 * ((gp_grads.reshape(gp_grads.shape[0], -1).norm(2, dim=1) - 1) ** 2).mean()
             d_loss = d_loss + gp
             d_loss.backward()
