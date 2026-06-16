@@ -241,6 +241,11 @@ if evaluator_py.exists():
                 batch_t = torch.from_numpy(batch.transpose([0, 3, 1, 2])).float()
             else:
                 batch_t = evaluator.resize_batch(batch)
+            # Feature extractor is built on CUDA (build_feature_extractor(..., torch.device("cuda")));
+            # batch_t may be a CPU tensor (legacy_tensorflow branch, or a CPU resize_batch), which
+            # raises "Input type (torch.FloatTensor) and weight type (torch.cuda.FloatTensor)..." on
+            # the e2h/DIODE FID path. Move it onto the model's device first (idempotent if already there).
+            batch_t = batch_t.to(next(evaluator.model.parameters()).device, non_blocking=True)
             pred, _ = evaluator.model(batch_t)
             act = pred.detach().cpu().numpy().reshape([pred.shape[0], -1]).astype(np.float64, copy=False)
             if sum_act is None:
