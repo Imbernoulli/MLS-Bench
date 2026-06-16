@@ -229,23 +229,31 @@ if evaluator_py.exists():
     text = evaluator_py.read_text()
     start = text.find("def get_fid(args):\n")
     end = text.find("\ndef get_ssim_lpips(args):\n")
-    if start != -1 and end != -1 and "def _stream_fid_statistics(" not in text:
-        text = text[:start] + r'''def _stream_fid_statistics(evaluator, npz_path):
+    if start != -1 and end != -1 and "# dbim-fid-patch: device-safe v2" not in text:
+        # Re-splice over an older patch if present (its _stream_fid_statistics sits before
+        # get_fid) so the device fix lands even on a previously-patched evaluator.py.
+        _sf = text.find("def _stream_fid_statistics(")
+        splice_start = _sf if _sf != -1 else start
+        text = text[:splice_start] + r'''def _stream_fid_statistics(evaluator, npz_path):
+    # dbim-fid-patch: device-safe v2
     """Compute FID mean/cov online without retaining all activations."""
     n = 0
     sum_act = None
     sum_outer = None
+    _fid_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     with open_npz_array(npz_path, "arr_0") as reader:
         for batch in tqdm(reader.read_batches(evaluator.batch_size)):
             if MODE == "legacy_tensorflow":
                 batch_t = torch.from_numpy(batch.transpose([0, 3, 1, 2])).float()
             else:
                 batch_t = evaluator.resize_batch(batch)
-            # Feature extractor is built on CUDA (build_feature_extractor(..., torch.device("cuda")));
-            # batch_t may be a CPU tensor (legacy_tensorflow branch, or a CPU resize_batch), which
-            # raises "Input type (torch.FloatTensor) and weight type (torch.cuda.FloatTensor)..." on
-            # the e2h/DIODE FID path. Move it onto the model's device first (idempotent if already there).
-            batch_t = batch_t.to(next(evaluator.model.parameters()).device, non_blocking=True)
+            # The feature extractor is built on CUDA (build_feature_extractor(..., torch.device("cuda")))
+            # and evaluator.model is the build_feature_extractor closure (a plain function, NOT an
+            # nn.Module — so it has no .parameters()). batch_t may be a CPU tensor (legacy_tensorflow
+            # branch, or a CPU resize_batch), which raises "Input type (torch.FloatTensor) and weight
+            # type (torch.cuda.FloatTensor)..." on the e2h/DIODE FID path when use_dataparallel is off
+            # (the default). Move batch_t onto the extractor's device (idempotent if already there).
+            batch_t = batch_t.to(_fid_device, non_blocking=True)
             pred, _ = evaluator.model(batch_t)
             act = pred.detach().cpu().numpy().reshape([pred.shape[0], -1]).astype(np.float64, copy=False)
             if sum_act is None:

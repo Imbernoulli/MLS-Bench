@@ -1,3 +1,13 @@
+# Stage the FID inception weights and apply the shared runtime patch (streaming
+# FID + device-safe), matching run_Imagenet.sh. Without this, DIODE FID only gets
+# the patch if an ImageNet run happened to patch the shared evaluator.py first.
+if [ -f assets/pt_inception-2015-12-05-6726825d.pth ]; then
+    mkdir -p "${TORCH_HOME:-/data/torch_cache}/hub/checkpoints"
+    cp -n assets/pt_inception-2015-12-05-6726825d.pth \
+          "${TORCH_HOME:-/data/torch_cache}/hub/checkpoints/" 2>/dev/null || true
+fi
+source "$(dirname "${BASH_SOURCE[0]}")/_runtime_patch.sh"
+
 export eta=0.0
 export ds=diode
 export num_samples=10000
