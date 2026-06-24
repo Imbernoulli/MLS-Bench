@@ -8,6 +8,8 @@
     "pip install mujoco==2.3.6 mujoco-python-viewer",
     "pip install wandb DateTime tensorboard tqdm matplotlib",
     "cd /workspace/humanoid-gym && pip install -e .",
+    "pip install --no-cache-dir torch==2.1.2 torchvision==0.16.2 --index-url https://download.pytorch.org/whl/cu118",
+    "python -c \"import torch; print('torch', torch.__version__, 'cuda', torch.version.cuda); assert torch.__version__.startswith('2.1.2') and torch.version.cuda=='11.8', 'unexpected torch/cuda (need 2.1.2+cu118 for native sm_90)'\"",
     "pip uninstall -y opencv-python opencv-python-headless || true",
     "pip install --no-deps 'opencv-python-headless==4.5.5.64'"
   ],

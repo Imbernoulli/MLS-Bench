@@ -41,6 +41,27 @@ class _TBStub:
         return lambda *a, **kw: None
 import torch.utils.tensorboard as _tb
 _tb.SummaryWriter = _TBStub
+
+# --- TF32 matmul parity (sm_90 torch upgrade) ---------------------------------
+# The recorded anchor (sim2sim success 0.73) was trained under torch 1.12, whose
+# default is torch.backends.cuda.matmul.allow_tf32 == True: every fp32 nn.Linear
+# matmul in the actor/critic MLPs and PPO loss ran in TF32 (~10-bit mantissa).
+# torch >=2.x flips this default to False (full fp32, "highest" precision). With
+# identical CPU RNG and identical IsaacGym/obs eager numerics, this is the SOLE
+# diverging framework default between the two images, and it deterministically
+# shifts the optimization trajectory: the IsaacGym training reward still saturates
+# (~182) but the resulting policy generalizes worse in the MuJoCo sim2sim eval
+# (0.73 -> 0.20, same on seeds 42 and 123). Restore the torch-1.12 behavior so a
+# newer (sm_90-capable) torch reproduces the anchor.
+import torch as _torch
+try:
+    _torch.backends.cuda.matmul.allow_tf32 = True
+    _torch.backends.cudnn.allow_tf32 = True
+    if hasattr(_torch, "set_float32_matmul_precision"):
+        # "high" == TF32 for fp32 matmuls (matches torch 1.12 default behavior).
+        _torch.set_float32_matmul_precision("high")
+except Exception:
+    pass
 '''
 
 OPS = [
