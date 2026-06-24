@@ -792,6 +792,12 @@ class BaseAgent(ABC):
         """Show edit operations as a git-style diff."""
         op = tool_input.get("op", "?")
         fname = tool_input.get("filename", "?")
+        # Mirror the edit tool: show the canonical (package-prefixed) path so the
+        # diff header matches the file actually edited.
+        try:
+            fname = self.tools._canonicalize_filename(fname)
+        except Exception:
+            pass
         content = tool_input.get("content", "")
         new_lines = content.splitlines()
         limit = None if self.verbose else 40

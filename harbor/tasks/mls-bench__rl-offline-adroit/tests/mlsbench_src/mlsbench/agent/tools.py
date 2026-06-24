@@ -615,6 +615,41 @@ class WorkspaceTools:
             f"Package '{pkg_name}' not found in workspace: {wtd}"
         )
 
+    def _canonicalize_filename(self, filename: str) -> str:
+        """Map a model-supplied path onto a declared file when the package
+        prefix is missing or wrong.
+
+        The task description and the diff headers refer to the target file by
+        its package-*relative* path (e.g. ``bench/custom_algorithm.py``), while
+        the edit whitelist keys on the package-*prefixed* path declared in
+        ``config.json`` (e.g. ``causal-learn/bench/custom_algorithm.py``). A
+        model that follows the prompt body would otherwise have every edit
+        rejected with "Package 'bench' is not in allowed packages" and score 0
+        without ever editing. Accept the package-less / basename form whenever it
+        unambiguously identifies one declared file; otherwise leave it unchanged
+        so the normal validation (and its error message) still applies.
+        """
+        if not filename:
+            return filename
+        first = filename.split("/")[0]
+        known = {self._normalize_pkg_name(p) for p in self.all_external_packages}
+        # Already a valid package-prefixed path → nothing to do.
+        if self._normalize_pkg_name(first) in known:
+            return filename
+        declared = [e["filename"] for e in self.config_edit]
+        norm = filename.strip("/")
+        # 1) Unique suffix match (most specific): declared endswith "/<supplied>".
+        suffix = [d for d in declared if d == norm or d.endswith("/" + norm)]
+        if len(suffix) == 1:
+            return suffix[0]
+        # 2) Unique basename match (e.g. just "custom_algorithm.py").
+        base = norm.rsplit("/", 1)[-1]
+        bmatch = [d for d in declared if d.rsplit("/", 1)[-1] == base]
+        if len(bmatch) == 1:
+            return bmatch[0]
+        return filename
+
+
     def _resolve_workspace_path(self, filename: str) -> Path:
         """Resolve a filename to an absolute path.
 
@@ -894,6 +929,11 @@ class WorkspaceTools:
         end_line: int | None = None,
     ) -> str:
         """Unified file editing tool."""
+        # Accept package-relative / basename paths (as written in the task body
+        # and diff headers) by mapping them onto the declared package-prefixed
+        # file before validation, so a correct edit isn't rejected on a prefix
+        # mismatch.
+        filename = self._canonicalize_filename(filename)
         result = self._edit_impl(op, filename, content, after_line, start_line, end_line)
 
         # Always append the current file snapshot so the model sees the live state
