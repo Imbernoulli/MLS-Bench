@@ -7,7 +7,7 @@ How can we design better adversarial training methods to enhance model robustnes
 Adversarial training is the most effective approach for improving neural-network robustness against adversarial examples. The standard method (Madry et al., 2018, arXiv:1706.06083) trains on PGD-generated adversarial examples using cross-entropy loss but suffers from a tradeoff between clean accuracy and robust accuracy. Advanced methods such as TRADES (Zhang et al., ICML 2019, arXiv:1901.08573) and MART (Wang et al., ICLR 2020, OpenReview rklOg6EFwS) address this through different loss formulations that decouple the robustness objective from clean classification. AWP (Wu, Xia, Wang, NeurIPS 2020, arXiv:2004.05884) further regularizes the flatness of the weight loss landscape and combines naturally with TRADES-style training.
 
 ## Task
-Implement a novel adversarial training method in `bench/custom_adv_train.py` by modifying the `AdversarialTrainer` class. Your method should improve robust accuracy against white-box `L_inf` attacks while maintaining reasonable clean accuracy.
+Implement a novel adversarial training method in `torchattacks/bench/custom_adv_train.py` by modifying the `AdversarialTrainer` class. Your method should improve robust accuracy against white-box `L_inf` attacks while maintaining reasonable clean accuracy.
 
 ## Editable Interface
 You must implement the `AdversarialTrainer` class with two methods:

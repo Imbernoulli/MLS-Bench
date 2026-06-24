@@ -9,7 +9,7 @@ Sparse adversarial attacks differ from dense `L_p` attacks in that the perturbat
 Representative sparse-attack algorithms include the Jacobian Saliency Map Attack JSMA (Papernot et al., 2016, arXiv:1511.07528), the differential-evolution One-Pixel attack (Su et al., 2019, arXiv:1710.08864), the geometry-inspired SparseFool (Modas et al., CVPR 2019, arXiv:1811.02248), the random-search Sparse-RS framework (Croce et al., AAAI 2022, arXiv:2006.12834), and Pixle, a fast pixel-rearrangement black-box attack (Pomponi et al., 2022, arXiv:2202.02236).
 
 ## Objective
-Implement a stronger sparse attack in `bench/custom_attack.py`. The method should maximize attack success rate (ASR) under a strict `L0` perturbation budget:
+Implement a stronger sparse attack in `torchattacks/bench/custom_attack.py`. The method should maximize attack success rate (ASR) under a strict `L0` perturbation budget:
 
 - Threat model: full model access for custom attack implementation (gradients permitted).
 - Norm constraint: number of modified spatial pixels is bounded.

@@ -7,7 +7,7 @@ What modular reconstruction-based component (sequence representation, training o
 Reconstruction-based anomaly detection trains a model to reproduce normal input windows and flags points where the reconstruction error exceeds a threshold. The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes this setup: model outputs an MSE per timestep, the per-dataset `anomaly_ratio` percentile of train/test scores defines the threshold, and predictions are converted to point-wise binary labels for F1 / precision / recall scoring against ground-truth anomaly intervals.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Given a window `x_enc` of shape `[batch, seq_len, enc_in]`, return a reconstruction of the same shape. The framework computes the score, threshold, and metrics.
+Implement the `Model` class in `Time-Series-Library/models/Custom.py`. Given a window `x_enc` of shape `[batch, seq_len, enc_in]`, return a reconstruction of the same shape. The framework computes the score, threshold, and metrics.
 
 ## Model Interface
 ```python

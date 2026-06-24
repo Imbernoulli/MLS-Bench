@@ -20,7 +20,7 @@ sizes (small to >70 nodes), and edge densities, without over-specializing to a
 single scale or cardinality pattern.
 
 ## Task
-Implement a causal discovery algorithm in `bench/custom_algorithm.py`. The
+Implement a causal discovery algorithm in `causal-bnlearn/bench/custom_algorithm.py`. The
 `run_causal_discovery(X)` function receives integer-encoded discrete
 observational data and must return the estimated CPDAG as a
 `causallearn.graph.GeneralGraph.GeneralGraph` object.

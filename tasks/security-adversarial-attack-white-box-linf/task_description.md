@@ -7,7 +7,7 @@ Can you design a stronger white-box `L_inf` evasion attack that increases attack
 White-box evasion attacks assume the attacker has full access to the model, including its parameters and gradients. The classical first-order attack is FGSM (Goodfellow et al., 2015, arXiv:1412.6572), a one-step sign-of-gradient attack. Iterative variants such as PGD (Madry et al., 2018, arXiv:1706.06083) and momentum iterative FGSM, MI-FGSM (Dong et al., CVPR 2018, arXiv:1710.06081), refine the perturbation through multiple gradient steps. AutoAttack (Croce and Hein, ICML 2020, arXiv:2003.01690) is a parameter-free ensemble of two adaptive PGD variants together with FAB and Square Attack and is widely used as a strong reference attack.
 
 ## Objective
-Implement a stronger white-box `L_inf` attack in `bench/custom_attack.py`. The method should maximize ASR under a strict perturbation budget:
+Implement a stronger white-box `L_inf` attack in `torchattacks/bench/custom_attack.py`. The method should maximize ASR under a strict perturbation budget:
 
 - Threat model: white-box (full model access, including gradients).
 - Norm constraint: `||x_adv - x||_inf <= eps`.

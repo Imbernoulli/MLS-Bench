@@ -20,7 +20,7 @@ types (MLP, GP, polynomial, sigmoid), and (4) robustness when noise is
 Gaussian, where ANM identifiability becomes more delicate.
 
 ## Task
-Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
+Implement `run_causal_discovery(X)` in `causal-learn/bench/custom_algorithm.py`. It must
 return a directed DAG compatible with the benchmark evaluation.
 
 ## Evaluation Scenarios
