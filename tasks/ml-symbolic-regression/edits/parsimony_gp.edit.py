@@ -141,8 +141,8 @@ OPS = [
     {
         "op": "replace",
         "file": _FILE,
-        "start_line": 228,
-        "end_line": 306,
+        "start_line": 188,
+        "end_line": 266,
         "content": _PARSIMONY_GP,
     },
 ]

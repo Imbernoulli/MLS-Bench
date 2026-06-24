@@ -50,13 +50,19 @@
       ],
       "edit": [
         {
-          "start": 286,
-          "end": 370
+          "start": 96,
+          "end": 177
+        }
+      ]
+    },
+    {
+      "filename": "opt-vr-bench/vr_driver.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
         }
       ]
     }
-  ],
-  "seeds": [
-    42
   ]
 }

@@ -1,6 +1,5 @@
 {
   "rigorous_codebase": true,
-  "seeds": [42],
   "test_cmds": [
     {
       "cmd": "scripts/blobs.sh",
@@ -29,15 +28,31 @@
     }
   ],
   "baselines": {
-    "kmeans":  {"edit_ops": "edits/kmeans.edit.py"},
-    "dbscan":  {"edit_ops": "edits/dbscan.edit.py"},
-    "hdbscan": {"edit_ops": "edits/hdbscan.edit.py"}
+    "kmeans": {
+      "edit_ops": "edits/kmeans.edit.py"
+    },
+    "dbscan": {
+      "edit_ops": "edits/dbscan.edit.py"
+    },
+    "hdbscan": {
+      "edit_ops": "edits/hdbscan.edit.py"
+    }
   },
   "files": [
     {
       "filename": "scikit-learn/custom_clustering.py",
-      "read": [{"start": -1, "end": -1}],
-      "edit": [{"start": 36, "end": 109}]
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 36,
+          "end": 109
+        }
+      ]
     }
   ]
 }

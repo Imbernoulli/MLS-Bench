@@ -4,11 +4,11 @@ This script evaluates a clustering algorithm across multiple dataset types.
 The agent should modify the EDITABLE section to implement a novel clustering
 algorithm or distance metric that achieves high cluster quality.
 
-Datasets (selected by $ENV):
-  - blobs:          Isotropic Gaussian blobs (varying cluster sizes)
-  - moons:          Two interleaving half-circles + noise
-  - varied_density: Clusters with different densities and sizes
-  - digits:         Real-world: sklearn Digits (8x8 images of handwritten digits)
+Several standard clustering datasets are used for evaluation (a mix of
+synthetic and real, with differing shapes, densities, and cluster counts).
+The specific datasets, their parameters, and which $ENV maps to which are
+deliberately withheld from this file; your algorithm receives the standardized
+feature matrix and the (metadata) number of clusters, and must generalize.
 
 Metrics: ARI (Adjusted Rand Index), NMI (Normalized Mutual Information),
          Silhouette Score
@@ -18,7 +18,7 @@ import os
 import sys
 import warnings
 import numpy as np
-from sklearn.datasets import make_blobs, make_moons, load_digits
+# (dataset generators live in the host-only scoring module; eval datasets not named here)
 from sklearn.preprocessing import StandardScaler
 from sklearn.metrics import (
     adjusted_rand_score,
@@ -107,102 +107,51 @@ def custom_distance(x, y):
 
 
 # ================================================================
-# FIXED -- do not modify below this line
 # ================================================================
+# FIXED -- input loading + prediction emit (do not modify below this line)
+# ================================================================
+# The dataset generator (incl. identity), the true labels, and the metrics live
+# in a host-only module the agent's process cannot import. This program loads
+# the pre-generated standardized matrix, runs the clusterer, and emits the
+# cluster labels; the host-side parser regenerates the truth and scores it.
 
 
-def generate_dataset(env_name, seed=42):
-    """Generate or load the dataset for the given environment."""
-    rng = np.random.RandomState(seed)
-
-    if env_name == "blobs":
-        X, y = make_blobs(
-            n_samples=1500,
-            centers=5,
-            cluster_std=[0.8, 1.2, 0.5, 1.5, 1.0],
-            random_state=seed,
-        )
-        n_clusters_true = 5
-    elif env_name == "moons":
-        X, y = make_moons(n_samples=1000, noise=0.08, random_state=seed)
-        n_clusters_true = 2
-    elif env_name == "varied_density":
-        # Three clusters with very different densities
-        X1, y1 = make_blobs(
-            n_samples=500, centers=[[0, 0]], cluster_std=0.3, random_state=seed
-        )
-        X2, y2 = make_blobs(
-            n_samples=300,
-            centers=[[4, 4]],
-            cluster_std=1.5,
-            random_state=seed + 1,
-        )
-        X3, y3 = make_blobs(
-            n_samples=200,
-            centers=[[-3, 5]],
-            cluster_std=0.6,
-            random_state=seed + 2,
-        )
-        X = np.vstack([X1, X2, X3])
-        y = np.concatenate([y1, y2 + 1, y3 + 2])
-        n_clusters_true = 3
-    elif env_name == "digits":
-        digits = load_digits()
-        X, y = digits.data, digits.target
-        n_clusters_true = 10
-    else:
-        raise ValueError(f"Unknown environment: {env_name}")
-
-    return X, y, n_clusters_true
+def _cluster_inputs_dir():
+    d = os.environ.get("CLUSTER_INPUTS_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_cluster_inputs")
 
 
-def evaluate_clustering(X, y_true, labels):
-    """Compute clustering quality metrics."""
-    metrics = {}
-    metrics["ari"] = adjusted_rand_score(y_true, labels)
-    metrics["nmi"] = normalized_mutual_info_score(y_true, labels)
-    # Silhouette requires at least 2 clusters and fewer than n_samples
-    n_labels = len(set(labels)) - (1 if -1 in labels else 0)
-    if 2 <= n_labels < len(X):
-        metrics["silhouette"] = silhouette_score(X, labels)
-    else:
-        metrics["silhouette"] = -1.0
-    return metrics
+def _load_input(env_name, seed):
+    import io as _io, base64 as _b64
+    path = os.path.join(_cluster_inputs_dir(), f"{env_name}_seed{seed}.npz.b64")
+    with open(path, "r") as f:
+        raw = _b64.b64decode(f.read())
+    d = np.load(_io.BytesIO(raw))
+    return d["X"], int(d["n_clusters"])
 
 
 def main():
-    env = os.environ.get("ENV", "blobs")
+    import base64 as _b64
+    env = os.environ.get("ENV", "")
+    if not env:
+        raise SystemExit("ENV not set")
     seed = int(os.environ.get("SEED", "42"))
-
     print(f"=== Clustering benchmark: {env} (seed={seed}) ===", flush=True)
 
-    # Generate data
-    X_raw, y_true, n_clusters_true = generate_dataset(env, seed=seed)
-
-    # Standardize features
-    scaler = StandardScaler()
-    X = scaler.fit_transform(X_raw)
-
-    print(f"Dataset: {env}, samples={X.shape[0]}, features={X.shape[1]}, "
+    X, n_clusters_true = _load_input(env, seed)
+    print(f"Input: samples={X.shape[0]}, features={X.shape[1]}, "
           f"true_clusters={n_clusters_true}", flush=True)
 
-    # Run custom clustering
     print("TRAIN_METRICS stage=fitting", flush=True)
     model = CustomClustering(n_clusters=n_clusters_true, random_state=seed)
     model.fit(X)
-    labels = model.predict(X)
+    labels = np.asarray(model.predict(X))
     print("TRAIN_METRICS stage=done", flush=True)
 
-    # Evaluate
-    metrics = evaluate_clustering(X, y_true, labels)
-
-    for k, v in metrics.items():
-        print(f"TRAIN_METRICS {k}={v:.6f}", flush=True)
-
-    # Final metrics
-    parts = " ".join(f"{k}={v:.6f}" for k, v in metrics.items())
-    print(f"TEST_METRICS {parts}", flush=True)
-
+    payload = _b64.b64encode(np.ascontiguousarray(labels, dtype=np.int64).tobytes()).decode("ascii")
+    print(f"CLUSTER_PRED env={env} seed={seed} n={labels.shape[0]} labels={payload}", flush=True)
     print("Done.", flush=True)
 
 

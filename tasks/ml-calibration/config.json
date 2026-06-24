@@ -1,7 +1,6 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
-  "seeds": [42],
   "test_cmds": [
     {
       "cmd": "scripts/rf_mnist.sh",
@@ -38,15 +37,31 @@
     }
   ],
   "baselines": {
-    "platt_scaling":       {"edit_ops": "edits/platt_scaling.edit.py"},
-    "temperature_scaling": {"edit_ops": "edits/temperature_scaling.edit.py"},
-    "isotonic_regression": {"edit_ops": "edits/isotonic_regression.edit.py"}
+    "platt_scaling": {
+      "edit_ops": "edits/platt_scaling.edit.py"
+    },
+    "temperature_scaling": {
+      "edit_ops": "edits/temperature_scaling.edit.py"
+    },
+    "isotonic_regression": {
+      "edit_ops": "edits/isotonic_regression.edit.py"
+    }
   },
   "files": [
     {
       "filename": "scikit-learn/custom_calibration.py",
-      "read": [{"start": -1, "end": -1}],
-      "edit": [{"start": 45, "end": 102}]
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 45,
+          "end": 102
+        }
+      ]
     }
   ]
 }

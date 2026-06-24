@@ -1,77 +1,95 @@
-"""Task-specific output parser for causal-treatment-effect.
+"""Host-side output parser / scorer for causal-treatment-effect.
 
-Handles CATE estimation output:
+This runs in the harness process on the HOST — never inside the agent's
+container. The agent's program now only emits its cross-fitted predictions:
 
-Training feedback: lines matching
-    TRAIN_METRICS rep=N PEHE=X.XXXXXX ATE_error=X.XXXXXX
+    CATE_PRED dataset=<d> seed=<s> rep=<r> data_seed=<ds> n=<n> tau_hat=<base64 float64>
 
-Final metrics: lines matching
-    TEST_METRICS PEHE=X.XXXXXX ATE_error=X.XXXXXX
+The held-out ground truth (the true treatment effect ``tau``) lives in
+``holdout/causal-treatment-effect/dgp.py`` — a module that is NOT bind-mounted
+into the agent's container. This parser regenerates the truth here, host-side,
+and scores the predictions against it, using the same PEHE / ATE_error formulas
+and the same per-rep mean aggregation as before. Honest results are therefore
+identical to the pre-fix pipeline, while the agent's process can never reach the
+answer.
 """
 
+import base64
 import re
 import sys
 from pathlib import Path
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+# Host-only scoring module (never inside the agent container).
+_HOLDOUT_DIR = PROJECT_ROOT / "holdout" / "causal-treatment-effect"
+sys.path.insert(0, str(_HOLDOUT_DIR))
 
 from mlsbench.agent.parsers import OutputParser, ParseResult
 
+import dgp  # noqa: E402  (from holdout/causal-treatment-effect/)
+
+
+_PRED_RE = re.compile(
+    r"CATE_PRED\s+dataset=(\S+)\s+seed=(\S+)\s+rep=(\d+)\s+data_seed=(\d+)\s+"
+    r"n=(\d+)\s+tau_hat=(\S+)"
+)
+
 
 class Parser(OutputParser):
-    """Parser for the causal-treatment-effect task."""
+    """Parser for the causal-treatment-effect task (predict-then-score)."""
 
     def parse(self, cmd_label: str, raw_output: str) -> ParseResult:
-        feedback_parts = []
-        metrics: dict = {}
+        per_rep = []  # (rep, pehe, ate_err)
+        for m in _PRED_RE.finditer(raw_output):
+            dataset, _seed, rep_s, data_seed_s, n_s, payload = m.groups()
+            if dataset != cmd_label:
+                continue
+            rep = int(rep_s)
+            data_seed = int(data_seed_s)
+            n = int(n_s)
+            try:
+                tau_hat = np.frombuffer(
+                    base64.b64decode(payload), dtype=np.float64
+                )
+            except Exception:  # malformed payload -> skip rep
+                continue
+            if tau_hat.shape[0] != n:
+                continue
+            tau, ate = dgp.truth(dataset, data_seed)
+            if tau_hat.shape[0] != tau.shape[0]:
+                continue
+            pehe = float(dgp.compute_pehe(tau, tau_hat))
+            ate_err = float(dgp.compute_ate_error(ate, tau_hat))
+            per_rep.append((rep, pehe, ate_err))
 
-        # Parse training metrics (per-repetition)
-        train_feedback = self._parse_train_metrics(raw_output)
-        if train_feedback:
-            feedback_parts.append(train_feedback)
+        if not per_rep:
+            # No scorable predictions — surface a tail of the raw output to help
+            # the agent debug (no ground truth is ever included here).
+            return ParseResult(feedback=raw_output[-3000:], metrics={})
 
-        # Parse final test metrics
-        test_feedback, test_metrics = self._parse_test_metrics(raw_output, cmd_label)
-        if test_feedback:
-            feedback_parts.append(test_feedback)
-        metrics.update(test_metrics)
+        per_rep.sort()
+        pehe_vals = np.array([p for _, p, _ in per_rep])
+        ate_vals = np.array([a for _, _, a in per_rep])
+        mean_pehe = float(np.mean(pehe_vals))
+        mean_ate = float(np.mean(ate_vals))
 
-        if feedback_parts:
-            feedback = "\n".join(feedback_parts)
-        else:
-            feedback = raw_output[-3000:]
+        metrics = {
+            f"PEHE_{cmd_label}": mean_pehe,
+            f"ATE_error_{cmd_label}": mean_ate,
+        }
 
+        last = per_rep[-5:]
+        rep_lines = "\n".join(
+            f"  rep={r} PEHE={p:.6f} ATE_error={a:.6f}" for r, p, a in last
+        )
+        feedback = (
+            f"Per-repetition metrics ({cmd_label}, last {len(last)} of "
+            f"{len(per_rep)}):\n{rep_lines}\n"
+            f"Final metrics ({cmd_label}):\n"
+            f"  PEHE_{cmd_label}: {mean_pehe:.6f}\n"
+            f"  ATE_error_{cmd_label}: {mean_ate:.6f}"
+        )
         return ParseResult(feedback=feedback, metrics=metrics)
-
-    def _parse_train_metrics(self, output: str) -> str:
-        """Extract TRAIN_METRICS lines and return a summary."""
-        lines = []
-        for line in output.splitlines():
-            if line.strip().startswith("TRAIN_METRICS "):
-                lines.append(line.strip())
-
-        if not lines:
-            return ""
-
-        summary_lines = lines[-5:]
-        return "Per-repetition metrics (last 5):\n" + "\n".join(summary_lines)
-
-    def _parse_test_metrics(self, output: str, cmd_label: str) -> tuple:
-        """Extract TEST_METRICS line and return feedback + metrics dict."""
-        metrics = {}
-        feedback = ""
-
-        for line in output.splitlines():
-            line = line.strip()
-            if line.startswith("TEST_METRICS"):
-                for match in re.finditer(r"(\w+)=([\d.eE+-]+)", line):
-                    key, val = match.group(1), float(match.group(2))
-                    metric_key = f"{key}_{cmd_label}"
-                    metrics[metric_key] = val
-
-        if metrics:
-            parts = [f"{k}: {v:.6f}" for k, v in metrics.items()]
-            feedback = f"Final metrics ({cmd_label}):\n" + "\n".join(parts)
-
-        return feedback, metrics

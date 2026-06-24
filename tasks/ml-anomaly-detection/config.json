@@ -1,7 +1,6 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
-  "seeds": [42],
   "test_cmds": [
     {
       "cmd": "scripts/cardio.sh",
@@ -38,17 +37,37 @@
     }
   ],
   "baselines": {
-    "isolation_forest": {"edit_ops": "edits/isolation_forest.edit.py"},
-    "lof":              {"edit_ops": "edits/lof.edit.py"},
-    "ocsvm":            {"edit_ops": "edits/ocsvm.edit.py"},
-    "ecod":             {"edit_ops": "edits/ecod.edit.py"},
-    "copod":            {"edit_ops": "edits/copod.edit.py"}
+    "isolation_forest": {
+      "edit_ops": "edits/isolation_forest.edit.py"
+    },
+    "lof": {
+      "edit_ops": "edits/lof.edit.py"
+    },
+    "ocsvm": {
+      "edit_ops": "edits/ocsvm.edit.py"
+    },
+    "ecod": {
+      "edit_ops": "edits/ecod.edit.py"
+    },
+    "copod": {
+      "edit_ops": "edits/copod.edit.py"
+    }
   },
   "files": [
     {
       "filename": "scikit-learn/custom_anomaly.py",
-      "read": [{"start": -1, "end": -1}],
-      "edit": [{"start": 160, "end": 212}]
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 28,
+          "end": 80
+        }
+      ]
     }
   ]
 }

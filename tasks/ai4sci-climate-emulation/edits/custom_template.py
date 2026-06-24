@@ -156,7 +156,7 @@ def compute_rmse(pred, target):
 # Training Script
 # ============================================================================
 
-if __name__ == '__main__':
+def _main():
     # ── Configuration from environment ──
     output_dir = os.environ.get('OUTPUT_DIR', 'out')
     seed = int(os.environ.get('SEED', 42))
@@ -331,3 +331,10 @@ if __name__ == '__main__':
     print(f"TEST_METRICS: nmse={final_nmse:.6f}, r2={final_r2:.4f}, "
           f"rmse={final_rmse:.6f}, ml_nmse={ml_nmse:.6f}, sl_nmse={sl_nmse:.6f}",
           flush=True)
+
+
+# Run inside a function so the test dataset (with the held-out target outputs in
+# test_dataset.outputs) is a local, NOT a module global the editable model can
+# read. An honest forward(x) is unaffected.
+if __name__ == '__main__':
+    _main()

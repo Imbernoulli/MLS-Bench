@@ -1,12 +1,46 @@
 """Mid-edit operations for ml-missing-data-imputation.
 
-Creates the custom imputation script in the scikit-learn workspace.
+Creates the custom imputation script in the scikit-learn workspace AND
+pre-generates the masked input matrices the agent's program loads at run time.
+
+The dataset loader, the true matrix, the missingness mask, and the labels live
+ONLY in ``holdout/ml-missing-data-imputation/dgp.py`` (host-side, never
+bind-mounted). Here we import it host-side and write ONLY the masked input
+matrix (X with NaN at the masked entries) into the workspace — the agent never
+sees which datasets are used for evaluation nor the held-out true values.
+Inputs are byte-identical to the originals, so honest results are unchanged.
 """
 
+import io
+import json
+import base64
+import sys
 from pathlib import Path
 
-_TEMPLATE_PATH = Path(__file__).parent / "custom_template.py"
-_CUSTOM_PY = _TEMPLATE_PATH.read_text()
+import numpy as np
+
+_HERE = Path(__file__).resolve()
+_TASK_DIR = _HERE.parents[1]
+_PROJECT_ROOT = _HERE.parents[3]
+sys.path.insert(0, str(_PROJECT_ROOT / "holdout" / "ml-missing-data-imputation"))
+import dgp  # host-only
+
+_CUSTOM_PY = (_HERE.parent / "custom_template.py").read_text()
+
+_ENVS = ("breast_cancer", "wine", "california")
+try:
+    _cfg = json.loads((_TASK_DIR / "config.json").read_text())
+    _SEEDS = _cfg.get("seeds") or [42]
+except Exception:
+    _SEEDS = [42]
+
+
+def _encode_input(env, seed):
+    X_missing = dgp.gen_input(env, seed=seed)
+    buf = io.BytesIO()
+    np.save(buf, np.ascontiguousarray(X_missing, dtype=np.float64))
+    return base64.b64encode(buf.getvalue()).decode("ascii")
+
 
 OPS = [
     {
@@ -15,3 +49,11 @@ OPS = [
         "content": _CUSTOM_PY,
     },
 ]
+
+for _env in _ENVS:
+    for _seed in _SEEDS:
+        OPS.append({
+            "op": "create",
+            "file": f"scikit-learn/_impute_inputs/{_env}_seed{_seed}.npy.b64",
+            "content": _encode_input(_env, _seed),
+        })

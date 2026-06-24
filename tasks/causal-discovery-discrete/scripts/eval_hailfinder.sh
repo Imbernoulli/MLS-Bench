@@ -1,7 +1,10 @@
 #!/bin/bash
-# Evaluate on Hailfinder: 56 nodes, 66 edges, 10000 samples (meteorology).
+# Evaluate on the Hailfinder case.
+# The dataset is pre-generated into the workspace at setup time; the network
+# identity and ground truth are held out off-machine. The driver picks the
+# pre-generated input by the ENV label and emits a CAUSAL_PRED line that the
+# host-side scorer grades.
 
 python -u bench/run_eval.py \
-    --network hailfinder \
-    --n_samples 10000 \
+    --label "${ENV:-Hailfinder}" \
     --seed "${SEED:-42}"

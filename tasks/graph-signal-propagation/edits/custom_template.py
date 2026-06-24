@@ -193,7 +193,7 @@ def train_step(model, optimizer, data):
 
 def evaluate(model, data):
     model.eval()
-    logits = model(data)
+    logits = model(_mask_y(data))
     accs, losses = [], []
     for mask_name in ["train_mask", "val_mask", "test_mask"]:
         mask = getattr(data, mask_name)
@@ -311,6 +311,16 @@ class CustomFilter(nn.Module):
 # =====================================================================
 # FIXED: Main training and evaluation script
 # =====================================================================
+def _mask_y(data):
+    """Return a clone with node labels withheld (set to -1) so the editable
+    filter's forward(data) cannot read off the held-out labels at evaluation.
+    Honest filters use only data.x/edge_index, so predictions are unchanged;
+    the metric below still uses the real data.y."""
+    c = data.clone()
+    c.y = torch.full_like(data.y, -1)
+    return c
+
+
 if __name__ == "__main__":
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print(f"Dataset: {DATASET_NAME}, Seed: {SEED}", flush=True)

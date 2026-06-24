@@ -1,62 +1,33 @@
 """ML Ensemble Boosting Benchmark.
 
-Train gradient-boosted ensembles of decision stumps/trees on tabular datasets
-to evaluate novel sample weighting / boosting update strategies.
+Train gradient-boosted ensembles of shallow decision trees on standardized
+tabular data to evaluate novel sample weighting / boosting update strategies.
 
-FIXED: Data loading, base learner (decision trees), prediction aggregation,
-       evaluation loop, CLI.
-EDITABLE: BoostingStrategy class — compute_sample_weights() and update_weights().
-
-Usage:
-    python custom_boosting.py --dataset breast_cancer --task classification --seed 42
-    python custom_boosting.py --dataset diabetes --task regression --seed 42
+EDITABLE: BoostingStrategy class -- the agent's boosting strategy.
+FIXED: input loading + base learner + ensemble accumulation + prediction emit.
+       The dataset identity, the train/test split, the test labels, and the
+       metric live in a host-only module the agent's process cannot import;
+       this program loads a pre-generated standardized (X_train, y_train, X_test)
+       triple, builds the boosting ensemble with the agent's strategy on the
+       training split, and emits the ensemble's test predictions. The host-side
+       parser regenerates the labels and scores the same metric. Inputs are
+       pre-standardized, exactly as before; the split is identical.
 """
 
-import argparse
-import math
+import io
 import os
-import time
+import base64
+import warnings
 from abc import ABC, abstractmethod
 
 import numpy as np
-from sklearn.datasets import (
-    fetch_california_housing,
-    load_breast_cancer,
-    load_diabetes,
-)
-from sklearn.model_selection import train_test_split
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
-from sklearn.metrics import accuracy_score, mean_squared_error
+
+warnings.filterwarnings("ignore")
 
 
 # ============================================================================
-# FIXED — Data loading and preprocessing
-# ============================================================================
-
-def load_dataset(name):
-    """Load a dataset by name. Returns X, y, task_type."""
-    if name == "breast_cancer":
-        data = load_breast_cancer()
-        return data.data, data.target, "classification"
-    elif name == "diabetes":
-        data = load_diabetes()
-        return data.data, data.target, "regression"
-    elif name == "california_housing":
-        data = fetch_california_housing(data_home=os.environ.get("SKLEARN_DATA_HOME"))
-        return data.data, data.target, "regression"
-    else:
-        raise ValueError(f"Unknown dataset: {name}")
-
-
-def normalize_features(X_train, X_test):
-    """Standardize features to zero mean and unit variance."""
-    mean = X_train.mean(axis=0)
-    std = X_train.std(axis=0) + 1e-8
-    return (X_train - mean) / std, (X_test - mean) / std
-
-
-# ============================================================================
-# FIXED — Base learner interface
+# FIXED -- Base learner interface (do not modify)
 # ============================================================================
 
 class BaseLearner:
@@ -82,7 +53,7 @@ class BaseLearner:
 
 
 # ============================================================================
-# FIXED — Ensemble prediction and evaluation
+# FIXED -- Ensemble prediction (do not modify)
 # ============================================================================
 
 def ensemble_predict(learners, alphas, learner_modes, X, task_type,
@@ -127,21 +98,8 @@ def ensemble_predict(learners, alphas, learner_modes, X, task_type,
         return raw_scores
 
 
-def evaluate_ensemble(learners, alphas, learner_modes, X, y, task_type,
-                      learning_rate=0.1):
-    """Evaluate the ensemble on given data."""
-    preds = ensemble_predict(learners, alphas, learner_modes, X, task_type,
-                             learning_rate)
-    if task_type == "classification":
-        acc = accuracy_score(y, preds)
-        return {"accuracy": acc}
-    else:
-        rmse = np.sqrt(mean_squared_error(y, preds))
-        return {"rmse": rmse}
-
-
 # ============================================================================
-# EDITABLE — Boosting strategy (lines 147-256)
+# EDITABLE -- Boosting strategy (lines 105 to 212)
 # ============================================================================
 
 class BoostingStrategy:
@@ -161,12 +119,11 @@ class BoostingStrategy:
        d. Calls update_weights() to adjust sample weights
 
     Args (available via self.config set in __init__):
-        n_samples: int — number of training samples
-        n_features: int — number of input features
-        n_rounds: int — total boosting rounds
-        task_type: str — 'classification' or 'regression'
-        learning_rate: float — shrinkage factor (default 0.1)
-        dataset: str — dataset name
+        n_samples: int -- number of training samples
+        n_features: int -- number of input features
+        n_rounds: int -- total boosting rounds
+        task_type: str -- 'classification' or 'regression'
+        learning_rate: float -- shrinkage factor (default 0.1)
 
     For classification: y in {0, 1}, use signed labels y_signed = 2*y - 1
     For regression: y is continuous, use residual-based approaches
@@ -177,7 +134,7 @@ class BoostingStrategy:
 
         Args:
             config: dict with keys n_samples, n_features, n_rounds,
-                    task_type, learning_rate, dataset.
+                    task_type, learning_rate.
         """
         self.config = config
         self.task_type = config["task_type"]
@@ -188,10 +145,10 @@ class BoostingStrategy:
         """Initialize sample weights.
 
         Args:
-            n_samples: int — number of training samples.
+            n_samples: int -- number of training samples.
 
         Returns:
-            np.ndarray of shape [n_samples] — initial sample weights (should sum to 1).
+            np.ndarray of shape [n_samples] -- initial sample weights (should sum to 1).
         """
         return np.ones(n_samples) / n_samples
 
@@ -201,14 +158,14 @@ class BoostingStrategy:
         This determines WHAT the weak learner tries to predict at each round.
 
         Args:
-            y: np.ndarray [n_samples] — true labels/targets.
-            current_predictions: np.ndarray [n_samples] — ensemble prediction so far
+            y: np.ndarray [n_samples] -- true labels/targets.
+            current_predictions: np.ndarray [n_samples] -- ensemble prediction so far
                 (raw scores for classification, values for regression).
-            sample_weights: np.ndarray [n_samples] — current sample weights.
-            round_idx: int — current boosting round (0-indexed).
+            sample_weights: np.ndarray [n_samples] -- current sample weights.
+            round_idx: int -- current boosting round (0-indexed).
 
         Returns:
-            np.ndarray [n_samples] — pseudo-targets to fit the weak learner on.
+            np.ndarray [n_samples] -- pseudo-targets to fit the weak learner on.
         """
         # Default: fit on original labels (basic boosting)
         return y
@@ -218,15 +175,15 @@ class BoostingStrategy:
         """Compute the weight (alpha) for the newly fitted learner.
 
         Args:
-            learner: BaseLearner — the just-fitted weak learner.
-            X: np.ndarray [n_samples, n_features] — training features.
-            y: np.ndarray [n_samples] — true labels/targets.
-            pseudo_targets: np.ndarray [n_samples] — what the learner was fit on.
-            sample_weights: np.ndarray [n_samples] — current sample weights.
-            round_idx: int — current boosting round.
+            learner: BaseLearner -- the just-fitted weak learner.
+            X: np.ndarray [n_samples, n_features] -- training features.
+            y: np.ndarray [n_samples] -- true labels/targets.
+            pseudo_targets: np.ndarray [n_samples] -- what the learner was fit on.
+            sample_weights: np.ndarray [n_samples] -- current sample weights.
+            round_idx: int -- current boosting round.
 
         Returns:
-            float — learner weight alpha_t. For classification, higher alpha
+            float -- learner weight alpha_t. For classification, higher alpha
                 means more influence in the vote. For regression, alpha scales
                 the contribution (multiplied by learning_rate).
         """
@@ -240,38 +197,43 @@ class BoostingStrategy:
         to focus on harder examples in subsequent rounds.
 
         Args:
-            sample_weights: np.ndarray [n_samples] — current sample weights.
-            learner: BaseLearner — the just-fitted weak learner.
-            X: np.ndarray [n_samples, n_features] — training features.
-            y: np.ndarray [n_samples] — true labels/targets.
-            pseudo_targets: np.ndarray [n_samples] — what the learner was fit on.
-            alpha: float — the learner's weight.
-            round_idx: int — current boosting round.
+            sample_weights: np.ndarray [n_samples] -- current sample weights.
+            learner: BaseLearner -- the just-fitted weak learner.
+            X: np.ndarray [n_samples, n_features] -- training features.
+            y: np.ndarray [n_samples] -- true labels/targets.
+            pseudo_targets: np.ndarray [n_samples] -- what the learner was fit on.
+            alpha: float -- the learner's weight.
+            round_idx: int -- current boosting round.
 
         Returns:
-            np.ndarray [n_samples] — updated sample weights (should sum to 1).
+            np.ndarray [n_samples] -- updated sample weights (should sum to 1).
         """
         # Default: uniform weights (no reweighting)
         return sample_weights
 
 
 # ============================================================================
-# FIXED — Training loop
+# FIXED -- Training loop + input loading + prediction emit (do not modify below)
 # ============================================================================
+# The dataset generator (incl. identity), the train/test split, the test labels,
+# and the metric live in a host-only module the agent's process cannot import.
+# This program loads the pre-generated standardized (X_train, y_train, X_test)
+# triple, builds the boosting ensemble using the agent's strategy on the training
+# split, predicts on the held-out test split, and emits those predictions. The
+# host-side parser regenerates the truth and scores it.
 
-def train_boosting(X_train, y_train, X_test, y_test, strategy, config):
-    """Train a boosted ensemble using the given strategy.
+def train_boosting(X_train, y_train, strategy, config):
+    """Train a boosted ensemble using the given strategy on the training split.
 
     Args:
         X_train, y_train: training data.
-        X_test, y_test: test data.
         strategy: BoostingStrategy instance.
         config: dict with n_rounds, task_type, learning_rate, max_depth, seed.
 
     Returns:
         learners: list of fitted BaseLearner.
         alphas: list of float learner weights.
-        metrics: dict of final test metrics.
+        learner_modes: list of "discrete"/"continuous" per learner.
     """
     n_rounds = config["n_rounds"]
     task_type = config["task_type"]
@@ -346,103 +308,101 @@ def train_boosting(X_train, y_train, X_test, y_test, strategy, config):
         alphas.append(alpha)
         learner_modes.append(mode)
 
-        # Log progress
+        # Log training progress (train-split only; test split is held out)
         if (t + 1) % max(1, n_rounds // 10) == 0 or t == 0:
-            test_metrics = evaluate_ensemble(
-                learners, alphas, learner_modes,
-                X_test, y_test, task_type, lr,
-            )
-            train_metrics = evaluate_ensemble(
-                learners, alphas, learner_modes,
-                X_train, y_train, task_type, lr,
+            train_preds = ensemble_predict(
+                learners, alphas, learner_modes, X_train, task_type, lr,
             )
             if task_type == "classification":
+                train_acc = float(np.mean(train_preds == y_train))
                 print(
                     f"TRAIN_METRICS: round={t+1}/{n_rounds} "
-                    f"train_acc={train_metrics['accuracy']:.4f} "
-                    f"test_acc={test_metrics['accuracy']:.4f}",
+                    f"train_acc={train_acc:.4f}",
                     flush=True,
                 )
             else:
+                train_rmse = float(np.sqrt(np.mean((train_preds - y_train) ** 2)))
                 print(
                     f"TRAIN_METRICS: round={t+1}/{n_rounds} "
-                    f"train_rmse={train_metrics['rmse']:.4f} "
-                    f"test_rmse={test_metrics['rmse']:.4f}",
+                    f"train_rmse={train_rmse:.4f}",
                     flush=True,
                 )
 
-    # Final evaluation
-    final_metrics = evaluate_ensemble(
-        learners, alphas, learner_modes, X_test, y_test, task_type, lr,
-    )
-    return learners, alphas, final_metrics
+    return learners, alphas, learner_modes
 
 
-# ============================================================================
-# FIXED — Main
-# ============================================================================
+def _inputs_dir():
+    d = os.environ.get("BOOST_INPUTS_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_boost_inputs")
+
+
+def _load_input(env_name, seed):
+    path = os.path.join(_inputs_dir(), f"{env_name}_seed{seed}.npz.b64")
+    with open(path, "r") as f:
+        raw = base64.b64decode(f.read())
+    d = np.load(io.BytesIO(raw))
+    return (d["X_train"], d["y_train"], d["X_test"],
+            str(d["task_type"]), int(d["n_rounds"]),
+            int(d["max_depth"]), float(d["learning_rate"]))
+
 
 def main():
-    parser = argparse.ArgumentParser(description="ML Ensemble Boosting Benchmark")
-    parser.add_argument("--dataset", type=str, required=True,
-                        choices=["breast_cancer", "diabetes", "california_housing"])
-    parser.add_argument("--task", type=str, required=True,
-                        choices=["classification", "regression"])
-    parser.add_argument("--n-rounds", type=int, default=200,
-                        help="Number of boosting rounds")
-    parser.add_argument("--max-depth", type=int, default=3,
-                        help="Max depth of base decision trees")
-    parser.add_argument("--learning-rate", type=float, default=0.1,
-                        help="Shrinkage / learning rate")
-    parser.add_argument("--test-size", type=float, default=0.2,
-                        help="Fraction of data for testing")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--output-dir", type=str, default=".")
-    args = parser.parse_args()
+    env = os.environ.get("ENV", "")
+    if not env:
+        raise SystemExit("ENV not set")
+    seed = int(os.environ.get("SEED", "42"))
+    print(f"=== Boosting benchmark: {env} (seed={seed}) ===", flush=True)
 
-    np.random.seed(args.seed)
-
-    # Load data
-    X, y, detected_task = load_dataset(args.dataset)
-    task_type = args.task
-    print(f"Dataset: {args.dataset} ({task_type})", flush=True)
-    print(f"Samples: {X.shape[0]}, Features: {X.shape[1]}", flush=True)
-
-    # Split
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=args.test_size, random_state=args.seed,
+    X_train, y_train, X_test, task_type, n_rounds, max_depth, lr = _load_input(
+        env, seed,
     )
+    np.random.seed(seed)
+    print(f"Input: train={X_train.shape}, test={X_test.shape}, "
+          f"task={task_type}", flush=True)
+    print(f"Boosting rounds: {n_rounds}, Max depth: {max_depth}, "
+          f"LR: {lr}", flush=True)
 
-    # Normalize
-    X_train, X_test = normalize_features(X_train, X_test)
+    # Scrub the dataset identity and split seed from the environment before the
+    # strategy is constructed, so the editable strategy cannot read ENV/SEED at
+    # run time, reconstruct the public loader + split, and recover the held-out
+    # test labels.
+    for _k in ("ENV", "SEED", "BOOST_INPUTS_DIR"):
+        os.environ.pop(_k, None)
 
-    print(f"Train: {X_train.shape[0]}, Test: {X_test.shape[0]}", flush=True)
-    print(f"Boosting rounds: {args.n_rounds}, Max depth: {args.max_depth}, "
-          f"LR: {args.learning_rate}", flush=True)
-
-    # Build strategy config
+    # config for the strategy: NO dataset identity, NO seed (cannot replay split)
     config = {
         "n_samples": X_train.shape[0],
         "n_features": X_train.shape[1],
-        "n_rounds": args.n_rounds,
+        "n_rounds": n_rounds,
         "task_type": task_type,
-        "learning_rate": args.learning_rate,
-        "max_depth": args.max_depth,
-        "dataset": args.dataset,
-        "seed": args.seed,
+        "learning_rate": lr,
     }
+    # runner config carries seed/max_depth for reproducible tree fitting
+    run_config = dict(config)
+    run_config["max_depth"] = max_depth
+    run_config["seed"] = seed
 
-    # Create strategy and train
     strategy = BoostingStrategy(config)
-    learners, alphas, final_metrics = train_boosting(
-        X_train, y_train, X_test, y_test, strategy, config,
+    learners, alphas, learner_modes = train_boosting(
+        X_train, y_train, strategy, run_config,
     )
 
-    # Report final metrics
-    if task_type == "classification":
-        print(f"TEST_METRICS: test_accuracy={final_metrics['accuracy']:.4f}", flush=True)
-    else:
-        print(f"TEST_METRICS: test_rmse={final_metrics['rmse']:.4f}", flush=True)
+    # Predict on the held-out test split and emit predictions for host scoring.
+    test_preds = ensemble_predict(
+        learners, alphas, learner_modes, X_test, task_type, lr,
+    )
+    test_preds = np.asarray(test_preds, dtype=np.float64).ravel()
+    payload = base64.b64encode(
+        np.ascontiguousarray(test_preds, dtype=np.float64).tobytes()
+    ).decode("ascii")
+    print(
+        f"BOOST_PRED env={env} seed={seed} n={test_preds.shape[0]} "
+        f"preds={payload}",
+        flush=True,
+    )
+    print("Done.", flush=True)
 
 
 if __name__ == "__main__":

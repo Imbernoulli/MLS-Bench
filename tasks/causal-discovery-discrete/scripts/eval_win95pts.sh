@@ -1,7 +1,10 @@
 #!/bin/bash
-# Evaluate on Win95pts: 76 nodes, 112 edges, 10000 samples.
+# Evaluate on the Win95pts case (hidden).
+# The dataset is pre-generated into the workspace at setup time; the network
+# identity and ground truth are held out off-machine. The driver picks the
+# pre-generated input by the ENV label and emits a CAUSAL_PRED line that the
+# host-side scorer grades.
 
 python -u bench/run_eval.py \
-    --network win95pts \
-    --n_samples 10000 \
+    --label "${ENV:-Win95pts}" \
     --seed "${SEED:-42}"

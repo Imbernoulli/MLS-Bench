@@ -1,7 +1,10 @@
 #!/bin/bash
-# Evaluate on Child: 20 nodes, 25 edges, 2000 samples (medical).
+# Evaluate on the Child case.
+# The dataset is pre-generated into the workspace at setup time; the network
+# identity and ground truth are held out off-machine. The driver picks the
+# pre-generated input by the ENV label and emits a CAUSAL_PRED line that the
+# host-side scorer grades.
 
 python -u bench/run_eval.py \
-    --network child \
-    --n_samples 2000 \
+    --label "${ENV:-Child}" \
     --seed "${SEED:-42}"

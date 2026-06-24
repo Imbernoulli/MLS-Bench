@@ -1,8 +1,8 @@
 """Kaiming initialization baseline for optimization-parity.
 
 Uses Kaiming normal initialization (He init) instead of Xavier uniform,
-paired with a moderately-sized dataset and tuned AdamW hyperparameters
-(lower weight decay, slightly higher learning rate).
+paired with a moderately-sized slice of the labeled pool and tuned AdamW
+hyperparameters (lower weight decay, slightly higher learning rate).
 """
 
 _FILE = "pytorch-examples/optimization_parity/custom_strategy.py"
@@ -17,22 +17,13 @@ def init_model(model: nn.Sequential, config: TaskConfig) -> None:
 
 
 def make_dataset(
-    secret: tuple[int, ...],
+    x_pool: torch.Tensor,
+    y_pool: torch.Tensor,
     config: TaskConfig,
-    seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return a moderately-sized random dataset (50k examples)."""
-    generator = torch.Generator().manual_seed(seed)
+    """Return a moderately-sized slice of the labeled pool (50k examples)."""
     num_examples = min(50_000, config.max_train_examples)
-    x = torch.randint(
-        low=0,
-        high=2,
-        size=(num_examples, config.n_features),
-        generator=generator,
-        dtype=torch.int64,
-    ).to(torch.float32)
-    y = parity_labels(x, secret)
-    return x, y
+    return x_pool[:num_examples], y_pool[:num_examples]
 
 
 def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
@@ -49,8 +40,8 @@ OPS = [
     {
         "op": "replace",
         "file": _FILE,
-        "start_line": 220,
-        "end_line": 255,
+        "start_line": 242,
+        "end_line": 274,
         "content": _CONTENT,
     },
 ]

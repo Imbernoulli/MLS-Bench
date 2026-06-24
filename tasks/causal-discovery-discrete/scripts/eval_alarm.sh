@@ -1,7 +1,10 @@
 #!/bin/bash
-# Evaluate on Alarm: 37 nodes, 46 edges, 5000 samples (medical monitoring).
+# Evaluate on the Alarm case.
+# The dataset is pre-generated into the workspace at setup time; the network
+# identity and ground truth are held out off-machine. The driver picks the
+# pre-generated input by the ENV label and emits a CAUSAL_PRED line that the
+# host-side scorer grades.
 
 python -u bench/run_eval.py \
-    --network alarm \
-    --n_samples 5000 \
+    --label "${ENV:-Alarm}" \
     --seed "${SEED:-42}"

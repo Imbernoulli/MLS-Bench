@@ -38,7 +38,7 @@
     {
       "filename": "gplearn/custom_sr.py",
       "read": [{"start": -1, "end": -1}],
-      "edit": [{"start": 228, "end": 306}]
+      "edit": [{"start": 188, "end": 266}]
     },
     {
       "filename": "gplearn/gplearn/genetic.py",

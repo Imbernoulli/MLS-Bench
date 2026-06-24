@@ -1,13 +1,50 @@
-"""Evaluation harness for the causal-observational-linear-non-gaussian task."""
+"""Evaluation harness for the causal-observational-linear-non-gaussian task.
+
+FIXED driver (do not edit). It loads a PRE-GENERATED observational matrix X
+(written into bench/_inputs/ by the task scaffold), calls the agent-editable
+``run_causal_discovery(X)``, serializes the returned estimated adjacency matrix
+B (n x n float64, convention B[i, j] != 0 means j -> i), and prints a single
+base64 line:
+
+    CAUSAL_PRED <args...> n=<n> adj=<base64 of the n x n float64 matrix>
+
+The LiNGAM data-generating process (which also produces the true adjacency
+matrix) and the metrics live in a host-only module the agent's process cannot
+import. The host-side parser regenerates the true B, reconstructs the estimated
+B from the payload, and scores SHD + F1 + precision + recall. This driver never
+imports data_gen / metrics and never holds the true adjacency.
+"""
 import argparse
+import base64
 import os
 import sys
 
+import numpy as np
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from data_gen import simulate_lingam
-from metrics import compute_metrics
 from custom_algorithm import run_causal_discovery
+
+
+def _inputs_dir():
+    d = os.environ.get("CAUSAL_INPUTS_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_inputs")
+
+
+def _input_key(args):
+    return (
+        f"{args.graph_type}_n{args.n_nodes}_s{args.n_samples}"
+        f"_{args.noise_type}_p{args.er_prob}_m{args.sf_m}_seed{args.seed}"
+    )
+
+
+def _load_input(args):
+    path = os.path.join(_inputs_dir(), f"{_input_key(args)}.npy.b64")
+    with open(path, "r") as f:
+        raw = base64.b64decode(f.read())
+    return np.frombuffer(raw, dtype=np.float64).reshape(args.n_samples, args.n_nodes).copy()
 
 
 def main():
@@ -31,25 +68,30 @@ def main():
     parser.add_argument("--seed",    type=int,   default=42, help="Random seed")
     args = parser.parse_args()
 
-    X, B_true = simulate_lingam(
-        n_nodes=args.n_nodes,
-        n_samples=args.n_samples,
-        graph_type=args.graph_type,
-        noise_type=args.noise_type,
-        seed=args.seed,
-        er_prob=args.er_prob,
-        sf_m=args.sf_m,
-    )
+    X = _load_input(args)
 
     B_est = run_causal_discovery(X)
-    m = compute_metrics(B_est, B_true)
+    B_est = np.asarray(B_est, dtype=np.float64)
+    if B_est.shape != (args.n_nodes, args.n_nodes):
+        raise ValueError(
+            f"run_causal_discovery returned shape {B_est.shape}, expected "
+            f"{(args.n_nodes, args.n_nodes)}."
+        )
+    payload = base64.b64encode(
+        np.ascontiguousarray(B_est, dtype=np.float64).tobytes()
+    ).decode("ascii")
 
     print(
-        f"CAUSAL_METRICS "
-        f"shd={m['shd']} "
-        f"f1={m['f1']:.4f} "
-        f"precision={m['precision']:.4f} "
-        f"recall={m['recall']:.4f}",
+        f"CAUSAL_PRED "
+        f"graph_type={args.graph_type} "
+        f"n_nodes={args.n_nodes} "
+        f"n_samples={args.n_samples} "
+        f"noise_type={args.noise_type} "
+        f"er_prob={args.er_prob} "
+        f"sf_m={args.sf_m} "
+        f"seed={args.seed} "
+        f"n={args.n_nodes} "
+        f"adj={payload}",
         flush=True,
     )
 

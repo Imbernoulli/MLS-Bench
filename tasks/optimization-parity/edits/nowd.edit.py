@@ -8,7 +8,7 @@ _FILE = "pytorch-examples/optimization_parity/custom_strategy.py"
 
 _CONTENT = '''\
 def init_model(model: nn.Sequential, config: TaskConfig) -> None:
-    """Initialize the fixed two-layer MLP without using the hidden secret."""
+    """Initialize the fixed two-layer MLP."""
     for layer in model:
         if isinstance(layer, nn.Linear):
             gain = nn.init.calculate_gain("relu") if layer is model[0] else 1.0
@@ -17,22 +17,13 @@ def init_model(model: nn.Sequential, config: TaskConfig) -> None:
 
 
 def make_dataset(
-    secret: tuple[int, ...],
+    x_pool: torch.Tensor,
+    y_pool: torch.Tensor,
     config: TaskConfig,
-    seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return a maximal random dataset to induce one-pass training."""
-    generator = torch.Generator().manual_seed(seed)
+    """Return the maximal slice of the labeled pool to induce one-pass training."""
     num_examples = config.max_train_examples
-    x = torch.randint(
-        low=0,
-        high=2,
-        size=(num_examples, config.n_features),
-        generator=generator,
-        dtype=torch.int64,
-    ).to(torch.float32)
-    y = parity_labels(x, secret)
-    return x, y
+    return x_pool[:num_examples], y_pool[:num_examples]
 
 
 def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
@@ -49,8 +40,8 @@ OPS = [
     {
         "op": "replace",
         "file": _FILE,
-        "start_line": 220,
-        "end_line": 255,
+        "start_line": 242,
+        "end_line": 274,
         "content": _CONTENT,
     },
 ]
