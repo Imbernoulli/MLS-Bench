@@ -2,6 +2,7 @@
 # Evaluate on SF100: Scale-Free graph, 100 nodes, m=3, 1000 samples, uniform noise.
 # Working directory is /workspace (causal-learn package root).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-non-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type sf \
     --n_nodes 100 \

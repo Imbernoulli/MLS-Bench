@@ -9,13 +9,24 @@ Metric: -log2(n*) (higher is better — fewer training samples needed).
 
 Uses PyTorch with autograd for gradient computation; the optimizer interface
 receives torch.Tensor gradients directly.
+
+FIXED driver (do not edit). The data-generating process that also produces the
+true sparse vector w_star lives in a host-only module the agent's process cannot
+import. This driver loads the PRE-GENERATED observable problem
+(X_train, y_train, X_test, y_test) — written into bench/_inputs/ by the task
+scaffold — and never imports the generator nor holds w_star. The recovery
+success criterion (test MSE < 1.0) needs only the observable test data, so the
+n_star / score metric is identical to the pre-fix pipeline.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
+import io
 import json
 import math
+import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -83,52 +94,62 @@ class DiagonalNet(nn.Module):
 
 
 # ===================================================================
-# Data generation
+# Data loading (pre-generated; generator lives host-only in holdout/)
 # ===================================================================
 
-def generate_problem(
+def _inputs_dir() -> str:
+    d = os.environ.get("DIAGNET_INPUTS_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_inputs")
+
+
+def _input_key(dim, sparsity, n_max_train, n_test, seed) -> str:
+    return (
+        f"d{int(dim)}_k{int(sparsity)}"
+        f"_nmax{int(n_max_train)}_nt{int(n_test)}_seed{int(seed)}"
+    )
+
+
+def load_problem(
     dim: int,
     sparsity: int,
     n_max_train: int,
     n_test: int,
     seed: int,
 ):
-    """Generate a clean sparse-recovery dataset (no label noise).
+    """Load the PRE-GENERATED clean sparse-recovery dataset (no label noise).
 
-    Labels are y = X @ w_star exactly.  Per-step Rademacher noise (±delta)
-    is added during training, not here.
+    The data-generating process that also builds the true sparse vector w_star
+    lives in a host-only module the agent's process cannot import; here we only
+    read the observable problem written into bench/_inputs/ by the scaffold.
 
-    The dataset is generated at maximum size ``n_max_train`` so that any
-    n_train <= n_max_train can reuse the first n_train rows without
-    re-generating data.
+    Labels are y = X @ w_star exactly.  Per-step Rademacher noise (±delta) is
+    added during training, not here.  The training matrix is stored at the
+    maximum size ``n_max_train`` so any n_train <= n_max_train reuses its first
+    n_train rows.
 
     Returns:
-        (X_train, y_train, X_test, y_test, w_star) as torch.Tensor (float64)
+        (X_train, y_train, X_test, y_test) as torch.Tensor (float64)
     """
-    rng = np.random.RandomState(seed)
+    path = os.path.join(
+        _inputs_dir(),
+        f"{_input_key(dim, sparsity, n_max_train, n_test, seed)}.npz.b64",
+    )
+    with open(path, "r") as f:
+        raw = base64.b64decode(f.read())
+    with np.load(io.BytesIO(raw)) as data:
+        X_train_np = data["X_train"].astype(np.float64)
+        y_train_np = data["y_train"].astype(np.float64)
+        X_test_np = data["X_test"].astype(np.float64)
+        y_test_np = data["y_test"].astype(np.float64)
 
-    # --- ground-truth sparse vector ---
-    support = rng.choice(dim, size=sparsity, replace=False)
-    w_star_np = np.zeros(dim, dtype=np.float64)
-    signs = rng.choice([-1.0, 1.0], size=sparsity)
-    w_star_np[support] = signs
+    X_train = torch.from_numpy(np.ascontiguousarray(X_train_np))
+    y_train = torch.from_numpy(np.ascontiguousarray(y_train_np))
+    X_test = torch.from_numpy(np.ascontiguousarray(X_test_np))
+    y_test = torch.from_numpy(np.ascontiguousarray(y_test_np))
 
-    # --- test data (generated first for stability) ---
-    X_test_np = (2 * rng.randint(0, 2, size=(n_test, dim)) - 1).astype(np.float64)
-    y_test_np = X_test_np @ w_star_np           # clean labels
-
-    # --- training data (max size, clean labels) ---
-    X_train_np = (2 * rng.randint(0, 2, size=(n_max_train, dim)) - 1).astype(np.float64)
-    y_train_np = X_train_np @ w_star_np         # clean labels
-
-    # Convert to torch tensors
-    X_train = torch.from_numpy(X_train_np)
-    y_train = torch.from_numpy(y_train_np)
-    X_test = torch.from_numpy(X_test_np)
-    y_test = torch.from_numpy(y_test_np)
-    w_star = torch.from_numpy(w_star_np)
-
-    return X_train, y_train, X_test, y_test, w_star
+    return X_train, y_train, X_test, y_test
 
 
 # ===================================================================
@@ -222,7 +243,6 @@ def _train_single(
     y_train: torch.Tensor,
     X_test: torch.Tensor,
     y_test: torch.Tensor,
-    w_star: torch.Tensor,
     dim: int,
     alpha_init: float,
     delta: float,
@@ -313,26 +333,16 @@ def _train_single(
     with torch.no_grad():
         final_test_mse = _mse_batched(model, X_test, y_test, eval_batch)
         final_train_mse = _mse_batched(model, X_train, y_train, eval_batch)
-        w_hat = (model.u ** 2 - model.v ** 2).cpu().numpy()
 
-    w_star_np = w_star.cpu().numpy()
-
-    # Diagnostic: distance to ground truth
-    w_diff = float(np.linalg.norm(w_hat - w_star_np))
-    support_true = set(np.nonzero(w_star_np)[0])
-    support_hat = set(np.where(np.abs(w_hat) > 0.5)[0])
-    tp = len(support_true & support_hat)
-    precision = tp / max(len(support_hat), 1)
-    recall = tp / max(len(support_true), 1)
-
+    # Recovery success uses only the observable test data. Ground-truth
+    # diagnostics (w_diff / support precision-recall) are intentionally omitted
+    # here: w_star lives in a host-only module the agent cannot reach, and these
+    # diagnostics never entered the n_star / score metric.
     return {
         "success": final_test_mse < 1.0,
         "final_test_mse": float(final_test_mse),
         "final_train_mse": float(final_train_mse),
         "steps": final_step,
-        "w_diff": w_diff,
-        "support_precision": precision,
-        "support_recall": recall,
     }
 
 
@@ -368,12 +378,12 @@ def _evaluate_n_train(
         # Early termination: can't reach threshold even if all remaining succeed
         if successes + remaining < threshold:
             break
-        X_tr_full, y_tr_full, X_te, y_te, w_star = datasets[seed]
+        X_tr_full, y_tr_full, X_te, y_te = datasets[seed]
         X_tr = X_tr_full[:n_train]
         y_tr = y_tr_full[:n_train]
         model_seed = seed + 1_000_000
         result = _train_single(
-            X_tr, y_tr, X_te, y_te, w_star,
+            X_tr, y_tr, X_te, y_te,
             problem.dim, problem.alpha_init, problem.delta,
             init_state_fn, step_fn, hparams,
             model_seed, stop_cfg, problem.eval_batch, verbose,
@@ -410,13 +420,15 @@ def _coarse_to_fine_search(
     threshold = search_cfg.success_seeds_required
     hparams = get_hparams_fn(problem.dim, problem.sparsity, problem.delta)
 
-    # Pre-generate clean datasets for all seeds at max training size
+    # Load pre-generated clean datasets for all seeds at max training size.
+    # The generator (and the true w_star it builds) is host-only; here we only
+    # read the observable problem written into bench/_inputs/ by the scaffold.
     n_max_train = max(grid)
     datasets: dict[int, tuple] = {}
-    print(f"Generating datasets (n_max_train={n_max_train}, n_test={problem.n_test}) ...",
+    print(f"Loading datasets (n_max_train={n_max_train}, n_test={problem.n_test}) ...",
           flush=True)
     for seed in seeds:
-        datasets[seed] = generate_problem(
+        datasets[seed] = load_problem(
             problem.dim, problem.sparsity, n_max_train, problem.n_test, seed,
         )
     print("Datasets ready.", flush=True)

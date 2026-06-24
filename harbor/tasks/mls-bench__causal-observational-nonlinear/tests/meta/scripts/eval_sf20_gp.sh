@@ -2,6 +2,7 @@
 # Evaluate on SF20-GP: Scale-Free graph, 20 nodes, GP nonlinearity, 2000 samples, exp noise.
 # Working directory is /workspace (causal-learn package root).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-nonlinear" /workspace
 python -u bench/run_eval.py \
     --graph_type sf \
     --n_nodes 20 \

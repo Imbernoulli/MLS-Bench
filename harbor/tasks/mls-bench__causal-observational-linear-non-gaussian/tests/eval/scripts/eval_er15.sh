@@ -2,6 +2,7 @@
 # Evaluate on ER15: Erdos-Renyi graph, 15 nodes, p=0.2, 500 samples, Laplace noise.
 # Working directory is /workspace (causal-learn package root).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-non-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type er \
     --n_nodes 15 \

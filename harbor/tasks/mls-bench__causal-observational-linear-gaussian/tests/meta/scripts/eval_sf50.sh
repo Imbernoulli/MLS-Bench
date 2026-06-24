@@ -1,6 +1,7 @@
 #!/bin/bash
 # Evaluate on SF50: Scale-Free graph, 50 nodes, m=2, 2000 samples.
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type sf \
     --n_nodes 50 \

@@ -1,20 +1,31 @@
 """
 Multi-Objective Optimization — Custom Evolutionary Strategy Template
 
-This script runs a complete multi-objective evolutionary algorithm on standard
-benchmark problems (ZDT/DTLZ). The agent should implement the custom selection
-and variation strategy in the CustomMOEA class.
+This script runs a complete multi-objective evolutionary algorithm on a held-out
+benchmark problem. The agent should implement the custom selection and variation
+strategy in the CustomMOEA class.
 
-Usage:
-    python deap/custom_moea.py --problem zdt1 --seed 42 --output-dir ./out
+NOTE: The benchmark problem identity, its analytic true Pareto front, and the
+evaluation metrics are NOT part of this program. The harness pre-generates the
+problem to optimize (the objective functions, with their numeric configuration)
+and scores the final population in a separate host-side process. Your strategy
+only ever sees individuals with already-evaluated objective values — it never
+receives the problem name nor the true front.
+
+Usage (the harness sets ENV/SEED for you):
+    ENV=<opaque-problem-key> SEED=42 python deap/custom_moea.py
 """
 
 import argparse
+import base64
+import io
 import json
+import marshal
 import math
 import os
 import random
 import time
+import types
 import warnings
 from copy import deepcopy
 from functools import reduce
@@ -30,7 +41,7 @@ from deap.benchmarks import tools as btools
 warnings.filterwarnings("ignore")
 
 # ================================================================
-# FIXED — Problem definitions and utilities (do not modify)
+# FIXED — Individual types and generic utilities (do not modify)
 # ================================================================
 
 # Create DEAP fitness and individual types
@@ -42,200 +53,6 @@ creator.create("FitnessMin3", base.Fitness, weights=(-1.0, -1.0, -1.0))
 creator.create("Individual3", list, fitness=creator.FitnessMin3)
 
 
-PROBLEMS = {
-    "zdt1": {
-        "func": benchmarks.zdt1,
-        "n_var": 30,
-        "n_obj": 2,
-        "bounds": (0.0, 1.0),
-        "pop_size": 100,
-        "n_gen": 200,
-        "ref_point": [1.1, 1.1],
-        "description": "ZDT1: convex Pareto front, 30 variables, 2 objectives",
-    },
-    "zdt3": {
-        "func": benchmarks.zdt3,
-        "n_var": 30,
-        "n_obj": 2,
-        "bounds": (0.0, 1.0),
-        "pop_size": 100,
-        "n_gen": 200,
-        "ref_point": [1.1, 1.1],
-        "description": "ZDT3: disconnected Pareto front, 30 variables, 2 objectives",
-    },
-    "dtlz2": {
-        "func": lambda ind: benchmarks.dtlz2(ind, 3),
-        "n_var": 12,
-        "n_obj": 3,
-        "bounds": (0.0, 1.0),
-        "pop_size": 120,
-        "n_gen": 250,
-        "ref_point": [1.5, 1.5, 1.5],
-        "description": "DTLZ2: spherical Pareto front, 12 variables, 3 objectives",
-    },
-    "dtlz1": {
-        "func": lambda ind: benchmarks.dtlz1(ind, 3),
-        "n_var": 7,
-        "n_obj": 3,
-        "bounds": (0.0, 1.0),
-        "pop_size": 120,
-        "n_gen": 400,
-        "ref_point": [1.0, 1.0, 1.0],
-        "description": "DTLZ1: linear Pareto front with many local fronts, 7 variables, 3 objectives",
-    },
-}
-
-
-def generate_pareto_front(problem_name: str, n_points: int = 500) -> np.ndarray:
-    """Generate reference Pareto front points for IGD computation."""
-    if problem_name == "zdt1":
-        x = np.linspace(0, 1, n_points)
-        return np.column_stack([x, 1 - np.sqrt(x)])
-    elif problem_name == "zdt3":
-        # ZDT3 has a disconnected front
-        regions = [
-            (0.0, 0.0830),
-            (0.1822, 0.2577),
-            (0.4093, 0.4538),
-            (0.6183, 0.6525),
-            (0.8233, 0.8518),
-        ]
-        points = []
-        per_region = n_points // len(regions)
-        for lo, hi in regions:
-            x = np.linspace(lo, hi, per_region)
-            f1 = x
-            f2 = 1 - np.sqrt(x) - x * np.sin(10 * np.pi * x)
-            points.append(np.column_stack([f1, f2]))
-        return np.vstack(points)
-    elif problem_name == "dtlz2":
-        # Uniform points on first octant of unit sphere
-        points = []
-        ns = int(np.sqrt(n_points)) + 1
-        for i in range(ns):
-            for j in range(ns):
-                theta1 = (i / max(ns - 1, 1)) * np.pi / 2
-                theta2 = (j / max(ns - 1, 1)) * np.pi / 2
-                f1 = np.cos(theta1) * np.cos(theta2)
-                f2 = np.cos(theta1) * np.sin(theta2)
-                f3 = np.sin(theta1)
-                points.append([f1, f2, f3])
-        return np.array(points[:n_points])
-    elif problem_name == "dtlz1":
-        # Pareto front lies on the plane sum(f_i) = 0.5
-        points = []
-        ns = int(np.sqrt(n_points)) + 1
-        for i in range(ns):
-            for j in range(ns - i):
-                f1 = i / max(ns - 1, 1) * 0.5
-                f2 = j / max(ns - 1, 1) * 0.5
-                f3 = 0.5 - f1 - f2
-                if f3 >= -1e-8:
-                    points.append([f1, f2, max(f3, 0.0)])
-        return np.array(points[:n_points])
-    else:
-        raise ValueError(f"Unknown problem: {problem_name}")
-
-
-def _hv_2d(points, ref):
-    """Exact 2D hypervolume via non-dominated sweep."""
-    pts = points[(points[:, 0] < ref[0]) & (points[:, 1] < ref[1])]
-    if len(pts) == 0:
-        return 0.0
-    pts = pts[pts[:, 0].argsort()]
-    nd = [pts[0]]
-    for p in pts[1:]:
-        if p[1] < nd[-1][1]:
-            nd.append(p)
-    nd = np.array(nd)
-    hv = 0.0
-    prev_y = ref[1]
-    for p in nd:
-        width = ref[0] - p[0]
-        hv += width * (prev_y - p[1])
-        prev_y = p[1]
-    return hv
-
-
-def _hv_3d(points, ref):
-    """Exact 3D hypervolume via z-slicing + 2D sweep."""
-    mask = np.all(points < ref, axis=1)
-    pts = points[mask]
-    if len(pts) == 0:
-        return 0.0
-    # Sort by z ascending: as z increases, more points become active
-    order = np.argsort(pts[:, 2])
-    pts = pts[order]
-    hv = 0.0
-    active_2d = []
-    for i in range(len(pts)):
-        active_2d.append(pts[i, :2])
-        z_lo = pts[i, 2]
-        z_hi = pts[i + 1, 2] if i + 1 < len(pts) else ref[2]
-        dz = z_hi - z_lo
-        if dz > 0:
-            hv += _hv_2d(np.array(active_2d), ref[:2]) * dz
-    return hv
-
-
-def compute_hypervolume(nd_front, ref_point):
-    """Robust hypervolume computation that works for 2D and 3D.
-
-    Falls back to a pure-Python implementation if DEAP's built-in fails.
-    """
-    # Always use pure-Python implementation (DEAP's C version fails silently in some envs)
-    front_values = np.array([ind.fitness.values for ind in nd_front])
-    ref = np.array(ref_point, dtype=np.float64)
-    # Filter out points not dominated by ref
-    mask = np.all(front_values < ref, axis=1)
-    front_values = front_values[mask]
-    if len(front_values) == 0:
-        return 0.0
-    n_obj = front_values.shape[1]
-    if n_obj == 2:
-        return _hv_2d(front_values, ref)
-    elif n_obj == 3:
-        return _hv_3d(front_values, ref)
-    return 0.0
-
-
-def compute_spread(front_values: np.ndarray) -> float:
-    """Compute spread (Delta) metric for a 2D front.
-
-    Measures the extent and uniformity of the Pareto front approximation.
-    Lower is better. For >2 objectives, returns average pairwise distance std.
-    """
-    if len(front_values) < 2:
-        return float("inf")
-
-    n_obj = front_values.shape[1]
-    if n_obj == 2:
-        # Sort by first objective
-        sorted_idx = np.argsort(front_values[:, 0])
-        sorted_front = front_values[sorted_idx]
-        # Consecutive distances
-        dists = np.sqrt(np.sum(np.diff(sorted_front, axis=0) ** 2, axis=1))
-        if len(dists) == 0:
-            return float("inf")
-        d_mean = np.mean(dists)
-        if d_mean < 1e-12:
-            return float("inf")
-        spread = np.sum(np.abs(dists - d_mean)) / (len(dists) * d_mean)
-        return float(spread)
-    else:
-        # For many-objective: use spacing metric
-        from scipy.spatial.distance import cdist
-
-        dist_matrix = cdist(front_values, front_values)
-        np.fill_diagonal(dist_matrix, np.inf)
-        min_dists = np.min(dist_matrix, axis=1)
-        d_mean = np.mean(min_dists)
-        if d_mean < 1e-12:
-            return float("inf")
-        spread = np.sqrt(np.mean((min_dists - d_mean) ** 2)) / d_mean
-        return float(spread)
-
-
 def make_individual(n_var, bounds, ind_class):
     """Create a random individual within bounds."""
     lo, hi = bounds
@@ -243,7 +60,7 @@ def make_individual(n_var, bounds, ind_class):
 
 
 def evaluate(individual, func):
-    """Evaluate an individual on the benchmark function."""
+    """Evaluate an individual on the (held-out) objective function."""
     return func(individual)
 
 
@@ -289,7 +106,52 @@ def compute_crowding_distance(individuals):
 
 
 # ================================================================
-# EDITABLE — Custom multi-objective evolutionary strategy (lines 297 to 446)
+# FIXED — Held-out problem spec loading (do not modify)
+# ================================================================
+#
+# The harness pre-generates, for the opaque problem key in ENV, a spec file
+# carrying the numeric problem configuration and an opaque black-box objective
+# evaluator f(individual) -> objectives. This program loads that spec, builds the
+# evaluator as a pure black box, and uses it to evaluate candidate solutions.
+# The problem name, the analytic Pareto front, and the metrics are NOT present
+# here — they live in a host-only module the agent's process cannot import. The
+# host-side scorer regenerates the front and computes HV/IGD/Spread.
+
+
+def _spec_dir():
+    d = os.environ.get("MOEA_SPEC_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_moea_specs")
+
+
+def _load_spec(env_key, seed):
+    path = os.path.join(_spec_dir(), f"{env_key}_seed{seed}.json.b64")
+    with open(path, "r") as f:
+        raw = base64.b64decode(f.read())
+    return json.loads(raw.decode("utf-8"))
+
+
+def _build_objective(spec):
+    """Reconstruct the black-box objective f(individual) -> tuple from the spec.
+
+    The evaluator is a marshalled, name-free code object dispatched by an opaque
+    integer ``kind``; it is used purely as a black box and carries no problem
+    identity that the strategy could exploit.
+    """
+    code = marshal.loads(base64.b64decode(spec["evaluator"]))
+    kernel = types.FunctionType(code, {"__builtins__": __builtins__}, "objective")
+    kind = int(spec["kind"])
+    n_obj = int(spec["n_obj"])
+
+    def f(individual):
+        return tuple(kernel(individual, kind, n_obj))
+
+    return f
+
+
+# ================================================================
+# EDITABLE — Custom multi-objective evolutionary strategy (lines 297 to 441)
 # The agent modifies ONLY this section.
 # ================================================================
 
@@ -440,20 +302,27 @@ class CustomMOEA:
 
 
 # ================================================================
-# FIXED — Main evolution loop and evaluation (do not modify below)
+# FIXED — Main evolution loop and prediction emit (do not modify below)
 # ================================================================
 
 
-def run_moea(problem_name: str, seed: int, output_dir: str):
-    """Run the custom MOEA on a benchmark problem."""
-    cfg = PROBLEMS[problem_name]
-    func = cfg["func"]
-    n_var = cfg["n_var"]
-    n_obj = cfg["n_obj"]
-    bounds = cfg["bounds"]
-    pop_size = cfg["pop_size"]
-    n_gen = cfg["n_gen"]
-    ref_point = cfg["ref_point"]
+def run_moea(env_key: str, seed: int, output_dir: str):
+    """Run the custom MOEA on the held-out benchmark problem.
+
+    Loads the pre-generated problem spec for ``env_key``, runs the strategy, and
+    emits the final non-dominated population's objective values for the host-side
+    scorer. The true Pareto front and the metrics are computed host-side; this
+    process never sees them.
+    """
+    spec = _load_spec(env_key, seed)
+    n_var = int(spec["n_var"])
+    n_obj = int(spec["n_obj"])
+    bounds = tuple(spec["bounds"])
+    pop_size = int(spec["pop_size"])
+    n_gen = int(spec["n_gen"])
+
+    # Black-box objective evaluator (legitimate: evaluating candidates is the task)
+    func = _build_objective(spec)
 
     # Set seeds
     random.seed(seed)
@@ -477,13 +346,6 @@ def run_moea(problem_name: str, seed: int, output_dir: str):
     for ind in population:
         ind.fitness.values = evaluate(ind, func)
 
-    # Generate reference Pareto front for IGD
-    pf_ref = generate_pareto_front(problem_name, n_points=500)
-
-    # Track metrics over generations
-    hv_history = []
-    igd_history = []
-
     for gen in range(1, n_gen + 1):
         # Parent selection
         parents = moea.select(population, pop_size)
@@ -502,88 +364,57 @@ def run_moea(problem_name: str, seed: int, output_dir: str):
         # Optional per-generation callback
         moea.on_generation(gen, population)
 
-        # Compute metrics periodically
+        # Periodic progress feedback (objective-space extent only, no metrics)
         if gen % 20 == 0 or gen == n_gen:
             nd_front = get_nondominated(population)
             front_values = np.array([ind.fitness.values for ind in nd_front])
-
-            # Hypervolume (robust computation with fallback)
-            hv_val = compute_hypervolume(nd_front, ref_point)
-
-            # IGD
-            try:
-                igd_val = btools.igd(front_values, pf_ref)
-            except Exception:
-                igd_val = float("inf")
-
-            # Spread
-            spread_val = compute_spread(front_values)
-
-            hv_history.append(hv_val)
-            igd_history.append(igd_val)
-
             print(
-                f"TRAIN_METRICS gen={gen} hv={hv_val:.6f} igd={igd_val:.6f} "
-                f"spread={spread_val:.6f} front_size={len(nd_front)}",
+                f"TRAIN_PROGRESS gen={gen} front_size={len(nd_front)} "
+                f"f_min={np.min(front_values, axis=0).round(4).tolist()} "
+                f"f_max={np.max(front_values, axis=0).round(4).tolist()}",
                 flush=True,
             )
 
-    # Final evaluation
+    # Final non-dominated front
     nd_front = get_nondominated(population)
-    front_values = np.array([ind.fitness.values for ind in nd_front])
+    front_values = np.array([ind.fitness.values for ind in nd_front], dtype=np.float64)
 
-    final_hv = compute_hypervolume(nd_front, ref_point)
+    # Emit the final population's objective values for the host-side scorer. We do
+    # NOT have the true Pareto front, so we cannot (and do not) compute metrics.
+    payload = base64.b64encode(
+        np.ascontiguousarray(front_values, dtype=np.float64).tobytes()
+    ).decode("ascii")
+    print(
+        f"MOEA_PRED env={env_key} seed={seed} shape={front_values.shape[0]},{front_values.shape[1]} "
+        f"objs={payload}",
+        flush=True,
+    )
 
-    try:
-        final_igd = btools.igd(front_values, pf_ref)
-    except Exception:
-        final_igd = float("inf")
-
-    final_spread = compute_spread(front_values)
-
-    print(f"TEST_METRICS hv={final_hv:.6f} igd={final_igd:.6f} spread={final_spread:.6f}", flush=True)
-
-    # Save results
+    # Save final front to disk (objective values only)
     os.makedirs(output_dir, exist_ok=True)
-    results = {
-        "problem": problem_name,
-        "seed": seed,
-        "n_var": n_var,
-        "n_obj": n_obj,
-        "pop_size": pop_size,
-        "n_gen": n_gen,
-        "final_hv": final_hv,
-        "final_igd": final_igd,
-        "final_spread": final_spread,
-        "front_size": len(nd_front),
-        "hv_history": hv_history,
-        "igd_history": igd_history,
-    }
-    with open(os.path.join(output_dir, f"{problem_name}_results.json"), "w") as f:
-        json.dump(results, f, indent=2)
-
-    # Save final front
     np.savetxt(
-        os.path.join(output_dir, f"{problem_name}_front.csv"),
+        os.path.join(output_dir, f"{env_key}_front.csv"),
         front_values,
         delimiter=",",
         header=",".join(f"f{i+1}" for i in range(n_obj)),
     )
 
-    return final_hv, final_igd, final_spread
+    return front_values
 
 
 def main():
     parser = argparse.ArgumentParser(description="Multi-Objective Optimization Benchmark")
-    parser.add_argument("--problem", type=str, required=True, choices=list(PROBLEMS.keys()))
+    parser.add_argument("--env", type=str, default=os.environ.get("ENV", ""))
     parser.add_argument("--seed", type=int, default=int(os.environ.get("SEED", 42)))
     parser.add_argument("--output-dir", type=str, default=os.environ.get("OUTPUT_DIR", "./output"))
     args = parser.parse_args()
 
-    print(f"Running MOEA benchmark: {args.problem} (seed={args.seed})", flush=True)
-    print(f"  {PROBLEMS[args.problem]['description']}", flush=True)
-    hv, igd, spread = run_moea(args.problem, args.seed, args.output_dir)
-    print(f"Final on {args.problem}: HV={hv:.6f} IGD={igd:.6f} Spread={spread:.6f}", flush=True)
+    if not args.env:
+        raise SystemExit("ENV not set")
+
+    print(f"Running MOEA benchmark: {args.env} (seed={args.seed})", flush=True)
+    run_moea(args.env, args.seed, args.output_dir)
+    print(f"Done {args.env}.", flush=True)
 
 
 if __name__ == "__main__":

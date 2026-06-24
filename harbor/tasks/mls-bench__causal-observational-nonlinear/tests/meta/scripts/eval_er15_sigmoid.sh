@@ -2,6 +2,7 @@
 # Evaluate on ER15-Sigmoid: Erdos-Renyi graph, 15 nodes, sigmoid nonlinearity, 1000 samples, exp noise.
 # Working directory is /workspace (causal-learn package root).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-nonlinear" /workspace
 python -u bench/run_eval.py \
     --graph_type er \
     --n_nodes 15 \

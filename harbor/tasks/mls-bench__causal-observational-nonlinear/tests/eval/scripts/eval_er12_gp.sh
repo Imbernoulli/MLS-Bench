@@ -2,6 +2,7 @@
 # Evaluate on ER12-GP: Erdos-Renyi graph, 12 nodes, GP nonlinearity, 1000 samples, laplace noise.
 # Working directory is /workspace (causal-learn package root).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-nonlinear" /workspace
 python -u bench/run_eval.py \
     --graph_type er \
     --n_nodes 12 \

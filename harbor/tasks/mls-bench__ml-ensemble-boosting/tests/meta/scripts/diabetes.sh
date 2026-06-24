@@ -1,6 +1,7 @@
 #!/bin/bash
 # Train boosted ensemble on Diabetes (regression)
 cd /workspace
+python "/tests/eval/_inputgen/apply.py" "ml-ensemble-boosting" /workspace
 python scikit-learn/custom_boosting.py \
     --dataset diabetes --task regression \
     --n-rounds 200 --max-depth 3 --learning-rate 0.1 \

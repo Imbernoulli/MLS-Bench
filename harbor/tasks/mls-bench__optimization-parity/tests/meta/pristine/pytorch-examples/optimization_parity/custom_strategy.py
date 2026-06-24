@@ -1,17 +1,26 @@
 """Optimization-parity scaffold for MLS-Bench.
 
-The fixed evaluation samples hidden sparse parity functions and asks the agent
-to control only:
+The fixed evaluation trains a fixed two-layer MLP to learn hidden sparse parity
+functions and asks the agent to control only:
   1. model initialization
-  2. training-data generation
+  2. training-data construction (selecting/transforming the provided pool)
   3. AdamW hyperparameters
+
+NOTE: The hidden parity secret S and the held-out test labels are NOT part of
+this program. The harness pre-generates the (unlabeled) training inputs and
+their labels for you and scores your predictions against held-out truth in a
+separate host-side process. Your editable hooks only ever see binary inputs and
+their labels — never the secret subset S, and never the test labels. The runner
+trains your model and emits its predictions on a held-out test set; the host
+regenerates the test labels and computes test accuracy.
 """
 
 from __future__ import annotations
 
 import argparse
+import base64
 import json
-import math
+import os
 import random
 from dataclasses import asdict, dataclass, replace
 from pathlib import Path
@@ -53,7 +62,6 @@ class RunResult:
     secret_index: int
     order_index: int
     steps: int
-    test_accuracy: float
 
 
 DEFAULT_TASK = TaskConfig()
@@ -73,46 +81,6 @@ def set_global_seed(seed: int) -> None:
     torch.manual_seed(seed)
     if torch.cuda.is_available():
         torch.cuda.manual_seed_all(seed)
-
-
-def sample_hidden_secrets(config: TaskConfig, seed: int) -> list[tuple[int, ...]]:
-    max_unique = math.comb(config.n_features, config.secret_size)
-    if config.num_hidden_secrets > max_unique:
-        raise ValueError("Requested more hidden secrets than unique subsets.")
-
-    rng = random.Random(seed)
-    seen: set[tuple[int, ...]] = set()
-    secrets: list[tuple[int, ...]] = []
-    while len(secrets) < config.num_hidden_secrets:
-        secret = tuple(sorted(rng.sample(range(config.n_features), config.secret_size)))
-        if secret not in seen:
-            seen.add(secret)
-            secrets.append(secret)
-    return secrets
-
-
-def parity_labels(x: torch.Tensor, secret: tuple[int, ...]) -> torch.Tensor:
-    secret_index = torch.tensor(secret, dtype=torch.long)
-    return (x.index_select(dim=1, index=secret_index).sum(dim=1).remainder(2)).to(
-        torch.float32
-    )
-
-
-def make_test_set(
-    secret: tuple[int, ...],
-    config: TaskConfig,
-    seed: int,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    generator = torch.Generator().manual_seed(seed)
-    x = torch.randint(
-        low=0,
-        high=2,
-        size=(config.test_set_size, config.n_features),
-        generator=generator,
-        dtype=torch.int64,
-    ).to(torch.float32)
-    y = parity_labels(x, secret)
-    return x, y
 
 
 def normalize_dataset(
@@ -175,25 +143,22 @@ def normalize_optimizer_config(config_dict: dict[str, float]) -> OptimizerConfig
     return config
 
 
-def evaluate_accuracy(
+def predict_on(
     model: nn.Module,
     x: torch.Tensor,
-    y: torch.Tensor,
     device: torch.device,
     batch_size: int = 4096,
-) -> float:
+) -> torch.Tensor:
+    """Return raw model outputs (sigmoid probabilities) for every row of x."""
     model.eval()
-    correct = 0
-    total = 0
+    outputs = []
     with torch.no_grad():
         for start in range(0, x.shape[0], batch_size):
             end = start + batch_size
             batch_x = x[start:end].to(device)
-            batch_y = y[start:end].to(device)
             preds = model(batch_x).view(-1)
-            correct += ((preds >= 0.5) == (batch_y >= 0.5)).sum().item()
-            total += batch_y.numel()
-    return correct / max(total, 1)
+            outputs.append(preds.detach().cpu())
+    return torch.cat(outputs) if outputs else torch.empty(0)
 
 
 def maybe_log_final_window(
@@ -215,10 +180,67 @@ def maybe_log_final_window(
 
 
 # =====================================================================
+# FIXED: held-out input loading (the harness pre-generates these; the
+# secret and the test labels are never present in this process)
+# =====================================================================
+def _inputs_dir() -> str:
+    """Directory holding the pre-generated parity inputs for this task."""
+    env = os.environ.get("PARITY_INPUTS_DIR")
+    if env:
+        return env
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_parity_inputs")
+
+
+def _config_tag(config: TaskConfig) -> str:
+    return f"n{config.n_features}_k{config.secret_size}"
+
+
+def gen_train_pool_x(config: TaskConfig, train_dataset_seed: int) -> torch.Tensor:
+    """Regenerate the full unlabeled training x-pool (no secret involved)."""
+    generator = torch.Generator().manual_seed(train_dataset_seed)
+    return torch.randint(
+        low=0,
+        high=2,
+        size=(config.max_train_examples, config.n_features),
+        generator=generator,
+        dtype=torch.int64,
+    ).to(torch.float32)
+
+
+def gen_test_x(config: TaskConfig, test_seed: int) -> torch.Tensor:
+    """Regenerate the held-out test inputs (no secret; labels are withheld)."""
+    generator = torch.Generator().manual_seed(test_seed)
+    return torch.randint(
+        low=0,
+        high=2,
+        size=(config.test_set_size, config.n_features),
+        generator=generator,
+        dtype=torch.int64,
+    ).to(torch.float32)
+
+
+def load_train_labels(config: TaskConfig, seed: int, secret_index: int) -> torch.Tensor:
+    """Load the bit-packed training-pool labels for one hidden secret.
+
+    Only the labels are provided (the secret that produced them is held out).
+    The labels are bit-packed for one row per training example over the full
+    ``max_train_examples`` pool; unpack to a float tensor in {0, 1}.
+    """
+    import numpy as np
+
+    tag = _config_tag(config)
+    path = os.path.join(_inputs_dir(), f"{tag}_seed{seed}_s{secret_index}.labels.b64")
+    with open(path, "r") as f:
+        packed = np.frombuffer(base64.b64decode(f.read()), dtype=np.uint8)
+    bits = np.unpackbits(packed)[: config.max_train_examples]
+    return torch.from_numpy(bits.astype("float32"))
+
+
+# =====================================================================
 # EDITABLE: init_model, make_dataset, get_optimizer_config
 # =====================================================================
 def init_model(model: nn.Sequential, config: TaskConfig) -> None:
-    """Initialize the fixed two-layer MLP without using the hidden secret."""
+    """Initialize the fixed two-layer MLP."""
     for layer in model:
         if isinstance(layer, nn.Linear):
             gain = nn.init.calculate_gain("relu") if layer is model[0] else 1.0
@@ -227,22 +249,19 @@ def init_model(model: nn.Sequential, config: TaskConfig) -> None:
 
 
 def make_dataset(
-    secret: tuple[int, ...],
+    x_pool: torch.Tensor,
+    y_pool: torch.Tensor,
     config: TaskConfig,
-    seed: int,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return a reproducible training dataset for one hidden secret."""
-    generator = torch.Generator().manual_seed(seed)
+    """Construct the training dataset from the provided labeled pool.
+
+    The harness supplies a large pool of labeled binary examples (x_pool, y_pool)
+    drawn from the same distribution as the held-out test set. Select and/or
+    transform it however you like; the result must be a binary (x, y) pair (or a
+    dict with keys 'x' and 'y'). The hidden parity secret is never exposed.
+    """
     num_examples = 4_096
-    x = torch.randint(
-        low=0,
-        high=2,
-        size=(num_examples, config.n_features),
-        generator=generator,
-        dtype=torch.int64,
-    ).to(torch.float32)
-    y = parity_labels(x, secret)
-    return x, y
+    return x_pool[:num_examples], y_pool[:num_examples]
 
 
 def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
@@ -256,20 +275,19 @@ def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
 
 
 # =====================================================================
-# FIXED: training and evaluation driver
+# FIXED: training and prediction driver
 # =====================================================================
 def train_one_run(
     train_x: torch.Tensor,
     train_y: torch.Tensor,
     test_x: torch.Tensor,
-    test_y: torch.Tensor,
     config: TaskConfig,
     device: torch.device,
     run_seed: int,
     order_seed: int,
     secret_index: int,
     order_index: int,
-) -> RunResult:
+) -> tuple[RunResult, torch.Tensor]:
     set_global_seed(run_seed)
 
     model = build_model(config).to(device)
@@ -346,18 +364,19 @@ def train_one_run(
             window_count=window_count,
         )
 
-    test_accuracy = evaluate_accuracy(model, test_x, test_y, device)
+    test_preds = predict_on(model, test_x, device)
     print(
         "RUN_METRICS "
-        f"secret={secret_index} order={order_index} steps={steps} "
-        f"test_accuracy={test_accuracy:.6f}",
+        f"secret={secret_index} order={order_index} steps={steps}",
         flush=True,
     )
-    return RunResult(
-        secret_index=secret_index,
-        order_index=order_index,
-        steps=steps,
-        test_accuracy=test_accuracy,
+    return (
+        RunResult(
+            secret_index=secret_index,
+            order_index=order_index,
+            steps=steps,
+        ),
+        test_preds,
     )
 
 
@@ -386,6 +405,31 @@ def maybe_apply_smoke_mode(config: TaskConfig, enabled: bool) -> TaskConfig:
     )
 
 
+def _emit_pred(
+    config: TaskConfig,
+    seed: int,
+    secret_index: int,
+    order_index: int,
+    test_preds: torch.Tensor,
+) -> None:
+    """Emit the model's held-out predictions for the host-side scorer.
+
+    Predictions are thresholded at 0.5 (the same threshold the metric uses) and
+    bit-packed. We do NOT have the test labels, so we cannot (and do not) compute
+    the metric here.
+    """
+    import numpy as np
+
+    pred_bits = (test_preds.numpy() >= 0.5).astype(np.uint8)
+    payload = base64.b64encode(np.packbits(pred_bits).tobytes()).decode("ascii")
+    print(
+        "PARITY_PRED "
+        f"config={_config_tag(config)} seed={seed} secret={secret_index} "
+        f"order={order_index} n={int(test_preds.numel())} preds={payload}",
+        flush=True,
+    )
+
+
 def run_benchmark(
     config: TaskConfig,
     seed: int,
@@ -408,20 +452,17 @@ def run_benchmark(
         flush=True,
     )
 
-    secrets = sample_hidden_secrets(config, seed + 17)
     results: list[RunResult] = []
 
-    for secret_index, secret in enumerate(secrets):
+    for secret_index in range(config.num_hidden_secrets):
         train_dataset_seed = seed * 10_000 + secret_index
+        x_pool = gen_train_pool_x(config, train_dataset_seed)
+        y_pool = load_train_labels(config, seed, secret_index)
         train_x, train_y = normalize_dataset(
-            make_dataset(secret, config, train_dataset_seed),
+            make_dataset(x_pool, y_pool, config),
             config,
         )
-        test_x, test_y = make_test_set(
-            secret=secret,
-            config=config,
-            seed=seed * 20_000 + secret_index,
-        )
+        test_x = gen_test_x(config, seed * 20_000 + secret_index)
         positive_rate = float(train_y.mean().item())
         print(
             "DATASET_METRICS "
@@ -433,47 +474,28 @@ def run_benchmark(
         for order_index in range(config.num_orderings):
             run_seed = seed * 1_000_000 + secret_index * 1_000 + order_index
             order_seed = seed * 2_000_000 + secret_index * 1_000 + order_index
-            results.append(
-                train_one_run(
-                    train_x=train_x,
-                    train_y=train_y,
-                    test_x=test_x,
-                    test_y=test_y,
-                    config=config,
-                    device=device,
-                    run_seed=run_seed,
-                    order_seed=order_seed,
-                    secret_index=secret_index,
-                    order_index=order_index,
-                )
+            result, test_preds = train_one_run(
+                train_x=train_x,
+                train_y=train_y,
+                test_x=test_x,
+                config=config,
+                device=device,
+                run_seed=run_seed,
+                order_seed=order_seed,
+                secret_index=secret_index,
+                order_index=order_index,
             )
+            results.append(result)
+            _emit_pred(config, seed, secret_index, order_index, test_preds)
 
-    accuracy_tensor = torch.tensor([result.test_accuracy for result in results], dtype=torch.float64)
     step_tensor = torch.tensor([result.steps for result in results], dtype=torch.float64)
-    final_metrics = {
-        "test_accuracy": float(accuracy_tensor.mean().item()),
-        "score": float(accuracy_tensor.mean().item()),
-        "test_accuracy_std": float(accuracy_tensor.std(unbiased=False).item()),
-        "mean_steps": float(step_tensor.mean().item()),
-        "num_runs": int(len(results)),
-    }
     print(
-        "FINAL_METRICS "
-        + " ".join(
-            f"{key}={value:.6f}" if isinstance(value, float) else f"{key}={value}"
-            for key, value in final_metrics.items()
-        ),
-        flush=True,
-    )
-    # Also print TEST_METRICS for framework compatibility
-    print(
-        f"TEST_METRICS test_accuracy={final_metrics['test_accuracy']:.6f} "
-        f"score={final_metrics['score']:.6f}",
+        "BENCH_DONE "
+        f"num_runs={len(results)} mean_steps={float(step_tensor.mean().item()):.6f}",
         flush=True,
     )
     return {
         "config": asdict(config),
-        "metrics": final_metrics,
         "results": [asdict(result) for result in results],
     }
 

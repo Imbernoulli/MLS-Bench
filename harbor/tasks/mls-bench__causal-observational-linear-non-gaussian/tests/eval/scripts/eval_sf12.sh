@@ -3,6 +3,7 @@
 # Uniform noise has zero kurtosis (weakest non-Gaussianity), making this the hardest scenario.
 # Working directory is /workspace (causal-learn package root).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-non-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type sf \
     --n_nodes 12 \

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Evaluate on Child: 20 nodes, 25 edges, 2000 samples (medical).
 
+python "/tests/eval/_inputgen/apply.py" "causal-discovery-discrete" /workspace
 python -u bench/run_eval.py \
     --network child \
     --n_samples 2000 \

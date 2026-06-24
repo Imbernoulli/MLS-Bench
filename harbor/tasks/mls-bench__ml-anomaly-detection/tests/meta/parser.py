@@ -1,72 +1,71 @@
-"""Task-specific output parser for ml-anomaly-detection.
+"""Host-side output parser / scorer for ml-anomaly-detection.
 
-Handles combined train+eval output from anomaly detection:
-- Training feedback: TRAIN_METRICS fold=F auroc=A f1=F
-- Test feedback: TEST_METRICS auroc=A f1=F
+Runs in the harness process on the HOST — never inside the agent container. The
+agent's program now only emits its test-set anomaly scores:
 
-Metrics are keyed by dataset label, e.g. auroc_cardio, f1_cardio.
+    ANOMALY_PRED env=<env> seed=<seed> n=<n> scores=<base64 float64>
+
+The dataset identity (adbench file mapping), the train/test split, the test
+labels, and the metrics live in ``holdout/ml-anomaly-detection/dgp.py`` — not
+bind-mounted into the agent container. This parser regenerates y_test here and
+scores AUROC + F1 with the same per-dataset keys (auroc_<env>, f1_<env>).
+Honest results are identical to the pre-fix pipeline.
 """
 
+import base64
 import re
 import sys
 from pathlib import Path
 
+import numpy as np
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
+# Locate the host-only DGP module. Native layout: <repo>/holdout/ml-anomaly-detection/dgp.py.
+# Harbor layout: score_task.py copies tests/meta/ to a private dir and loads
+# parser.py from there, with the held-out dgp.py staged next to it. Try both.
+_HERE = Path(__file__).resolve().parent
+for _cand in (PROJECT_ROOT / "holdout" / "ml-anomaly-detection", _HERE, _HERE / "holdout" / "ml-anomaly-detection"):
+    if (_cand / "dgp.py").exists():
+        sys.path.insert(0, str(_cand))
+        break
 
 from mlsbench.agent.parsers import OutputParser, ParseResult
 
+import dgp  # noqa: E402  (host-only)
+
+_PRED_RE = re.compile(
+    r"ANOMALY_PRED\s+env=(\S+)\s+seed=(\d+)\s+n=(\d+)\s+scores=(\S+)"
+)
+
 
 class Parser(OutputParser):
-    """Parser for the ml-anomaly-detection task."""
+    """Parser for ml-anomaly-detection (predict-then-score)."""
 
     def parse(self, cmd_label: str, raw_output: str) -> ParseResult:
+        metrics: dict = {}
         feedback_parts = []
-        metrics: dict = {}
 
-        train_feedback = self._parse_train_metrics(raw_output)
-        if train_feedback:
-            feedback_parts.append(train_feedback)
+        for m in _PRED_RE.finditer(raw_output):
+            env, seed_s, n_s, payload = m.groups()
+            if env != cmd_label:
+                continue
+            seed = int(seed_s)
+            try:
+                scores = np.frombuffer(base64.b64decode(payload), dtype=np.float64)
+            except Exception:
+                continue
+            if scores.shape[0] != int(n_s):
+                continue
+            y_test = dgp.truth(env, seed)
+            if scores.shape[0] != y_test.shape[0]:
+                continue
+            res = dgp.score_predictions(scores, y_test)
+            metrics[f"auroc_{cmd_label}"] = res["auroc"]
+            metrics[f"f1_{cmd_label}"] = res["f1"]
+            feedback_parts.append(f"auroc_{cmd_label}: {res['auroc']:.6f}")
+            feedback_parts.append(f"f1_{cmd_label}: {res['f1']:.6f}")
 
-        eval_feedback, eval_metrics = self._parse_test_metrics(raw_output, cmd_label)
-        if eval_feedback:
-            feedback_parts.append(eval_feedback)
-        metrics.update(eval_metrics)
-
-        feedback = "\n".join(feedback_parts) if feedback_parts else raw_output[-3000:]
-        return ParseResult(feedback=feedback, metrics=metrics)
-
-    def _parse_train_metrics(self, output: str) -> str:
-        lines = [l.strip() for l in output.splitlines() if l.strip().startswith("TRAIN_METRICS")]
-        if not lines:
-            return ""
-        return "Cross-validation folds:\n" + "\n".join(lines[-5:])
-
-    def _parse_test_metrics(self, output: str, cmd_label: str) -> tuple:
-        metrics: dict = {}
-        feedback = ""
-
-        for line in output.splitlines():
-            line = line.strip()
-            if line.startswith("TEST_METRICS"):
-                auroc_match = re.search(r"auroc=([\d.]+)", line)
-                f1_match = re.search(r"f1=([\d.]+)", line)
-
-                if auroc_match:
-                    auroc = float(auroc_match.group(1))
-                    key = f"auroc_{cmd_label}"
-                    metrics[key] = auroc
-
-                if f1_match:
-                    f1 = float(f1_match.group(1))
-                    key = f"f1_{cmd_label}"
-                    metrics[key] = f1
-
-                if auroc_match and f1_match:
-                    feedback = (
-                        f"Test results ({cmd_label}):\n"
-                        f"  AUROC: {auroc:.4f}\n"
-                        f"  F1:    {f1:.4f}"
-                    )
-
-        return feedback, metrics
+        if not feedback_parts:
+            return ParseResult(feedback=raw_output[-3000:], metrics={})
+        return ParseResult(feedback="\n".join(feedback_parts), metrics=metrics)

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Evaluate on Insurance: 27 nodes, 52 edges, 5000 samples (automotive insurance).
 
+python "/tests/eval/_inputgen/apply.py" "causal-discovery-discrete" /workspace
 python -u bench/run_eval.py \
     --network insurance \
     --n_samples 5000 \

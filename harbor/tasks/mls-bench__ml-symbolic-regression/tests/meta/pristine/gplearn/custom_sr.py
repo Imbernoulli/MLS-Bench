@@ -1,16 +1,27 @@
 #!/usr/bin/env python3
 """Symbolic Regression via Genetic Programming.
 
-A self-contained GP framework for symbolic regression benchmarks.
-The editable section contains the search strategy: fitness function,
-selection, crossover, mutation, and per-generation evolution logic.
+A self-contained GP framework for symbolic regression. The editable section
+contains the search strategy: fitness function, selection, crossover, mutation,
+and per-generation evolution logic.
+
+The benchmark identity (which target function is used) and the held-out test
+labels are NOT available here. The FIXED runner loads a pre-generated
+``(X_train, y_train, X_test)`` triple — only SAMPLES of the target on the
+training inputs — drives the GP search using those samples for fitness, then
+emits the best evolved expression's predictions on ``X_test``. The host-side
+scorer regenerates the test labels and computes R2. Your GP must fit the
+``(X_train, y_train)`` samples; there is no closed-form target to read off.
 """
 
 import argparse
+import base64
+import io
 import math
+import os
 import random
 import sys
-import os
+
 import numpy as np
 
 
@@ -143,62 +154,6 @@ def ramped_half_and_half(pop_size, max_depth, n_features):
 
 
 # ============================================================
-# Benchmark Data (FIXED)
-# ============================================================
-
-BENCHMARKS = {
-    'nguyen7': {
-        'func': lambda X: np.log(X[:, 0] + 1) + np.log(X[:, 0] ** 2 + 1),
-        'n_features': 1,
-        'train_range': (0.0, 2.0),
-        'n_train': 20,
-        'test_range': (-0.5, 2.5),
-        'n_test': 100,
-    },
-    'nguyen10': {
-        'func': lambda X: 2 * np.sin(X[:, 0]) * np.cos(X[:, 1]),
-        'n_features': 2,
-        'train_range': (0.0, 2 * np.pi),
-        'n_train': 100,
-        'test_range': (0.0, 2 * np.pi),
-        'n_test': 400,
-    },
-    'koza3': {
-        'func': lambda X: X[:, 0] ** 5 - 2 * X[:, 0] ** 3 + X[:, 0],
-        'n_features': 1,
-        'train_range': (-1.0, 1.0),
-        'n_train': 20,
-        'test_range': (-1.0, 1.0),
-        'n_test': 100,
-    },
-}
-
-
-def generate_data(benchmark_name, seed=42):
-    """Generate train/test data for a benchmark function."""
-    bench = BENCHMARKS[benchmark_name]
-    n_features = bench['n_features']
-    lo, hi = bench['train_range']
-
-    if n_features == 1:
-        X_train = np.linspace(lo, hi, bench['n_train']).reshape(-1, 1)
-        lo_t, hi_t = bench['test_range']
-        X_test = np.linspace(lo_t, hi_t, bench['n_test']).reshape(-1, 1)
-    else:
-        n_per_dim = int(round(bench['n_train'] ** (1.0 / n_features)))
-        grids = [np.linspace(lo, hi, n_per_dim) for _ in range(n_features)]
-        X_train = np.array(np.meshgrid(*grids)).T.reshape(-1, n_features)
-        lo_t, hi_t = bench['test_range']
-        n_per_dim_t = int(round(bench['n_test'] ** (1.0 / n_features)))
-        grids_t = [np.linspace(lo_t, hi_t, n_per_dim_t) for _ in range(n_features)]
-        X_test = np.array(np.meshgrid(*grids_t)).T.reshape(-1, n_features)
-
-    y_train = bench['func'](X_train)
-    y_test = bench['func'](X_test)
-    return X_train, y_train, X_test, y_test, n_features
-
-
-# ============================================================
 # Evaluation Utilities (FIXED)
 # ============================================================
 
@@ -212,13 +167,18 @@ def safe_evaluate(tree, X):
         return np.full(X.shape[0], 1e10)
 
 
-def r2_score(y_true, y_pred):
-    """Compute R-squared score."""
+def _train_r2(y_true, y_pred):
+    """R2 of the GP fit on the TRAINING samples (feedback only).
+
+    This uses only the (X_train, y_train) samples the search already has access
+    to, so it leaks nothing about the held-out test target. The official test
+    R2 is computed host-side from the emitted predictions.
+    """
     ss_res = np.sum((y_true - y_pred) ** 2)
     ss_tot = np.sum((y_true - np.mean(y_true)) ** 2)
     if ss_tot < 1e-15:
         return 1.0 if ss_res < 1e-15 else 0.0
-    return max(1.0 - ss_res / ss_tot, 0.0)  # SRBench floor: clip blowups
+    return max(1.0 - ss_res / ss_tot, 0.0)
 
 
 # ============================================================
@@ -307,25 +267,49 @@ def evolve_one_generation(population, fitnesses, X_train, y_train,
 
 
 # ============================================================
-# Main GP Loop (FIXED)
+# FIXED: input loading + GP driver + prediction emit
+# (do not modify below this line)
 # ============================================================
+
+def _inputs_dir():
+    d = os.environ.get("SR_INPUTS_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_sr_inputs")
+
+
+def _load_input(task_id, seed):
+    """Load the pre-generated (X_train, y_train, X_test) for this run.
+
+    Only training SAMPLES (X_train, y_train) and the test inputs (X_test) are
+    present; the closed-form target and the test labels are withheld.
+    """
+    path = os.path.join(_inputs_dir(), f"{task_id}_seed{seed}.npz.b64")
+    with open(path, "r") as f:
+        raw = base64.b64decode(f.read())
+    d = np.load(io.BytesIO(raw))
+    return d["X_train"], d["y_train"], d["X_test"]
+
 
 def main():
     parser = argparse.ArgumentParser(description="GP Symbolic Regression")
-    parser.add_argument('--benchmark', type=str, required=True,
-                        choices=list(BENCHMARKS.keys()))
     parser.add_argument('--seed', type=int, default=42)
     parser.add_argument('--pop-size', type=int, default=500)
     parser.add_argument('--generations', type=int, default=50)
     parser.add_argument('--max-depth', type=int, default=6)
     args = parser.parse_args()
 
+    # Opaque task id used only to locate the pre-generated inputs; it carries
+    # no information about which target function is in use.
+    task_id = os.environ.get("SR_TASK", "")
+    if not task_id:
+        raise SystemExit("SR_TASK not set")
+
     random.seed(args.seed)
     np.random.seed(args.seed)
 
-    X_train, y_train, X_test, y_test, n_features = generate_data(
-        args.benchmark, args.seed
-    )
+    X_train, y_train, X_test = _load_input(task_id, args.seed)
+    n_features = X_train.shape[1]
 
     # Initialize population
     population = ramped_half_and_half(args.pop_size, args.max_depth, n_features)
@@ -347,7 +331,7 @@ def main():
             best_tree_ever = population[best_idx].copy()
 
         y_pred_gen = safe_evaluate(best_tree_ever, X_train)
-        train_r2 = r2_score(y_train, y_pred_gen)
+        train_r2 = _train_r2(y_train, y_pred_gen)
 
         print(
             f"TRAIN_METRICS generation={gen} best_fitness={best_fitness:.6f} "
@@ -363,18 +347,24 @@ def main():
                 max_depth=args.max_depth + 2,
             )
 
-    # Final evaluation on test set
+    # Final fit summary on the training samples (feedback only)
     y_pred_train = safe_evaluate(best_tree_ever, X_train)
-    y_pred_test = safe_evaluate(best_tree_ever, X_test)
-    train_r2 = r2_score(y_train, y_pred_train)
-    test_r2 = r2_score(y_test, y_pred_test)
-    test_rmse = float(np.sqrt(np.mean((y_test - y_pred_test) ** 2)))
+    train_r2 = _train_r2(y_train, y_pred_train)
     expr_str = str(best_tree_ever)
 
+    # Emit predictions on the held-out test inputs for host-side scoring.
+    y_pred_test = safe_evaluate(best_tree_ever, X_test)
+    y_pred_test = np.ascontiguousarray(np.asarray(y_pred_test, dtype=np.float64)).ravel()
+    payload = base64.b64encode(y_pred_test.tobytes()).decode("ascii")
+
     print(
-        f"TEST_METRICS r2={test_r2:.6f} rmse={test_rmse:.6f} "
-        f"train_r2={train_r2:.6f} size={best_tree_ever.size()} "
+        f"TEST_METRICS train_r2={train_r2:.6f} size={best_tree_ever.size()} "
         f'expression="{expr_str}"',
+        flush=True,
+    )
+    print(
+        f"SR_PRED task={task_id} seed={args.seed} n={y_pred_test.shape[0]} "
+        f"preds={payload}",
         flush=True,
     )
 

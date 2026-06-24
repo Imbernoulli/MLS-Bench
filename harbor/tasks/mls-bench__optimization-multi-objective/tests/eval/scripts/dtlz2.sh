@@ -3,6 +3,7 @@
 
 cd /workspace
 
+python "/tests/eval/_inputgen/apply.py" "optimization-multi-objective" /workspace
 python deap/custom_moea.py \
     --problem dtlz2 \
     --seed ${SEED:-42} \

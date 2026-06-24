@@ -5,9 +5,9 @@ with artificially introduced missing values. The agent should modify the EDITABL
 section to implement a novel imputation algorithm.
 
 Datasets (selected by $ENV):
-  - breast_cancer:  Classification, 569 samples x 30 features (binary)
-  - wine:           Classification, 178 samples x 13 features (3-class)
-  - california:     Regression, 20640 samples x 8 features (continuous target)
+  - Several standard tabular datasets are used for evaluation (a mix of
+    classification and regression); the specific datasets, shapes, and
+    train/eval splits are withheld from this file so the imputer must generalize.
 
 Missing patterns: MCAR (Missing Completely At Random) at 20% rate.
 
@@ -20,7 +20,7 @@ import os
 import sys
 import warnings
 import numpy as np
-from sklearn.datasets import load_breast_cancer, load_wine, fetch_california_housing
+# (dataset loaders live in the host-only scoring module; the eval datasets are not named here)
 from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
 from sklearn.preprocessing import StandardScaler
 from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
@@ -130,108 +130,48 @@ def compute_feature_correlations(X):
 
 
 # ================================================================
-# FIXED -- do not modify below this line
+# FIXED -- input loading + prediction emit (do not modify below this line)
 # ================================================================
+# The true matrix, the missingness mask, the labels, the dataset identity, and
+# the metrics all live in a host-only module the agent's process cannot import.
+# This program only loads the pre-generated masked matrix, runs the imputer, and
+# emits the imputed matrix; the host-side parser regenerates the truth and
+# scores it with the same RMSE + downstream metrics.
 
 
-def load_dataset(env_name, seed=42):
-    """Load dataset and return X, y, and task type."""
-    if env_name == "breast_cancer":
-        data = load_breast_cancer()
-        return data.data, data.target, "classification"
-    elif env_name == "wine":
-        data = load_wine()
-        return data.data, data.target, "classification"
-    elif env_name == "california":
-        data = fetch_california_housing()
-        # Subsample for speed (use first 5000 samples)
-        rng = np.random.RandomState(seed)
-        idx = rng.choice(len(data.data), min(5000, len(data.data)), replace=False)
-        return data.data[idx], data.target[idx], "regression"
-    else:
-        raise ValueError(f"Unknown environment: {env_name}")
+def _impute_inputs_dir():
+    d = os.environ.get("IMPUTE_INPUTS_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_impute_inputs")
 
 
-def introduce_missing(X, missing_rate=0.20, seed=42):
-    """Introduce MCAR missing values at the given rate.
-
-    Returns:
-        X_missing: array with NaN for missing values
-        mask: boolean array, True where values were made missing
-    """
-    rng = np.random.RandomState(seed)
-    mask = rng.random(X.shape) < missing_rate
-    # Don't make entire rows or columns missing
-    for i in range(X.shape[0]):
-        if mask[i].all():
-            mask[i, rng.randint(X.shape[1])] = False
-    for j in range(X.shape[1]):
-        if mask[:, j].all():
-            mask[rng.randint(X.shape[0]), j] = False
-    X_missing = X.copy()
-    X_missing[mask] = np.nan
-    return X_missing, mask
-
-
-def compute_imputation_rmse(X_true, X_imputed, mask):
-    """Compute RMSE only on the artificially missing entries."""
-    true_vals = X_true[mask]
-    imputed_vals = X_imputed[mask]
-    return np.sqrt(mean_squared_error(true_vals, imputed_vals))
-
-
-def compute_downstream_score(X_imputed, y, task_type, seed=42):
-    """Compute downstream predictive performance using cross-validation."""
-    if task_type == "classification":
-        model = GradientBoostingClassifier(
-            n_estimators=100, max_depth=3, random_state=seed
-        )
-        cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        scores = cross_val_score(model, X_imputed, y, cv=cv, scoring="accuracy")
-    else:
-        model = GradientBoostingRegressor(
-            n_estimators=100, max_depth=3, random_state=seed
-        )
-        cv = KFold(n_splits=5, shuffle=True, random_state=seed)
-        scores = cross_val_score(model, X_imputed, y, cv=cv, scoring="r2")
-    return scores.mean()
+def _load_input(env_name, seed):
+    import io as _io
+    import base64 as _b64
+    path = os.path.join(_impute_inputs_dir(), f"{env_name}_seed{seed}.npy.b64")
+    with open(path, "r") as f:
+        raw = _b64.b64decode(f.read())
+    return np.load(_io.BytesIO(raw))
 
 
 def main():
-    env = os.environ.get("ENV", "breast_cancer")
+    import base64 as _b64
+    env = os.environ.get("ENV", "")
+    if not env:
+        raise SystemExit("ENV not set")
     seed = int(os.environ.get("SEED", "42"))
-
     print(f"=== Missing Data Imputation benchmark: {env} (seed={seed}) ===", flush=True)
 
-    # Load data
-    X_raw, y, task_type = load_dataset(env, seed=seed)
+    X_missing = _load_input(env, seed)
+    print(f"Input: samples={X_missing.shape[0]}, features={X_missing.shape[1]}", flush=True)
 
-    # Standardize features (on full data, before introducing missing values)
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X_raw)
-
-    print(
-        f"Dataset: {env}, samples={X_scaled.shape[0]}, features={X_scaled.shape[1]}, "
-        f"task={task_type}",
-        flush=True,
-    )
-
-    # Introduce missing values (MCAR at 20%)
-    X_missing, mask = introduce_missing(X_scaled, missing_rate=0.20, seed=seed)
-    n_missing = mask.sum()
-    print(
-        f"Missing entries: {n_missing} / {X_scaled.size} "
-        f"({100 * n_missing / X_scaled.size:.1f}%)",
-        flush=True,
-    )
-
-    # Run custom imputer
     print("TRAIN_METRICS stage=fitting", flush=True)
     imputer = CustomImputer(random_state=seed)
     X_imputed = imputer.fit_transform(X_missing)
     print("TRAIN_METRICS stage=done", flush=True)
 
-    # Check for remaining NaN
+    X_imputed = np.asarray(X_imputed, dtype=np.float64)
     if np.isnan(X_imputed).any():
         print("WARNING: Imputed data still contains NaN! Filling with column means.", flush=True)
         col_means = np.nanmean(X_imputed, axis=0)
@@ -239,21 +179,9 @@ def main():
             nan_mask = np.isnan(X_imputed[:, j])
             X_imputed[nan_mask, j] = col_means[j]
 
-    # Compute imputation RMSE
-    rmse = compute_imputation_rmse(X_scaled, X_imputed, mask)
-    print(f"TRAIN_METRICS rmse={rmse:.6f}", flush=True)
-
-    # Compute downstream score
-    downstream = compute_downstream_score(X_imputed, y, task_type, seed=seed)
-    print(f"TRAIN_METRICS downstream_score={downstream:.6f}", flush=True)
-
-    # Also compute baseline (no missing data) downstream score for reference
-    baseline_score = compute_downstream_score(X_scaled, y, task_type, seed=seed)
-    print(f"TRAIN_METRICS baseline_no_missing={baseline_score:.6f}", flush=True)
-
-    # Final metrics
-    print(f"TEST_METRICS rmse={rmse:.6f} downstream_score={downstream:.6f}", flush=True)
-
+    payload = _b64.b64encode(np.ascontiguousarray(X_imputed, dtype=np.float64).tobytes()).decode("ascii")
+    print(f"IMPUTE_PRED env={env} seed={seed} rows={X_imputed.shape[0]} cols={X_imputed.shape[1]} "
+          f"X_imputed={payload}", flush=True)
     print("Done.", flush=True)
 
 
