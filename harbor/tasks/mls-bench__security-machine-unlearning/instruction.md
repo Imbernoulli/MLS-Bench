@@ -11,7 +11,7 @@ Machine unlearning methods approximate the effect of retraining without the dele
 The harness first pretrains a standard vision model on an image-classification training set. After pretraining, a single class is designated as the forget set. The unlearning method then runs for a fixed number of epochs, receiving both retain-set and forget-set minibatches each step, with an Adam optimizer (`lr = 0.001`).
 
 ## Task
-Implement a better unlearning rule in `bench/unlearning/custom_unlearning.py`. The fixed harness trains an initial model, defines a forget split, and then applies your update rule for a fixed number of unlearning steps using retain and forget minibatches.
+Implement a better unlearning rule in `pytorch-vision/bench/unlearning/custom_unlearning.py`. The fixed harness trains an initial model, defines a forget split, and then applies your update rule for a fixed number of unlearning steps using retain and forget minibatches.
 
 Your method should lower forget-set memorization while preserving retained-task accuracy.
 

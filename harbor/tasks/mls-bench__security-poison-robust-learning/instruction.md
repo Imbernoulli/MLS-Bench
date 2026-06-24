@@ -11,7 +11,7 @@ A fraction of poisoned (label-flipped) training labels can disproportionately di
 This task uses research-scale models trained on full datasets with standard SGD + CosineAnnealing.
 
 ## Task
-Implement a better poison-robust objective in `bench/poison/custom_robust_loss.py`. The fixed harness injects random label-flip corruption (`(original + 1) % num_classes`) into the training set, trains with your loss, and evaluates on a clean test set.
+Implement a better poison-robust objective in `pytorch-vision/bench/poison/custom_robust_loss.py`. The fixed harness injects random label-flip corruption (`(original + 1) % num_classes`) into the training set, trains with your loss, and evaluates on a clean test set.
 
 Your method should improve clean test accuracy under poisoning while reducing how much the model memorizes poisoned labels. The approach must be modular and transferable across architectures and datasets.
 

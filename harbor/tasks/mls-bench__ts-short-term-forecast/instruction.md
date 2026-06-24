@@ -9,7 +9,7 @@ Can one univariate forecasting component (seasonal decomposition, scale normaliz
 Short, univariate, many-series forecasting is a well-studied problem dominated by combinations of statistical and ML methods. The Time-Series-Library (Wu et al., ICLR 2023) provides a standardized training and evaluation protocol with per-pattern fixed look-back / horizon settings and a SMAPE training loss.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the univariate setting `enc_in == c_out == 1`.
+Implement the `Model` class in `Time-Series-Library/models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the univariate setting `enc_in == c_out == 1`.
 
 ## Model Interface
 ```python

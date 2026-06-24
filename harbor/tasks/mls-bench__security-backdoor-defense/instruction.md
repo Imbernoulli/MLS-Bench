@@ -9,7 +9,7 @@ How can we design a better poisoned-sample scoring rule that identifies backdoor
 Backdoor attacks (BadNets: Gu, Dolan-Gavitt, Garg, 2017, arXiv:1708.06733; Blended attack: Chen et al., 2017, arXiv:1712.05526) implant a trigger pattern into a subset of training examples and relabel them to an attacker-chosen target class. Models trained on this data retain high clean accuracy while also predicting the target label whenever the trigger appears. Many defenses try to identify suspicious points using feature statistics (Spectral Signatures: Tran, Li, Madry, NeurIPS 2018, arXiv:1811.00636), confidence patterns, or clustering structure (Activation Clustering: Chen et al., 2018, arXiv:1811.03728) before retraining on the filtered set, while pruning-style defenses (Fine-Pruning: Liu, Dolan-Gavitt, Garg, 2018, arXiv:1805.12185) operate on activations of suspicious neurons.
 
 ## Task
-Implement a stronger backdoor defense in `bench/backdoor/custom_backdoor_defense.py`. The fixed harness will:
+Implement a stronger backdoor defense in `pytorch-vision/bench/backdoor/custom_backdoor_defense.py`. The fixed harness will:
 
 1. Construct a poisoned training set for a fixed trigger pattern.
 2. Train a victim model on the poisoned data.

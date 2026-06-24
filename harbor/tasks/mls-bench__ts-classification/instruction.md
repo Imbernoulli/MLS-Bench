@@ -9,7 +9,7 @@ Can a single classification component (temporal encoder + channel-interaction + 
 Standard multivariate time series classification benchmarks cover diverse signal types — datasets vary widely in sequence length, channel count, number of classes, sampling rate, and noise characteristics, making them a stress test for "general-purpose" temporal encoders. The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes train/test splits, padding to a common per-dataset length, RAdam optimization, cross-entropy loss, and accuracy reporting.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Given a padded input window plus a binary padding mask, return class logits.
+Implement the `Model` class in `Time-Series-Library/models/Custom.py`. Given a padded input window plus a binary padding mask, return class logits.
 
 ## Model Interface
 ```python

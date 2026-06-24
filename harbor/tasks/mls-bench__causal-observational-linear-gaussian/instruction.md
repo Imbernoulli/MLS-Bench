@@ -15,7 +15,7 @@ robustness across sparse and denser graphs and across noise levels, and the
 method should not rely on dataset-specific constants.
 
 ## Task
-Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
+Implement `run_causal_discovery(X)` in `causal-learn/bench/custom_algorithm.py`. It must
 return a `causallearn.graph.GeneralGraph.GeneralGraph` representing the
 estimated CPDAG.
 
