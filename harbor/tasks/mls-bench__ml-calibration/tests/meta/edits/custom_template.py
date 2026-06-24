@@ -344,5 +344,9 @@ def main():
           f"NLL={nll_after:.6f}", flush=True)
 
 
-if __name__ == "__main__":
+def _main():
     main()
+
+
+if __name__ == "__main__":
+    _main()

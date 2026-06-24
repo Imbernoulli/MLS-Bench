@@ -541,5 +541,9 @@ def main():
         train_ogbl(model, data_bundle, args, device)
 
 
-if __name__ == "__main__":
+def _main():
     main()
+
+
+if __name__ == "__main__":
+    _main()
