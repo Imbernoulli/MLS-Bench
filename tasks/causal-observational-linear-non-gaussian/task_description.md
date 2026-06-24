@@ -19,7 +19,7 @@ moderate-to-large node counts and avoid assuming a single fixed noise
 distribution or graph family.
 
 ## Task
-Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
+Implement `run_causal_discovery(X)` in `causal-learn/bench/custom_algorithm.py`. It must
 return a directed DAG (skeleton + correct edge orientation) compatible with the
 benchmark evaluation.
 

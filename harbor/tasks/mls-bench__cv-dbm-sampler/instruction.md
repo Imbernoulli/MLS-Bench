@@ -9,7 +9,7 @@ conditional generation quality on image-to-image translation tasks under a
 strict per-sample budget on the number of denoiser calls.
 
 Implement the algorithm inside the `sample_custom_bridge` function in
-`ddbm/karras_diffusion.py`. The evaluation pipeline calls this function to
+`dbim-codebase/ddbm/karras_diffusion.py`. The evaluation pipeline calls this function to
 generate target images from source conditions.
 
 ## Background

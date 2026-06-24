@@ -9,7 +9,7 @@ What architectural component best fuses *exogenous* covariates (additional obser
 Many real-world forecasting tasks present a designated target variable accompanied by side-information channels (weather covariates for energy load, exogenous prices, related sensors). The Time-Series-Library `features=MS` mode formalizes this: all variables are fed into the model, but only the last channel (the target) is scored. Recent methods such as TimeXer (Wang et al., NeurIPS 2024) explicitly separate endogenous (patch-level) and exogenous (variate-level) representations and fuse them via cross-attention; iTransformer (Liu et al., ICLR 2024) treats every channel as a token and uses attention across channels; PatchTST (Nie et al., ICLR 2023) takes the channel-independent route and ignores cross-channel structure entirely. The contribution space here is the exogenous-fusion component itself.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]` where `c_out == enc_in`; the harness slices `outputs[:, :, -1:]` so only the final (target) channel is scored.
+Implement the `Model` class in `Time-Series-Library/models/Custom.py`. Output shape is `[batch, pred_len, c_out]` where `c_out == enc_in`; the harness slices `outputs[:, :, -1:]` so only the final (target) channel is scored.
 
 ## Model Interface
 ```python

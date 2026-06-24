@@ -7,7 +7,7 @@ What forecasting component (sequence modeling, decomposition, cross-variable att
 Long-term multivariate forecasting predicts the next horizon for all channels of a multivariate series given a fixed look-back window. Recent work has explored very different inductive biases: pure linear projections after trend/seasonal decomposition (DLinear); channel-independent Transformer over patches (PatchTST); inverted attention treating variates as tokens (iTransformer); MLP-based multi-scale decomposition (TimeMixer); and explicit endogenous/exogenous separation (TimeXer). The Time-Series-Library protocol (Wu et al., ICLR 2023) standardizes splits, normalization, and metric computation so that architectural contributions can be compared head-to-head.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]` covering all target channels.
+Implement the `Model` class in `Time-Series-Library/models/Custom.py`. Output shape is `[batch, pred_len, c_out]` covering all target channels.
 
 ## Model Interface
 ```python

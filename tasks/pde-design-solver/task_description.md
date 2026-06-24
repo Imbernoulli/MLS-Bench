@@ -1,7 +1,7 @@
 # Industrial CFD Design: Custom Neural Operator Design
 
 ## Objective
-Design and implement a custom neural operator for industrial aerodynamic design prediction on 3D unstructured point clouds. Your code goes in the `Model` class in `models/Custom.py`. Reference implementations (PointNet, GraphSAGE, Graph_UNet, Transolver) from Neural-Solver-Library are provided as read-only context.
+Design and implement a custom neural operator for industrial aerodynamic design prediction on 3D unstructured point clouds. Your code goes in the `Model` class in `Neural-Solver-Library/models/Custom.py`. Reference implementations (PointNet, GraphSAGE, Graph_UNet, Transolver) from Neural-Solver-Library are provided as read-only context.
 
 ## Background
 The task evaluates point-cloud / mesh-based neural operators on three steady aerodynamic design benchmarks. Key reference architectures:
@@ -29,7 +29,7 @@ forward(self, x, fx, T=None, geo=None) -> output
 Key `args` attributes: `n_hidden`, `n_layers`, `n_heads`, `space_dim` (2 for AirfRANS, 3 for Car/AirCraft), `fun_dim=7`, `out_dim` (4 for Car/AirfRANS, 6 for AirCraft), `act`, `mlp_ratio`, `dropout`, `geotype` (`unstructured`), `radius` (for graph construction), `slice_num` (for Transolver-style physics attention).
 
 ## Hyperparameter Override (`CONFIG_OVERRIDES`)
-The shell scripts (`scripts/car.sh`, `scripts/airfrans.sh`, `scripts/aircraft.sh`) default to `--n_hidden 128 --slice_num 32`. Different model families need different widths to be competitive — for example Transolver uses 256 in the original paper, while PointNet and Graph_UNet typically use much smaller widths. To set per-method values, edit the `CONFIG_OVERRIDES` dict at the bottom of `models/Custom.py`:
+The shell scripts (`scripts/car.sh`, `scripts/airfrans.sh`, `scripts/aircraft.sh`) default to `--n_hidden 128 --slice_num 32`. Different model families need different widths to be competitive — for example Transolver uses 256 in the original paper, while PointNet and Graph_UNet typically use much smaller widths. To set per-method values, edit the `CONFIG_OVERRIDES` dict at the bottom of `Neural-Solver-Library/models/Custom.py`:
 
 ```python
 # Allowed keys: n_hidden (int), slice_num (int).

@@ -18,7 +18,7 @@ JMLR 7, 2006.
 The method should handle moderate-to-large variable counts and avoid assuming a single fixed noise distribution or graph family. Data is generated from synthetic DAGs with signed linear edge weights and independent non-Gaussian noise.
 
 ## Task
-Implement `run_causal_discovery(X)` in `bench/custom_algorithm.py`. It must
+Implement `run_causal_discovery(X)` in `causal-learn/bench/custom_algorithm.py`. It must
 return a directed DAG (skeleton + correct edge orientation) compatible with the
 benchmark evaluation.
 

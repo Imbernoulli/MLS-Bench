@@ -11,7 +11,7 @@ Score-based query black-box attacks assume the attacker can query the victim mod
 Representative algorithms include the random-search-based Square Attack (Andriushchenko et al., 2020, arXiv:1912.00049), gradient-free SPSA-based attacks (Uesato et al., 2018, arXiv:1802.05666), and pixel-coordinate random search baselines. Across these methods the central tradeoff is between per-step exploration (which helps escape local minima) and per-step exploitation (which keeps the query budget low).
 
 ## Objective
-Implement a better black-box attack in `bench/custom_attack.py`:
+Implement a better black-box attack in `torchattacks/bench/custom_attack.py`:
 
 - Threat model: query black-box (no gradient access, only model logits).
 - Constraint: `||x_adv - x||_inf <= eps`.

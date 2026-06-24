@@ -7,7 +7,7 @@ Can one univariate forecasting component (seasonal decomposition, scale normaliz
 The M4 competition (Makridakis, Spiliotis & Assimakopoulos, "The M4 Competition: 100,000 time series and 61 forecasting methods", *International Journal of Forecasting*, 2018/2020) collected 100,000 short, real-world series across 6 seasonal patterns (Yearly, Quarterly, Monthly, Weekly, Daily, Hourly). It is the standard benchmark for *short, univariate, many-series* forecasting and is dominated by combinations of statistical and ML methods. The Time-Series-Library protocol (Wu et al., ICLR 2023) wraps M4 with per-pattern fixed look-back / horizon settings, SMAPE training loss, and SMAPE / MAPE / OWA scoring.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the M4 univariate setting `enc_in == c_out == 1`.
+Implement the `Model` class in `Time-Series-Library/models/Custom.py`. Output shape is `[batch, pred_len, c_out]`; for the M4 univariate setting `enc_in == c_out == 1`.
 
 ## Model Interface
 ```python

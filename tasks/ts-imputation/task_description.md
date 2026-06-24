@@ -7,7 +7,7 @@ What modular imputation component (mask-aware temporal modeling, cross-channel d
 Time series imputation under random masking is a canonical "fill-in-the-blanks" benchmark for temporal models. The Time-Series-Library protocol (Wu et al., ICLR 2023) masks a fixed fraction of observed entries uniformly at random, hands the model both the masked sequence and a binary observation mask, and scores reconstruction error only at masked positions. This isolates the model's ability to infer missing values from surrounding temporal context and from correlated channels.
 
 ## Objective
-Implement the `Model` class in `models/Custom.py`. Given a partially-masked input window and a binary observation mask, return a fully reconstructed sequence; only positions where `mask == 0` count toward the metric.
+Implement the `Model` class in `Time-Series-Library/models/Custom.py`. Given a partially-masked input window and a binary observation mask, return a fully reconstructed sequence; only positions where `mask == 0` count toward the metric.
 
 ## Model Interface
 ```python

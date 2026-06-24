@@ -11,7 +11,7 @@ Diffusion models learn rich priors `p(x)` over signal distributions. For inverse
 - **LGD — Loss-Guided Diffusion** (Song et al., "Loss-Guided Diffusion Models for Plug-and-Play Controllable Generation", ICML 2023). Estimates the guidance term via Monte Carlo sampling around the denoised estimate to reduce bias of point-estimate approximations.
 
 ## What to Implement
-Implement the `Custom` class in `algo/custom.py`. You must implement:
+Implement the `Custom` class in `InverseBench/algo/custom.py`. You must implement:
 1. `__init__`: Set up your algorithm (schedulers, optimizers, hyperparameters).
 2. `inference(observation, num_samples)`: Given observation `y`, return reconstructed `x`.
 
@@ -34,4 +34,4 @@ The algorithm is tested on three scientific inverse problems:
 Higher PSNR/SSIM is better; lower LPIPS and chi-squared are better.
 
 ## Editable Region
-The entire `algo/custom.py` file is editable. You may define any helper classes/functions within this file.
+The entire `InverseBench/algo/custom.py` file is editable. You may define any helper classes/functions within this file.
