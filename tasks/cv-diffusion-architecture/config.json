@@ -7,7 +7,7 @@
       "cmd": "scripts/train_small.sh",
       "label": "train_small",
       "group": 1,
-      "compute": 1.0,
+      "compute": 8.0,
       "time": "1:30:00",
       "package": "diffusers-main"
     },
@@ -15,7 +15,7 @@
       "cmd": "scripts/train_medium.sh",
       "label": "train_medium",
       "group": 2,
-      "compute": 1.0,
+      "compute": 8.0,
       "time": "4:00:00",
       "package": "diffusers-main"
     },
@@ -23,7 +23,7 @@
       "cmd": "scripts/train_large.sh",
       "label": "train_large",
       "group": 3,
-      "compute": 1.0,
+      "compute": 8.0,
       "time": "10:00:00",
       "package": "diffusers-main",
       "hidden": true
