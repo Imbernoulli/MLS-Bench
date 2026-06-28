@@ -23,8 +23,15 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-_HOLDOUT_DIR = PROJECT_ROOT / "holdout" / "ml-ensemble-boosting"
-sys.path.insert(0, str(_HOLDOUT_DIR))
+# Locate the host-only DGP module. Native layout:
+# <repo>/holdout/ml-ensemble-boosting/dgp.py. Harbor layout: score_task.py loads this
+# parser from a private copy of tests/meta/ with the held-out dgp.py staged
+# next to it -- so also try the parser's own directory. Try both.
+_HERE = Path(__file__).resolve().parent
+for _cand in (PROJECT_ROOT / "holdout" / "ml-ensemble-boosting", _HERE, _HERE / "holdout" / "ml-ensemble-boosting"):
+    if (_cand / "dgp.py").exists():
+        sys.path.insert(0, str(_cand))
+        break
 
 from mlsbench.agent.parsers import OutputParser, ParseResult
 
