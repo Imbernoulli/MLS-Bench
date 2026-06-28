@@ -41,9 +41,9 @@ _CUSTOM_PY = _TEMPLATE_PATH.read_text()
 # Match the harness seed selection: task seeds if present, else default [42].
 try:
     _cfg = json.loads((_TASK_DIR / "config.json").read_text())
-    _SEEDS = _cfg.get("seeds") or [42]
+    _SEEDS = sorted(set((_cfg.get("seeds") or []) + [42, 123, 456]))
 except Exception:
-    _SEEDS = [42]
+    _SEEDS = [42, 123, 456]
 _N_REPS = 10
 
 

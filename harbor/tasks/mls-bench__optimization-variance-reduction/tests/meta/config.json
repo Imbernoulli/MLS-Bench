@@ -1,6 +1,9 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
   "test_cmds": [
     {
       "cmd": "scripts/logistic.sh",
@@ -54,9 +57,15 @@
           "end": 177
         }
       ]
+    },
+    {
+      "filename": "opt-vr-bench/vr_driver.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
     }
-  ],
-  "seeds": [
-    42
   ]
 }

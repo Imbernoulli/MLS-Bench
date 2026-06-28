@@ -67,8 +67,7 @@
           "start": -1,
           "end": -1
         }
-      ],
-      "edit": null
+      ]
     },
     {
       "filename": "gplearn/gplearn/_program.py",
@@ -77,8 +76,7 @@
           "start": -1,
           "end": -1
         }
-      ],
-      "edit": null
+      ]
     },
     {
       "filename": "gplearn/gplearn/fitness.py",
@@ -87,8 +85,7 @@
           "start": -1,
           "end": -1
         }
-      ],
-      "edit": null
+      ]
     }
   ]
 }

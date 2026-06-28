@@ -75,27 +75,36 @@ def main():
                         default=int(os.environ.get("SEED", "42")), help="Random seed")
     args = parser.parse_args()
 
+    # ``label`` is an OPAQUE token (host-only salted hash of the eval case); it
+    # carries no information about which bnlearn network this is, and is used only
+    # to locate the pre-generated samples below.
     label = args.label
     if not label:
         raise SystemExit("No evaluation label provided (set --label or ENV).")
 
-    X = _load_input(label, args.seed)
-    print(
-        f"Dataset: {label} | nodes={X.shape[1]} | samples={X.shape[0]}",
-        flush=True,
-    )
+    seed = args.seed
+    X = _load_input(label, seed)
+
+    # Scrub the (opaque) case token + seed from the environment before the agent's
+    # algorithm runs -- defence in depth, so the editable code cannot key off them
+    # at all. The token is opaque regardless, so this leaks nothing either way.
+    for _k in ("ENV", "SEED", "CAUSAL_INPUTS_DIR"):
+        os.environ.pop(_k, None)
+
+    print(f"Dataset: nodes={X.shape[1]} | samples={X.shape[0]}", flush=True)
 
     est_graph = run_causal_discovery(X)
     est_graph = _normalize_graph_output(est_graph)
 
-    # The integer endpoint matrix fully encodes the estimated graph; serialize
-    # it losslessly for the host scorer.
+    # The integer endpoint matrix fully encodes the estimated graph; serialize it
+    # losslessly for the host scorer. The eval-case identity is NOT echoed (the
+    # host-side scorer already knows it from the test command label).
     adj = np.ascontiguousarray(np.asarray(est_graph.graph, dtype=np.int64))
     n_vars = int(adj.shape[0])
     payload = base64.b64encode(adj.tobytes()).decode("ascii")
 
     print(
-        f"CAUSAL_PRED label={label} seed={args.seed} n={n_vars} adj={payload}",
+        f"CAUSAL_PRED seed={seed} n={n_vars} adj={payload}",
         flush=True,
     )
 

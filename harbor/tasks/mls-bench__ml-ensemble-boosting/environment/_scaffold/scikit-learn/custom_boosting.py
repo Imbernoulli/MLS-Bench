@@ -6,10 +6,12 @@ tabular data to evaluate novel sample weighting / boosting update strategies.
 EDITABLE: BoostingStrategy class -- the agent's boosting strategy.
 FIXED: input loading + base learner + ensemble accumulation + prediction emit.
        The dataset identity, the train/test split, the test labels, and the
-       metric live in a host-only module the agent's process cannot import;
-       this program loads a pre-generated standardized (X_train, y_train, X_test)
-       triple, builds the boosting ensemble with the agent's strategy on the
-       training split, and emits the ensemble's test predictions. The host-side
+       metric live in a host-only module the agent's process cannot import.
+       The pre-generated standardized (X_train, y_train, X_test) triple is
+       loaded -- and ENV/SEED scrubbed -- in the FIXED header BELOW, *before*
+       the editable strategy class is defined, so editable code that runs at
+       import time cannot read the dataset identity, reconstruct the public
+       loader + split, and recover the held-out test labels. The host-side
        parser regenerates the labels and scores the same metric. Inputs are
        pre-standardized, exactly as before; the split is identical.
 """
@@ -24,6 +26,58 @@ import numpy as np
 from sklearn.tree import DecisionTreeClassifier, DecisionTreeRegressor
 
 warnings.filterwarnings("ignore")
+
+
+# ============================================================================
+# FIXED -- Input loading + run bootstrap (do not modify)
+# ============================================================================
+# The dataset generator (incl. identity), the train/test split, the test
+# labels, and the metric live in a host-only module the agent's process cannot
+# import. We load the pre-generated standardized (X_train, y_train, X_test)
+# triple HERE -- before the editable strategy class below is defined -- and
+# immediately scrub ENV/SEED from the environment, so editable class-body code
+# (which executes at import time) cannot read the dataset identity, reconstruct
+# the public loader + split, and recover the held-out test labels.
+
+def _inputs_dir():
+    d = os.environ.get("BOOST_INPUTS_DIR")
+    if d:
+        return d
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_boost_inputs")
+
+
+def _load_input(env_name, seed):
+    path = os.path.join(_inputs_dir(), f"{env_name}_seed{seed}.npz.b64")
+    with open(path, "r") as f:
+        raw = base64.b64decode(f.read())
+    d = np.load(io.BytesIO(raw))
+    return (d["X_train"], d["y_train"], d["X_test"],
+            str(d["task_type"]), int(d["n_rounds"]),
+            int(d["max_depth"]), float(d["learning_rate"]))
+
+
+def _bootstrap():
+    """Load this run's inputs, then scrub the dataset identity + seed.
+
+    Runs once at import, BEFORE the editable ``BoostingStrategy`` class below is
+    defined, so editable class-body code cannot cache ENV/SEED and replay the
+    public split. The dataset identity (``env``) is used only inside this
+    function and is never stored as a module global; only label-free arrays and
+    pipeline hyperparameters survive.
+    """
+    env = os.environ.get("ENV", "")
+    if not env:
+        raise SystemExit("ENV not set")
+    seed = int(os.environ.get("SEED", "42"))
+    print(f"=== Boosting benchmark (seed={seed}) ===", flush=True)
+    bundle = _load_input(env, seed)
+    for _k in ("ENV", "SEED", "BOOST_INPUTS_DIR"):
+        os.environ.pop(_k, None)
+    return seed, bundle
+
+
+_SEED, _INPUT_BUNDLE = _bootstrap()
+(_X_TRAIN, _Y_TRAIN, _X_TEST, _TASK_TYPE, _N_ROUNDS, _MAX_DEPTH, _LR) = _INPUT_BUNDLE
 
 
 # ============================================================================
@@ -99,7 +153,7 @@ def ensemble_predict(learners, alphas, learner_modes, X, task_type,
 
 
 # ============================================================================
-# EDITABLE -- Boosting strategy (lines 105 to 212)
+# EDITABLE -- Boosting strategy (lines 159 to 266)
 # ============================================================================
 
 class BoostingStrategy:
@@ -213,14 +267,15 @@ class BoostingStrategy:
 
 
 # ============================================================================
-# FIXED -- Training loop + input loading + prediction emit (do not modify below)
+# FIXED -- Training loop + prediction emit (do not modify below)
 # ============================================================================
 # The dataset generator (incl. identity), the train/test split, the test labels,
 # and the metric live in a host-only module the agent's process cannot import.
-# This program loads the pre-generated standardized (X_train, y_train, X_test)
-# triple, builds the boosting ensemble using the agent's strategy on the training
-# split, predicts on the held-out test split, and emits those predictions. The
-# host-side parser regenerates the truth and scores it.
+# The pre-generated standardized (X_train, y_train, X_test) triple was loaded in
+# the header above (with ENV/SEED scrubbed before this editable class was even
+# defined). This program builds the boosting ensemble using the agent's strategy
+# on the training split, predicts on the held-out test split, and emits those
+# predictions. The host-side parser regenerates the truth and scores it.
 
 def train_boosting(X_train, y_train, strategy, config):
     """Train a boosted ensemble using the given strategy on the training split.
@@ -331,45 +386,16 @@ def train_boosting(X_train, y_train, strategy, config):
     return learners, alphas, learner_modes
 
 
-def _inputs_dir():
-    d = os.environ.get("BOOST_INPUTS_DIR")
-    if d:
-        return d
-    return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_boost_inputs")
-
-
-def _load_input(env_name, seed):
-    path = os.path.join(_inputs_dir(), f"{env_name}_seed{seed}.npz.b64")
-    with open(path, "r") as f:
-        raw = base64.b64decode(f.read())
-    d = np.load(io.BytesIO(raw))
-    return (d["X_train"], d["y_train"], d["X_test"],
-            str(d["task_type"]), int(d["n_rounds"]),
-            int(d["max_depth"]), float(d["learning_rate"]))
-
-
 def main():
-    env = os.environ.get("ENV", "")
-    if not env:
-        raise SystemExit("ENV not set")
-    seed = int(os.environ.get("SEED", "42"))
-    print(f"=== Boosting benchmark: {env} (seed={seed}) ===", flush=True)
-
-    X_train, y_train, X_test, task_type, n_rounds, max_depth, lr = _load_input(
-        env, seed,
-    )
-    np.random.seed(seed)
+    # Inputs were loaded -- and ENV/SEED scrubbed -- in the header bootstrap,
+    # before the editable strategy class above was defined.
+    np.random.seed(_SEED)
+    X_train, y_train, X_test = _X_TRAIN, _Y_TRAIN, _X_TEST
+    task_type, n_rounds, max_depth, lr = _TASK_TYPE, _N_ROUNDS, _MAX_DEPTH, _LR
     print(f"Input: train={X_train.shape}, test={X_test.shape}, "
           f"task={task_type}", flush=True)
     print(f"Boosting rounds: {n_rounds}, Max depth: {max_depth}, "
           f"LR: {lr}", flush=True)
-
-    # Scrub the dataset identity and split seed from the environment before the
-    # strategy is constructed, so the editable strategy cannot read ENV/SEED at
-    # run time, reconstruct the public loader + split, and recover the held-out
-    # test labels.
-    for _k in ("ENV", "SEED", "BOOST_INPUTS_DIR"):
-        os.environ.pop(_k, None)
 
     # config for the strategy: NO dataset identity, NO seed (cannot replay split)
     config = {
@@ -382,7 +408,7 @@ def main():
     # runner config carries seed/max_depth for reproducible tree fitting
     run_config = dict(config)
     run_config["max_depth"] = max_depth
-    run_config["seed"] = seed
+    run_config["seed"] = _SEED
 
     strategy = BoostingStrategy(config)
     learners, alphas, learner_modes = train_boosting(
@@ -390,6 +416,8 @@ def main():
     )
 
     # Predict on the held-out test split and emit predictions for host scoring.
+    # The dataset identity is intentionally NOT echoed (the host-side parser
+    # already knows which environment it scores, by command label).
     test_preds = ensemble_predict(
         learners, alphas, learner_modes, X_test, task_type, lr,
     )
@@ -398,8 +426,7 @@ def main():
         np.ascontiguousarray(test_preds, dtype=np.float64).tobytes()
     ).decode("ascii")
     print(
-        f"BOOST_PRED env={env} seed={seed} n={test_preds.shape[0]} "
-        f"preds={payload}",
+        f"BOOST_PRED seed={_SEED} n={test_preds.shape[0]} preds={payload}",
         flush=True,
     )
     print("Done.", flush=True)

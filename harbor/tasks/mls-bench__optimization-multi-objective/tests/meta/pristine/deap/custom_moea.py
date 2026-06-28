@@ -135,17 +135,17 @@ def _load_spec(env_key, seed):
 def _build_objective(spec):
     """Reconstruct the black-box objective f(individual) -> tuple from the spec.
 
-    The evaluator is a marshalled, name-free code object dispatched by an opaque
-    integer ``kind``; it is used purely as a black box and carries no problem
-    identity that the strategy could exploit.
+    The evaluator is a marshalled, name-free, problem-specific code object that
+    inlines the objective arithmetic; it is used purely as a black box and
+    carries no problem identity (no name, no ``kind``) the strategy could exploit.
     """
     code = marshal.loads(base64.b64decode(spec["evaluator"]))
     kernel = types.FunctionType(code, {"__builtins__": __builtins__}, "objective")
-    kind = int(spec["kind"])
+    # No problem id in the spec; the kernel is specific to this run's problem.
     n_obj = int(spec["n_obj"])
 
     def f(individual):
-        return tuple(kernel(individual, kind, n_obj))
+        return tuple(kernel(individual, n_obj))
 
     return f
 

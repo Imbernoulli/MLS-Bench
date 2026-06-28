@@ -1,6 +1,9 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
   "use_cuda": false,
   "test_cmds": [
     {
@@ -85,29 +88,7 @@
           "start": -1,
           "end": -1
         }
-      ],
-      "edit": null
-    },
-    {
-      "filename": "causal-bnlearn/bench/data_gen.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
-      ]
-    },
-    {
-      "filename": "causal-bnlearn/bench/metrics.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
       ]
     }
-  ],
-  "seeds": [
-    42
   ]
 }

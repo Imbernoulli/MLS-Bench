@@ -1,6 +1,9 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
   "test_cmds": [
     {
       "cmd": "scripts/eval.sh",
@@ -55,8 +58,5 @@
         }
       ]
     }
-  ],
-  "seeds": [
-    42
   ]
 }

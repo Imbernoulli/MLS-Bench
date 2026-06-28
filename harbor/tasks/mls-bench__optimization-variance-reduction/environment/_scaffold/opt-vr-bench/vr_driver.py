@@ -132,10 +132,13 @@ def get_cifar10_dataset(data_dir=os.environ.get("DATA_ROOT", "/data") + "/cifar"
 
 
 def _load_pregenerated(problem: str, seed: int):
-    """Load PRE-GENERATED (X_train, y_train, X_test, y_test) for a problem.
+    """Load PRE-GENERATED (X_train, y_train, X_test) for a problem.
 
-    The generator (incl. the synthetic ground-truth w_true) lives host-only; here
-    we only read the observable arrays written into _inputs/ by the scaffold.
+    The generator (incl. the synthetic ground-truth w_true) AND the held-out test
+    labels live host-only; here we only read the observable arrays written into
+    _inputs/ by the scaffold. ``y_test`` is intentionally absent from this file --
+    the test labels never enter the container -- so this returns y_test=None and
+    the test predictions are scored host-side (see ``train_problem``).
     """
     path = os.path.join(_inputs_dir(), f"{problem}_seed{seed}.npz.b64")
     with open(path, "r") as f:
@@ -144,12 +147,15 @@ def _load_pregenerated(problem: str, seed: int):
         X_train = torch.from_numpy(np.ascontiguousarray(data["X_train"]))
         y_train = torch.from_numpy(np.ascontiguousarray(data["y_train"]))
         X_test = torch.from_numpy(np.ascontiguousarray(data["X_test"]))
-        y_test = torch.from_numpy(np.ascontiguousarray(data["y_test"]))
-    return X_train, y_train, X_test, y_test
+    return X_train, y_train, X_test, None
 
 
 def get_data(problem: str, seed: int):
-    """Return (X_train, y_train, X_test, y_test) for a problem."""
+    """Return (X_train, y_train, X_test, y_test) for a problem.
+
+    For 'conditioned' y_test is None: the synthetic test labels are held out of
+    the container and the test predictions are scored host-side instead.
+    """
     if problem == "logistic":
         return get_mnist_dataset()
     elif problem == "mlp":
@@ -158,6 +164,30 @@ def get_data(problem: str, seed: int):
         return _load_pregenerated(problem, seed)
     else:
         raise ValueError(f"Unknown problem: {problem}")
+
+
+@torch.no_grad()
+def _emit_test_predictions(model: nn.Module, X: torch.Tensor,
+                           device: torch.device, epoch: int,
+                           batch_size: int = 512):
+    """Emit the model's raw test-set predictions for host-side scoring.
+
+    Used for problems whose held-out test labels are NOT present in the container
+    (synthetic 'conditioned'): the host-side parser regenerates y_test and scores
+    the same metric. No labels are read here -- only the model's own outputs on
+    the observable X_test are emitted.
+    """
+    model.eval()
+    chunks = []
+    for start in range(0, X.size(0), batch_size):
+        end = min(start + batch_size, X.size(0))
+        pred = model(X[start:end].to(device))
+        chunks.append(pred.detach().cpu().numpy().astype(np.float32))
+    model.train()
+    preds = np.ascontiguousarray(np.concatenate(chunks, axis=0), dtype=np.float32)
+    payload = base64.b64encode(preds.tobytes()).decode("ascii")
+    print(f"VR_PRED epoch={epoch} shape={'x'.join(str(s) for s in preds.shape)} "
+          f"preds={payload}", flush=True)
 
 
 # ============================================================================
@@ -262,6 +292,13 @@ def train_problem(problem: str, seed: int, output_dir: str):
     n_train = X_train.size(0)
     print(f"Training samples: {n_train}", flush=True)
 
+    # When the held-out test labels are NOT present in the container (synthetic
+    # 'conditioned'), we never compute the metric here -- we emit the model's test
+    # predictions and the host-side parser regenerates y_test and scores the same
+    # metric. For logistic/mlp the public test labels are loaded by this fixed
+    # driver and scored in-container, exactly as before.
+    score_host_side = y_test is None
+
     # Create variance reduction optimizer
     optimizer = VarianceReductionOptimizer(
         model=model,
@@ -298,6 +335,11 @@ def train_problem(problem: str, seed: int, output_dir: str):
 
         # Evaluation
         if epoch % cfg["eval_interval"] == 0 or epoch == cfg["n_epochs"]:
+            if score_host_side:
+                # Emit raw test predictions; the host parser regenerates y_test
+                # and computes best_/final_ over exactly these eval epochs.
+                _emit_test_predictions(model, X_test, device, epoch)
+                continue
             metrics = evaluate(model, X_test, y_test, cfg["loss_type"],
                                cfg["l2_reg"], device)
             metric_val = metrics[cfg["target_metric"]]
@@ -313,6 +355,22 @@ def train_problem(problem: str, seed: int, output_dir: str):
             print(f"EVAL_METRICS: epoch={epoch} {metric_str} "
                   f"best_{cfg['target_metric']}={best_metric:.6f}",
                   flush=True)
+
+    if score_host_side:
+        # The host-side parser computes best_/final_<target_metric> from the
+        # emitted VR_PRED lines; the in-container cost metric is reported here.
+        print(f"VR_TRAJ problem={problem} seed={seed} "
+              f"target_metric={cfg['target_metric']} "
+              f"higher_is_better={int(cfg['higher_is_better'])} "
+              f"total_grad_comps={total_grad_comps}", flush=True)
+        os.makedirs(output_dir, exist_ok=True)
+        torch.save(
+            {"problem": problem, "seed": seed,
+             "target_metric": cfg["target_metric"],
+             "total_grad_comps": total_grad_comps},
+            os.path.join(output_dir, f"result_{problem}.pt"),
+        )
+        return
 
     # Final reporting
     final_metrics = evaluate(model, X_test, y_test, cfg["loss_type"],

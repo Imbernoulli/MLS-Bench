@@ -301,6 +301,28 @@ def _spec(label):
     return LABEL_SPEC[label]
 
 
+# Host-only salt: this string lives ONLY in this held-out module (and the staged
+# Harbor verifier copy); it is never shipped into the agent container. The
+# opaque token below is the ONLY identifier the agent's process ever sees (ENV,
+# the pre-generated input filename, the CAUSAL_PRED line). Because the salt is
+# host-only, the agent cannot invert the token back to the bnlearn network name
+# and reconstruct the ground-truth DAG via pgmpy.get_example_model.
+_OPAQUE_SALT = "causal-discovery-discrete::label-token::v1"
+
+
+def opaque_label(label):
+    """Deterministic opaque token for a config label (host-only mapping).
+
+    Used by the input pre-generator (to name the workspace input file) and
+    hard-coded into the verifier-side eval scripts (ENV=<token>). The host-side
+    scorer keeps using the real config label, so leaderboard keys are unchanged.
+    """
+    import hashlib
+    return hashlib.sha1(
+        (_OPAQUE_SALT + "::" + str(label)).encode("utf-8")
+    ).hexdigest()[:12]
+
+
 def gen_input(label, seed=42):
     """Agent-visible input ONLY: integer-encoded discrete samples X for a label.
 

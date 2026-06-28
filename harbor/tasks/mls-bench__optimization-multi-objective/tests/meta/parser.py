@@ -23,9 +23,10 @@ import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
-# Locate the host-only DGP module. Native layout: <repo>/holdout/optimization-multi-objective/dgp.py.
-# Harbor layout: score_task.py copies tests/meta/ to a private dir and loads
-# parser.py from there, with the held-out dgp.py staged next to it. Try both.
+# Locate the host-only DGP module. Native layout:
+# <repo>/holdout/optimization-multi-objective/dgp.py. Harbor layout: score_task.py loads this
+# parser from a private copy of tests/meta/ with the held-out dgp.py staged
+# next to it -- so also try the parser's own directory. Try both.
 _HERE = Path(__file__).resolve().parent
 for _cand in (PROJECT_ROOT / "holdout" / "optimization-multi-objective", _HERE, _HERE / "holdout" / "optimization-multi-objective"):
     if (_cand / "dgp.py").exists():

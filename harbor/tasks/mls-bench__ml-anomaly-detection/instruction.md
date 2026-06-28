@@ -57,7 +57,7 @@ may add or remove lines inside it. Only code outside the editable ranges must
 stay unchanged.
 
 - `scikit-learn/custom_anomaly.py`
-- editable lines **160–212**
+- editable lines **28–80**
 
 
 
@@ -65,265 +65,127 @@ stay unchanged.
 ## Readable Context
 
 
-### `scikit-learn/custom_anomaly.py`  [EDITABLE — lines 160–212 only]
+### `scikit-learn/custom_anomaly.py`  [EDITABLE — lines 28–80 only]
 
 ```python
      1: """Unsupervised Anomaly Detection Benchmark for MLS-Bench.
      2: 
-     3: FIXED: Data loading, evaluation pipeline, metrics computation.
-     4: EDITABLE: CustomAnomalyDetector class — the agent's anomaly detection algorithm.
-     5: 
-     6: Usage:
-     7:     ENV=cardio SEED=42 OUTPUT_DIR=./output python custom_anomaly.py
-     8: """
-     9: 
-    10: import os
-    11: import sys
-    12: import json
-    13: import time
-    14: import warnings
-    15: from pathlib import Path
+     3: EDITABLE: CustomAnomalyDetector class -- the agent's anomaly detection algorithm.
+     4: FIXED: input loading + prediction emit. The dataset identity, the train/test
+     5: split, the test labels, and the metrics live in a host-only module the agent's
+     6: process cannot import; this program loads a pre-generated standardized
+     7: (train, test) pair, fits the detector unsupervised on the train split, and emits
+     8: the test anomaly scores. The host-side parser regenerates the labels and scores
+     9: AUROC + F1. Inputs are pre-standardized, exactly as before.
+    10: """
+    11: 
+    12: import os
+    13: import io
+    14: import base64
+    15: import warnings
     16: 
     17: import numpy as np
-    18: from scipy.io import loadmat
-    19: from sklearn.preprocessing import StandardScaler
-    20: from sklearn.model_selection import train_test_split
-    21: from sklearn.metrics import roc_auc_score, f1_score
-    22: from sklearn.base import BaseEstimator
+    18: from sklearn.base import BaseEstimator
+    19: 
+    20: warnings.filterwarnings("ignore")
+    21: SEED = int(os.environ.get("SEED", "42"))
+    22: np.random.seed(SEED)
     23: 
     24: 
     25: # =====================================================================
-    26: # FIXED: Configuration
+    26: # EDITABLE: Custom Anomaly Detector
     27: # =====================================================================
-    28: SEED = int(os.environ.get("SEED", "42"))
-    29: OUTPUT_DIR = os.environ.get("OUTPUT_DIR", "./output")
-    30: DATASET_NAME = os.environ.get("ENV", "cardio")
-    31: 
-    32: DATA_DIR = os.environ.get("DATA_ROOT", "/data") + "/adbench"
-    33: 
-    34: # Dataset file mapping
-    35: DATASET_FILES = {
-    36:     "cardio": "6_cardio.npz",
-    37:     "thyroid": "38_thyroid.npz",
-    38:     "satellite": "30_satellite.npz",
-    39:     "shuttle": "32_shuttle.npz",
-    40: }
+    28: class CustomAnomalyDetector:
+    29:     """Custom unsupervised anomaly detection algorithm.
+    30: 
+    31:     You MUST implement:
+    32:         - __init__(self): initialize any hyperparameters and internal state
+    33:         - fit(self, X): train the detector on unlabeled data X (n_samples, n_features).
+    34:                         This is UNSUPERVISED — you do not receive labels.
+    35:         - decision_function(self, X): return anomaly scores for X.
+    36:                         Shape: (n_samples,). Higher scores = more anomalous.
+    37: 
+    38:     Available libraries (pre-installed):
+    39:         - numpy, scipy, scikit-learn (StandardScaler, PCA, KernelDensity, etc.)
+    40:         - pyod (IForest, LOF, OCSVM, ECOD, COPOD, KNN, HBOS, PCA, LODA, etc.)
     41: 
-    42: TRAIN_RATIO = 0.6  # Task-local 60/40 stratified train/test split.
-    43: 
-    44: warnings.filterwarnings("ignore")
-    45: np.random.seed(SEED)
-    46: 
-    47: 
-    48: # =====================================================================
-    49: # FIXED: Data loading
-    50: # =====================================================================
-    51: def load_dataset(name: str):
-    52:     """Load an anomaly detection dataset.
-    53: 
-    54:     Returns:
-    55:         X: feature matrix of shape (n_samples, n_features), float64
-    56:         y: binary labels of shape (n_samples,), 0=normal 1=anomaly
-    57:     """
-    58:     filename = DATASET_FILES[name]
-    59:     filepath = os.path.join(DATA_DIR, filename)
-    60:     data = np.load(filepath, allow_pickle=True)
-    61:     X = data["X"].astype(np.float64)
-    62:     y = data["y"].astype(np.int32).ravel()
-    63:     # Ensure binary: 0=normal, 1=anomaly
-    64:     y = (y > 0).astype(np.int32)
-    65:     return X, y
-    66: 
-    67: 
-    68: # =====================================================================
-    69: # FIXED: Evaluation utilities
-    70: # =====================================================================
-    71: def evaluate_detector(detector, X_train, X_test, y_test):
-    72:     """Fit detector on training data and evaluate on test data.
+    42:     The detector will be evaluated on tabular anomaly detection benchmarks via
+    43:     a 60/40 stratified train/test split, measuring AUROC and F1.
+    44: 
+    45:     Design considerations:
+    46:         - Anomalies are rare (typically 2-30% of data)
+    47:         - Feature dimensions vary (6 to 36 features)
+    48:         - Dataset sizes vary (1,800 to 49,000 samples)
+    49:         - Data is pre-standardized before being passed to fit/decision_function
+    50:         - Your algorithm should work WITHOUT labels (unsupervised)
+    51:         - Consider: density estimation, distance-based, projection-based,
+    52:           ensemble methods, or hybrid approaches
+    53:     """
+    54: 
+    55:     def __init__(self):
+    56:         """Initialize the anomaly detector."""
+    57:         # Default: simple Isolation Forest wrapper
+    58:         from pyod.models.iforest import IForest
+    59: 
+    60:         self.model = IForest(random_state=SEED)
+    61: 
+    62:     def fit(self, X):
+    63:         """Fit the detector on unlabeled training data.
+    64: 
+    65:         Args:
+    66:             X: numpy array of shape (n_samples, n_features), standardized
+    67:         """
+    68:         self.model.fit(X)
+    69:         return self
+    70: 
+    71:     def decision_function(self, X):
+    72:         """Compute anomaly scores for input data.
     73: 
-    74:     Args:
-    75:         detector: an object with fit(X) and decision_function(X) methods.
-    76:                   fit(X) trains on UNLABELED data (no y).
-    77:                   decision_function(X) returns anomaly scores (higher = more anomalous).
-    78:         X_train: training features (n_train, n_features)
-    79:         X_test: test features (n_test, n_features)
-    80:         y_test: test labels (n_test,), 0=normal, 1=anomaly
+    74:         Args:
+    75:             X: numpy array of shape (n_samples, n_features), standardized
+    76: 
+    77:         Returns:
+    78:             scores: numpy array of shape (n_samples,), higher = more anomalous
+    79:         """
+    80:         return self.model.decision_function(X)
     81: 
-    82:     Returns:
-    83:         dict with 'auroc' and 'f1' metrics
-    84:     """
-    85:     # Fit on training data (unsupervised — no labels)
-    86:     detector.fit(X_train)
-    87: 
-    88:     # Get anomaly scores on test data
-    89:     scores = detector.decision_function(X_test)
-    90: 
-    91:     # AUROC
-    92:     try:
-    93:         auroc = roc_auc_score(y_test, scores)
-    94:     except ValueError:
-    95:         auroc = 0.5  # fallback if only one class present
-    96: 
-    97:     # F1 at optimal threshold (using test set threshold for fair comparison)
-    98:     # Threshold at the contamination ratio percentile
-    99:     contamination = y_test.mean()
-   100:     if contamination > 0 and contamination < 1:
-   101:         threshold = np.percentile(scores, 100 * (1 - contamination))
-   102:         y_pred = (scores >= threshold).astype(int)
-   103:     else:
-   104:         y_pred = np.zeros_like(y_test)
-   105: 
-   106:     f1 = f1_score(y_test, y_pred, zero_division=0.0)
-   107: 
-   108:     return {"auroc": auroc, "f1": f1}
-   109: 
-   110: 
-   111: def run_evaluation(detector_cls, X, y, seed):
-   112:     """Run evaluation with a 60/40 stratified train/test split.
-   113: 
-   114:     This task uses a fixed 60/40 stratified split. It is inspired by
-   115:     ADBench-style held-out evaluation, but is not the ADBench 70/30 protocol.
+    82: 
+    83: # =====================================================================
+    84: # FIXED: input loading + prediction emit (do not modify below this line)
+    85: # =====================================================================
+    86: def _inputs_dir():
+    87:     d = os.environ.get("ANOMALY_INPUTS_DIR")
+    88:     if d:
+    89:         return d
+    90:     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_anomaly_inputs")
+    91: 
+    92: 
+    93: def _load_input(env_name, seed):
+    94:     path = os.path.join(_inputs_dir(), f"{env_name}_seed{seed}.npz.b64")
+    95:     with open(path, "r") as f:
+    96:         raw = base64.b64decode(f.read())
+    97:     d = np.load(io.BytesIO(raw))
+    98:     return d["X_train"], d["X_test"]
+    99: 
+   100: 
+   101: def main():
+   102:     env = os.environ.get("ENV", "")
+   103:     if not env:
+   104:         raise SystemExit("ENV not set")
+   105:     seed = SEED
+   106:     print(f"=== Anomaly detection benchmark: {env} (seed={seed}) ===", flush=True)
+   107:     X_train, X_test = _load_input(env, seed)
+   108:     print(f"Input: train={X_train.shape}, test={X_test.shape}", flush=True)
+   109:     detector = CustomAnomalyDetector()
+   110:     detector.fit(X_train)
+   111:     scores = np.asarray(detector.decision_function(X_test), dtype=np.float64).ravel()
+   112:     payload = base64.b64encode(np.ascontiguousarray(scores, dtype=np.float64).tobytes()).decode("ascii")
+   113:     print(f"ANOMALY_PRED env={env} seed={seed} n={scores.shape[0]} scores={payload}", flush=True)
+   114:     print("Done.", flush=True)
+   115: 
    116: 
-   117:     Args:
-   118:         detector_cls: callable that returns a fresh detector instance
-   119:         X: full feature matrix
-   120:         y: full label vector
-   121:         seed: random seed
-   122: 
-   123:     Returns:
-   124:         dict with auroc and f1 metrics
-   125:     """
-   126:     X_train, X_test, y_train, y_test = train_test_split(
-   127:         X, y, test_size=1.0 - TRAIN_RATIO, stratify=y, random_state=seed,
-   128:     )
-   129: 
-   130:     # Standardize features
-   131:     scaler = StandardScaler()
-   132:     X_train_scaled = scaler.fit_transform(X_train)
-   133:     X_test_scaled = scaler.transform(X_test)
-   134: 
-   135:     # Create fresh detector and evaluate
-   136:     detector = detector_cls()
-   137: 
-   138:     try:
-   139:         metrics = evaluate_detector(detector, X_train_scaled, X_test_scaled, y_test)
-   140:         print(
-   141:             f"TRAIN_METRICS split=60/40 "
-   142:             f"auroc={metrics['auroc']:.4f} f1={metrics['f1']:.4f}",
-   143:             flush=True,
-   144:         )
-   145:     except Exception as e:
-   146:         print(f"TRAIN_METRICS split=60/40 error={str(e)}", flush=True)
-   147:         metrics = {"auroc": 0.5, "f1": 0.0}
-   148: 
-   149:     return {
-   150:         "auroc_mean": float(metrics["auroc"]),
-   151:         "auroc_std": 0.0,
-   152:         "f1_mean": float(metrics["f1"]),
-   153:         "f1_std": 0.0,
-   154:     }
-   155: 
-   156: 
-   157: # =====================================================================
-   158: # EDITABLE: Custom Anomaly Detector (lines 160-212)
-   159: # =====================================================================
-   160: class CustomAnomalyDetector:
-   161:     """Custom unsupervised anomaly detection algorithm.
-   162: 
-   163:     You MUST implement:
-   164:         - __init__(self): initialize any hyperparameters and internal state
-   165:         - fit(self, X): train the detector on unlabeled data X (n_samples, n_features).
-   166:                         This is UNSUPERVISED — you do not receive labels.
-   167:         - decision_function(self, X): return anomaly scores for X.
-   168:                         Shape: (n_samples,). Higher scores = more anomalous.
-   169: 
-   170:     Available libraries (pre-installed):
-   171:         - numpy, scipy, scikit-learn (StandardScaler, PCA, KernelDensity, etc.)
-   172:         - pyod (IForest, LOF, OCSVM, ECOD, COPOD, KNN, HBOS, PCA, LODA, etc.)
-   173: 
-   174:     The detector will be evaluated on tabular anomaly detection benchmarks via
-   175:     a 60/40 stratified train/test split, measuring AUROC and F1.
-   176: 
-   177:     Design considerations:
-   178:         - Anomalies are rare (typically 2-30% of data)
-   179:         - Feature dimensions vary (6 to 36 features)
-   180:         - Dataset sizes vary (1,800 to 49,000 samples)
-   181:         - Data is pre-standardized before being passed to fit/decision_function
-   182:         - Your algorithm should work WITHOUT labels (unsupervised)
-   183:         - Consider: density estimation, distance-based, projection-based,
-   184:           ensemble methods, or hybrid approaches
-   185:     """
-   186: 
-   187:     def __init__(self):
-   188:         """Initialize the anomaly detector."""
-   189:         # Default: simple Isolation Forest wrapper
-   190:         from pyod.models.iforest import IForest
-   191: 
-   192:         self.model = IForest(random_state=SEED)
-   193: 
-   194:     def fit(self, X):
-   195:         """Fit the detector on unlabeled training data.
-   196: 
-   197:         Args:
-   198:             X: numpy array of shape (n_samples, n_features), standardized
-   199:         """
-   200:         self.model.fit(X)
-   201:         return self
-   202: 
-   203:     def decision_function(self, X):
-   204:         """Compute anomaly scores for input data.
-   205: 
-   206:         Args:
-   207:             X: numpy array of shape (n_samples, n_features), standardized
-   208: 
-   209:         Returns:
-   210:             scores: numpy array of shape (n_samples,), higher = more anomalous
-   211:         """
-   212:         return self.model.decision_function(X)
-   213: 
-   214: 
-   215: # =====================================================================
-   216: # FIXED: Main evaluation script
-   217: # =====================================================================
-   218: if __name__ == "__main__":
-   219:     os.makedirs(OUTPUT_DIR, exist_ok=True)
-   220: 
-   221:     print(f"Dataset: {DATASET_NAME}, Seed: {SEED}", flush=True)
-   222: 
-   223:     # Load data
-   224:     X, y = load_dataset(DATASET_NAME)
-   225:     print(
-   226:         f"Loaded {DATASET_NAME}: {X.shape[0]} samples, {X.shape[1]} features, "
-   227:         f"{y.mean()*100:.1f}% anomalies",
-   228:         flush=True,
-   229:     )
-   230: 
-   231:     # Run evaluation
-   232:     start_time = time.time()
-   233:     results = run_evaluation(
-   234:         detector_cls=CustomAnomalyDetector,
-   235:         X=X,
-   236:         y=y,
-   237:         seed=SEED,
-   238:     )
-   239:     elapsed = time.time() - start_time
-   240: 
-   241:     print(f"\nResults on {DATASET_NAME} (seed={SEED}):", flush=True)
-   242:     print(
-   243:         f"  AUROC: {results['auroc_mean']:.4f} +/- {results['auroc_std']:.4f}",
-   244:         flush=True,
-   245:     )
-   246:     print(
-   247:         f"  F1:    {results['f1_mean']:.4f} +/- {results['f1_std']:.4f}",
-   248:         flush=True,
-   249:     )
-   250:     print(f"  Time:  {elapsed:.1f}s", flush=True)
-   251: 
-   252:     # Output final metrics for parser
-   253:     print(
-   254:         f"TEST_METRICS auroc={results['auroc_mean']:.6f} f1={results['f1_mean']:.6f}",
-   255:         flush=True,
-   256:     )
+   117: if __name__ == "__main__":
+   118:     main()
 ```
 
 ## Reference Baselines
@@ -340,37 +202,36 @@ a baseline reproduction.
 In `scikit-learn/custom_anomaly.py`:
 
 ```python
-Lines 160–183:
-   157: # =====================================================================
-   158: # EDITABLE: Custom Anomaly Detector (lines 160-212)
-   159: # =====================================================================
-   160: class CustomAnomalyDetector:
-   161:     """Isolation Forest anomaly detector.
-   162: 
-   163:     Ensemble of random isolation trees. Anomaly score is based on the
-   164:     average path length to isolate each sample.
-   165:     """
-   166: 
-   167:     def __init__(self):
-   168:         from pyod.models.iforest import IForest
-   169: 
-   170:         self.model = IForest(
-   171:             n_estimators=100,
-   172:             max_samples="auto",
-   173:             contamination=0.1,
-   174:             random_state=SEED,
-   175:         )
-   176: 
-   177:     def fit(self, X):
-   178:         self.model.fit(X)
-   179:         return self
-   180: 
-   181:     def decision_function(self, X):
-   182:         return self.model.decision_function(X)
-   183: 
-   184: 
-   185: 
-   186: # =====================================================================
+Lines 28–50:
+    25: # =====================================================================
+    26: # EDITABLE: Custom Anomaly Detector
+    27: # =====================================================================
+    28: class CustomAnomalyDetector:
+    29:     """Isolation Forest anomaly detector.
+    30: 
+    31:     Ensemble of random isolation trees. Anomaly score is based on the
+    32:     average path length to isolate each sample.
+    33:     """
+    34: 
+    35:     def __init__(self):
+    36:         from pyod.models.iforest import IForest
+    37: 
+    38:         self.model = IForest(
+    39:             n_estimators=100,
+    40:             max_samples="auto",
+    41:             contamination=0.1,
+    42:             random_state=SEED,
+    43:         )
+    44: 
+    45:     def fit(self, X):
+    46:         self.model.fit(X)
+    47:         return self
+    48: 
+    49:     def decision_function(self, X):
+    50:         return self.model.decision_function(X)
+    51: 
+    52: 
+    53: 
 ```
 
 ### `lof` baseline — editable region  [READ-ONLY — reference implementation]
@@ -378,42 +239,41 @@ Lines 160–183:
 In `scikit-learn/custom_anomaly.py`:
 
 ```python
-Lines 160–188:
-   157: # =====================================================================
-   158: # EDITABLE: Custom Anomaly Detector (lines 160-212)
-   159: # =====================================================================
-   160: class CustomAnomalyDetector:
-   161:     """Local Outlier Factor anomaly detector (ADBench protocol).
-   162: 
-   163:     Applies MinMax normalization internally to match the preprocessing
-   164:     used by ADBench (data_generator.py: MinMaxScaler().fit(X_train)).
-   165:     LOF is density-based and extremely sensitive to feature scaling,
-   166:     so this is required to reproduce the Table D4 numbers.
-   167:     """
-   168: 
-   169:     def __init__(self):
-   170:         from pyod.models.lof import LOF
-   171: 
-   172:         # PyOD defaults (matches ADBench with no hyperparameter tuning):
-   173:         # n_neighbors=20, algorithm='auto', metric='minkowski', p=2,
-   174:         # contamination=0.1.
-   175:         self.model = LOF()
-   176:         self._scaler = None
-   177: 
-   178:     def fit(self, X):
-   179:         from sklearn.preprocessing import MinMaxScaler
-   180:         self._scaler = MinMaxScaler()
-   181:         Xs = self._scaler.fit_transform(X)
-   182:         self.model.fit(Xs)
-   183:         return self
-   184: 
-   185:     def decision_function(self, X):
-   186:         Xs = self._scaler.transform(X)
-   187:         return self.model.decision_function(Xs)
-   188: 
-   189: 
-   190: 
-   191: # =====================================================================
+Lines 28–55:
+    25: # =====================================================================
+    26: # EDITABLE: Custom Anomaly Detector
+    27: # =====================================================================
+    28: class CustomAnomalyDetector:
+    29:     """Local Outlier Factor anomaly detector (ADBench protocol).
+    30: 
+    31:     Applies MinMax normalization internally to match the preprocessing
+    32:     used by ADBench (data_generator.py: MinMaxScaler().fit(X_train)).
+    33:     LOF is density-based and extremely sensitive to feature scaling,
+    34:     so this is required to reproduce the Table D4 numbers.
+    35:     """
+    36: 
+    37:     def __init__(self):
+    38:         from pyod.models.lof import LOF
+    39: 
+    40:         # PyOD defaults (matches ADBench with no hyperparameter tuning):
+    41:         # n_neighbors=20, algorithm='auto', metric='minkowski', p=2,
+    42:         # contamination=0.1.
+    43:         self.model = LOF()
+    44:         self._scaler = None
+    45: 
+    46:     def fit(self, X):
+    47:         from sklearn.preprocessing import MinMaxScaler
+    48:         self._scaler = MinMaxScaler()
+    49:         Xs = self._scaler.fit_transform(X)
+    50:         self.model.fit(Xs)
+    51:         return self
+    52: 
+    53:     def decision_function(self, X):
+    54:         Xs = self._scaler.transform(X)
+    55:         return self.model.decision_function(Xs)
+    56: 
+    57: 
+    58: 
 ```
 
 ### `ocsvm` baseline — editable region  [READ-ONLY — reference implementation]
@@ -421,39 +281,38 @@ Lines 160–188:
 In `scikit-learn/custom_anomaly.py`:
 
 ```python
-Lines 160–185:
-   157: # =====================================================================
-   158: # EDITABLE: Custom Anomaly Detector (lines 160-212)
-   159: # =====================================================================
-   160: class CustomAnomalyDetector:
-   161:     """One-Class SVM anomaly detector (ADBench protocol).
-   162: 
-   163:     Applies MinMax normalization internally to match ADBench's
-   164:     preprocessing. Uses PyOD defaults: kernel='rbf', nu=0.5,
-   165:     gamma='auto' (= 1/n_features).
-   166:     """
-   167: 
-   168:     def __init__(self):
-   169:         from pyod.models.ocsvm import OCSVM
-   170: 
-   171:         # PyOD default: kernel='rbf', nu=0.5, gamma='auto'.
-   172:         self.model = OCSVM()
-   173:         self._scaler = None
-   174: 
-   175:     def fit(self, X):
-   176:         from sklearn.preprocessing import MinMaxScaler
-   177:         self._scaler = MinMaxScaler()
-   178:         Xs = self._scaler.fit_transform(X)
-   179:         self.model.fit(Xs)
-   180:         return self
-   181: 
-   182:     def decision_function(self, X):
-   183:         Xs = self._scaler.transform(X)
-   184:         return self.model.decision_function(Xs)
-   185: 
-   186: 
-   187: 
-   188: # =====================================================================
+Lines 28–52:
+    25: # =====================================================================
+    26: # EDITABLE: Custom Anomaly Detector
+    27: # =====================================================================
+    28: class CustomAnomalyDetector:
+    29:     """One-Class SVM anomaly detector (ADBench protocol).
+    30: 
+    31:     Applies MinMax normalization internally to match ADBench's
+    32:     preprocessing. Uses PyOD defaults: kernel='rbf', nu=0.5,
+    33:     gamma='auto' (= 1/n_features).
+    34:     """
+    35: 
+    36:     def __init__(self):
+    37:         from pyod.models.ocsvm import OCSVM
+    38: 
+    39:         # PyOD default: kernel='rbf', nu=0.5, gamma='auto'.
+    40:         self.model = OCSVM()
+    41:         self._scaler = None
+    42: 
+    43:     def fit(self, X):
+    44:         from sklearn.preprocessing import MinMaxScaler
+    45:         self._scaler = MinMaxScaler()
+    46:         Xs = self._scaler.fit_transform(X)
+    47:         self.model.fit(Xs)
+    48:         return self
+    49: 
+    50:     def decision_function(self, X):
+    51:         Xs = self._scaler.transform(X)
+    52:         return self.model.decision_function(Xs)
+    53: 
+    54: 
+    55: 
 ```
 
 ### `ecod` baseline — editable region  [READ-ONLY — reference implementation]
@@ -461,28 +320,27 @@ Lines 160–185:
 In `scikit-learn/custom_anomaly.py`:
 
 ```python
-Lines 160–174:
-   157: # =====================================================================
-   158: # EDITABLE: Custom Anomaly Detector (lines 160-212)
-   159: # =====================================================================
-   160: class CustomAnomalyDetector:
-   161:     """ECOD anomaly detector (PyOD default, matches ADBench)."""
-   162: 
-   163:     def __init__(self):
-   164:         from pyod.models.ecod import ECOD
-   165: 
-   166:         self.model = ECOD()
-   167: 
-   168:     def fit(self, X):
-   169:         self.model.fit(X)
-   170:         return self
-   171: 
-   172:     def decision_function(self, X):
-   173:         return self.model.decision_function(X)
-   174: 
-   175: 
-   176: 
-   177: # =====================================================================
+Lines 28–41:
+    25: # =====================================================================
+    26: # EDITABLE: Custom Anomaly Detector
+    27: # =====================================================================
+    28: class CustomAnomalyDetector:
+    29:     """ECOD anomaly detector (PyOD default, matches ADBench)."""
+    30: 
+    31:     def __init__(self):
+    32:         from pyod.models.ecod import ECOD
+    33: 
+    34:         self.model = ECOD()
+    35: 
+    36:     def fit(self, X):
+    37:         self.model.fit(X)
+    38:         return self
+    39: 
+    40:     def decision_function(self, X):
+    41:         return self.model.decision_function(X)
+    42: 
+    43: 
+    44: 
 ```
 
 ### `copod` baseline — editable region  [READ-ONLY — reference implementation]
@@ -490,32 +348,31 @@ Lines 160–174:
 In `scikit-learn/custom_anomaly.py`:
 
 ```python
-Lines 160–178:
-   157: # =====================================================================
-   158: # EDITABLE: Custom Anomaly Detector (lines 160-212)
-   159: # =====================================================================
-   160: class CustomAnomalyDetector:
-   161:     """COPOD: Copula-Based Outlier Detection.
-   162: 
-   163:     Parameter-free method using empirical copula functions to model
-   164:     the joint tail probability of observations across features.
-   165:     """
-   166: 
-   167:     def __init__(self):
-   168:         from pyod.models.copod import COPOD
-   169: 
-   170:         self.model = COPOD(contamination=0.1)
-   171: 
-   172:     def fit(self, X):
-   173:         self.model.fit(X)
-   174:         return self
-   175: 
-   176:     def decision_function(self, X):
-   177:         return self.model.decision_function(X)
-   178: 
-   179: 
-   180: 
-   181: # =====================================================================
+Lines 28–45:
+    25: # =====================================================================
+    26: # EDITABLE: Custom Anomaly Detector
+    27: # =====================================================================
+    28: class CustomAnomalyDetector:
+    29:     """COPOD: Copula-Based Outlier Detection.
+    30: 
+    31:     Parameter-free method using empirical copula functions to model
+    32:     the joint tail probability of observations across features.
+    33:     """
+    34: 
+    35:     def __init__(self):
+    36:         from pyod.models.copod import COPOD
+    37: 
+    38:         self.model = COPOD(contamination=0.1)
+    39: 
+    40:     def fit(self, X):
+    41:         self.model.fit(X)
+    42:         return self
+    43: 
+    44:     def decision_function(self, X):
+    45:         return self.model.decision_function(X)
+    46: 
+    47: 
+    48: 
 ```
 
 

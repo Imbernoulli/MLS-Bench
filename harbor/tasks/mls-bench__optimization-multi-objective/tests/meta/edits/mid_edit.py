@@ -35,14 +35,18 @@ import dgp  # host-only problem defs + fronts + metrics (NOT shipped into the co
 _TEMPLATE_PATH = _HERE.parent / "custom_template.py"
 _CUSTOM_PY = _TEMPLATE_PATH.read_text()
 
-# Match the harness seed selection: task seeds if present, else default [42].
+# The runtime seed list is chosen by the harness from the global config and is
+# NOT known at workspace-setup time (mid_edit only sees the task config). We
+# pre-generate specs for the task's declared seeds plus the standard seed set so
+# that whichever seeds the harness runs are always covered.
+_STANDARD_SEEDS = [42, 123, 456]
 try:
     _cfg = json.loads((_TASK_DIR / "config.json").read_text())
-    _SEEDS = _cfg.get("seeds") or [42]
+    _SEEDS = sorted(set((_cfg.get("seeds") or []) + _STANDARD_SEEDS))
     # Problem names come from the test_cmd labels (host-side only).
     _PROBLEMS = [e.get("label") for e in _cfg.get("test_cmds", []) if e.get("label")]
 except Exception:
-    _SEEDS = [42]
+    _SEEDS = list(_STANDARD_SEEDS)
     _PROBLEMS = ["zdt1", "zdt3", "dtlz2", "dtlz1"]
 
 

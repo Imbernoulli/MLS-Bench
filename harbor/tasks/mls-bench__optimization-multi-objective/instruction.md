@@ -84,7 +84,7 @@ may add or remove lines inside it. Only code outside the editable ranges must
 stay unchanged.
 
 - `deap/custom_moea.py`
-- editable lines **297–441**
+- editable lines **159–303**
 
 
 
@@ -92,511 +92,430 @@ stay unchanged.
 ## Readable Context
 
 
-### `deap/custom_moea.py`  [EDITABLE — lines 297–441 only]
+### `deap/custom_moea.py`  [EDITABLE — lines 159–303 only]
 
 ```python
      1: """
      2: Multi-Objective Optimization — Custom Evolutionary Strategy Template
      3: 
-     4: This script runs a complete multi-objective evolutionary algorithm on standard
-     5: benchmark problems (ZDT/DTLZ). The agent should implement the custom selection
-     6: and variation strategy in the CustomMOEA class.
+     4: This script runs a complete multi-objective evolutionary algorithm on a held-out
+     5: benchmark problem. The agent should implement the custom selection and variation
+     6: strategy in the CustomMOEA class.
      7: 
-     8: Usage:
-     9:     python deap/custom_moea.py --problem zdt1 --seed 42 --output-dir ./out
-    10: """
-    11: 
-    12: import argparse
-    13: import json
-    14: import math
-    15: import os
-    16: import random
-    17: import time
-    18: import warnings
-    19: from copy import deepcopy
-    20: from functools import reduce
-    21: from math import cos, pi, sin, sqrt
-    22: from operator import mul
-    23: from typing import List, Optional, Tuple
-    24: 
-    25: import numpy as np
-    26: 
-    27: from deap import base, benchmarks, creator, tools
-    28: from deap.benchmarks import tools as btools
-    29: 
-    30: warnings.filterwarnings("ignore")
-    31: 
-    32: # ================================================================
-    33: # FIXED — Problem definitions and utilities (do not modify)
-    34: # ================================================================
+     8: NOTE: The benchmark problem identity, its analytic true Pareto front, and the
+     9: evaluation metrics are NOT part of this program. The harness pre-generates the
+    10: problem to optimize (the objective functions, with their numeric configuration)
+    11: and scores the final population in a separate host-side process. Your strategy
+    12: only ever sees individuals with already-evaluated objective values — it never
+    13: receives the problem name nor the true front.
+    14: 
+    15: Usage (the harness sets ENV/SEED for you):
+    16:     ENV=<opaque-problem-key> SEED=42 python deap/custom_moea.py
+    17: """
+    18: 
+    19: import argparse
+    20: import base64
+    21: import io
+    22: import json
+    23: import marshal
+    24: import math
+    25: import os
+    26: import random
+    27: import time
+    28: import types
+    29: import warnings
+    30: from copy import deepcopy
+    31: from functools import reduce
+    32: from math import cos, pi, sin, sqrt
+    33: from operator import mul
+    34: from typing import List, Optional, Tuple
     35: 
-    36: # Create DEAP fitness and individual types
-    37: creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
-    38: creator.create("Individual", list, fitness=creator.FitnessMin)
-    39: 
-    40: # For 3-objective problems
-    41: creator.create("FitnessMin3", base.Fitness, weights=(-1.0, -1.0, -1.0))
-    42: creator.create("Individual3", list, fitness=creator.FitnessMin3)
-    43: 
-    44: 
-    45: PROBLEMS = {
-    46:     "zdt1": {
-    47:         "func": benchmarks.zdt1,
-    48:         "n_var": 30,
-    49:         "n_obj": 2,
-    50:         "bounds": (0.0, 1.0),
-    51:         "pop_size": 100,
-    52:         "n_gen": 200,
-    53:         "ref_point": [1.1, 1.1],
-    54:         "description": "ZDT1: convex Pareto front, 30 variables, 2 objectives",
-    55:     },
-    56:     "zdt3": {
-    57:         "func": benchmarks.zdt3,
-    58:         "n_var": 30,
-    59:         "n_obj": 2,
-    60:         "bounds": (0.0, 1.0),
-    61:         "pop_size": 100,
-    62:         "n_gen": 200,
-    63:         "ref_point": [1.1, 1.1],
-    64:         "description": "ZDT3: disconnected Pareto front, 30 variables, 2 objectives",
-    65:     },
-    66:     "dtlz2": {
-    67:         "func": lambda ind: benchmarks.dtlz2(ind, 3),
-    68:         "n_var": 12,
-    69:         "n_obj": 3,
-    70:         "bounds": (0.0, 1.0),
-    71:         "pop_size": 120,
-    72:         "n_gen": 250,
-    73:         "ref_point": [1.5, 1.5, 1.5],
-    74:         "description": "DTLZ2: spherical Pareto front, 12 variables, 3 objectives",
-    75:     },
-    76:     "dtlz1": {
-    77:         "func": lambda ind: benchmarks.dtlz1(ind, 3),
-    78:         "n_var": 7,
-    79:         "n_obj": 3,
-    80:         "bounds": (0.0, 1.0),
-    81:         "pop_size": 120,
-    82:         "n_gen": 400,
-    83:         "ref_point": [1.0, 1.0, 1.0],
-    84:         "description": "DTLZ1: linear Pareto front with many local fronts, 7 variables, 3 objectives",
-    85:     },
-    86: }
-    87: 
-    88: 
-    89: def generate_pareto_front(problem_name: str, n_points: int = 500) -> np.ndarray:
-    90:     """Generate reference Pareto front points for IGD computation."""
-    91:     if problem_name == "zdt1":
-    92:         x = np.linspace(0, 1, n_points)
-    93:         return np.column_stack([x, 1 - np.sqrt(x)])
-    94:     elif problem_name == "zdt3":
-    95:         # ZDT3 has a disconnected front
-    96:         regions = [
-    97:             (0.0, 0.0830),
-    98:             (0.1822, 0.2577),
-    99:             (0.4093, 0.4538),
-   100:             (0.6183, 0.6525),
-   101:             (0.8233, 0.8518),
-   102:         ]
-   103:         points = []
-   104:         per_region = n_points // len(regions)
-   105:         for lo, hi in regions:
-   106:             x = np.linspace(lo, hi, per_region)
-   107:             f1 = x
-   108:             f2 = 1 - np.sqrt(x) - x * np.sin(10 * np.pi * x)
-   109:             points.append(np.column_stack([f1, f2]))
-   110:         return np.vstack(points)
-   111:     elif problem_name == "dtlz2":
-   112:         # Uniform points on first octant of unit sphere
-   113:         points = []
-   114:         ns = int(np.sqrt(n_points)) + 1
-   115:         for i in range(ns):
-   116:             for j in range(ns):
-   117:                 theta1 = (i / max(ns - 1, 1)) * np.pi / 2
-   118:                 theta2 = (j / max(ns - 1, 1)) * np.pi / 2
-   119:                 f1 = np.cos(theta1) * np.cos(theta2)
-   120:                 f2 = np.cos(theta1) * np.sin(theta2)
-   121:                 f3 = np.sin(theta1)
-   122:                 points.append([f1, f2, f3])
-   123:         return np.array(points[:n_points])
-   124:     elif problem_name == "dtlz1":
-   125:         # Pareto front lies on the plane sum(f_i) = 0.5
-   126:         points = []
-   127:         ns = int(np.sqrt(n_points)) + 1
-   128:         for i in range(ns):
-   129:             for j in range(ns - i):
-   130:                 f1 = i / max(ns - 1, 1) * 0.5
-   131:                 f2 = j / max(ns - 1, 1) * 0.5
-   132:                 f3 = 0.5 - f1 - f2
-   133:                 if f3 >= -1e-8:
-   134:                     points.append([f1, f2, max(f3, 0.0)])
-   135:         return np.array(points[:n_points])
-   136:     else:
-   137:         raise ValueError(f"Unknown problem: {problem_name}")
-   138: 
-   139: 
-   140: def _hv_2d(points, ref):
-   141:     """Exact 2D hypervolume via non-dominated sweep."""
-   142:     pts = points[(points[:, 0] < ref[0]) & (points[:, 1] < ref[1])]
-   143:     if len(pts) == 0:
-   144:         return 0.0
-   145:     pts = pts[pts[:, 0].argsort()]
-   146:     nd = [pts[0]]
-   147:     for p in pts[1:]:
-   148:         if p[1] < nd[-1][1]:
-   149:             nd.append(p)
-   150:     nd = np.array(nd)
-   151:     hv = 0.0
-   152:     prev_y = ref[1]
-   153:     for p in nd:
-   154:         width = ref[0] - p[0]
-   155:         hv += width * (prev_y - p[1])
-   156:         prev_y = p[1]
-   157:     return hv
+    36: import numpy as np
+    37: 
+    38: from deap import base, benchmarks, creator, tools
+    39: from deap.benchmarks import tools as btools
+    40: 
+    41: warnings.filterwarnings("ignore")
+    42: 
+    43: # ================================================================
+    44: # FIXED — Individual types and generic utilities (do not modify)
+    45: # ================================================================
+    46: 
+    47: # Create DEAP fitness and individual types
+    48: creator.create("FitnessMin", base.Fitness, weights=(-1.0, -1.0))
+    49: creator.create("Individual", list, fitness=creator.FitnessMin)
+    50: 
+    51: # For 3-objective problems
+    52: creator.create("FitnessMin3", base.Fitness, weights=(-1.0, -1.0, -1.0))
+    53: creator.create("Individual3", list, fitness=creator.FitnessMin3)
+    54: 
+    55: 
+    56: def make_individual(n_var, bounds, ind_class):
+    57:     """Create a random individual within bounds."""
+    58:     lo, hi = bounds
+    59:     return ind_class([random.uniform(lo, hi) for _ in range(n_var)])
+    60: 
+    61: 
+    62: def evaluate(individual, func):
+    63:     """Evaluate an individual on the (held-out) objective function."""
+    64:     return func(individual)
+    65: 
+    66: 
+    67: def bounded_crossover(ind1, ind2, eta, low, up):
+    68:     """Simulated Binary Crossover (SBX) with bounds."""
+    69:     tools.cxSimulatedBinaryBounded(ind1, ind2, eta=eta, low=low, up=up)
+    70:     return ind1, ind2
+    71: 
+    72: 
+    73: def bounded_mutation(individual, eta, low, up, indpb):
+    74:     """Polynomial mutation with bounds."""
+    75:     tools.mutPolynomialBounded(individual, eta=eta, low=low, up=up, indpb=indpb)
+    76:     return (individual,)
+    77: 
+    78: 
+    79: def get_nondominated(population):
+    80:     """Extract the first non-dominated front from the population."""
+    81:     pareto_fronts = tools.sortNondominated(population, len(population), first_front_only=True)
+    82:     return pareto_fronts[0]
+    83: 
+    84: 
+    85: def compute_crowding_distance(individuals):
+    86:     """Compute crowding distance for a set of individuals."""
+    87:     if len(individuals) <= 2:
+    88:         for ind in individuals:
+    89:             ind.fitness.crowding_dist = float("inf")
+    90:         return
+    91:     n_obj = len(individuals[0].fitness.values)
+    92:     for ind in individuals:
+    93:         ind.fitness.crowding_dist = 0.0
+    94:     for m in range(n_obj):
+    95:         individuals.sort(key=lambda x: x.fitness.values[m])
+    96:         individuals[0].fitness.crowding_dist = float("inf")
+    97:         individuals[-1].fitness.crowding_dist = float("inf")
+    98:         f_max = individuals[-1].fitness.values[m]
+    99:         f_min = individuals[0].fitness.values[m]
+   100:         if f_max - f_min < 1e-12:
+   101:             continue
+   102:         for i in range(1, len(individuals) - 1):
+   103:             individuals[i].fitness.crowding_dist += (
+   104:                 individuals[i + 1].fitness.values[m] - individuals[i - 1].fitness.values[m]
+   105:             ) / (f_max - f_min)
+   106: 
+   107: 
+   108: # ================================================================
+   109: # FIXED — Held-out problem spec loading (do not modify)
+   110: # ================================================================
+   111: #
+   112: # The harness pre-generates, for the opaque problem key in ENV, a spec file
+   113: # carrying the numeric problem configuration and an opaque black-box objective
+   114: # evaluator f(individual) -> objectives. This program loads that spec, builds the
+   115: # evaluator as a pure black box, and uses it to evaluate candidate solutions.
+   116: # The problem name, the analytic Pareto front, and the metrics are NOT present
+   117: # here — they live in a host-only module the agent's process cannot import. The
+   118: # host-side scorer regenerates the front and computes HV/IGD/Spread.
+   119: 
+   120: 
+   121: def _spec_dir():
+   122:     d = os.environ.get("MOEA_SPEC_DIR")
+   123:     if d:
+   124:         return d
+   125:     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_moea_specs")
+   126: 
+   127: 
+   128: def _load_spec(env_key, seed):
+   129:     path = os.path.join(_spec_dir(), f"{env_key}_seed{seed}.json.b64")
+   130:     with open(path, "r") as f:
+   131:         raw = base64.b64decode(f.read())
+   132:     return json.loads(raw.decode("utf-8"))
+   133: 
+   134: 
+   135: def _build_objective(spec):
+   136:     """Reconstruct the black-box objective f(individual) -> tuple from the spec.
+   137: 
+   138:     The evaluator is a marshalled, name-free, problem-specific code object that
+   139:     inlines the objective arithmetic; it is used purely as a black box and
+   140:     carries no problem identity (no name, no ``kind``) the strategy could exploit.
+   141:     """
+   142:     code = marshal.loads(base64.b64decode(spec["evaluator"]))
+   143:     kernel = types.FunctionType(code, {"__builtins__": __builtins__}, "objective")
+   144:     # No problem id in the spec; the kernel is specific to this run's problem.
+   145:     n_obj = int(spec["n_obj"])
+   146: 
+   147:     def f(individual):
+   148:         return tuple(kernel(individual, n_obj))
+   149: 
+   150:     return f
+   151: 
+   152: 
+   153: # ================================================================
+   154: # EDITABLE — Custom multi-objective evolutionary strategy (lines 297 to 441)
+   155: # The agent modifies ONLY this section.
+   156: # ================================================================
+   157: 
    158: 
-   159: 
-   160: def _hv_3d(points, ref):
-   161:     """Exact 3D hypervolume via z-slicing + 2D sweep."""
-   162:     mask = np.all(points < ref, axis=1)
-   163:     pts = points[mask]
-   164:     if len(pts) == 0:
-   165:         return 0.0
-   166:     # Sort by z ascending: as z increases, more points become active
-   167:     order = np.argsort(pts[:, 2])
-   168:     pts = pts[order]
-   169:     hv = 0.0
-   170:     active_2d = []
-   171:     for i in range(len(pts)):
-   172:         active_2d.append(pts[i, :2])
-   173:         z_lo = pts[i, 2]
-   174:         z_hi = pts[i + 1, 2] if i + 1 < len(pts) else ref[2]
-   175:         dz = z_hi - z_lo
-   176:         if dz > 0:
-   177:             hv += _hv_2d(np.array(active_2d), ref[:2]) * dz
-   178:     return hv
+   159: class CustomMOEA:
+   160:     """Custom multi-objective evolutionary algorithm.
+   161: 
+   162:     The agent should implement a novel evolutionary strategy for multi-objective
+   163:     optimization. The algorithm operates on a population of individuals, each
+   164:     with a fitness consisting of multiple objective values (all minimized).
+   165: 
+   166:     Available DEAP utilities (already imported):
+   167:         - tools.sortNondominated(pop, k) -> list of fronts
+   168:         - tools.selTournamentDCD(pop, k) -> selected individuals
+   169:         - tools.cxSimulatedBinaryBounded(ind1, ind2, eta, low, up)
+   170:         - tools.mutPolynomialBounded(ind, eta, low, up, indpb)
+   171:         - tools.uniform_reference_points(nobj, p) -> reference points array
+   172:         - compute_crowding_distance(individuals) -> sets .fitness.crowding_dist
+   173:         - get_nondominated(population) -> first front
+   174: 
+   175:     Individual interface:
+   176:         ind.fitness.values -> tuple of objective values (all minimized)
+   177:         ind.fitness.dominates(other.fitness) -> bool
+   178:         ind.fitness.valid -> bool (True if evaluated)
    179: 
-   180: 
-   181: def compute_hypervolume(nd_front, ref_point):
-   182:     """Robust hypervolume computation that works for 2D and 3D.
-   183: 
-   184:     Falls back to a pure-Python implementation if DEAP's built-in fails.
-   185:     """
-   186:     # Always use pure-Python implementation (DEAP's C version fails silently in some envs)
-   187:     front_values = np.array([ind.fitness.values for ind in nd_front])
-   188:     ref = np.array(ref_point, dtype=np.float64)
-   189:     # Filter out points not dominated by ref
-   190:     mask = np.all(front_values < ref, axis=1)
-   191:     front_values = front_values[mask]
-   192:     if len(front_values) == 0:
-   193:         return 0.0
-   194:     n_obj = front_values.shape[1]
-   195:     if n_obj == 2:
-   196:         return _hv_2d(front_values, ref)
-   197:     elif n_obj == 3:
-   198:         return _hv_3d(front_values, ref)
-   199:     return 0.0
-   200: 
-   201: 
-   202: def compute_spread(front_values: np.ndarray) -> float:
-   203:     """Compute spread (Delta) metric for a 2D front.
-   204: 
-   205:     Measures the extent and uniformity of the Pareto front approximation.
-   206:     Lower is better. For >2 objectives, returns average pairwise distance std.
-   207:     """
-   208:     if len(front_values) < 2:
-   209:         return float("inf")
+   180:     Args:
+   181:         pop_size: population size
+   182:         n_obj: number of objectives
+   183:         n_var: number of decision variables
+   184:         bounds: (low, high) for all variables
+   185:         cx_eta: SBX crossover distribution index (default 20)
+   186:         mut_eta: polynomial mutation distribution index (default 20)
+   187:         mut_prob: per-variable mutation probability (default 1/n_var)
+   188:     """
+   189: 
+   190:     def __init__(
+   191:         self,
+   192:         pop_size: int,
+   193:         n_obj: int,
+   194:         n_var: int,
+   195:         bounds: Tuple[float, float],
+   196:         cx_eta: float = 20.0,
+   197:         mut_eta: float = 20.0,
+   198:         mut_prob: Optional[float] = None,
+   199:     ):
+   200:         self.pop_size = pop_size
+   201:         self.n_obj = n_obj
+   202:         self.n_var = n_var
+   203:         self.bounds = bounds
+   204:         self.cx_eta = cx_eta
+   205:         self.mut_eta = mut_eta
+   206:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
+   207: 
+   208:     def select(self, population: list, k: int) -> list:
+   209:         """Select k parents from the population for mating.
    210: 
-   211:     n_obj = front_values.shape[1]
-   212:     if n_obj == 2:
-   213:         # Sort by first objective
-   214:         sorted_idx = np.argsort(front_values[:, 0])
-   215:         sorted_front = front_values[sorted_idx]
-   216:         # Consecutive distances
-   217:         dists = np.sqrt(np.sum(np.diff(sorted_front, axis=0) ** 2, axis=1))
-   218:         if len(dists) == 0:
-   219:             return float("inf")
-   220:         d_mean = np.mean(dists)
-   221:         if d_mean < 1e-12:
-   222:             return float("inf")
-   223:         spread = np.sum(np.abs(dists - d_mean)) / (len(dists) * d_mean)
-   224:         return float(spread)
-   225:     else:
-   226:         # For many-objective: use spacing metric
-   227:         from scipy.spatial.distance import cdist
+   211:         Default: binary tournament selection based on non-domination rank
+   212:         and crowding distance (NSGA-II style). Replace with a better strategy.
+   213: 
+   214:         Args:
+   215:             population: current population (list of Individuals)
+   216:             k: number of parents to select
+   217:         Returns:
+   218:             list of k selected individuals (copies)
+   219:         """
+   220:         # Assign crowding distances for tournament selection
+   221:         fronts = tools.sortNondominated(population, len(population), first_front_only=False)
+   222:         for front in fronts:
+   223:             compute_crowding_distance(front)
+   224:         return tools.selTournamentDCD(population, k)
+   225: 
+   226:     def vary(self, parents: list) -> list:
+   227:         """Apply crossover and mutation to produce offspring.
    228: 
-   229:         dist_matrix = cdist(front_values, front_values)
-   230:         np.fill_diagonal(dist_matrix, np.inf)
-   231:         min_dists = np.min(dist_matrix, axis=1)
-   232:         d_mean = np.mean(min_dists)
-   233:         if d_mean < 1e-12:
-   234:             return float("inf")
-   235:         spread = np.sqrt(np.mean((min_dists - d_mean) ** 2)) / d_mean
-   236:         return float(spread)
-   237: 
-   238: 
-   239: def make_individual(n_var, bounds, ind_class):
-   240:     """Create a random individual within bounds."""
-   241:     lo, hi = bounds
-   242:     return ind_class([random.uniform(lo, hi) for _ in range(n_var)])
-   243: 
-   244: 
-   245: def evaluate(individual, func):
-   246:     """Evaluate an individual on the benchmark function."""
-   247:     return func(individual)
-   248: 
+   229:         Default: SBX crossover (probability 0.9) + polynomial mutation.
+   230:         Replace or augment with novel variation operators.
+   231: 
+   232:         Args:
+   233:             parents: list of selected parent individuals
+   234:         Returns:
+   235:             list of offspring individuals (fitness invalidated)
+   236:         """
+   237:         offspring = [deepcopy(ind) for ind in parents]
+   238:         lo, hi = self.bounds
+   239: 
+   240:         # Pairwise crossover
+   241:         for i in range(0, len(offspring) - 1, 2):
+   242:             if random.random() < 0.9:
+   243:                 tools.cxSimulatedBinaryBounded(
+   244:                     offspring[i], offspring[i + 1],
+   245:                     eta=self.cx_eta, low=lo, up=hi,
+   246:                 )
+   247:                 del offspring[i].fitness.values
+   248:                 del offspring[i + 1].fitness.values
    249: 
-   250: def bounded_crossover(ind1, ind2, eta, low, up):
-   251:     """Simulated Binary Crossover (SBX) with bounds."""
-   252:     tools.cxSimulatedBinaryBounded(ind1, ind2, eta=eta, low=low, up=up)
-   253:     return ind1, ind2
-   254: 
-   255: 
-   256: def bounded_mutation(individual, eta, low, up, indpb):
-   257:     """Polynomial mutation with bounds."""
-   258:     tools.mutPolynomialBounded(individual, eta=eta, low=low, up=up, indpb=indpb)
-   259:     return (individual,)
-   260: 
-   261: 
-   262: def get_nondominated(population):
-   263:     """Extract the first non-dominated front from the population."""
-   264:     pareto_fronts = tools.sortNondominated(population, len(population), first_front_only=True)
-   265:     return pareto_fronts[0]
-   266: 
-   267: 
-   268: def compute_crowding_distance(individuals):
-   269:     """Compute crowding distance for a set of individuals."""
-   270:     if len(individuals) <= 2:
-   271:         for ind in individuals:
-   272:             ind.fitness.crowding_dist = float("inf")
-   273:         return
-   274:     n_obj = len(individuals[0].fitness.values)
-   275:     for ind in individuals:
-   276:         ind.fitness.crowding_dist = 0.0
-   277:     for m in range(n_obj):
-   278:         individuals.sort(key=lambda x: x.fitness.values[m])
-   279:         individuals[0].fitness.crowding_dist = float("inf")
-   280:         individuals[-1].fitness.crowding_dist = float("inf")
-   281:         f_max = individuals[-1].fitness.values[m]
-   282:         f_min = individuals[0].fitness.values[m]
-   283:         if f_max - f_min < 1e-12:
-   284:             continue
-   285:         for i in range(1, len(individuals) - 1):
-   286:             individuals[i].fitness.crowding_dist += (
-   287:                 individuals[i + 1].fitness.values[m] - individuals[i - 1].fitness.values[m]
-   288:             ) / (f_max - f_min)
-   289: 
+   250:         # Mutation
+   251:         for ind in offspring:
+   252:             if random.random() < 1.0:
+   253:                 tools.mutPolynomialBounded(
+   254:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
+   255:                 )
+   256:                 del ind.fitness.values
+   257: 
+   258:         return offspring
+   259: 
+   260:     def survive(self, population: list, offspring: list) -> list:
+   261:         """Environmental selection: choose next generation from combined pool.
+   262: 
+   263:         Default: NSGA-II survival — non-dominated sorting + crowding distance.
+   264:         Replace with a better environmental selection mechanism.
+   265: 
+   266:         Args:
+   267:             population: current population
+   268:             offspring: newly generated offspring
+   269:         Returns:
+   270:             list of pop_size individuals for the next generation
+   271:         """
+   272:         combined = population + offspring
+   273: 
+   274:         # Non-dominated sorting
+   275:         fronts = tools.sortNondominated(combined, self.pop_size, first_front_only=False)
+   276: 
+   277:         next_gen = []
+   278:         for front in fronts:
+   279:             if len(next_gen) + len(front) <= self.pop_size:
+   280:                 next_gen.extend(front)
+   281:             else:
+   282:                 # Fill remaining slots using crowding distance
+   283:                 remaining = self.pop_size - len(next_gen)
+   284:                 compute_crowding_distance(front)
+   285:                 front.sort(key=lambda x: x.fitness.crowding_dist, reverse=True)
+   286:                 next_gen.extend(front[:remaining])
+   287:                 break
+   288: 
+   289:         return next_gen
    290: 
-   291: # ================================================================
-   292: # EDITABLE — Custom multi-objective evolutionary strategy (lines 297 to 446)
-   293: # The agent modifies ONLY this section.
-   294: # ================================================================
-   295: 
+   291:     def on_generation(self, gen: int, population: list):
+   292:         """Optional callback at the end of each generation.
+   293: 
+   294:         Can be used for adaptive parameter updates, archive maintenance, etc.
+   295:         Default: no-op.
    296: 
-   297: class CustomMOEA:
-   298:     """Custom multi-objective evolutionary algorithm.
-   299: 
-   300:     The agent should implement a novel evolutionary strategy for multi-objective
-   301:     optimization. The algorithm operates on a population of individuals, each
-   302:     with a fitness consisting of multiple objective values (all minimized).
+   297:         Args:
+   298:             gen: current generation number (1-indexed)
+   299:             population: current population after survival selection
+   300:         """
+   301:         pass
+   302: 
    303: 
-   304:     Available DEAP utilities (already imported):
-   305:         - tools.sortNondominated(pop, k) -> list of fronts
-   306:         - tools.selTournamentDCD(pop, k) -> selected individuals
-   307:         - tools.cxSimulatedBinaryBounded(ind1, ind2, eta, low, up)
-   308:         - tools.mutPolynomialBounded(ind, eta, low, up, indpb)
-   309:         - tools.uniform_reference_points(nobj, p) -> reference points array
-   310:         - compute_crowding_distance(individuals) -> sets .fitness.crowding_dist
-   311:         - get_nondominated(population) -> first front
-   312: 
-   313:     Individual interface:
-   314:         ind.fitness.values -> tuple of objective values (all minimized)
-   315:         ind.fitness.dominates(other.fitness) -> bool
-   316:         ind.fitness.valid -> bool (True if evaluated)
-   317: 
-   318:     Args:
-   319:         pop_size: population size
-   320:         n_obj: number of objectives
-   321:         n_var: number of decision variables
-   322:         bounds: (low, high) for all variables
-   323:         cx_eta: SBX crossover distribution index (default 20)
-   324:         mut_eta: polynomial mutation distribution index (default 20)
-   325:         mut_prob: per-variable mutation probability (default 1/n_var)
-   326:     """
-   327: 
-   328:     def __init__(
-   329:         self,
-   330:         pop_size: int,
-   331:         n_obj: int,
-   332:         n_var: int,
-   333:         bounds: Tuple[float, float],
-   334:         cx_eta: float = 20.0,
-   335:         mut_eta: float = 20.0,
-   336:         mut_prob: Optional[float] = None,
-   337:     ):
-   338:         self.pop_size = pop_size
-   339:         self.n_obj = n_obj
-   340:         self.n_var = n_var
-   341:         self.bounds = bounds
-   342:         self.cx_eta = cx_eta
-   343:         self.mut_eta = mut_eta
-   344:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
-   345: 
-   346:     def select(self, population: list, k: int) -> list:
-   347:         """Select k parents from the population for mating.
+   304: # ================================================================
+   305: # FIXED — Main evolution loop and prediction emit (do not modify below)
+   306: # ================================================================
+   307: 
+   308: 
+   309: def run_moea(env_key: str, seed: int, output_dir: str):
+   310:     """Run the custom MOEA on the held-out benchmark problem.
+   311: 
+   312:     Loads the pre-generated problem spec for ``env_key``, runs the strategy, and
+   313:     emits the final non-dominated population's objective values for the host-side
+   314:     scorer. The true Pareto front and the metrics are computed host-side; this
+   315:     process never sees them.
+   316:     """
+   317:     spec = _load_spec(env_key, seed)
+   318:     n_var = int(spec["n_var"])
+   319:     n_obj = int(spec["n_obj"])
+   320:     bounds = tuple(spec["bounds"])
+   321:     pop_size = int(spec["pop_size"])
+   322:     n_gen = int(spec["n_gen"])
+   323: 
+   324:     # Black-box objective evaluator (legitimate: evaluating candidates is the task)
+   325:     func = _build_objective(spec)
+   326: 
+   327:     # Set seeds
+   328:     random.seed(seed)
+   329:     np.random.seed(seed)
+   330: 
+   331:     # Determine individual class based on number of objectives
+   332:     ind_class = creator.Individual3 if n_obj == 3 else creator.Individual
+   333: 
+   334:     # Initialize algorithm
+   335:     moea = CustomMOEA(
+   336:         pop_size=pop_size,
+   337:         n_obj=n_obj,
+   338:         n_var=n_var,
+   339:         bounds=bounds,
+   340:     )
+   341: 
+   342:     # Create initial population
+   343:     population = [make_individual(n_var, bounds, ind_class) for _ in range(pop_size)]
+   344: 
+   345:     # Evaluate initial population
+   346:     for ind in population:
+   347:         ind.fitness.values = evaluate(ind, func)
    348: 
-   349:         Default: binary tournament selection based on non-domination rank
-   350:         and crowding distance (NSGA-II style). Replace with a better strategy.
-   351: 
-   352:         Args:
-   353:             population: current population (list of Individuals)
-   354:             k: number of parents to select
-   355:         Returns:
-   356:             list of k selected individuals (copies)
-   357:         """
-   358:         # Assign crowding distances for tournament selection
-   359:         fronts = tools.sortNondominated(population, len(population), first_front_only=False)
-   360:         for front in fronts:
-   361:             compute_crowding_distance(front)
-   362:         return tools.selTournamentDCD(population, k)
+   349:     for gen in range(1, n_gen + 1):
+   350:         # Parent selection
+   351:         parents = moea.select(population, pop_size)
+   352: 
+   353:         # Variation (crossover + mutation)
+   354:         offspring = moea.vary(parents)
+   355: 
+   356:         # Evaluate offspring
+   357:         for ind in offspring:
+   358:             if not ind.fitness.valid:
+   359:                 ind.fitness.values = evaluate(ind, func)
+   360: 
+   361:         # Environmental selection (survival)
+   362:         population = moea.survive(population, offspring)
    363: 
-   364:     def vary(self, parents: list) -> list:
-   365:         """Apply crossover and mutation to produce offspring.
+   364:         # Optional per-generation callback
+   365:         moea.on_generation(gen, population)
    366: 
-   367:         Default: SBX crossover (probability 0.9) + polynomial mutation.
-   368:         Replace or augment with novel variation operators.
-   369: 
-   370:         Args:
-   371:             parents: list of selected parent individuals
-   372:         Returns:
-   373:             list of offspring individuals (fitness invalidated)
-   374:         """
-   375:         offspring = [deepcopy(ind) for ind in parents]
-   376:         lo, hi = self.bounds
+   367:         # Periodic progress feedback (objective-space extent only, no metrics)
+   368:         if gen % 20 == 0 or gen == n_gen:
+   369:             nd_front = get_nondominated(population)
+   370:             front_values = np.array([ind.fitness.values for ind in nd_front])
+   371:             print(
+   372:                 f"TRAIN_PROGRESS gen={gen} front_size={len(nd_front)} "
+   373:                 f"f_min={np.min(front_values, axis=0).round(4).tolist()} "
+   374:                 f"f_max={np.max(front_values, axis=0).round(4).tolist()}",
+   375:                 flush=True,
+   376:             )
    377: 
-   378:         # Pairwise crossover
-   379:         for i in range(0, len(offspring) - 1, 2):
-   380:             if random.random() < 0.9:
-   381:                 tools.cxSimulatedBinaryBounded(
-   382:                     offspring[i], offspring[i + 1],
-   383:                     eta=self.cx_eta, low=lo, up=hi,
-   384:                 )
-   385:                 del offspring[i].fitness.values
-   386:                 del offspring[i + 1].fitness.values
-   387: 
-   388:         # Mutation
-   389:         for ind in offspring:
-   390:             if random.random() < 1.0:
-   391:                 tools.mutPolynomialBounded(
-   392:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
-   393:                 )
-   394:                 del ind.fitness.values
-   395: 
-   396:         return offspring
-   397: 
-   398:     def survive(self, population: list, offspring: list) -> list:
-   399:         """Environmental selection: choose next generation from combined pool.
-   400: 
-   401:         Default: NSGA-II survival — non-dominated sorting + crowding distance.
-   402:         Replace with a better environmental selection mechanism.
+   378:     # Final non-dominated front
+   379:     nd_front = get_nondominated(population)
+   380:     front_values = np.array([ind.fitness.values for ind in nd_front], dtype=np.float64)
+   381: 
+   382:     # Emit the final population's objective values for the host-side scorer. We do
+   383:     # NOT have the true Pareto front, so we cannot (and do not) compute metrics.
+   384:     payload = base64.b64encode(
+   385:         np.ascontiguousarray(front_values, dtype=np.float64).tobytes()
+   386:     ).decode("ascii")
+   387:     print(
+   388:         f"MOEA_PRED env={env_key} seed={seed} shape={front_values.shape[0]},{front_values.shape[1]} "
+   389:         f"objs={payload}",
+   390:         flush=True,
+   391:     )
+   392: 
+   393:     # Save final front to disk (objective values only)
+   394:     os.makedirs(output_dir, exist_ok=True)
+   395:     np.savetxt(
+   396:         os.path.join(output_dir, f"{env_key}_front.csv"),
+   397:         front_values,
+   398:         delimiter=",",
+   399:         header=",".join(f"f{i+1}" for i in range(n_obj)),
+   400:     )
+   401: 
+   402:     return front_values
    403: 
-   404:         Args:
-   405:             population: current population
-   406:             offspring: newly generated offspring
-   407:         Returns:
-   408:             list of pop_size individuals for the next generation
-   409:         """
-   410:         combined = population + offspring
+   404: 
+   405: def main():
+   406:     parser = argparse.ArgumentParser(description="Multi-Objective Optimization Benchmark")
+   407:     parser.add_argument("--env", type=str, default=os.environ.get("ENV", ""))
+   408:     parser.add_argument("--seed", type=int, default=int(os.environ.get("SEED", 42)))
+   409:     parser.add_argument("--output-dir", type=str, default=os.environ.get("OUTPUT_DIR", "./output"))
+   410:     args = parser.parse_args()
    411: 
-   412:         # Non-dominated sorting
-   413:         fronts = tools.sortNondominated(combined, self.pop_size, first_front_only=False)
+   412:     if not args.env:
+   413:         raise SystemExit("ENV not set")
    414: 
-   415:         next_gen = []
-   416:         for front in fronts:
-   417:             if len(next_gen) + len(front) <= self.pop_size:
-   418:                 next_gen.extend(front)
-   419:             else:
-   420:                 # Fill remaining slots using crowding distance
-   421:                 remaining = self.pop_size - len(next_gen)
-   422:                 compute_crowding_distance(front)
-   423:                 front.sort(key=lambda x: x.fitness.crowding_dist, reverse=True)
-   424:                 next_gen.extend(front[:remaining])
-   425:                 break
-   426: 
-   427:         return next_gen
-   428: 
-   429:     def on_generation(self, gen: int, population: list):
-   430:         """Optional callback at the end of each generation.
-   431: 
-   432:         Can be used for adaptive parameter updates, archive maintenance, etc.
-   433:         Default: no-op.
-   434: 
-   435:         Args:
-   436:             gen: current generation number (1-indexed)
-   437:             population: current population after survival selection
-   438:         """
-   439:         pass
-   440: 
-   441: 
-   442: # ================================================================
-   443: # FIXED — Main evolution loop and evaluation (do not modify below)
-   444: # ================================================================
-   445: 
-   446: 
-   447: def run_moea(problem_name: str, seed: int, output_dir: str):
-   448:     """Run the custom MOEA on a benchmark problem."""
-   449:     cfg = PROBLEMS[problem_name]
-   450:     func = cfg["func"]
-   451:     n_var = cfg["n_var"]
-   452:     n_obj = cfg["n_obj"]
-   453:     bounds = cfg["bounds"]
-   454:     pop_size = cfg["pop_size"]
-   455:     n_gen = cfg["n_gen"]
-   456:     ref_point = cfg["ref_point"]
-   457: 
-   458:     # Set seeds
-   459:     random.seed(seed)
-   460:     np.random.seed(seed)
-   461: 
-   462:     # Determine individual class based on number of objectives
-   463:     ind_class = creator.Individual3 if n_obj == 3 else creator.Individual
-   464: 
-   465:     # Initialize algorithm
-   466:     moea = CustomMOEA(
-   467:         pop_size=pop_size,
-   468:         n_obj=n_obj,
-   469:         n_var=n_var,
-   470:         bounds=bounds,
-   471:     )
-   472: 
-   473:     # Create initial population
-   474:     population = [make_individual(n_var, bounds, ind_class) for _ in range(pop_size)]
-   475: 
-   476:     # Evaluate initial population
-   477:     for ind in population:
-   478:         ind.fitness.values = evaluate(ind, func)
-   479: 
-   480:     # Generate reference Pareto front for IGD
-   481:     pf_ref = generate_pareto_front(problem_name, n_points=500)
-   482: 
-   483:     # Track metrics over generations
-   484:     hv_history = []
-   485:     igd_history = []
-   486: 
-   487:     for gen in range(1, n_gen + 1):
-   488:         # Parent selection
-   489:         parents = moea.select(population, pop_size)
-   490: 
-   491:         # Variation (crossover + mutation)
-   492:         offspring = moea.vary(parents)
-   493: 
-   494:         # Evaluate offspring
-   495:         for ind in offspring:
-   496:             if not ind.fitness.valid:
-   497:                 ind.fitness.values = evaluate(ind, func)
-   498: 
-   499:         # Environmental selection (survival)
-   500:         population = moea.survive(population, offspring)
-
-[truncated: showing at most 500 lines / 60000 bytes from deap/custom_moea.py]
+   415:     print(f"Running MOEA benchmark: {args.env} (seed={args.seed})", flush=True)
+   416:     run_moea(args.env, args.seed, args.output_dir)
+   417:     print(f"Done {args.env}.", flush=True)
+   418: 
+   419: 
+   420: if __name__ == "__main__":
+   421:     main()
 ```
 
 ## Reference Baselines
@@ -613,78 +532,76 @@ a baseline reproduction.
 In `deap/custom_moea.py`:
 
 ```python
-Lines 297–361:
-   294: # ================================================================
-   295: 
-   296: 
-   297: 
-   298: class CustomMOEA:
-   299:     """NSGA-II: Non-dominated Sorting Genetic Algorithm II."""
-   300: 
-   301:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
-   302:         self.pop_size = pop_size
-   303:         self.n_obj = n_obj
-   304:         self.n_var = n_var
-   305:         self.bounds = bounds
-   306:         self.cx_eta = cx_eta
-   307:         self.mut_eta = mut_eta
-   308:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
-   309: 
-   310:     def select(self, population, k):
-   311:         """Binary tournament selection with crowding distance."""
-   312:         fronts = tools.sortNondominated(population, len(population), first_front_only=False)
-   313:         for front in fronts:
-   314:             compute_crowding_distance(front)
-   315:         return tools.selTournamentDCD(population, k)
-   316: 
-   317:     def vary(self, parents):
-   318:         """SBX crossover + polynomial mutation."""
-   319:         offspring = [deepcopy(ind) for ind in parents]
-   320:         lo, hi = self.bounds
-   321: 
-   322:         for i in range(0, len(offspring) - 1, 2):
-   323:             if random.random() < 0.9:
-   324:                 tools.cxSimulatedBinaryBounded(
-   325:                     offspring[i], offspring[i + 1],
-   326:                     eta=self.cx_eta, low=lo, up=hi,
-   327:                 )
-   328:                 del offspring[i].fitness.values
-   329:                 del offspring[i + 1].fitness.values
-   330: 
-   331:         for ind in offspring:
-   332:             if random.random() < 1.0:
-   333:                 tools.mutPolynomialBounded(
-   334:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
-   335:                 )
-   336:                 del ind.fitness.values
-   337: 
-   338:         return offspring
-   339: 
-   340:     def survive(self, population, offspring):
-   341:         """NSGA-II survival: non-dominated sorting + crowding distance."""
-   342:         combined = population + offspring
-   343:         fronts = tools.sortNondominated(combined, self.pop_size, first_front_only=False)
-   344: 
-   345:         next_gen = []
-   346:         for front in fronts:
-   347:             if len(next_gen) + len(front) <= self.pop_size:
-   348:                 next_gen.extend(front)
-   349:             else:
-   350:                 remaining = self.pop_size - len(next_gen)
-   351:                 compute_crowding_distance(front)
-   352:                 front.sort(key=lambda x: x.fitness.crowding_dist, reverse=True)
-   353:                 next_gen.extend(front[:remaining])
-   354:                 break
-   355: 
-   356:         return next_gen
-   357: 
-   358:     def on_generation(self, gen, population):
-   359:         pass
-   360: 
-   361: 
-   362: # ================================================================
-   363: # FIXED — Main evolution loop and evaluation (do not modify below)
-   364: # ================================================================
+Lines 159–221:
+   156: # ================================================================
+   157: 
+   158: 
+   159: 
+   160: class CustomMOEA:
+   161:     """NSGA-II: Non-dominated Sorting Genetic Algorithm II."""
+   162: 
+   163:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
+   164:         self.pop_size = pop_size
+   165:         self.n_obj = n_obj
+   166:         self.n_var = n_var
+   167:         self.bounds = bounds
+   168:         self.cx_eta = cx_eta
+   169:         self.mut_eta = mut_eta
+   170:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
+   171: 
+   172:     def select(self, population, k):
+   173:         """Binary tournament selection with crowding distance."""
+   174:         fronts = tools.sortNondominated(population, len(population), first_front_only=False)
+   175:         for front in fronts:
+   176:             compute_crowding_distance(front)
+   177:         return tools.selTournamentDCD(population, k)
+   178: 
+   179:     def vary(self, parents):
+   180:         """SBX crossover + polynomial mutation."""
+   181:         offspring = [deepcopy(ind) for ind in parents]
+   182:         lo, hi = self.bounds
+   183: 
+   184:         for i in range(0, len(offspring) - 1, 2):
+   185:             if random.random() < 0.9:
+   186:                 tools.cxSimulatedBinaryBounded(
+   187:                     offspring[i], offspring[i + 1],
+   188:                     eta=self.cx_eta, low=lo, up=hi,
+   189:                 )
+   190:                 del offspring[i].fitness.values
+   191:                 del offspring[i + 1].fitness.values
+   192: 
+   193:         for ind in offspring:
+   194:             if random.random() < 1.0:
+   195:                 tools.mutPolynomialBounded(
+   196:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
+   197:                 )
+   198:                 del ind.fitness.values
+   199: 
+   200:         return offspring
+   201: 
+   202:     def survive(self, population, offspring):
+   203:         """NSGA-II survival: non-dominated sorting + crowding distance."""
+   204:         combined = population + offspring
+   205:         fronts = tools.sortNondominated(combined, self.pop_size, first_front_only=False)
+   206: 
+   207:         next_gen = []
+   208:         for front in fronts:
+   209:             if len(next_gen) + len(front) <= self.pop_size:
+   210:                 next_gen.extend(front)
+   211:             else:
+   212:                 remaining = self.pop_size - len(next_gen)
+   213:                 compute_crowding_distance(front)
+   214:                 front.sort(key=lambda x: x.fitness.crowding_dist, reverse=True)
+   215:                 next_gen.extend(front[:remaining])
+   216:                 break
+   217: 
+   218:         return next_gen
+   219: 
+   220:     def on_generation(self, gen, population):
+   221:         pass
+   222: 
+   223: 
+   224: # ================================================================
 ```
 
 ### `moead` baseline — editable region  [READ-ONLY — reference implementation]
@@ -692,135 +609,133 @@ Lines 297–361:
 In `deap/custom_moea.py`:
 
 ```python
-Lines 297–418:
-   294: # ================================================================
-   295: 
-   296: 
-   297: 
-   298: class CustomMOEA:
-   299:     """MOEA/D: Multi-Objective Evolutionary Algorithm Based on Decomposition."""
-   300: 
-   301:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
-   302:         self.pop_size = pop_size
-   303:         self.n_obj = n_obj
-   304:         self.n_var = n_var
-   305:         self.bounds = bounds
-   306:         self.cx_eta = cx_eta
-   307:         self.mut_eta = mut_eta
-   308:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
-   309:         self.T = 20  # neighborhood size
-   310:         self.delta = 0.9  # probability of selecting from neighborhood
-   311: 
-   312:         # Generate weight vectors
-   313:         self.weights = self._generate_weights(pop_size, n_obj)
-   314:         self.pop_size = len(self.weights)  # adjust to actual number of weight vectors
-   315: 
-   316:         # Compute neighborhoods
-   317:         self.neighbors = self._compute_neighborhoods()
-   318: 
-   319:         # Ideal point (updated during search)
-   320:         self.z_star = None
-   321: 
-   322:     def _generate_weights(self, n, n_obj):
-   323:         """Generate uniformly distributed weight vectors."""
-   324:         if n_obj == 2:
-   325:             weights = []
-   326:             for i in range(n):
-   327:                 w1 = i / max(n - 1, 1)
-   328:                 weights.append([w1, 1.0 - w1])
-   329:             return np.array(weights)
-   330:         else:
-   331:             # Use DEAP's uniform reference points for 3+ objectives
-   332:             ref_points = tools.uniform_reference_points(n_obj, p=12)
-   333:             return np.array(ref_points)
-   334: 
-   335:     def _compute_neighborhoods(self):
-   336:         """Compute T-nearest weight vector neighborhoods."""
-   337:         from scipy.spatial.distance import cdist
-   338:         dist_matrix = cdist(self.weights, self.weights)
-   339:         neighbors = []
-   340:         for i in range(len(self.weights)):
-   341:             idx = np.argsort(dist_matrix[i])[:self.T]
-   342:             neighbors.append(idx.tolist())
-   343:         return neighbors
-   344: 
-   345:     def _tchebycheff(self, fitness_values, weight, z_star):
-   346:         """Tchebycheff scalarization."""
-   347:         return max(weight[j] * abs(fitness_values[j] - z_star[j])
-   348:                    for j in range(self.n_obj))
-   349: 
-   350:     def select(self, population, k):
-   351:         """MOEA/D doesn't use standard selection — return population as-is."""
-   352:         return [deepcopy(ind) for ind in population]
-   353: 
-   354:     def vary(self, parents):
-   355:         """Generate one offspring per subproblem using neighborhood mating."""
-   356:         offspring = []
-   357:         lo, hi = self.bounds
-   358: 
-   359:         for i in range(len(parents)):
-   360:             # Select mating pool (neighborhood or whole population)
-   361:             if random.random() < self.delta:
-   362:                 pool = [parents[j] for j in self.neighbors[i % len(self.neighbors)]]
-   363:             else:
-   364:                 pool = parents
-   365: 
-   366:             # Select two parents from pool
-   367:             p1, p2 = random.sample(range(len(pool)), 2)
-   368:             child = deepcopy(pool[p1])
-   369: 
-   370:             # SBX crossover
-   371:             mate = deepcopy(pool[p2])
-   372:             if random.random() < 1.0:
-   373:                 tools.cxSimulatedBinaryBounded(child, mate, eta=self.cx_eta, low=lo, up=hi)
-   374: 
-   375:             # Polynomial mutation
-   376:             tools.mutPolynomialBounded(child, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob)
-   377:             del child.fitness.values
-   378:             offspring.append(child)
-   379: 
-   380:         return offspring
-   381: 
-   382:     def survive(self, population, offspring):
-   383:         """MOEA/D survival: update subproblems using Tchebycheff decomposition."""
-   384:         # Update ideal point
-   385:         all_inds = [ind for ind in population + offspring if ind.fitness.valid]
-   386:         if not all_inds:
-   387:             return population
-   388: 
-   389:         if self.z_star is None:
-   390:             self.z_star = [float('inf')] * self.n_obj
-   391:         for ind in all_inds:
-   392:             for j in range(self.n_obj):
-   393:                 if ind.fitness.values[j] < self.z_star[j]:
-   394:                     self.z_star[j] = ind.fitness.values[j]
-   395: 
-   396:         # Update each subproblem
-   397:         next_gen = list(population)
-   398:         for i in range(min(len(offspring), len(self.weights))):
-   399:             child = offspring[i]
-   400:             if not child.fitness.valid:
-   401:                 continue
-   402: 
-   403:             # Update neighbors
-   404:             neighbors_idx = self.neighbors[i % len(self.neighbors)]
-   405:             for j_idx in neighbors_idx:
-   406:                 if j_idx >= len(next_gen):
-   407:                     continue
-   408:                 g_child = self._tchebycheff(child.fitness.values, self.weights[j_idx], self.z_star)
-   409:                 g_current = self._tchebycheff(next_gen[j_idx].fitness.values, self.weights[j_idx], self.z_star)
-   410:                 if g_child < g_current:
-   411:                     next_gen[j_idx] = deepcopy(child)
-   412: 
-   413:         return next_gen[:self.pop_size]
-   414: 
-   415:     def on_generation(self, gen, population):
-   416:         pass
-   417: 
-   418: 
-   419: # ================================================================
-   420: # FIXED — Main evolution loop and evaluation (do not modify below)
-   421: # ================================================================
+Lines 159–278:
+   156: # ================================================================
+   157: 
+   158: 
+   159: 
+   160: class CustomMOEA:
+   161:     """MOEA/D: Multi-Objective Evolutionary Algorithm Based on Decomposition."""
+   162: 
+   163:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
+   164:         self.pop_size = pop_size
+   165:         self.n_obj = n_obj
+   166:         self.n_var = n_var
+   167:         self.bounds = bounds
+   168:         self.cx_eta = cx_eta
+   169:         self.mut_eta = mut_eta
+   170:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
+   171:         self.T = 20  # neighborhood size
+   172:         self.delta = 0.9  # probability of selecting from neighborhood
+   173: 
+   174:         # Generate weight vectors
+   175:         self.weights = self._generate_weights(pop_size, n_obj)
+   176:         self.pop_size = len(self.weights)  # adjust to actual number of weight vectors
+   177: 
+   178:         # Compute neighborhoods
+   179:         self.neighbors = self._compute_neighborhoods()
+   180: 
+   181:         # Ideal point (updated during search)
+   182:         self.z_star = None
+   183: 
+   184:     def _generate_weights(self, n, n_obj):
+   185:         """Generate uniformly distributed weight vectors."""
+   186:         if n_obj == 2:
+   187:             weights = []
+   188:             for i in range(n):
+   189:                 w1 = i / max(n - 1, 1)
+   190:                 weights.append([w1, 1.0 - w1])
+   191:             return np.array(weights)
+   192:         else:
+   193:             # Use DEAP's uniform reference points for 3+ objectives
+   194:             ref_points = tools.uniform_reference_points(n_obj, p=12)
+   195:             return np.array(ref_points)
+   196: 
+   197:     def _compute_neighborhoods(self):
+   198:         """Compute T-nearest weight vector neighborhoods."""
+   199:         from scipy.spatial.distance import cdist
+   200:         dist_matrix = cdist(self.weights, self.weights)
+   201:         neighbors = []
+   202:         for i in range(len(self.weights)):
+   203:             idx = np.argsort(dist_matrix[i])[:self.T]
+   204:             neighbors.append(idx.tolist())
+   205:         return neighbors
+   206: 
+   207:     def _tchebycheff(self, fitness_values, weight, z_star):
+   208:         """Tchebycheff scalarization."""
+   209:         return max(weight[j] * abs(fitness_values[j] - z_star[j])
+   210:                    for j in range(self.n_obj))
+   211: 
+   212:     def select(self, population, k):
+   213:         """MOEA/D doesn't use standard selection — return population as-is."""
+   214:         return [deepcopy(ind) for ind in population]
+   215: 
+   216:     def vary(self, parents):
+   217:         """Generate one offspring per subproblem using neighborhood mating."""
+   218:         offspring = []
+   219:         lo, hi = self.bounds
+   220: 
+   221:         for i in range(len(parents)):
+   222:             # Select mating pool (neighborhood or whole population)
+   223:             if random.random() < self.delta:
+   224:                 pool = [parents[j] for j in self.neighbors[i % len(self.neighbors)]]
+   225:             else:
+   226:                 pool = parents
+   227: 
+   228:             # Select two parents from pool
+   229:             p1, p2 = random.sample(range(len(pool)), 2)
+   230:             child = deepcopy(pool[p1])
+   231: 
+   232:             # SBX crossover
+   233:             mate = deepcopy(pool[p2])
+   234:             if random.random() < 1.0:
+   235:                 tools.cxSimulatedBinaryBounded(child, mate, eta=self.cx_eta, low=lo, up=hi)
+   236: 
+   237:             # Polynomial mutation
+   238:             tools.mutPolynomialBounded(child, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob)
+   239:             del child.fitness.values
+   240:             offspring.append(child)
+   241: 
+   242:         return offspring
+   243: 
+   244:     def survive(self, population, offspring):
+   245:         """MOEA/D survival: update subproblems using Tchebycheff decomposition."""
+   246:         # Update ideal point
+   247:         all_inds = [ind for ind in population + offspring if ind.fitness.valid]
+   248:         if not all_inds:
+   249:             return population
+   250: 
+   251:         if self.z_star is None:
+   252:             self.z_star = [float('inf')] * self.n_obj
+   253:         for ind in all_inds:
+   254:             for j in range(self.n_obj):
+   255:                 if ind.fitness.values[j] < self.z_star[j]:
+   256:                     self.z_star[j] = ind.fitness.values[j]
+   257: 
+   258:         # Update each subproblem
+   259:         next_gen = list(population)
+   260:         for i in range(min(len(offspring), len(self.weights))):
+   261:             child = offspring[i]
+   262:             if not child.fitness.valid:
+   263:                 continue
+   264: 
+   265:             # Update neighbors
+   266:             neighbors_idx = self.neighbors[i % len(self.neighbors)]
+   267:             for j_idx in neighbors_idx:
+   268:                 if j_idx >= len(next_gen):
+   269:                     continue
+   270:                 g_child = self._tchebycheff(child.fitness.values, self.weights[j_idx], self.z_star)
+   271:                 g_current = self._tchebycheff(next_gen[j_idx].fitness.values, self.weights[j_idx], self.z_star)
+   272:                 if g_child < g_current:
+   273:                     next_gen[j_idx] = deepcopy(child)
+   274: 
+   275:         return next_gen[:self.pop_size]
+   276: 
+   277:     def on_generation(self, gen, population):
+   278:         pass
+   279: 
+   280: 
+   281: # ================================================================
 ```
 
 ### `spea2` baseline — editable region  [READ-ONLY — reference implementation]
@@ -828,84 +743,82 @@ Lines 297–418:
 In `deap/custom_moea.py`:
 
 ```python
-Lines 297–367:
-   294: # ================================================================
-   295: 
-   296: 
-   297: 
-   298: class CustomMOEA:
-   299:     """SPEA2: Strength Pareto Evolutionary Algorithm 2."""
-   300: 
-   301:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
-   302:         self.pop_size = pop_size
-   303:         self.n_obj = n_obj
-   304:         self.n_var = n_var
-   305:         self.bounds = bounds
-   306:         self.cx_eta = cx_eta
-   307:         self.mut_eta = mut_eta
-   308:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
-   309:         self.archive = []
-   310: 
-   311:     def select(self, population, k):
-   312:         """Binary tournament selection using SPEA2 fitness from archive."""
-   313:         # Use archive for selection if available, otherwise population
-   314:         pool = self.archive if self.archive else population
-   315:         # Binary tournament on dominance
-   316:         selected = []
-   317:         for _ in range(k):
-   318:             i1, i2 = random.sample(range(len(pool)), 2)
-   319:             a, b = pool[i1], pool[i2]
-   320:             if a.fitness.dominates(b.fitness):
-   321:                 selected.append(deepcopy(a))
-   322:             elif b.fitness.dominates(a.fitness):
-   323:                 selected.append(deepcopy(b))
-   324:             else:
-   325:                 selected.append(deepcopy(random.choice([a, b])))
-   326:         return selected
-   327: 
-   328:     def vary(self, parents):
-   329:         """SBX crossover + polynomial mutation."""
-   330:         offspring = [deepcopy(ind) for ind in parents]
-   331:         lo, hi = self.bounds
-   332: 
-   333:         for i in range(0, len(offspring) - 1, 2):
-   334:             if random.random() < 0.9:
-   335:                 tools.cxSimulatedBinaryBounded(
-   336:                     offspring[i], offspring[i + 1],
-   337:                     eta=self.cx_eta, low=lo, up=hi,
-   338:                 )
-   339:                 del offspring[i].fitness.values
-   340:                 del offspring[i + 1].fitness.values
-   341: 
-   342:         for ind in offspring:
-   343:             if random.random() < 1.0:
-   344:                 tools.mutPolynomialBounded(
-   345:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
-   346:                 )
-   347:                 del ind.fitness.values
-   348: 
-   349:         return offspring
-   350: 
-   351:     def survive(self, population, offspring):
-   352:         """SPEA2 survival: strength fitness + kNN density truncation."""
-   353:         combined = population + offspring
-   354: 
-   355:         # Use DEAP's built-in SPEA2 selection
-   356:         selected = tools.selSPEA2(combined, self.pop_size)
-   357: 
-   358:         # Update archive with non-dominated solutions
-   359:         nd = get_nondominated(selected)
-   360:         self.archive = [deepcopy(ind) for ind in nd[:self.pop_size]]
-   361: 
-   362:         return selected
-   363: 
-   364:     def on_generation(self, gen, population):
-   365:         pass
-   366: 
-   367: 
-   368: # ================================================================
-   369: # FIXED — Main evolution loop and evaluation (do not modify below)
-   370: # ================================================================
+Lines 159–227:
+   156: # ================================================================
+   157: 
+   158: 
+   159: 
+   160: class CustomMOEA:
+   161:     """SPEA2: Strength Pareto Evolutionary Algorithm 2."""
+   162: 
+   163:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
+   164:         self.pop_size = pop_size
+   165:         self.n_obj = n_obj
+   166:         self.n_var = n_var
+   167:         self.bounds = bounds
+   168:         self.cx_eta = cx_eta
+   169:         self.mut_eta = mut_eta
+   170:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
+   171:         self.archive = []
+   172: 
+   173:     def select(self, population, k):
+   174:         """Binary tournament selection using SPEA2 fitness from archive."""
+   175:         # Use archive for selection if available, otherwise population
+   176:         pool = self.archive if self.archive else population
+   177:         # Binary tournament on dominance
+   178:         selected = []
+   179:         for _ in range(k):
+   180:             i1, i2 = random.sample(range(len(pool)), 2)
+   181:             a, b = pool[i1], pool[i2]
+   182:             if a.fitness.dominates(b.fitness):
+   183:                 selected.append(deepcopy(a))
+   184:             elif b.fitness.dominates(a.fitness):
+   185:                 selected.append(deepcopy(b))
+   186:             else:
+   187:                 selected.append(deepcopy(random.choice([a, b])))
+   188:         return selected
+   189: 
+   190:     def vary(self, parents):
+   191:         """SBX crossover + polynomial mutation."""
+   192:         offspring = [deepcopy(ind) for ind in parents]
+   193:         lo, hi = self.bounds
+   194: 
+   195:         for i in range(0, len(offspring) - 1, 2):
+   196:             if random.random() < 0.9:
+   197:                 tools.cxSimulatedBinaryBounded(
+   198:                     offspring[i], offspring[i + 1],
+   199:                     eta=self.cx_eta, low=lo, up=hi,
+   200:                 )
+   201:                 del offspring[i].fitness.values
+   202:                 del offspring[i + 1].fitness.values
+   203: 
+   204:         for ind in offspring:
+   205:             if random.random() < 1.0:
+   206:                 tools.mutPolynomialBounded(
+   207:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
+   208:                 )
+   209:                 del ind.fitness.values
+   210: 
+   211:         return offspring
+   212: 
+   213:     def survive(self, population, offspring):
+   214:         """SPEA2 survival: strength fitness + kNN density truncation."""
+   215:         combined = population + offspring
+   216: 
+   217:         # Use DEAP's built-in SPEA2 selection
+   218:         selected = tools.selSPEA2(combined, self.pop_size)
+   219: 
+   220:         # Update archive with non-dominated solutions
+   221:         nd = get_nondominated(selected)
+   222:         self.archive = [deepcopy(ind) for ind in nd[:self.pop_size]]
+   223: 
+   224:         return selected
+   225: 
+   226:     def on_generation(self, gen, population):
+   227:         pass
+   228: 
+   229: 
+   230: # ================================================================
 ```
 
 ### `nsga3` baseline — editable region  [READ-ONLY — reference implementation]
@@ -913,74 +826,72 @@ Lines 297–367:
 In `deap/custom_moea.py`:
 
 ```python
-Lines 297–357:
-   294: # ================================================================
-   295: 
-   296: 
-   297: 
-   298: class CustomMOEA:
-   299:     """NSGA-III: Non-dominated Sorting Genetic Algorithm III."""
-   300: 
-   301:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
-   302:         self.pop_size = pop_size
-   303:         self.n_obj = n_obj
-   304:         self.n_var = n_var
-   305:         self.bounds = bounds
-   306:         self.cx_eta = cx_eta
-   307:         self.mut_eta = mut_eta
-   308:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
-   309: 
-   310:         # Generate reference points
-   311:         if n_obj == 2:
-   312:             p = pop_size - 1  # number of divisions
-   313:             self.ref_points = tools.uniform_reference_points(n_obj, p=p)
-   314:         else:
-   315:             self.ref_points = tools.uniform_reference_points(n_obj, p=12)
-   316: 
-   317:     def select(self, population, k):
-   318:         """Random shuffle selection (NSGA-III relies on survive for diversity)."""
-   319:         selected = [deepcopy(ind) for ind in population]
-   320:         random.shuffle(selected)
-   321:         return selected[:k]
-   322: 
-   323:     def vary(self, parents):
-   324:         """SBX crossover + polynomial mutation."""
-   325:         offspring = [deepcopy(ind) for ind in parents]
-   326:         lo, hi = self.bounds
-   327: 
-   328:         for i in range(0, len(offspring) - 1, 2):
-   329:             if random.random() < 1.0:
-   330:                 tools.cxSimulatedBinaryBounded(
-   331:                     offspring[i], offspring[i + 1],
-   332:                     eta=self.cx_eta, low=lo, up=hi,
-   333:                 )
-   334:                 del offspring[i].fitness.values
-   335:                 del offspring[i + 1].fitness.values
-   336: 
-   337:         for ind in offspring:
-   338:             if random.random() < 1.0:
-   339:                 tools.mutPolynomialBounded(
-   340:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
-   341:                 )
-   342:                 del ind.fitness.values
-   343: 
-   344:         return offspring
-   345: 
-   346:     def survive(self, population, offspring):
-   347:         """NSGA-III survival: reference-point-based selection."""
-   348:         combined = population + offspring
-   349: 
-   350:         # Use DEAP's built-in NSGA-III selection
-   351:         selected = tools.selNSGA3(combined, self.pop_size, self.ref_points)
-   352:         return selected
-   353: 
-   354:     def on_generation(self, gen, population):
-   355:         pass
-   356: 
-   357: 
-   358: # ================================================================
-   359: # FIXED — Main evolution loop and evaluation (do not modify below)
-   360: # ================================================================
+Lines 159–217:
+   156: # ================================================================
+   157: 
+   158: 
+   159: 
+   160: class CustomMOEA:
+   161:     """NSGA-III: Non-dominated Sorting Genetic Algorithm III."""
+   162: 
+   163:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
+   164:         self.pop_size = pop_size
+   165:         self.n_obj = n_obj
+   166:         self.n_var = n_var
+   167:         self.bounds = bounds
+   168:         self.cx_eta = cx_eta
+   169:         self.mut_eta = mut_eta
+   170:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
+   171: 
+   172:         # Generate reference points
+   173:         if n_obj == 2:
+   174:             p = pop_size - 1  # number of divisions
+   175:             self.ref_points = tools.uniform_reference_points(n_obj, p=p)
+   176:         else:
+   177:             self.ref_points = tools.uniform_reference_points(n_obj, p=12)
+   178: 
+   179:     def select(self, population, k):
+   180:         """Random shuffle selection (NSGA-III relies on survive for diversity)."""
+   181:         selected = [deepcopy(ind) for ind in population]
+   182:         random.shuffle(selected)
+   183:         return selected[:k]
+   184: 
+   185:     def vary(self, parents):
+   186:         """SBX crossover + polynomial mutation."""
+   187:         offspring = [deepcopy(ind) for ind in parents]
+   188:         lo, hi = self.bounds
+   189: 
+   190:         for i in range(0, len(offspring) - 1, 2):
+   191:             if random.random() < 1.0:
+   192:                 tools.cxSimulatedBinaryBounded(
+   193:                     offspring[i], offspring[i + 1],
+   194:                     eta=self.cx_eta, low=lo, up=hi,
+   195:                 )
+   196:                 del offspring[i].fitness.values
+   197:                 del offspring[i + 1].fitness.values
+   198: 
+   199:         for ind in offspring:
+   200:             if random.random() < 1.0:
+   201:                 tools.mutPolynomialBounded(
+   202:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
+   203:                 )
+   204:                 del ind.fitness.values
+   205: 
+   206:         return offspring
+   207: 
+   208:     def survive(self, population, offspring):
+   209:         """NSGA-III survival: reference-point-based selection."""
+   210:         combined = population + offspring
+   211: 
+   212:         # Use DEAP's built-in NSGA-III selection
+   213:         selected = tools.selNSGA3(combined, self.pop_size, self.ref_points)
+   214:         return selected
+   215: 
+   216:     def on_generation(self, gen, population):
+   217:         pass
+   218: 
+   219: 
+   220: # ================================================================
 ```
 
 ### `rvea` baseline — editable region  [READ-ONLY — reference implementation]
@@ -988,166 +899,164 @@ Lines 297–357:
 In `deap/custom_moea.py`:
 
 ```python
-Lines 297–449:
-   294: # ================================================================
-   295: 
-   296: 
-   297: 
-   298: class CustomMOEA:
-   299:     """RVEA: Reference Vector Guided Evolutionary Algorithm."""
-   300: 
-   301:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
-   302:         self.pop_size = pop_size
-   303:         self.n_obj = n_obj
-   304:         self.n_var = n_var
-   305:         self.bounds = bounds
-   306:         self.cx_eta = cx_eta
-   307:         self.mut_eta = mut_eta
-   308:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
-   309:         self.alpha = 2.0  # penalty parameter for APD
-   310:         self.fr = 0.1  # frequency of reference vector adaptation
+Lines 159–309:
+   156: # ================================================================
+   157: 
+   158: 
+   159: 
+   160: class CustomMOEA:
+   161:     """RVEA: Reference Vector Guided Evolutionary Algorithm."""
+   162: 
+   163:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
+   164:         self.pop_size = pop_size
+   165:         self.n_obj = n_obj
+   166:         self.n_var = n_var
+   167:         self.bounds = bounds
+   168:         self.cx_eta = cx_eta
+   169:         self.mut_eta = mut_eta
+   170:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
+   171:         self.alpha = 2.0  # penalty parameter for APD
+   172:         self.fr = 0.1  # frequency of reference vector adaptation
+   173: 
+   174:         # Generate initial reference vectors
+   175:         if n_obj == 2:
+   176:             p = pop_size - 1
+   177:             self.ref_vectors = np.array(tools.uniform_reference_points(n_obj, p=p))
+   178:         else:
+   179:             self.ref_vectors = np.array(tools.uniform_reference_points(n_obj, p=12))
+   180:         self.ref_vectors_initial = self.ref_vectors.copy()
+   181: 
+   182:         # Normalize reference vectors to unit length
+   183:         norms = np.linalg.norm(self.ref_vectors, axis=1, keepdims=True)
+   184:         norms[norms < 1e-12] = 1e-12
+   185:         self.ref_vectors = self.ref_vectors / norms
+   186: 
+   187:     def _angle_penalized_distance(self, fitness_values, gen, max_gen):
+   188:         """Compute angle-penalized distance for each individual to its closest reference vector."""
+   189:         F = np.array(fitness_values)
+   190:         n = len(F)
+   191:         n_ref = len(self.ref_vectors)
+   192: 
+   193:         if n == 0:
+   194:             return np.array([]), np.array([])
+   195: 
+   196:         # Translate objectives (subtract ideal point)
+   197:         z_min = np.min(F, axis=0)
+   198:         F_translated = F - z_min + 1e-12
+   199: 
+   200:         # Compute angles between each individual and each reference vector
+   201:         # cos(theta) = (F . v) / (||F|| * ||v||)
+   202:         F_norms = np.linalg.norm(F_translated, axis=1, keepdims=True)
+   203:         F_norms[F_norms < 1e-12] = 1e-12
+   204:         F_normalized = F_translated / F_norms
+   205: 
+   206:         # Cosine similarity
+   207:         cos_angles = F_normalized @ self.ref_vectors.T  # (n, n_ref)
+   208:         cos_angles = np.clip(cos_angles, -1.0, 1.0)
+   209:         angles = np.arccos(cos_angles)  # (n, n_ref)
+   210: 
+   211:         # Associate each individual with closest reference vector
+   212:         associations = np.argmin(angles, axis=1)  # (n,)
+   213:         min_angles = angles[np.arange(n), associations]  # (n,)
+   214: 
+   215:         # Compute convergence (distance along reference vector)
+   216:         convergence = F_norms.flatten()
+   217: 
+   218:         # Angle penalty that increases over generations
+   219:         gamma = self.alpha * (gen / max(max_gen, 1)) ** 2
+   220: 
+   221:         # APD = convergence * (1 + gamma * angle)
+   222:         apd = convergence * (1.0 + gamma * min_angles)
+   223: 
+   224:         return apd, associations
+   225: 
+   226:     def select(self, population, k):
+   227:         """Random mating selection."""
+   228:         selected = [deepcopy(ind) for ind in population]
+   229:         random.shuffle(selected)
+   230:         return selected[:k]
+   231: 
+   232:     def vary(self, parents):
+   233:         """SBX crossover + polynomial mutation."""
+   234:         offspring = [deepcopy(ind) for ind in parents]
+   235:         lo, hi = self.bounds
+   236: 
+   237:         for i in range(0, len(offspring) - 1, 2):
+   238:             if random.random() < 1.0:
+   239:                 tools.cxSimulatedBinaryBounded(
+   240:                     offspring[i], offspring[i + 1],
+   241:                     eta=self.cx_eta, low=lo, up=hi,
+   242:                 )
+   243:                 del offspring[i].fitness.values
+   244:                 del offspring[i + 1].fitness.values
+   245: 
+   246:         for ind in offspring:
+   247:             if random.random() < 1.0:
+   248:                 tools.mutPolynomialBounded(
+   249:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
+   250:                 )
+   251:                 del ind.fitness.values
+   252: 
+   253:         return offspring
+   254: 
+   255:     def survive(self, population, offspring):
+   256:         """RVEA survival: angle-penalized distance based selection."""
+   257:         combined = population + offspring
+   258:         valid = [ind for ind in combined if ind.fitness.valid]
+   259: 
+   260:         if len(valid) <= self.pop_size:
+   261:             return valid
+   262: 
+   263:         fitness_values = [ind.fitness.values for ind in valid]
+   264:         # Use a large gen estimate based on problem config
+   265:         max_gen = 400
+   266:         gen_estimate = getattr(self, '_current_gen', max_gen // 2)
+   267:         apd, associations = self._angle_penalized_distance(fitness_values, gen_estimate, max_gen)
+   268: 
+   269:         # Select the best individual per reference vector (lowest APD)
+   270:         selected_indices = set()
+   271:         n_ref = len(self.ref_vectors)
+   272:         for v in range(n_ref):
+   273:             mask = np.where(associations == v)[0]
+   274:             if len(mask) > 0:
+   275:                 best_idx = mask[np.argmin(apd[mask])]
+   276:                 selected_indices.add(best_idx)
+   277: 
+   278:         # If not enough, fill with best remaining by APD
+   279:         if len(selected_indices) < self.pop_size:
+   280:             remaining = [i for i in range(len(valid)) if i not in selected_indices]
+   281:             remaining.sort(key=lambda i: apd[i])
+   282:             for i in remaining:
+   283:                 selected_indices.add(i)
+   284:                 if len(selected_indices) >= self.pop_size:
+   285:                     break
+   286: 
+   287:         # If too many (more ref vectors than pop_size), truncate by APD
+   288:         selected_list = sorted(selected_indices, key=lambda i: apd[i])[:self.pop_size]
+   289:         return [valid[i] for i in selected_list]
+   290: 
+   291:     def on_generation(self, gen, population):
+   292:         """Adapt reference vectors periodically."""
+   293:         self._current_gen = gen
+   294: 
+   295:         # Reference vector adaptation
+   296:         max_gen = 400
+   297:         if gen % max(1, int(self.fr * max_gen)) == 0 and len(population) > 0:
+   298:             fitness_values = np.array([ind.fitness.values for ind in population if ind.fitness.valid])
+   299:             if len(fitness_values) > 0:
+   300:                 z_max = np.max(fitness_values, axis=0)
+   301:                 z_min = np.min(fitness_values, axis=0)
+   302:                 scale = z_max - z_min
+   303:                 scale[scale < 1e-12] = 1.0
+   304: 
+   305:                 # Scale reference vectors
+   306:                 self.ref_vectors = self.ref_vectors_initial * scale
+   307:                 norms = np.linalg.norm(self.ref_vectors, axis=1, keepdims=True)
+   308:                 norms[norms < 1e-12] = 1e-12
+   309:                 self.ref_vectors = self.ref_vectors / norms
+   310: 
    311: 
-   312:         # Generate initial reference vectors
-   313:         if n_obj == 2:
-   314:             p = pop_size - 1
-   315:             self.ref_vectors = np.array(tools.uniform_reference_points(n_obj, p=p))
-   316:         else:
-   317:             self.ref_vectors = np.array(tools.uniform_reference_points(n_obj, p=12))
-   318:         self.ref_vectors_initial = self.ref_vectors.copy()
-   319: 
-   320:         # Normalize reference vectors to unit length
-   321:         norms = np.linalg.norm(self.ref_vectors, axis=1, keepdims=True)
-   322:         norms[norms < 1e-12] = 1e-12
-   323:         self.ref_vectors = self.ref_vectors / norms
-   324: 
-   325:     def _angle_penalized_distance(self, fitness_values, gen, max_gen):
-   326:         """Compute angle-penalized distance for each individual to its closest reference vector."""
-   327:         F = np.array(fitness_values)
-   328:         n = len(F)
-   329:         n_ref = len(self.ref_vectors)
-   330: 
-   331:         if n == 0:
-   332:             return np.array([]), np.array([])
-   333: 
-   334:         # Translate objectives (subtract ideal point)
-   335:         z_min = np.min(F, axis=0)
-   336:         F_translated = F - z_min + 1e-12
-   337: 
-   338:         # Compute angles between each individual and each reference vector
-   339:         # cos(theta) = (F . v) / (||F|| * ||v||)
-   340:         F_norms = np.linalg.norm(F_translated, axis=1, keepdims=True)
-   341:         F_norms[F_norms < 1e-12] = 1e-12
-   342:         F_normalized = F_translated / F_norms
-   343: 
-   344:         # Cosine similarity
-   345:         cos_angles = F_normalized @ self.ref_vectors.T  # (n, n_ref)
-   346:         cos_angles = np.clip(cos_angles, -1.0, 1.0)
-   347:         angles = np.arccos(cos_angles)  # (n, n_ref)
-   348: 
-   349:         # Associate each individual with closest reference vector
-   350:         associations = np.argmin(angles, axis=1)  # (n,)
-   351:         min_angles = angles[np.arange(n), associations]  # (n,)
-   352: 
-   353:         # Compute convergence (distance along reference vector)
-   354:         convergence = F_norms.flatten()
-   355: 
-   356:         # Angle penalty that increases over generations
-   357:         gamma = self.alpha * (gen / max(max_gen, 1)) ** 2
-   358: 
-   359:         # APD = convergence * (1 + gamma * angle)
-   360:         apd = convergence * (1.0 + gamma * min_angles)
-   361: 
-   362:         return apd, associations
-   363: 
-   364:     def select(self, population, k):
-   365:         """Random mating selection."""
-   366:         selected = [deepcopy(ind) for ind in population]
-   367:         random.shuffle(selected)
-   368:         return selected[:k]
-   369: 
-   370:     def vary(self, parents):
-   371:         """SBX crossover + polynomial mutation."""
-   372:         offspring = [deepcopy(ind) for ind in parents]
-   373:         lo, hi = self.bounds
-   374: 
-   375:         for i in range(0, len(offspring) - 1, 2):
-   376:             if random.random() < 1.0:
-   377:                 tools.cxSimulatedBinaryBounded(
-   378:                     offspring[i], offspring[i + 1],
-   379:                     eta=self.cx_eta, low=lo, up=hi,
-   380:                 )
-   381:                 del offspring[i].fitness.values
-   382:                 del offspring[i + 1].fitness.values
-   383: 
-   384:         for ind in offspring:
-   385:             if random.random() < 1.0:
-   386:                 tools.mutPolynomialBounded(
-   387:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
-   388:                 )
-   389:                 del ind.fitness.values
-   390: 
-   391:         return offspring
-   392: 
-   393:     def survive(self, population, offspring):
-   394:         """RVEA survival: angle-penalized distance based selection."""
-   395:         combined = population + offspring
-   396:         valid = [ind for ind in combined if ind.fitness.valid]
-   397: 
-   398:         if len(valid) <= self.pop_size:
-   399:             return valid
-   400: 
-   401:         fitness_values = [ind.fitness.values for ind in valid]
-   402:         # Use a large gen estimate based on problem config
-   403:         max_gen = 400
-   404:         gen_estimate = getattr(self, '_current_gen', max_gen // 2)
-   405:         apd, associations = self._angle_penalized_distance(fitness_values, gen_estimate, max_gen)
-   406: 
-   407:         # Select the best individual per reference vector (lowest APD)
-   408:         selected_indices = set()
-   409:         n_ref = len(self.ref_vectors)
-   410:         for v in range(n_ref):
-   411:             mask = np.where(associations == v)[0]
-   412:             if len(mask) > 0:
-   413:                 best_idx = mask[np.argmin(apd[mask])]
-   414:                 selected_indices.add(best_idx)
-   415: 
-   416:         # If not enough, fill with best remaining by APD
-   417:         if len(selected_indices) < self.pop_size:
-   418:             remaining = [i for i in range(len(valid)) if i not in selected_indices]
-   419:             remaining.sort(key=lambda i: apd[i])
-   420:             for i in remaining:
-   421:                 selected_indices.add(i)
-   422:                 if len(selected_indices) >= self.pop_size:
-   423:                     break
-   424: 
-   425:         # If too many (more ref vectors than pop_size), truncate by APD
-   426:         selected_list = sorted(selected_indices, key=lambda i: apd[i])[:self.pop_size]
-   427:         return [valid[i] for i in selected_list]
-   428: 
-   429:     def on_generation(self, gen, population):
-   430:         """Adapt reference vectors periodically."""
-   431:         self._current_gen = gen
-   432: 
-   433:         # Reference vector adaptation
-   434:         max_gen = 400
-   435:         if gen % max(1, int(self.fr * max_gen)) == 0 and len(population) > 0:
-   436:             fitness_values = np.array([ind.fitness.values for ind in population if ind.fitness.valid])
-   437:             if len(fitness_values) > 0:
-   438:                 z_max = np.max(fitness_values, axis=0)
-   439:                 z_min = np.min(fitness_values, axis=0)
-   440:                 scale = z_max - z_min
-   441:                 scale[scale < 1e-12] = 1.0
-   442: 
-   443:                 # Scale reference vectors
-   444:                 self.ref_vectors = self.ref_vectors_initial * scale
-   445:                 norms = np.linalg.norm(self.ref_vectors, axis=1, keepdims=True)
-   446:                 norms[norms < 1e-12] = 1e-12
-   447:                 self.ref_vectors = self.ref_vectors / norms
-   448: 
-   449: 
-   450: # ================================================================
-   451: # FIXED — Main evolution loop and evaluation (do not modify below)
-   452: # ================================================================
+   312: # ================================================================
 ```
 
 ### `agemoea` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1155,190 +1064,188 @@ Lines 297–449:
 In `deap/custom_moea.py`:
 
 ```python
-Lines 297–473:
-   294: # ================================================================
-   295: 
-   296: 
+Lines 159–333:
+   156: # ================================================================
+   157: 
+   158: 
+   159: 
+   160: class CustomMOEA:
+   161:     """AGE-MOEA: Adaptive Geometry Estimation based MOEA."""
+   162: 
+   163:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
+   164:         self.pop_size = pop_size
+   165:         self.n_obj = n_obj
+   166:         self.n_var = n_var
+   167:         self.bounds = bounds
+   168:         self.cx_eta = cx_eta
+   169:         self.mut_eta = mut_eta
+   170:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
+   171: 
+   172:     def _estimate_geometry(self, front_values):
+   173:         """Estimate the geometry parameter p of the Pareto front.
+   174: 
+   175:         Uses the relationship between Lp-norm and front shape:
+   176:         p=1: linear front (like DTLZ1)
+   177:         p=2: spherical front (like DTLZ2)
+   178:         p->inf: rectangular front
+   179:         """
+   180:         if len(front_values) < 2 or self.n_obj < 2:
+   181:             return 1.0
+   182: 
+   183:         F = np.array(front_values)
+   184: 
+   185:         # Normalize objectives
+   186:         z_min = np.min(F, axis=0)
+   187:         z_max = np.max(F, axis=0)
+   188:         scale = z_max - z_min
+   189:         scale[scale < 1e-12] = 1.0
+   190:         F_norm = (F - z_min) / scale
+   191: 
+   192:         # Find extreme points (closest to axes)
+   193:         extremes = []
+   194:         for m in range(self.n_obj):
+   195:             # Point with smallest value on objective m
+   196:             idx = np.argmin(F_norm[:, m])
+   197:             extremes.append(F_norm[idx])
+   198: 
+   199:         if len(extremes) < 2:
+   200:             return 1.0
+   201: 
+   202:         # Estimate p from extreme points
+   203:         # For an Lp-norm sphere of radius r: sum(|x_i/r|^p) = 1
+   204:         # Use the median point on the front to estimate p
+   205:         median_idx = len(F_norm) // 2
+   206:         median_point = np.sort(F_norm, axis=0)[median_idx]
+   207: 
+   208:         # Avoid zero/negative values
+   209:         median_point = np.maximum(median_point, 1e-8)
+   210: 
+   211:         # Binary search for p
+   212:         p_low, p_high = 0.1, 20.0
+   213:         for _ in range(50):
+   214:             p_mid = (p_low + p_high) / 2
+   215:             lp_val = np.sum(median_point ** p_mid)
+   216:             if lp_val > 1.0:
+   217:                 p_low = p_mid
+   218:             else:
+   219:                 p_high = p_mid
+   220:         p = (p_low + p_high) / 2
+   221:         return max(0.1, min(p, 20.0))
+   222: 
+   223:     def _survival_score(self, front_values, p):
+   224:         """Compute survival score based on Lp-distance-based crowding."""
+   225:         F = np.array(front_values)
+   226:         n = len(F)
+   227:         if n <= 2:
+   228:             return np.full(n, float('inf'))
+   229: 
+   230:         # Normalize
+   231:         z_min = np.min(F, axis=0)
+   232:         z_max = np.max(F, axis=0)
+   233:         scale = z_max - z_min
+   234:         scale[scale < 1e-12] = 1.0
+   235:         F_norm = (F - z_min) / scale
+   236: 
+   237:         # Compute pairwise Lp-distances
+   238:         scores = np.zeros(n)
+   239:         for i in range(n):
+   240:             dists = []
+   241:             for j in range(n):
+   242:                 if i == j:
+   243:                     continue
+   244:                 diff = np.abs(F_norm[i] - F_norm[j])
+   245:                 lp_dist = np.sum(diff ** p) ** (1.0 / p)
+   246:                 dists.append(lp_dist)
+   247:             dists.sort()
+   248:             # Use nearest neighbor distance as diversity score
+   249:             if dists:
+   250:                 scores[i] = dists[0]
+   251:             else:
+   252:                 scores[i] = 0.0
+   253: 
+   254:         return scores
+   255: 
+   256:     def select(self, population, k):
+   257:         """Binary tournament selection based on non-domination rank."""
+   258:         fronts = tools.sortNondominated(population, len(population), first_front_only=False)
+   259:         # Assign rank
+   260:         for rank, front in enumerate(fronts):
+   261:             for ind in front:
+   262:                 ind.fitness.crowding_dist = 0.0  # reset
+   263:                 ind._rank = rank
+   264:         # Tournament
+   265:         selected = []
+   266:         for _ in range(k):
+   267:             i1, i2 = random.sample(range(len(population)), 2)
+   268:             a, b = population[i1], population[i2]
+   269:             if a._rank < b._rank:
+   270:                 selected.append(deepcopy(a))
+   271:             elif b._rank < a._rank:
+   272:                 selected.append(deepcopy(b))
+   273:             else:
+   274:                 selected.append(deepcopy(random.choice([a, b])))
+   275:         return selected
+   276: 
+   277:     def vary(self, parents):
+   278:         """SBX crossover + polynomial mutation."""
+   279:         offspring = [deepcopy(ind) for ind in parents]
+   280:         lo, hi = self.bounds
+   281: 
+   282:         for i in range(0, len(offspring) - 1, 2):
+   283:             if random.random() < 0.9:
+   284:                 tools.cxSimulatedBinaryBounded(
+   285:                     offspring[i], offspring[i + 1],
+   286:                     eta=self.cx_eta, low=lo, up=hi,
+   287:                 )
+   288:                 del offspring[i].fitness.values
+   289:                 del offspring[i + 1].fitness.values
+   290: 
+   291:         for ind in offspring:
+   292:             if random.random() < 1.0:
+   293:                 tools.mutPolynomialBounded(
+   294:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
+   295:                 )
+   296:                 del ind.fitness.values
    297: 
-   298: class CustomMOEA:
-   299:     """AGE-MOEA: Adaptive Geometry Estimation based MOEA."""
-   300: 
-   301:     def __init__(self, pop_size, n_obj, n_var, bounds, cx_eta=20.0, mut_eta=20.0, mut_prob=None):
-   302:         self.pop_size = pop_size
-   303:         self.n_obj = n_obj
-   304:         self.n_var = n_var
-   305:         self.bounds = bounds
-   306:         self.cx_eta = cx_eta
-   307:         self.mut_eta = mut_eta
-   308:         self.mut_prob = mut_prob if mut_prob is not None else 1.0 / n_var
-   309: 
-   310:     def _estimate_geometry(self, front_values):
-   311:         """Estimate the geometry parameter p of the Pareto front.
-   312: 
-   313:         Uses the relationship between Lp-norm and front shape:
-   314:         p=1: linear front (like DTLZ1)
-   315:         p=2: spherical front (like DTLZ2)
-   316:         p->inf: rectangular front
-   317:         """
-   318:         if len(front_values) < 2 or self.n_obj < 2:
-   319:             return 1.0
-   320: 
-   321:         F = np.array(front_values)
-   322: 
-   323:         # Normalize objectives
-   324:         z_min = np.min(F, axis=0)
-   325:         z_max = np.max(F, axis=0)
-   326:         scale = z_max - z_min
-   327:         scale[scale < 1e-12] = 1.0
-   328:         F_norm = (F - z_min) / scale
+   298:         return offspring
+   299: 
+   300:     def survive(self, population, offspring):
+   301:         """AGE-MOEA survival: adaptive geometry-based selection."""
+   302:         combined = population + offspring
+   303: 
+   304:         # Non-dominated sorting
+   305:         fronts = tools.sortNondominated(combined, len(combined), first_front_only=False)
+   306: 
+   307:         next_gen = []
+   308:         for front_idx, front in enumerate(fronts):
+   309:             if len(next_gen) + len(front) <= self.pop_size:
+   310:                 next_gen.extend(front)
+   311:             else:
+   312:                 remaining = self.pop_size - len(next_gen)
+   313:                 if remaining <= 0:
+   314:                     break
+   315: 
+   316:                 # Estimate geometry from the first front
+   317:                 first_front_values = [ind.fitness.values for ind in fronts[0]]
+   318:                 p = self._estimate_geometry(first_front_values)
+   319: 
+   320:                 # Compute survival scores for the critical front
+   321:                 front_values = [ind.fitness.values for ind in front]
+   322:                 scores = self._survival_score(front_values, p)
+   323: 
+   324:                 # Select individuals with highest diversity scores
+   325:                 sorted_indices = np.argsort(-scores)  # descending
+   326:                 for idx in sorted_indices[:remaining]:
+   327:                     next_gen.append(front[idx])
+   328:                 break
    329: 
-   330:         # Find extreme points (closest to axes)
-   331:         extremes = []
-   332:         for m in range(self.n_obj):
-   333:             # Point with smallest value on objective m
-   334:             idx = np.argmin(F_norm[:, m])
-   335:             extremes.append(F_norm[idx])
-   336: 
-   337:         if len(extremes) < 2:
-   338:             return 1.0
-   339: 
-   340:         # Estimate p from extreme points
-   341:         # For an Lp-norm sphere of radius r: sum(|x_i/r|^p) = 1
-   342:         # Use the median point on the front to estimate p
-   343:         median_idx = len(F_norm) // 2
-   344:         median_point = np.sort(F_norm, axis=0)[median_idx]
-   345: 
-   346:         # Avoid zero/negative values
-   347:         median_point = np.maximum(median_point, 1e-8)
-   348: 
-   349:         # Binary search for p
-   350:         p_low, p_high = 0.1, 20.0
-   351:         for _ in range(50):
-   352:             p_mid = (p_low + p_high) / 2
-   353:             lp_val = np.sum(median_point ** p_mid)
-   354:             if lp_val > 1.0:
-   355:                 p_low = p_mid
-   356:             else:
-   357:                 p_high = p_mid
-   358:         p = (p_low + p_high) / 2
-   359:         return max(0.1, min(p, 20.0))
-   360: 
-   361:     def _survival_score(self, front_values, p):
-   362:         """Compute survival score based on Lp-distance-based crowding."""
-   363:         F = np.array(front_values)
-   364:         n = len(F)
-   365:         if n <= 2:
-   366:             return np.full(n, float('inf'))
-   367: 
-   368:         # Normalize
-   369:         z_min = np.min(F, axis=0)
-   370:         z_max = np.max(F, axis=0)
-   371:         scale = z_max - z_min
-   372:         scale[scale < 1e-12] = 1.0
-   373:         F_norm = (F - z_min) / scale
-   374: 
-   375:         # Compute pairwise Lp-distances
-   376:         scores = np.zeros(n)
-   377:         for i in range(n):
-   378:             dists = []
-   379:             for j in range(n):
-   380:                 if i == j:
-   381:                     continue
-   382:                 diff = np.abs(F_norm[i] - F_norm[j])
-   383:                 lp_dist = np.sum(diff ** p) ** (1.0 / p)
-   384:                 dists.append(lp_dist)
-   385:             dists.sort()
-   386:             # Use nearest neighbor distance as diversity score
-   387:             if dists:
-   388:                 scores[i] = dists[0]
-   389:             else:
-   390:                 scores[i] = 0.0
-   391: 
-   392:         return scores
-   393: 
-   394:     def select(self, population, k):
-   395:         """Binary tournament selection based on non-domination rank."""
-   396:         fronts = tools.sortNondominated(population, len(population), first_front_only=False)
-   397:         # Assign rank
-   398:         for rank, front in enumerate(fronts):
-   399:             for ind in front:
-   400:                 ind.fitness.crowding_dist = 0.0  # reset
-   401:                 ind._rank = rank
-   402:         # Tournament
-   403:         selected = []
-   404:         for _ in range(k):
-   405:             i1, i2 = random.sample(range(len(population)), 2)
-   406:             a, b = population[i1], population[i2]
-   407:             if a._rank < b._rank:
-   408:                 selected.append(deepcopy(a))
-   409:             elif b._rank < a._rank:
-   410:                 selected.append(deepcopy(b))
-   411:             else:
-   412:                 selected.append(deepcopy(random.choice([a, b])))
-   413:         return selected
-   414: 
-   415:     def vary(self, parents):
-   416:         """SBX crossover + polynomial mutation."""
-   417:         offspring = [deepcopy(ind) for ind in parents]
-   418:         lo, hi = self.bounds
-   419: 
-   420:         for i in range(0, len(offspring) - 1, 2):
-   421:             if random.random() < 0.9:
-   422:                 tools.cxSimulatedBinaryBounded(
-   423:                     offspring[i], offspring[i + 1],
-   424:                     eta=self.cx_eta, low=lo, up=hi,
-   425:                 )
-   426:                 del offspring[i].fitness.values
-   427:                 del offspring[i + 1].fitness.values
-   428: 
-   429:         for ind in offspring:
-   430:             if random.random() < 1.0:
-   431:                 tools.mutPolynomialBounded(
-   432:                     ind, eta=self.mut_eta, low=lo, up=hi, indpb=self.mut_prob,
-   433:                 )
-   434:                 del ind.fitness.values
-   435: 
-   436:         return offspring
-   437: 
-   438:     def survive(self, population, offspring):
-   439:         """AGE-MOEA survival: adaptive geometry-based selection."""
-   440:         combined = population + offspring
-   441: 
-   442:         # Non-dominated sorting
-   443:         fronts = tools.sortNondominated(combined, len(combined), first_front_only=False)
-   444: 
-   445:         next_gen = []
-   446:         for front_idx, front in enumerate(fronts):
-   447:             if len(next_gen) + len(front) <= self.pop_size:
-   448:                 next_gen.extend(front)
-   449:             else:
-   450:                 remaining = self.pop_size - len(next_gen)
-   451:                 if remaining <= 0:
-   452:                     break
-   453: 
-   454:                 # Estimate geometry from the first front
-   455:                 first_front_values = [ind.fitness.values for ind in fronts[0]]
-   456:                 p = self._estimate_geometry(first_front_values)
-   457: 
-   458:                 # Compute survival scores for the critical front
-   459:                 front_values = [ind.fitness.values for ind in front]
-   460:                 scores = self._survival_score(front_values, p)
-   461: 
-   462:                 # Select individuals with highest diversity scores
-   463:                 sorted_indices = np.argsort(-scores)  # descending
-   464:                 for idx in sorted_indices[:remaining]:
-   465:                     next_gen.append(front[idx])
-   466:                 break
-   467: 
-   468:         return next_gen
-   469: 
-   470:     def on_generation(self, gen, population):
-   471:         pass
-   472: 
-   473: 
-   474: # ================================================================
-   475: # FIXED — Main evolution loop and evaluation (do not modify below)
-   476: # ================================================================
+   330:         return next_gen
+   331: 
+   332:     def on_generation(self, gen, population):
+   333:         pass
+   334: 
+   335: 
+   336: # ================================================================
 ```
 
 

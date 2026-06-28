@@ -34,13 +34,18 @@ _PROJECT_ROOT = _HERE.parents[3]
 sys.path.insert(0, str(_PROJECT_ROOT / "holdout" / "causal-discovery-discrete"))
 import dgp  # host-only (never bind-mounted into the agent container)
 
+# The runtime seed list is chosen by the harness from the global config and is
+# NOT known at workspace-setup time (mid_edit only sees the task config). We
+# pre-generate inputs for the task's declared seeds plus the standard seed set so
+# that whichever seeds the harness runs are always covered.
+_STANDARD_SEEDS = [42, 123, 456]
 try:
     _cfg = json.loads((_TASK_DIR / "config.json").read_text())
     _LABELS = [e.get("label") for e in _cfg.get("test_cmds", []) if e.get("label")]
-    _SEEDS = _cfg.get("seeds") or [42]
+    _SEEDS = sorted(set((_cfg.get("seeds") or []) + _STANDARD_SEEDS))
 except Exception:
     _LABELS = ["Cancer", "Child", "Alarm", "Hailfinder", "Win95pts"]
-    _SEEDS = [42]
+    _SEEDS = list(_STANDARD_SEEDS)
 
 
 def _encode_input(label, seed):
@@ -63,10 +68,16 @@ OPS = [
     },
 ]
 
+# The pre-generated input file is named by an OPAQUE token (host-only salted hash
+# of the config label) -- never the config label / network name -- so the agent's
+# process cannot read the network identity from the workspace filename and
+# reconstruct the ground-truth DAG. The host-side scorer keeps using the real
+# config label, so leaderboard keys are unchanged.
 for _label in _LABELS:
+    _token = dgp.opaque_label(_label)
     for _seed in _SEEDS:
         OPS.append({
             "op": "create",
-            "file": f"causal-bnlearn/bench/_causal_inputs/{_label}_seed{_seed}.npz.b64",
+            "file": f"causal-bnlearn/bench/_causal_inputs/{_token}_seed{_seed}.npz.b64",
             "content": _encode_input(_label, _seed),
         })

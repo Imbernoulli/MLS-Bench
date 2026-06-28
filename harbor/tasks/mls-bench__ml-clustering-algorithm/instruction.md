@@ -65,11 +65,11 @@ stay unchanged.
      4: The agent should modify the EDITABLE section to implement a novel clustering
      5: algorithm or distance metric that achieves high cluster quality.
      6: 
-     7: Datasets (selected by $ENV):
-     8:   - blobs:          Isotropic Gaussian blobs (varying cluster sizes)
-     9:   - moons:          Two interleaving half-circles + noise
-    10:   - varied_density: Clusters with different densities and sizes
-    11:   - digits:         Real-world: sklearn Digits (8x8 images of handwritten digits)
+     7: Several standard clustering datasets are used for evaluation (a mix of
+     8: synthetic and real, with differing shapes, densities, and cluster counts).
+     9: The specific datasets, their parameters, and which $ENV maps to which are
+    10: deliberately withheld from this file; your algorithm receives the standardized
+    11: feature matrix and the (metadata) number of clusters, and must generalize.
     12: 
     13: Metrics: ARI (Adjusted Rand Index), NMI (Normalized Mutual Information),
     14:          Silhouette Score
@@ -79,7 +79,7 @@ stay unchanged.
     18: import sys
     19: import warnings
     20: import numpy as np
-    21: from sklearn.datasets import make_blobs, make_moons, load_digits
+    21: # (dataset generators live in the host-only scoring module; eval datasets not named here)
     22: from sklearn.preprocessing import StandardScaler
     23: from sklearn.metrics import (
     24:     adjusted_rand_score,
@@ -168,107 +168,56 @@ stay unchanged.
    107: 
    108: 
    109: # ================================================================
-   110: # FIXED -- do not modify below this line
-   111: # ================================================================
-   112: 
-   113: 
-   114: def generate_dataset(env_name, seed=42):
-   115:     """Generate or load the dataset for the given environment."""
-   116:     rng = np.random.RandomState(seed)
+   110: # ================================================================
+   111: # FIXED -- input loading + prediction emit (do not modify below this line)
+   112: # ================================================================
+   113: # The dataset generator (incl. identity), the true labels, and the metrics live
+   114: # in a host-only module the agent's process cannot import. This program loads
+   115: # the pre-generated standardized matrix, runs the clusterer, and emits the
+   116: # cluster labels; the host-side parser regenerates the truth and scores it.
    117: 
-   118:     if env_name == "blobs":
-   119:         X, y = make_blobs(
-   120:             n_samples=1500,
-   121:             centers=5,
-   122:             cluster_std=[0.8, 1.2, 0.5, 1.5, 1.0],
-   123:             random_state=seed,
-   124:         )
-   125:         n_clusters_true = 5
-   126:     elif env_name == "moons":
-   127:         X, y = make_moons(n_samples=1000, noise=0.08, random_state=seed)
-   128:         n_clusters_true = 2
-   129:     elif env_name == "varied_density":
-   130:         # Three clusters with very different densities
-   131:         X1, y1 = make_blobs(
-   132:             n_samples=500, centers=[[0, 0]], cluster_std=0.3, random_state=seed
-   133:         )
-   134:         X2, y2 = make_blobs(
-   135:             n_samples=300,
-   136:             centers=[[4, 4]],
-   137:             cluster_std=1.5,
-   138:             random_state=seed + 1,
-   139:         )
-   140:         X3, y3 = make_blobs(
-   141:             n_samples=200,
-   142:             centers=[[-3, 5]],
-   143:             cluster_std=0.6,
-   144:             random_state=seed + 2,
-   145:         )
-   146:         X = np.vstack([X1, X2, X3])
-   147:         y = np.concatenate([y1, y2 + 1, y3 + 2])
-   148:         n_clusters_true = 3
-   149:     elif env_name == "digits":
-   150:         digits = load_digits()
-   151:         X, y = digits.data, digits.target
-   152:         n_clusters_true = 10
-   153:     else:
-   154:         raise ValueError(f"Unknown environment: {env_name}")
-   155: 
-   156:     return X, y, n_clusters_true
+   118: 
+   119: def _cluster_inputs_dir():
+   120:     d = os.environ.get("CLUSTER_INPUTS_DIR")
+   121:     if d:
+   122:         return d
+   123:     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_cluster_inputs")
+   124: 
+   125: 
+   126: def _load_input(env_name, seed):
+   127:     import io as _io, base64 as _b64
+   128:     path = os.path.join(_cluster_inputs_dir(), f"{env_name}_seed{seed}.npz.b64")
+   129:     with open(path, "r") as f:
+   130:         raw = _b64.b64decode(f.read())
+   131:     d = np.load(_io.BytesIO(raw))
+   132:     return d["X"], int(d["n_clusters"])
+   133: 
+   134: 
+   135: def main():
+   136:     import base64 as _b64
+   137:     env = os.environ.get("ENV", "")
+   138:     if not env:
+   139:         raise SystemExit("ENV not set")
+   140:     seed = int(os.environ.get("SEED", "42"))
+   141:     print(f"=== Clustering benchmark: {env} (seed={seed}) ===", flush=True)
+   142: 
+   143:     X, n_clusters_true = _load_input(env, seed)
+   144:     print(f"Input: samples={X.shape[0]}, features={X.shape[1]}, "
+   145:           f"true_clusters={n_clusters_true}", flush=True)
+   146: 
+   147:     print("TRAIN_METRICS stage=fitting", flush=True)
+   148:     model = CustomClustering(n_clusters=n_clusters_true, random_state=seed)
+   149:     model.fit(X)
+   150:     labels = np.asarray(model.predict(X))
+   151:     print("TRAIN_METRICS stage=done", flush=True)
+   152: 
+   153:     payload = _b64.b64encode(np.ascontiguousarray(labels, dtype=np.int64).tobytes()).decode("ascii")
+   154:     print(f"CLUSTER_PRED env={env} seed={seed} n={labels.shape[0]} labels={payload}", flush=True)
+   155:     print("Done.", flush=True)
+   156: 
    157: 
-   158: 
-   159: def evaluate_clustering(X, y_true, labels):
-   160:     """Compute clustering quality metrics."""
-   161:     metrics = {}
-   162:     metrics["ari"] = adjusted_rand_score(y_true, labels)
-   163:     metrics["nmi"] = normalized_mutual_info_score(y_true, labels)
-   164:     # Silhouette requires at least 2 clusters and fewer than n_samples
-   165:     n_labels = len(set(labels)) - (1 if -1 in labels else 0)
-   166:     if 2 <= n_labels < len(X):
-   167:         metrics["silhouette"] = silhouette_score(X, labels)
-   168:     else:
-   169:         metrics["silhouette"] = -1.0
-   170:     return metrics
-   171: 
-   172: 
-   173: def main():
-   174:     env = os.environ.get("ENV", "blobs")
-   175:     seed = int(os.environ.get("SEED", "42"))
-   176: 
-   177:     print(f"=== Clustering benchmark: {env} (seed={seed}) ===", flush=True)
-   178: 
-   179:     # Generate data
-   180:     X_raw, y_true, n_clusters_true = generate_dataset(env, seed=seed)
-   181: 
-   182:     # Standardize features
-   183:     scaler = StandardScaler()
-   184:     X = scaler.fit_transform(X_raw)
-   185: 
-   186:     print(f"Dataset: {env}, samples={X.shape[0]}, features={X.shape[1]}, "
-   187:           f"true_clusters={n_clusters_true}", flush=True)
-   188: 
-   189:     # Run custom clustering
-   190:     print("TRAIN_METRICS stage=fitting", flush=True)
-   191:     model = CustomClustering(n_clusters=n_clusters_true, random_state=seed)
-   192:     model.fit(X)
-   193:     labels = model.predict(X)
-   194:     print("TRAIN_METRICS stage=done", flush=True)
-   195: 
-   196:     # Evaluate
-   197:     metrics = evaluate_clustering(X, y_true, labels)
-   198: 
-   199:     for k, v in metrics.items():
-   200:         print(f"TRAIN_METRICS {k}={v:.6f}", flush=True)
-   201: 
-   202:     # Final metrics
-   203:     parts = " ".join(f"{k}={v:.6f}" for k, v in metrics.items())
-   204:     print(f"TEST_METRICS {parts}", flush=True)
-   205: 
-   206:     print("Done.", flush=True)
-   207: 
-   208: 
-   209: if __name__ == "__main__":
-   210:     main()
+   158: if __name__ == "__main__":
+   159:     main()
 ```
 
 ## Reference Baselines
@@ -318,9 +267,9 @@ Lines 36–64:
     62: 
     63: def custom_distance(x, y):
     64:     return np.sqrt(np.sum((x - y) ** 2))
-    65: # FIXED -- do not modify below this line
-    66: # ================================================================
-    67: 
+    65: # ================================================================
+    66: # FIXED -- input loading + prediction emit (do not modify below this line)
+    67: # ================================================================
 ```
 
 ### `dbscan` baseline — editable region  [READ-ONLY — reference implementation]
@@ -399,9 +348,9 @@ Lines 36–102:
    100: 
    101: def custom_distance(x, y):
    102:     return np.sqrt(np.sum((x - y) ** 2))
-   103: # FIXED -- do not modify below this line
-   104: # ================================================================
-   105: 
+   103: # ================================================================
+   104: # FIXED -- input loading + prediction emit (do not modify below this line)
+   105: # ================================================================
 ```
 
 ### `hdbscan` baseline — editable region  [READ-ONLY — reference implementation]
@@ -455,9 +404,9 @@ Lines 36–77:
     75: 
     76: def custom_distance(x, y):
     77:     return np.sqrt(np.sum((x - y) ** 2))
-    78: # FIXED -- do not modify below this line
-    79: # ================================================================
-    80: 
+    78: # ================================================================
+    79: # FIXED -- input loading + prediction emit (do not modify below this line)
+    80: # ================================================================
 ```
 
 
