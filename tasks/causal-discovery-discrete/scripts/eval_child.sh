@@ -1,10 +1,9 @@
 #!/bin/bash
-# Evaluate on the Child case.
-# The dataset is pre-generated into the workspace at setup time; the network
-# identity and ground truth are held out off-machine. The driver picks the
-# pre-generated input by the ENV label and emits a CAUSAL_PRED line that the
-# host-side scorer grades.
+# Evaluate on a held-out discrete Bayesian-network case.
+# The integer-encoded samples are pre-generated into the workspace at setup time;
+# the network identity and the ground-truth DAG are held out off-machine. The
+# driver selects the pre-generated input by the OPAQUE case token below (which
+# reveals nothing about the network) and emits a CAUSAL_PRED line that the
+# host-side scorer grades against the regenerated truth.
 
-python -u bench/run_eval.py \
-    --label "${ENV:-Child}" \
-    --seed "${SEED:-42}"
+ENV=28cc819c4345 python -u bench/run_eval.py --seed "${SEED:-42}"

@@ -37,22 +37,33 @@ _DRIVER_PY = (_DIR / "vr_driver_template.py").read_text()
 # Problems whose data is pre-generated into _inputs/ (synthetic only).
 _PREGEN_PROBLEMS = ["conditioned"]
 
+# The runtime seed list is chosen by the harness from the global config and is
+# NOT known at workspace-setup time (mid_edit only sees the task config). We
+# pre-generate inputs for the task's declared seeds plus the standard seed set so
+# that whichever seeds the harness runs are always covered. Generation is cheap
+# and seed-deterministic, so any unused files are harmless.
+_STANDARD_SEEDS = [42, 123, 456]
 try:
     _cfg = json.loads((_TASK_DIR / "config.json").read_text())
-    _SEEDS = _cfg.get("seeds") or [42]
+    _SEEDS = sorted(set((_cfg.get("seeds") or []) + _STANDARD_SEEDS))
 except Exception:
-    _SEEDS = [42]
+    _SEEDS = list(_STANDARD_SEEDS)
 
 
 def _encode_input(problem, seed):
-    X_train, y_train, X_test, y_test = dgp.gen_input(problem, seed)
+    # IMPORTANT: only the OBSERVABLE arrays (X_train, y_train, X_test) are written
+    # into the workspace. The held-out test labels ``y_test`` are deliberately NOT
+    # included -- otherwise the editable custom_vr.py could open this file, decode
+    # y_test, and tune/emit the test labels directly. For 'conditioned' the driver
+    # emits its test predictions and the host-side parser regenerates y_test (via
+    # dgp.truth) and scores the same MSE, so y_test never enters the container.
+    X_train, y_train, X_test, _y_test = dgp.gen_input(problem, seed)
     buf = io.BytesIO()
     np.savez(
         buf,
         X_train=np.ascontiguousarray(X_train),
         y_train=np.ascontiguousarray(y_train),
         X_test=np.ascontiguousarray(X_test),
-        y_test=np.ascontiguousarray(y_test),
     )
     return base64.b64encode(buf.getvalue()).decode("ascii")
 

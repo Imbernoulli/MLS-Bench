@@ -264,35 +264,74 @@ def compute_igd(front_values: np.ndarray, problem_name: str) -> float:
 #
 # The runner must be able to EVALUATE candidate solutions (that is the task),
 # but it must not be able to recover the analytic Pareto front nor the problem
-# name. We hand it a marshalled, name-free code object that dispatches into
-# ``deap.benchmarks`` by an opaque integer ``kind`` carried in the spec. The
-# code object is reconstructed and called purely as a black box ``f(ind)``.
+# name. We hand it a marshalled, PROBLEM-SPECIFIC, name-free code object that
+# inlines the objective arithmetic directly (no ``deap.benchmarks`` reference, no
+# benchmark name, no ``kind`` selector). It is reconstructed and called purely as
+# a black box ``f(individual, n_obj)``. The arithmetic is copied verbatim from
+# ``deap.benchmarks.{zdt1,zdt3,dtlz1,dtlz2}`` so the objective values are
+# byte-identical to the originals; only the identifying NAME is removed, so a
+# strategy that decodes / disassembles the spec finds arithmetic, not "zdt1".
+#
+# The generic kernel name (``_f``) and the absence of any benchmark name/integer
+# id mean the spec no longer enumerates which held-out problem this is.
 
-# kind ordering must stay in sync with _KIND_ORDER below.
-_KIND_ORDER = ["zdt1", "zdt3", "dtlz2", "dtlz1"]
+_KERNEL_SRC = {
+    "zdt1": (
+        "def _f(individual, n_obj):\n"
+        "    from math import sqrt\n"
+        "    g = 1.0 + 9.0 * sum(individual[1:]) / (len(individual) - 1)\n"
+        "    f1 = individual[0]\n"
+        "    f2 = g * (1 - sqrt(f1 / g))\n"
+        "    return (f1, f2)\n"
+    ),
+    "zdt3": (
+        "def _f(individual, n_obj):\n"
+        "    from math import sqrt, sin, pi\n"
+        "    g = 1.0 + 9.0 * sum(individual[1:]) / (len(individual) - 1)\n"
+        "    f1 = individual[0]\n"
+        "    f2 = g * (1 - sqrt(f1 / g) - f1 / g * sin(10 * pi * f1))\n"
+        "    return (f1, f2)\n"
+    ),
+    "dtlz2": (
+        "def _f(individual, n_obj):\n"
+        "    from math import cos, sin, pi\n"
+        "    from functools import reduce\n"
+        "    from operator import mul\n"
+        "    obj = n_obj\n"
+        "    xc = individual[:obj - 1]\n"
+        "    xm = individual[obj - 1:]\n"
+        "    g = sum((xi - 0.5) ** 2 for xi in xm)\n"
+        "    f = [(1.0 + g) * reduce(mul, (cos(0.5 * xi * pi) for xi in xc), 1.0)]\n"
+        "    f.extend((1.0 + g) * reduce(mul, (cos(0.5 * xi * pi) for xi in xc[:m]), 1)"
+        " * sin(0.5 * xc[m] * pi) for m in range(obj - 2, -1, -1))\n"
+        "    return tuple(f)\n"
+    ),
+    "dtlz1": (
+        "def _f(individual, n_obj):\n"
+        "    from math import cos, pi\n"
+        "    from functools import reduce\n"
+        "    from operator import mul\n"
+        "    obj = n_obj\n"
+        "    g = 100 * (len(individual[obj - 1:]) + sum((xi - 0.5) ** 2"
+        " - cos(20 * pi * (xi - 0.5)) for xi in individual[obj - 1:]))\n"
+        "    f = [0.5 * reduce(mul, individual[:obj - 1], 1) * (1 + g)]\n"
+        "    f.extend(0.5 * reduce(mul, individual[:m], 1) * (1 - individual[m]) * (1 + g)"
+        " for m in reversed(range(obj - 1)))\n"
+        "    return tuple(f)\n"
+    ),
+}
 
 
-def _objective_kernel(individual, kind, n_obj):
-    """Pure black-box objective dispatch (marshalled into the spec).
+def _evaluator_blob(problem: str) -> str:
+    """Base64 of the marshalled, name-free objective code object for ``problem``.
 
-    Reconstructed and called in-container with no problem name in scope. Returns
-    a tuple of objective values (all minimized).
+    The marshalled code object carries no benchmark name and no ``kind`` -- only
+    the inlined arithmetic -- so the agent-visible spec does not identify which
+    held-out problem is being optimized.
     """
-    import deap.benchmarks as _b
-    if kind == 0:
-        return tuple(_b.zdt1(individual))
-    if kind == 1:
-        return tuple(_b.zdt3(individual))
-    if kind == 2:
-        return tuple(_b.dtlz2(individual, n_obj))
-    if kind == 3:
-        return tuple(_b.dtlz1(individual, n_obj))
-    raise ValueError("unknown objective kind")
-
-
-def _evaluator_blob() -> str:
-    """Base64 of the marshalled black-box objective code object."""
-    return base64.b64encode(marshal.dumps(_objective_kernel.__code__)).decode("ascii")
+    ns: dict = {}
+    exec(compile(_KERNEL_SRC[problem], "<moea_objective>", "exec"), ns)
+    return base64.b64encode(marshal.dumps(ns["_f"].__code__)).decode("ascii")
 
 
 # ================================================================
@@ -316,8 +355,10 @@ def gen_problem(problem: str, seed: int = 42) -> dict:
         "bounds": [float(cfg["bounds"][0]), float(cfg["bounds"][1])],
         "pop_size": int(cfg["pop_size"]),
         "n_gen": int(cfg["n_gen"]),
-        "kind": _KIND_ORDER.index(problem),
-        "evaluator": _evaluator_blob(),
+        # NOTE: no "kind"/problem id -- the evaluator below is a name-free,
+        # problem-specific marshalled objective, so the spec does not enumerate
+        # which held-out benchmark this is.
+        "evaluator": _evaluator_blob(problem),
     }
 
 

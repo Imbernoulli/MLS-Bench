@@ -31,7 +31,7 @@ _CUSTOM_PY = (_HERE.parent / "custom_template.py").read_text()
 try:
     _cfg = json.loads((_TASK_DIR / "config.json").read_text())
     _ENVS = [e.get("label") for e in _cfg.get("test_cmds", []) if e.get("label")]
-    _SEEDS = _cfg.get("seeds") or [42]
+    _SEEDS = sorted(set((_cfg.get("seeds") or []) + [42, 123, 456]))
 except Exception:
     _ENVS, _SEEDS = ["blobs", "moons", "digits"], [42]
 

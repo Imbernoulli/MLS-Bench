@@ -30,9 +30,9 @@ _CUSTOM_PY = (_HERE.parent / "custom_template.py").read_text()
 _ENVS = ("breast_cancer", "wine", "california")
 try:
     _cfg = json.loads((_TASK_DIR / "config.json").read_text())
-    _SEEDS = _cfg.get("seeds") or [42]
+    _SEEDS = sorted(set((_cfg.get("seeds") or []) + [42, 123, 456]))
 except Exception:
-    _SEEDS = [42]
+    _SEEDS = [42, 123, 456]
 
 
 def _encode_input(env, seed):

@@ -26,22 +26,19 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT / "src"))
 # Host-only scoring module (never inside the agent container).
-# Locate the host-only DGP module. Native layout: <repo>/holdout/causal-discovery-discrete/dgp.py.
-# Harbor layout: score_task.py copies tests/meta/ to a private dir and loads
-# parser.py from there, with the held-out dgp.py staged next to it. Try both.
-_HERE = Path(__file__).resolve().parent
-for _cand in (PROJECT_ROOT / "holdout" / "causal-discovery-discrete", _HERE, _HERE / "holdout" / "causal-discovery-discrete"):
-    if (_cand / "dgp.py").exists():
-        sys.path.insert(0, str(_cand))
-        break
+_HOLDOUT_DIR = PROJECT_ROOT / "holdout" / "causal-discovery-discrete"
+sys.path.insert(0, str(_HOLDOUT_DIR))
 
 from mlsbench.agent.parsers import OutputParser, ParseResult
 
 import dgp  # noqa: E402  (host-only, from holdout/causal-discovery-discrete/)
 
 
+# The agent program no longer echoes the eval-case identity on the CAUSAL_PRED
+# line (it only ever saw an opaque token anyway); the host-side scorer already
+# knows which case it grades from ``cmd_label``. Each eval run emits one line.
 _PRED_RE = re.compile(
-    r"CAUSAL_PRED\s+label=(\S+)\s+seed=(\d+)\s+n=(\d+)\s+adj=(\S+)"
+    r"CAUSAL_PRED\s+seed=(\d+)\s+n=(\d+)\s+adj=(\S+)"
 )
 
 
@@ -52,10 +49,9 @@ class Parser(OutputParser):
         metrics: dict = {}
         feedback_parts = []
 
+        label = cmd_label
         for m in _PRED_RE.finditer(raw_output):
-            label, seed_s, n_s, payload = m.groups()
-            if label != cmd_label:
-                continue
+            seed_s, n_s, payload = m.groups()
             seed = int(seed_s)
             n = int(n_s)
             try:
