@@ -184,7 +184,7 @@ def cheby(i, x):
 def train_step(model, optimizer, data):
     model.train()
     optimizer.zero_grad()
-    out = model(data)[data.train_mask]
+    out = model(_mask_y(data))[data.train_mask]  # mask labels at train too (forward never sees y; loss below uses real train labels)
     loss = F.nll_loss(out, data.y[data.train_mask])
     loss.backward()
     optimizer.step()

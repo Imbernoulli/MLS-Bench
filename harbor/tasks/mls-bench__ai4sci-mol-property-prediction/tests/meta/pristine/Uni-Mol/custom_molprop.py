@@ -747,7 +747,13 @@ def evaluate(model, loader, task_type, device, dataset_name=None, is_tta=True, c
         # the answer. forward() uses only graph features, so honest predictions
         # are unchanged.
         true_targets = batch.targets
+        # dataclasses.replace() rebuilds a fresh batch with only declared fields,
+        # which drops the dynamically-attached _mol_indices used for TTA
+        # conformer-averaging below. Preserve it so honest TTA aggregation runs.
+        _saved_mol_idx = getattr(batch, '_mol_indices', None)
         batch = replace(batch, targets=torch.zeros_like(batch.targets))
+        if _saved_mol_idx is not None:
+            batch._mol_indices = _saved_mol_idx
         preds = model(batch)
         all_preds.append(preds.cpu())
         all_targets.append(true_targets.cpu())
