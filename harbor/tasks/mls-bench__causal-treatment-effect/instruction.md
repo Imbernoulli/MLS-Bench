@@ -243,52 +243,52 @@ stay unchanged.
    159: # FIXED: Input loading + cross-fitting + prediction emit
    160: # =====================================================================
    161: 
-   162: DATASETS = ("ihdp_synth", "jobs_synth", "acic_synth")
-   163: 
+   162: # --dataset is supplied as an opaque per-dataset token; the real dataset
+   163: # identity is held out by the harness and is not present in this process.
    164: 
-   165: def _inputs_dir():
-   166:     """Directory holding the pre-generated (X, T, Y) inputs for this task."""
-   167:     env = os.environ.get("CATE_INPUTS_DIR")
-   168:     if env:
-   169:         return env
-   170:     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_cate_inputs")
-   171: 
+   165: 
+   166: def _inputs_dir():
+   167:     """Directory holding the pre-generated (X, T, Y) inputs for this task."""
+   168:     env = os.environ.get("CATE_INPUTS_DIR")
+   169:     if env:
+   170:         return env
+   171:     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_cate_inputs")
    172: 
-   173: def load_inputs(dataset, data_seed):
-   174:     """Load the pre-generated observational inputs for (dataset, data_seed).
-   175: 
-   176:     Only (X, T, Y) are available — the true treatment effect is held out by the
-   177:     harness and is not present in this process.
-   178:     """
-   179:     path = os.path.join(_inputs_dir(), f"{dataset}_seed{data_seed}.npz.b64")
-   180:     with open(path, "r") as f:
-   181:         raw = base64.b64decode(f.read())
-   182:     with np.load(io.BytesIO(raw)) as d:
-   183:         return d["X"], d["T"], d["Y"]
-   184: 
+   173: 
+   174: def load_inputs(dataset, data_seed):
+   175:     """Load the pre-generated observational inputs for (dataset, data_seed).
+   176: 
+   177:     Only (X, T, Y) are available — the true treatment effect is held out by the
+   178:     harness and is not present in this process.
+   179:     """
+   180:     path = os.path.join(_inputs_dir(), f"{dataset}_seed{data_seed}.npz.b64")
+   181:     with open(path, "r") as f:
+   182:         raw = base64.b64decode(f.read())
+   183:     with np.load(io.BytesIO(raw)) as d:
+   184:         return d["X"], d["T"], d["Y"]
    185: 
-   186: def cross_fit_predict(X, T, Y, n_splits, seed):
-   187:     """Cross-fitted CATE prediction (same K-fold protocol as before).
-   188: 
-   189:     Fit on K-1 folds, predict held-out fold; aggregate to per-row tau_hat.
-   190:     A fresh deep-copy of the estimator is used per fold (cross-fitting).
-   191:     """
-   192:     import copy
-   193:     base = CATEEstimator()
-   194:     kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
-   195:     tau_hat_all = np.zeros(len(X))
-   196:     for train_idx, test_idx in kf.split(X):
-   197:         est = copy.deepcopy(base)
-   198:         est.fit(X[train_idx], T[train_idx], Y[train_idx])
-   199:         tau_hat_all[test_idx] = est.predict(X[test_idx])
-   200:     return tau_hat_all
-   201: 
+   186: 
+   187: def cross_fit_predict(X, T, Y, n_splits, seed):
+   188:     """Cross-fitted CATE prediction (same K-fold protocol as before).
+   189: 
+   190:     Fit on K-1 folds, predict held-out fold; aggregate to per-row tau_hat.
+   191:     A fresh deep-copy of the estimator is used per fold (cross-fitting).
+   192:     """
+   193:     import copy
+   194:     base = CATEEstimator()
+   195:     kf = KFold(n_splits=n_splits, shuffle=True, random_state=seed)
+   196:     tau_hat_all = np.zeros(len(X))
+   197:     for train_idx, test_idx in kf.split(X):
+   198:         est = copy.deepcopy(base)
+   199:         est.fit(X[train_idx], T[train_idx], Y[train_idx])
+   200:         tau_hat_all[test_idx] = est.predict(X[test_idx])
+   201:     return tau_hat_all
    202: 
-   203: def main():
-   204:     parser = argparse.ArgumentParser(description="CATE Estimation Benchmark")
-   205:     parser.add_argument("--dataset", type=str, required=True,
-   206:                         choices=list(DATASETS),
-   207:                         help="Dataset to evaluate on")
+   203: 
+   204: def main():
+   205:     parser = argparse.ArgumentParser(description="CATE Estimation Benchmark")
+   206:     parser.add_argument("--dataset", type=str, required=True,
+   207:                         help="Opaque dataset token (the real dataset is held out)")
    208:     parser.add_argument("--seed", type=int, default=42,
    209:                         help="Base random seed (selects the pre-generated inputs)")
    210:     parser.add_argument("--n-splits", type=int, default=5,

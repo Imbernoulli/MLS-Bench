@@ -159,7 +159,8 @@ class CATEEstimator(BaseCATEEstimator):
 # FIXED: Input loading + cross-fitting + prediction emit
 # =====================================================================
 
-DATASETS = ("ihdp_synth", "jobs_synth", "acic_synth")
+# --dataset is supplied as an opaque per-dataset token; the real dataset
+# identity is held out by the harness and is not present in this process.
 
 
 def _inputs_dir():
@@ -203,8 +204,7 @@ def cross_fit_predict(X, T, Y, n_splits, seed):
 def main():
     parser = argparse.ArgumentParser(description="CATE Estimation Benchmark")
     parser.add_argument("--dataset", type=str, required=True,
-                        choices=list(DATASETS),
-                        help="Dataset to evaluate on")
+                        help="Opaque dataset token (the real dataset is held out)")
     parser.add_argument("--seed", type=int, default=42,
                         help="Base random seed (selects the pre-generated inputs)")
     parser.add_argument("--n-splits", type=int, default=5,
