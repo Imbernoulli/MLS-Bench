@@ -85,3 +85,14 @@ def truth(env_name, seed=42):
     X_raw, y_true, _n = generate_dataset(env_name, seed=seed)
     X = StandardScaler().fit_transform(X_raw)
     return X, y_true
+
+
+def opaque_label(label):
+    """Host-only opaque token for a dataset label (the agent must not learn which
+    dataset is evaluated). Used to name the pre-generated input files and as the
+    identity the run scripts pass, so listing the workspace reveals only tokens;
+    the real label stays host-side (the scorer uses the test-command label)."""
+    import hashlib
+    return hashlib.sha1(
+        ("ml-clustering-algorithm::dataset-token::v1::" + str(label)).encode("utf-8")
+    ).hexdigest()[:12]

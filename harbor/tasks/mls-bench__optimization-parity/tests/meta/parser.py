@@ -47,8 +47,9 @@ _PRED_RE = re.compile(
     r"n=(\d+)\s+preds=(\S+)"
 )
 
-# n<N>_k<K> -> (n_features, secret_size)
-_TAG_RE = re.compile(r"n(\d+)_k(\d+)")
+# n<N>_k<K> -> (n_features, secret_size). Accept both the runner's underscore
+# tag (n32_k8) and the test-command label's hyphen form (n32-k8).
+_TAG_RE = re.compile(r"n(\d+)[-_]k(\d+)")
 
 _RUN_RE = re.compile(
     r"RUN_METRICS\s+secret=(\d+)\s+order=(\d+)\s+steps=(\d+)"
@@ -81,16 +82,24 @@ class Parser(OutputParser):
         accuracies: list[float] = []
         run_lines: list[str] = []
 
+        # The runner emits config tags as ``n<N>_k<K>`` (underscore) while the
+        # test-command label is ``n<N>-k<K>`` (hyphen); compare on the parsed
+        # (n_features, secret_size) so the two formats match.
+        want = _parse_tag(cmd_label) if cmd_label else (None, None)
         for m in _PRED_RE.finditer(raw_output):
             tag, seed_s, si_s, order_s, n_s, payload = m.groups()
-            # Only score PARITY_PRED lines for THIS test command. Otherwise extra
-            # / off-label lines in stdout (debug output, or crafted lines for an
-            # easier config) would be averaged into this command's metric.
-            if tag != cmd_label:
-                continue
             n_features, secret_size = _parse_tag(tag)
             if n_features is None:
                 continue
+            # Only score PARITY_PRED lines for THIS test command. Otherwise extra
+            # / off-label lines in stdout (debug output, or crafted lines for an
+            # easier config) would be averaged into this command's metric.
+            if want[0] is not None and (n_features, secret_size) != want:
+                continue
+            seed = int(seed_s)
+            secret_index = int(si_s)
+            order_index = int(order_s)
+            n = int(n_s)
             seed = int(seed_s)
             secret_index = int(si_s)
             order_index = int(order_s)

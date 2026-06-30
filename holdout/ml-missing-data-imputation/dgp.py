@@ -98,3 +98,14 @@ def truth(env_name, seed=42):
     X_scaled = StandardScaler().fit_transform(X_raw)
     _X_missing, mask = introduce_missing(X_scaled, missing_rate=0.20, seed=seed)
     return X_scaled, y, mask, task_type
+
+
+def opaque_label(label):
+    """Host-only opaque token for a dataset label (the agent must not learn which
+    dataset is evaluated). Used to name the pre-generated input files and as the
+    identity the run scripts pass, so listing the workspace reveals only tokens;
+    the real label stays host-side (the scorer uses the test-command label)."""
+    import hashlib
+    return hashlib.sha1(
+        ("ml-missing-data-imputation::dataset-token::v1::" + str(label)).encode("utf-8")
+    ).hexdigest()[:12]

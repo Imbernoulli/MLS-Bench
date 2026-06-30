@@ -55,6 +55,6 @@ for _env in _ENVS:
     for _seed in _SEEDS:
         OPS.append({
             "op": "create",
-            "file": f"scikit-learn/_anomaly_inputs/{_env}_seed{_seed}.npz.b64",
+            "file": f"scikit-learn/_anomaly_inputs/{dgp.opaque_label(_env)}_seed{_seed}.npz.b64",
             "content": _encode_input(_env, _seed),
         })

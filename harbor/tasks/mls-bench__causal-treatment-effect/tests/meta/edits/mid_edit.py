@@ -68,6 +68,6 @@ for _dataset in dgp.DATASETS:
             _data_seed = _seed + _rep * 1000
             OPS.append({
                 "op": "create",
-                "file": f"scikit-learn/_cate_inputs/{_dataset}_seed{_data_seed}.npz.b64",
+                "file": f"scikit-learn/_cate_inputs/{dgp.opaque_label(_dataset)}_seed{_data_seed}.npz.b64",
                 "content": _encode_inputs(_dataset, _data_seed),
             })

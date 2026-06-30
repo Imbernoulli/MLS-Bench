@@ -52,8 +52,11 @@ class Parser(OutputParser):
         per_rep = []  # (rep, pehe, ate_err)
         for m in _PRED_RE.finditer(raw_output):
             dataset, _seed, rep_s, data_seed_s, n_s, payload = m.groups()
-            if dataset != cmd_label:
+            # The agent only ever sees an opaque token for the dataset; map
+            # the real test-command label to that token to match the line.
+            if dataset != dgp.opaque_label(cmd_label):
                 continue
+            dataset = cmd_label  # use the real dataset for host-side scoring
             rep = int(rep_s)
             data_seed = int(data_seed_s)
             n = int(n_s)

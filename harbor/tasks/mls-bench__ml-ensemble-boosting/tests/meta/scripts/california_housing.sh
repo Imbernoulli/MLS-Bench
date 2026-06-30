@@ -3,5 +3,5 @@
 set -e
 cd /workspace
 python "/tests/eval/_inputgen/apply.py" "ml-ensemble-boosting" /workspace
-ENV=california_housing SEED=${SEED:-42} OUTPUT_DIR=${OUTPUT_DIR:-./output} \
+ENV=16d2b29d7afb SEED=${SEED:-42} OUTPUT_DIR=${OUTPUT_DIR:-./output} \
     python -u scikit-learn/custom_boosting.py

@@ -119,3 +119,14 @@ def truth(env_name, seed=42):
     """Held-out ground truth: y_test for the same split."""
     _Xtr, _ytr, _Xte, y_test, _task = _split_normalized(env_name, seed)
     return y_test
+
+
+def opaque_label(label):
+    """Host-only opaque token for a dataset label (the agent must not learn which
+    dataset is evaluated). Used to name the pre-generated input files and as the
+    identity the run scripts pass, so listing the workspace reveals only tokens;
+    the real label stays host-side (the scorer uses the test-command label)."""
+    import hashlib
+    return hashlib.sha1(
+        ("ml-ensemble-boosting::dataset-token::v1::" + str(label)).encode("utf-8")
+    ).hexdigest()[:12]

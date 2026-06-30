@@ -238,3 +238,14 @@ def truth(dataset, data_seed):
     """Return the held-out ground truth (tau, ate) for the host-side scorer."""
     _X, _T, _Y, tau, ate = DATASETS[dataset](seed=data_seed)
     return tau, ate
+
+
+def opaque_label(label):
+    """Host-only opaque token for a dataset label (the agent must not learn which
+    dataset is evaluated). Used to name the pre-generated input files and as the
+    identity the run scripts pass, so listing the workspace reveals only tokens;
+    the real label stays host-side (the scorer uses the test-command label)."""
+    import hashlib
+    return hashlib.sha1(
+        ("causal-treatment-effect::dataset-token::v1::" + str(label)).encode("utf-8")
+    ).hexdigest()[:12]

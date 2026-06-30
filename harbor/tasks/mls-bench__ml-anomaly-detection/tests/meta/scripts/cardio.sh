@@ -2,5 +2,5 @@
 set -e
 cd /workspace
 python "/tests/eval/_inputgen/apply.py" "ml-anomaly-detection" /workspace
-ENV=cardio SEED=${SEED:-42} OUTPUT_DIR=${OUTPUT_DIR:-./output} \
+ENV=206e182f63f7 SEED=${SEED:-42} OUTPUT_DIR=${OUTPUT_DIR:-./output} \
     python -u scikit-learn/custom_anomaly.py

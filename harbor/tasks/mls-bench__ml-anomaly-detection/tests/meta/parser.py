@@ -49,8 +49,11 @@ class Parser(OutputParser):
 
         for m in _PRED_RE.finditer(raw_output):
             env, seed_s, n_s, payload = m.groups()
-            if env != cmd_label:
+            # The agent only ever sees an opaque token for the dataset; map
+            # the real test-command label to that token to match the line.
+            if env != dgp.opaque_label(cmd_label):
                 continue
+            env = cmd_label  # use the real dataset for host-side scoring
             seed = int(seed_s)
             try:
                 scores = np.frombuffer(base64.b64decode(payload), dtype=np.float64)
