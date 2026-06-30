@@ -79,8 +79,6 @@ stay unchanged.
 
 Other files you may **read** for context (do not modify):
 - `causal-bnlearn/bench/run_eval.py`
-- `causal-bnlearn/bench/data_gen.py`
-- `causal-bnlearn/bench/metrics.py`
 
 
 ## Readable Context

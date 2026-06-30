@@ -321,7 +321,11 @@ def _mask_y(data):
     return c
 
 
-if __name__ == "__main__":
+def _main():
+    # Run inside a function so the loaded graph (incl. the held-out test-node
+    # labels in data.y / data_split.y) is a local, NOT a module global the
+    # editable CustomFilter/CustomProp can read. An honest forward(data) that
+    # uses only data.x/edge_index is unaffected (_mask_y still masks the arg).
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print(f"Dataset: {DATASET_NAME}, Seed: {SEED}", flush=True)
     print(f"Config: hidden={HIDDEN}, K={K}, alpha={ALPHA}, "
@@ -426,3 +430,6 @@ if __name__ == "__main__":
         f"Result: {DATASET_NAME} accuracy = {100*mean_acc:.2f} +/- {100*std_acc:.2f}%",
         flush=True,
     )
+
+if __name__ == "__main__":
+    _main()
