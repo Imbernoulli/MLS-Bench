@@ -13,6 +13,7 @@ mutually consistent and byte-identical to the native pipeline.
 import importlib.util
 import os
 import sys
+import tempfile
 
 
 def main():
@@ -37,8 +38,21 @@ def main():
             continue  # never overwrite the agent's editable program
         dst = os.path.join(workspace, f)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        with open(dst, "w") as fh:
-            fh.write(op.get("content", ""))
+        # Atomic write: group evals run concurrently and each materializes the
+        # SAME shared input files, so a plain truncating open() can be observed
+        # mid-write by another eval. Write to a temp in the same dir + os.replace
+        # (atomic on POSIX) so a concurrent reader always sees a complete file.
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(dst) or ".", suffix=".tmp")
+        try:
+            with os.fdopen(fd, "w") as fh:
+                fh.write(op.get("content", ""))
+            os.replace(tmp, dst)
+        except BaseException:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+            raise
         n += 1
     print(f"[inputgen] materialized {n} input file(s) for {task}")
     return 0

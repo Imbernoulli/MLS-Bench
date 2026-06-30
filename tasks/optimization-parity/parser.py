@@ -83,6 +83,11 @@ class Parser(OutputParser):
 
         for m in _PRED_RE.finditer(raw_output):
             tag, seed_s, si_s, order_s, n_s, payload = m.groups()
+            # Only score PARITY_PRED lines for THIS test command. Otherwise extra
+            # / off-label lines in stdout (debug output, or crafted lines for an
+            # easier config) would be averaged into this command's metric.
+            if tag != cmd_label:
+                continue
             n_features, secret_size = _parse_tag(tag)
             if n_features is None:
                 continue

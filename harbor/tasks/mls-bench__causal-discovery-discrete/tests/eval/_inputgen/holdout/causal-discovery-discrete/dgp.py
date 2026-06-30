@@ -197,8 +197,25 @@ def _worker_score(network_name, n_samples, seed, est_matrix):
 # =====================================================================
 
 def _heavy_imports_available():
-    if str(_VENDORED_CAUSALLEARN) not in sys.path:
-        sys.path.insert(0, str(_VENDORED_CAUSALLEARN))
+    # ``causallearn`` is bundled inside the causal-bnlearn package. Native run:
+    # vendor/external_packages/causal-bnlearn. Harbor scoring runs this module
+    # from a private copy of tests/meta/ under ``python -I`` (which ignores
+    # PYTHONPATH), so also try the Harbor pristine copy staged next to this file
+    # and the live workspace package dir.
+    _here = Path(__file__).resolve().parent
+    _candidates = [
+        _VENDORED_CAUSALLEARN,
+        _here / "pristine" / _PKG_NAME,          # tests/meta/pristine/causal-bnlearn
+        _here.parent / "pristine" / _PKG_NAME,
+        Path(os.environ.get("MLSBENCH_WORKSPACE", "/workspace")) / _PKG_NAME,
+        Path("/workspace") / _PKG_NAME,
+    ]
+    for _c in _candidates:
+        try:
+            if _c.is_dir() and str(_c) not in sys.path:
+                sys.path.insert(0, str(_c))
+        except OSError:
+            pass
     try:
         import pgmpy  # noqa: F401
         import causallearn  # noqa: F401
