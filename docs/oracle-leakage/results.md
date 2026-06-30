@@ -71,12 +71,12 @@ fixed bundle. Anchors are the `baseline:*` rows in `tests/meta/leaderboard.csv`.
 | graph-link-prediction | reward ≈ 0.224 | completed (dedicated GPU) |
 | ml-anomaly-detection | reward ≈ 0.491 | completed |
 | ai4sci-pla-binding-affinity | per-benchmark TEST_METRICS match anchor | rmse 1.457/1.295/1.473 vs 1.41/1.24/1.46 (each benchmark needs its own GPU — see artifacts) |
-| graph-signal-propagation | honest reward pending; **cheat→NameError (closure proven)** | re-run post wrap-main |
-| quant-stock-prediction | unit test: train labels byte-identical, test labels masked; csi100 honest IC=0.0386 completes | fit-guard transparent |
+| graph-signal-propagation | honest reward 0.383 (normal accuracies); **cheat→NameError (closure proven)** | re-run post wrap-main; 0.383 vs prior 0.432 = PyG GPU non-determinism on a ±4%-std task (graph-node, same pattern, reproduced the anchor exactly) |
+| quant-stock-prediction (+graph-stock,+concept-drift) | **fit-guard fully verified**: unit test `TRAIN_LABELS_UNCHANGED:True` + `TEST_LABELS_FULLY_MASKED:True`; cheat_new IC=**nan**, cheat_old IC=**0.886** (vs honest ~0.047) | the fit-cheat was real (IC 0.886 under the old guard) and is now closed; honest fit unchanged |
 | causal-* / ml-oop / optimization-* | anchor-matching (deterministic out-of-process) | inputs byte-identical by seed → metric identical by construction |
 | optimization-diagonal-net | inputgen materializes 19 inputs; evals emit normal train/test_mse | full reward = long eval (see artifacts) |
 | ml-missing-data-imputation | clean run ≈ 0.449 | (over-parallel run gave a spurious 0) |
-| causal-discovery-discrete | 4/5 configs match anchor; Hailfinder GES is slow | budget-bound on a shared box |
+| causal-discovery-discrete | 4/5 networks (Alarm/Cancer/Child/Win95pts) emit CAUSAL_PRED + score; **Hailfinder GES times out at the 3840 s per-config budget** → gmean=0 | budget/runtime of GES on a 56-node net, **unchanged by the fix** (same data X by seed, same algorithm); aggravated by a 142-core co-tenant job during this run |
 | ai4sci-climate-emulation / -weather-forecast-aggregation | wrap-main (no behavior change); structural guarantee | full GPU re-run is hours on the shared box |
 
 ## Known verification-harness artifacts (NOT task failures)
