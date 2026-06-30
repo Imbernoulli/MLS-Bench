@@ -22,8 +22,15 @@ import numpy as np
 _HERE = Path(__file__).resolve()
 _TASK_DIR = _HERE.parents[1]
 _PROJECT_ROOT = _HERE.parents[3]
-sys.path.insert(0, str(_PROJECT_ROOT / "holdout" / "ml-anomaly-detection"))
-import dgp  # host-only
+try:
+    sys.path.insert(0, str(_PROJECT_ROOT / "holdout" / "ml-anomaly-detection"))
+    import dgp  # host-only
+except Exception:
+    # Held-out generator is not importable in every context that loads this
+    # module (e.g. budget_check.py imports it only to read the editable-file
+    # template). The per-input OPS below are then skipped; they are needed by
+    # the inputgen, which runs where dgp IS staged.
+    dgp = None
 
 _CUSTOM_PY = (_HERE.parent / "custom_template.py").read_text()
 
@@ -51,10 +58,11 @@ OPS = [
     },
 ]
 
-for _env in _ENVS:
-    for _seed in _SEEDS:
-        OPS.append({
-            "op": "create",
-            "file": f"scikit-learn/_anomaly_inputs/{dgp.opaque_label(_env)}_seed{_seed}.npz.b64",
-            "content": _encode_input(_env, _seed),
-        })
+if dgp is not None:
+    for _env in _ENVS:
+        for _seed in _SEEDS:
+            OPS.append({
+                "op": "create",
+                "file": f"scikit-learn/_anomaly_inputs/{dgp.opaque_label(_env)}_seed{_seed}.npz.b64",
+                "content": _encode_input(_env, _seed),
+            })

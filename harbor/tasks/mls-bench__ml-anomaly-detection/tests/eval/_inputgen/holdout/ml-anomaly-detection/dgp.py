@@ -29,13 +29,17 @@ TRAIN_RATIO = 0.6  # Task-local 60/40 stratified train/test split.
 
 
 def _adbench_dir():
-    # The module only ever runs host-side; prefer the committed host data dir,
-    # fall back to a DATA_ROOT-relative path if set.
+    # The module runs host-side in two contexts: the eval container (DATA_ROOT
+    # is exported, data lives under $DATA_ROOT/adbench) and the verifier/scorer
+    # (env is stripped, _PROJECT_ROOT resolves to a temp dir). Try, in order:
+    # DATA_ROOT, the committed native data dir, then the Harbor image's baked
+    # data dir (/data/adbench). Return the first that exists.
     env_root = os.environ.get("DATA_ROOT")
     cands = []
     if env_root:
         cands.append(Path(env_root) / "adbench")
     cands.append(_PROJECT_ROOT / "vendor" / "data" / "adbench")
+    cands.append(Path("/data") / "adbench")
     for c in cands:
         if c.is_dir():
             return c
