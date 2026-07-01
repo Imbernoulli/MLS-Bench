@@ -74,7 +74,7 @@ fixed bundle. Anchors are the `baseline:*` rows in `tests/meta/leaderboard.csv`.
 | graph-signal-propagation | honest reward 0.383 (normal accuracies); **full before/after cheat: pre-fix `forward` reading the module-global `data_split.y` → accuracy 1.0000 on all 4 datasets (reward 1.0); post-fix → `NameError: name 'data_split' is not defined`** | the leak was real and fully exploitable pre-fix; wrap-main closes it. 0.383 vs prior 0.432 = PyG GPU non-determinism on a ±4%-std task (graph-node, same pattern, reproduced the anchor exactly) |
 | quant-stock-prediction (+graph-stock,+concept-drift) | **fit-guard fully verified**: unit test `TRAIN_LABELS_UNCHANGED:True` + `TEST_LABELS_FULLY_MASKED:True`; cheat_new IC=**nan**, cheat_old IC=**0.886** (vs honest ~0.047) | the fit-cheat was real (IC 0.886 under the old guard) and is now closed; honest fit unchanged |
 | causal-* / ml-oop / optimization-* | anchor-matching (deterministic out-of-process); **inputgen confirmed for ALL 14 holdout tasks** | inputs byte-identical by seed → metric identical by construction. Each materializes >0 input blobs at eval time (cate 90, causal-discovery 15, causal-obs 8–9, anomaly 12, clustering/ensemble/symbolic/missing-data 9, multi-objective 12, parity 45, variance-reduction 3, diagonal-net 19) — no staging bug like the original diagonal-net 0-inputs |
-| optimization-diagonal-net | inputgen 19 inputs; **d200_k5_s01 completes with `n_star=50 score=-5.643856` = anchor (sgd/adam) EXACTLY**; a max-cores run finished every config except **d10000_k50** (the single timeout — anchor n_star=487, by far the longest GD) → gmean=0 | per-config science confirmed; d10000's long GD loop just needs a generous timeout on a free box — its runtime is unchanged by the fix |
+| optimization-diagonal-net | inputgen 19 inputs; **d200_k5_s01 = `score=-5.643856` anchor-EXACT** (GPU run); **d500_k10_s01/s02 complete** (CPU run); only **d10000_k50** (dim 50×, grid-max 2000) unfinished → gmean=0 | reward=0 = harness resource combo, NOT the fix: the 3 `group=1` configs (d200+d500×2) are packed onto cuda:0 by score_task → they OOM each other (identical to pla-binding), and d10000 is too heavy for CPU (times out) or a shared GPU. 3/4 configs confirmed correct; d10000 needs a dedicated uncontended GPU |
 | ml-missing-data-imputation | clean run ≈ 0.449 | (over-parallel run gave a spurious 0) |
 | causal-discovery-discrete | **reward = 0.3713 CONFIRMED (0 timeouts)** on a max-cores run — all 5 networks incl. Hailfinder complete and score normally | a separate thread-capped / co-tenant-contended run had Hailfinder GES exceed the 3840 s budget → gmean=0; that is a pure resource artifact (GES needs enough cores to finish in budget) — with max cores the fixed bundle scores 0.371 |
 | ai4sci-climate-emulation / -weather-forecast-aggregation | wrap-main (no behavior change); structural guarantee | full GPU re-run is hours on the shared box |
@@ -89,8 +89,10 @@ properties of the *local reproduction*, not the fixes:
   qlib universes (csi300) get killed. Mitigation: run heavy tasks one/two at a time.
 - **`/dev/shm`** default 64 MB → PyTorch DataLoader bus error. Mitigation: `--ipc=host`.
 - **GPU packing**: `score_task` puts every same-group benchmark on the first visible
-  GPU; 3 group=1 benchmarks in one container OOM each other (pla-binding). Mitigation:
-  one dedicated GPU per benchmark.
+  GPU; 3 group=1 benchmarks in one container OOM each other — hits **pla-binding**
+  (3 PDBbind benchmarks) and **optimization-diagonal-net** (d200 + d500×2 are all
+  group=1). Mitigation: one dedicated GPU per benchmark (pla-binding was confirmed
+  this way: rmse 1.457/1.295/1.473 vs anchor 1.41/1.24/1.46).
 - **Short timeout**: diagonal-net runs 19 long gradient-descent instances; a short
   docker timeout cuts it off. Mitigation: generous timeout.
 
