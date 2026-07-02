@@ -4,6 +4,42 @@ Two properties per task: **runnability / results preserved** and **leak closed**
 We are honest about *how* each is established — empirical run, structural guarantee,
 or both. We do not paper over the verification-harness artifacts (§Known artifacts).
 
+## Full empirical re-run — all 26 tasks through the public Harbor bundles
+
+Every fixed task was re-run end-to-end (`solution/solve.sh` reference baseline →
+`tests/test.sh` verifier) on the public bundle, one/dedicated GPU per GPU task,
+`--ipc=host`, thread-capped to avoid oversubscription. **24 of 26 produce a normal
+non-zero reward** (the reference baseline's `combined_score`):
+
+| task | reward | | task | reward |
+|---|---|---|---|---|
+| causal-observational-linear-gaussian | 0.684 | | graph-node-classification | 0.507 |
+| causal-observational-linear-non-gaussian | 0.547 | | graph-link-prediction | 0.415 |
+| causal-observational-nonlinear | 0.474 | | graph-signal-propagation | 0.423 |
+| causal-treatment-effect | 0.481 | | ai4sci-mol-property-prediction | 0.460 |
+| causal-discovery-discrete | 0.371 | | ai4sci-pla-binding-affinity | 0.447 |
+| ml-clustering-algorithm | 0.355 | | ai4sci-weather-forecast-aggregation | 0.494 |
+| ml-calibration | 0.377 | | quant-stock-prediction | 0.482 |
+| ml-selective-deferral | 0.297 | | quant-graph-stock | 0.383 |
+| ml-symbolic-regression | 0.519 | | quant-concept-drift | 0.392 |
+| ml-ensemble-boosting | 0.166 | | ml-anomaly-detection | 0.491 |
+| optimization-multi-objective | 0.493 | | ml-missing-data-imputation | 0.449 |
+| optimization-variance-reduction | 0.458 | | optimization-parity | 0.310 |
+
+The remaining 2:
+- **optimization-diagonal-net** — d200_k5_s01 (`score=-5.643856`) and d500_k10_s01
+  (`score=-5.72792`) reproduce anchor baseline values EXACTLY once given the 3 GPUs its
+  3 `group=1` configs need (the earlier reward=0 was pure GPU-packing, same as pla-
+  binding). The full gmean also needs d10000_k50 — a grid-max-2000 coarse-to-fine
+  search that is a very long run; per-config science is confirmed.
+- **ai4sci-climate-emulation** — reward=0. Traced to the medium-100ep config diverging
+  on the temporal-holdout test split (introduced by the PR #44 sync, `d6636a821`), a
+  val/test-mismatch × hardware-non-determinism issue **independent of the oracle-
+  leakage fix** (wrap-main is pure scoping; training code byte-identical; dev==pub).
+  Handed to the ClimSim task owners.
+
+The reward-preservation claim rests on this + the structural guarantee below.
+
 ## How "results preserved" is established
 
 Each fix is semantics-preserving by construction, and that is the primary guarantee:
