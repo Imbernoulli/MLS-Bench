@@ -15,14 +15,25 @@ the answer:
 
 | Task | Residual | Why inherent |
 |---|---|---|
-| optimization-diagonal-net | `w_star` is least-squares / sparse-recoverable from the shipped clean `(X, y=X@w_star)` | a sparse-recovery task must ship the data whose solution is `w_star` |
-| optimization-parity | the secret subset S is GF(2)-recoverable from the shipped full-pool labels | supervised parity learning must ship labeled training pairs |
 | optimization-variance-reduction | the ridge minimizer is recomputable from `(X_train, y_train)` (self-documented in dgp.py) | the model is given the training problem it must optimize |
 
 These match the project's stated tolerance: *reconstruct-by-shape is a tolerated
-"邪门技巧"*. The fix still removes the **explicit** `w_star`/S/`y_test` + the DGP +
+"邪门技巧"*. The fix still removes the **explicit** `w_star`/`y_test` + the DGP +
 the scorer from the scaffold, so an honest solver computes the metric the intended
 way and a lazy "return the stored answer" path no longer exists.
+
+**Update (2026-07-03).** optimization-diagonal-net and optimization-parity were
+previously listed here, but a Codex re-review showed their "observable" actually
+carried the held-out answer in a form the editable code could read off disk:
+diagonal-net's blob shipped `y_test` (so `w_star` was directly least-squares-
+solvable), and parity's blob shipped the full **noiseless** pool labels (so the
+secret `S` was GF(2)-solvable — a strong model exploited exactly this on the
+leaderboard). Both are now **closed**, not tolerated: the fixed driver loads the
+arrays into memory and **deletes the input blobs before any editable hook runs**,
+and parity's `make_dataset` now sees only the UNLABELED pool and returns row
+indices. The editable code can no longer read the answer off disk; the only
+residual is a **frame-walk** into the fixed driver's locals — the same tolerated
+class as §6 (commits 6cc0c2f, 8e9bce9).
 
 ## 2. optimization-multi-objective — marshalled evaluator
 
