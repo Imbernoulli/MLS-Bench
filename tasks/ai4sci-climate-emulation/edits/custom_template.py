@@ -125,13 +125,23 @@ class Custom(nn.Module):
 # ============================================================================
 
 def compute_nmse(pred, target):
-    """Normalized MSE: MSE / Var(target) per variable, averaged over non-constant variables."""
+    """Normalized MSE: MSE / Var(target) per variable, averaged over non-constant
+    variables, with each dimension capped at 1.0.
+
+    The cap makes the score a bounded skill metric in [0, 1]: a per-dimension
+    NMSE of 1.0 means "no better than predicting the per-dim mean (climatology)",
+    so a handful of near-unpredictable low-variance dims (cloud/momentum
+    tendencies ptend_q0002/q0003/u/v) can contribute at most 1.0 each and can
+    neither dominate the average nor push it past 1.0. Without the cap those
+    dims reach per-dim NMSE 3-7 and make the reported score volatile and
+    non-reproducible across seeds/hardware.
+    """
     mse = ((pred - target) ** 2).mean(dim=0)
     var = target.var(dim=0)
     mask = var > 0.01  # skip near-constant dimensions
     if mask.sum() == 0:
         return mse.mean().item()
-    nmse = (mse[mask] / var[mask]).mean()
+    nmse = (mse[mask] / var[mask]).clamp(max=1.0).mean()
     return nmse.item()
 
 
@@ -231,10 +241,14 @@ def _main():
     criterion = nn.MSELoss()
 
     # ── Training Loop (early stopping uses VAL only — test stays held-out) ──
-    # Select the checkpoint by validation NMSE (the reported metric), not raw
-    # val MSE: under overfitting the two diverge (val MSE can stay flat while
-    # val NMSE rises), so val-NMSE selection picks the genuinely best model.
-    best_val_nmse = float('inf')
+    # Select the checkpoint by validation LOSS (smooth MSE), matching the
+    # ClimSim reference (which early-stops on val_loss). The per-dimension
+    # variance-normalized NMSE is dominated by a handful of near-unpredictable
+    # low-variance dims (cloud/momentum tendencies) and is far too volatile to
+    # select on: minimizing it over many epochs lands on a different checkpoint
+    # run-to-run (seed/cuDNN/host-vs-container), making the reported test metric
+    # non-reproducible. val_loss is smooth and its minimum is stable.
+    best_val_loss = float('inf')
     patience_counter = 0
     t0 = time.time()
 
@@ -288,8 +302,8 @@ def _main():
             print(f"TRAIN_METRICS: epoch={epoch}, train_loss={avg_train_loss:.6f}, "
                   f"val_loss={avg_val_loss:.6f}, nmse={nmse:.6f}, r2={r2:.4f}", flush=True)
 
-            if nmse < best_val_nmse:
-                best_val_nmse = nmse
+            if avg_val_loss < best_val_loss:
+                best_val_loss = avg_val_loss
                 patience_counter = 0
                 torch.save(model.state_dict(), os.path.join(output_dir, f'best_model_{env_label}.pt'))
             else:

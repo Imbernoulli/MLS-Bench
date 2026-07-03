@@ -72,7 +72,7 @@ Other files you may **read** for context (do not modify):
 ## Readable Context
 
 
-### `ClimSim/custom_emulator.py`  [EDITABLE — lines 86–118, lines 173–175 only]
+### `ClimSim/custom_emulator.py`  [EDITABLE — lines 86–118, lines 183–185 only]
 
 ```python
      1: """Custom Climate Physics Emulator
@@ -202,212 +202,233 @@ Other files you may **read** for context (do not modify):
    125: # ============================================================================
    126: 
    127: def compute_nmse(pred, target):
-   128:     """Normalized MSE: MSE / Var(target) per variable, averaged over non-constant variables."""
-   129:     mse = ((pred - target) ** 2).mean(dim=0)
-   130:     var = target.var(dim=0)
-   131:     mask = var > 0.01  # skip near-constant dimensions
-   132:     if mask.sum() == 0:
-   133:         return mse.mean().item()
-   134:     nmse = (mse[mask] / var[mask]).mean()
-   135:     return nmse.item()
-   136: 
-   137: 
-   138: def compute_r2(pred, target):
-   139:     """R² averaged across non-constant output variables."""
-   140:     ss_res = ((target - pred) ** 2).sum(dim=0)
-   141:     ss_tot = ((target - target.mean(dim=0)) ** 2).sum(dim=0)
-   142:     mask = ss_tot > 0.01 * target.shape[0]
-   143:     if mask.sum() == 0:
-   144:         return 0.0
-   145:     r2 = 1 - ss_res[mask] / ss_tot[mask]
-   146:     return r2.mean().item()
+   128:     """Normalized MSE: MSE / Var(target) per variable, averaged over non-constant
+   129:     variables, with each dimension capped at 1.0.
+   130: 
+   131:     The cap makes the score a bounded skill metric in [0, 1]: a per-dimension
+   132:     NMSE of 1.0 means "no better than predicting the per-dim mean (climatology)",
+   133:     so a handful of near-unpredictable low-variance dims (cloud/momentum
+   134:     tendencies ptend_q0002/q0003/u/v) can contribute at most 1.0 each and can
+   135:     neither dominate the average nor push it past 1.0. Without the cap those
+   136:     dims reach per-dim NMSE 3-7 and make the reported score volatile and
+   137:     non-reproducible across seeds/hardware.
+   138:     """
+   139:     mse = ((pred - target) ** 2).mean(dim=0)
+   140:     var = target.var(dim=0)
+   141:     mask = var > 0.01  # skip near-constant dimensions
+   142:     if mask.sum() == 0:
+   143:         return mse.mean().item()
+   144:     nmse = (mse[mask] / var[mask]).clamp(max=1.0).mean()
+   145:     return nmse.item()
+   146: 
    147: 
-   148: 
-   149: def compute_rmse(pred, target):
-   150:     """Root Mean Squared Error, averaged across output variables."""
-   151:     rmse_per_var = ((pred - target) ** 2).mean(dim=0).sqrt()
-   152:     return rmse_per_var.mean().item()
-   153: 
-   154: 
-   155: # ============================================================================
-   156: # Training Script
-   157: # ============================================================================
+   148: def compute_r2(pred, target):
+   149:     """R² averaged across non-constant output variables."""
+   150:     ss_res = ((target - pred) ** 2).sum(dim=0)
+   151:     ss_tot = ((target - target.mean(dim=0)) ** 2).sum(dim=0)
+   152:     mask = ss_tot > 0.01 * target.shape[0]
+   153:     if mask.sum() == 0:
+   154:         return 0.0
+   155:     r2 = 1 - ss_res[mask] / ss_tot[mask]
+   156:     return r2.mean().item()
+   157: 
    158: 
-   159: if __name__ == '__main__':
-   160:     # ── Configuration from environment ──
-   161:     output_dir = os.environ.get('OUTPUT_DIR', 'out')
-   162:     seed = int(os.environ.get('SEED', 42))
-   163:     data_dir = os.environ.get('DATA_DIR', '/data/climsim')
-   164:     env_label = os.environ.get('ENV', 'default')
-   165: 
-   166:     # Training hyperparameters
-   167:     num_epochs = int(os.environ.get('NUM_EPOCHS', 30))
-   168:     batch_size = int(os.environ.get('BATCH_SIZE', 1024))
-   169:     learning_rate = float(os.environ.get('LEARNING_RATE', 1e-4))
-   170:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
-   171:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
-   172:     patience = 10
-   173:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
-   174:     # Allowed keys: learning_rate, weight_decay, patience.
-   175:     CONFIG_OVERRIDES = {}
-   176: 
-   177:     # Apply per-method hyperparameter overrides (fixed infrastructure)
-   178:     for _k, _v in CONFIG_OVERRIDES.items():
-   179:         if _k == 'learning_rate': learning_rate = _v
-   180:         elif _k == 'weight_decay': weight_decay = _v
-   181:         elif _k == 'patience': patience = _v
-   182: 
-   183:     # ── Setup ──
-   184:     torch.manual_seed(seed)
-   185:     np.random.seed(seed)
-   186:     device = 'cuda' if torch.cuda.is_available() else 'cpu'
-   187:     os.makedirs(output_dir, exist_ok=True)
-   188: 
-   189:     # ── Load Data ──
-   190:     # Train/val/test split (fixed infrastructure, prepared by prepare_data.py):
-   191:     #   ClimSim-style temporal holdout — train = simulation year 1, val/test =
-   192:     #   year 2 (interleaved). Both span a full annual cycle, so it is an
-   193:     #   in-distribution temporal generalization test, not cross-season extrapolation.
-   194:     #   - train = SGD; val = early-stopping & model selection (not final metrics)
-   195:     #   - test  = held-out, reported metrics (never touched during training)
-   196:     print(f"Loading data from {data_dir}...")
-   197:     train_dataset = ClimSimDataset(data_dir, split='train')
+   159: def compute_rmse(pred, target):
+   160:     """Root Mean Squared Error, averaged across output variables."""
+   161:     rmse_per_var = ((pred - target) ** 2).mean(dim=0).sqrt()
+   162:     return rmse_per_var.mean().item()
+   163: 
+   164: 
+   165: # ============================================================================
+   166: # Training Script
+   167: # ============================================================================
+   168: 
+   169: def _main():
+   170:     # ── Configuration from environment ──
+   171:     output_dir = os.environ.get('OUTPUT_DIR', 'out')
+   172:     seed = int(os.environ.get('SEED', 42))
+   173:     data_dir = os.environ.get('DATA_DIR', '/data/climsim')
+   174:     env_label = os.environ.get('ENV', 'default')
+   175: 
+   176:     # Training hyperparameters
+   177:     num_epochs = int(os.environ.get('NUM_EPOCHS', 30))
+   178:     batch_size = int(os.environ.get('BATCH_SIZE', 1024))
+   179:     learning_rate = float(os.environ.get('LEARNING_RATE', 1e-4))
+   180:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
+   181:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
+   182:     patience = 10
+   183:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
+   184:     # Allowed keys: learning_rate, weight_decay, patience.
+   185:     CONFIG_OVERRIDES = {}
+   186: 
+   187:     # Apply per-method hyperparameter overrides (fixed infrastructure)
+   188:     for _k, _v in CONFIG_OVERRIDES.items():
+   189:         if _k == 'learning_rate': learning_rate = _v
+   190:         elif _k == 'weight_decay': weight_decay = _v
+   191:         elif _k == 'patience': patience = _v
+   192: 
+   193:     # ── Setup ──
+   194:     torch.manual_seed(seed)
+   195:     np.random.seed(seed)
+   196:     device = 'cuda' if torch.cuda.is_available() else 'cpu'
+   197:     os.makedirs(output_dir, exist_ok=True)
    198: 
-   199:     # prepare_data.py always emits an explicit, independent test split (year-2
-   200:     # odd timesteps). If it is missing the data is stale (pre-temporal-holdout),
-   201:     # so fail loudly rather than silently scoring on the wrong/old split.
-   202:     if not os.path.exists(os.path.join(data_dir, 'test_inputs.npy')):
-   203:         raise RuntimeError(
-   204:             f"test_inputs.npy missing under {data_dir}: the prepared ClimSim data is "
-   205:             "stale. Regenerate with vendor/data_scripts/ClimSim/prepare_data.py (and "
-   206:             "rebuild the container image) so val/test are the year-2 timestep splits."
-   207:         )
-   208:     val_dataset = ClimSimDataset(data_dir, split='val')
-   209:     test_dataset = ClimSimDataset(data_dir, split='test')
-   210: 
-   211:     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
-   212:                               num_workers=4, pin_memory=True, drop_last=True)
-   213:     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
-   214:                             num_workers=4, pin_memory=True)
-   215:     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
-   216:                              num_workers=4, pin_memory=True)
-   217: 
-   218:     print(f"Train samples: {len(train_dataset):,}, Val samples: {len(val_dataset):,}, "
-   219:           f"Test samples: {len(test_dataset):,}")
-   220:     print(f"Input dim: {INPUT_DIM}, Output dim: {OUTPUT_DIM}")
-   221:     print(f"Env: {env_label}, Seed: {seed}, Epochs: {num_epochs}")
-   222: 
-   223:     # ── Model Init ──
-   224:     model = Custom(INPUT_DIM, OUTPUT_DIM).to(device)
-   225:     n_params = sum(p.numel() for p in model.parameters())
-   226:     print(f"Model parameters: {n_params:,}")
+   199:     # ── Load Data ──
+   200:     # Train/val/test split (fixed infrastructure, prepared by prepare_data.py):
+   201:     #   ClimSim-style temporal holdout — train = simulation year 1, val/test =
+   202:     #   year 2 (interleaved). Both span a full annual cycle, so it is an
+   203:     #   in-distribution temporal generalization test, not cross-season extrapolation.
+   204:     #   - train = SGD; val = early-stopping & model selection (not final metrics)
+   205:     #   - test  = held-out, reported metrics (never touched during training)
+   206:     print(f"Loading data from {data_dir}...")
+   207:     train_dataset = ClimSimDataset(data_dir, split='train')
+   208: 
+   209:     # prepare_data.py always emits an explicit, independent test split (year-2
+   210:     # odd timesteps). If it is missing the data is stale (pre-temporal-holdout),
+   211:     # so fail loudly rather than silently scoring on the wrong/old split.
+   212:     if not os.path.exists(os.path.join(data_dir, 'test_inputs.npy')):
+   213:         raise RuntimeError(
+   214:             f"test_inputs.npy missing under {data_dir}: the prepared ClimSim data is "
+   215:             "stale. Regenerate with vendor/data_scripts/ClimSim/prepare_data.py (and "
+   216:             "rebuild the container image) so val/test are the year-2 timestep splits."
+   217:         )
+   218:     val_dataset = ClimSimDataset(data_dir, split='val')
+   219:     test_dataset = ClimSimDataset(data_dir, split='test')
+   220: 
+   221:     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,
+   222:                               num_workers=4, pin_memory=True, drop_last=True)
+   223:     val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,
+   224:                             num_workers=4, pin_memory=True)
+   225:     test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,
+   226:                              num_workers=4, pin_memory=True)
    227: 
-   228:     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate,
-   229:                                   weight_decay=weight_decay)
-   230:     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
-   231:     criterion = nn.MSELoss()
+   228:     print(f"Train samples: {len(train_dataset):,}, Val samples: {len(val_dataset):,}, "
+   229:           f"Test samples: {len(test_dataset):,}")
+   230:     print(f"Input dim: {INPUT_DIM}, Output dim: {OUTPUT_DIM}")
+   231:     print(f"Env: {env_label}, Seed: {seed}, Epochs: {num_epochs}")
    232: 
-   233:     # ── Training Loop (early stopping uses VAL only — test stays held-out) ──
-   234:     # Select the checkpoint by validation NMSE (the reported metric), not raw
-   235:     # val MSE: under overfitting the two diverge (val MSE can stay flat while
-   236:     # val NMSE rises), so val-NMSE selection picks the genuinely best model.
-   237:     best_val_nmse = float('inf')
-   238:     patience_counter = 0
-   239:     t0 = time.time()
-   240: 
-   241:     for epoch in range(1, num_epochs + 1):
-   242:         model.train()
-   243:         train_loss = 0.0
-   244:         n_batches = 0
-   245: 
-   246:         for inputs, targets in train_loader:
-   247:             inputs, targets = inputs.to(device), targets.to(device)
-   248:             optimizer.zero_grad()
-   249:             predictions = model(inputs)
-   250:             loss = criterion(predictions, targets)
-   251:             loss.backward()
-   252:             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-   253:             optimizer.step()
-   254:             train_loss += loss.item()
-   255:             n_batches += 1
-   256: 
-   257:         scheduler.step()
-   258:         avg_train_loss = train_loss / max(n_batches, 1)
+   233:     # ── Model Init ──
+   234:     model = Custom(INPUT_DIM, OUTPUT_DIM).to(device)
+   235:     n_params = sum(p.numel() for p in model.parameters())
+   236:     print(f"Model parameters: {n_params:,}")
+   237: 
+   238:     optimizer = torch.optim.AdamW(model.parameters(), lr=learning_rate,
+   239:                                   weight_decay=weight_decay)
+   240:     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs)
+   241:     criterion = nn.MSELoss()
+   242: 
+   243:     # ── Training Loop (early stopping uses VAL only — test stays held-out) ──
+   244:     # Select the checkpoint by validation LOSS (smooth MSE), matching the
+   245:     # ClimSim reference (which early-stops on val_loss). The per-dimension
+   246:     # variance-normalized NMSE is dominated by a handful of near-unpredictable
+   247:     # low-variance dims (cloud/momentum tendencies) and is far too volatile to
+   248:     # select on: minimizing it over many epochs lands on a different checkpoint
+   249:     # run-to-run (seed/cuDNN/host-vs-container), making the reported test metric
+   250:     # non-reproducible. val_loss is smooth and its minimum is stable.
+   251:     best_val_loss = float('inf')
+   252:     patience_counter = 0
+   253:     t0 = time.time()
+   254: 
+   255:     for epoch in range(1, num_epochs + 1):
+   256:         model.train()
+   257:         train_loss = 0.0
+   258:         n_batches = 0
    259: 
-   260:         # ── Validation (used for early stopping; NOT for final reporting) ──
-   261:         if epoch % eval_interval == 0 or epoch == num_epochs:
-   262:             model.eval()
-   263:             all_preds, all_targets = [], []
-   264:             val_loss = 0.0
-   265:             n_val = 0
-   266:             with torch.no_grad():
-   267:                 for inputs, targets in val_loader:
-   268:                     inputs, targets = inputs.to(device), targets.to(device)
-   269:                     predictions = model(inputs)
-   270:                     val_loss += criterion(predictions, targets).item()
-   271:                     all_preds.append(predictions)
-   272:                     all_targets.append(targets)
-   273:                     n_val += 1
-   274: 
-   275:             avg_val_loss = val_loss / max(n_val, 1)
-   276:             all_preds = torch.cat(all_preds, dim=0)
-   277:             all_targets = torch.cat(all_targets, dim=0)
-   278: 
-   279:             nmse = compute_nmse(all_preds, all_targets)
-   280:             r2 = compute_r2(all_preds, all_targets)
-   281:             rmse = compute_rmse(all_preds, all_targets)
-   282: 
-   283:             elapsed = time.time() - t0
-   284:             lr_now = scheduler.get_last_lr()[0]
-   285:             print(f"Epoch {epoch}/{num_epochs}: train_loss={avg_train_loss:.6f}, "
-   286:                   f"val_loss={avg_val_loss:.6f}, nmse={nmse:.6f}, r2={r2:.4f}, "
-   287:                   f"rmse={rmse:.6f}, lr={lr_now:.6f}, time={elapsed:.1f}s")
-   288:             print(f"TRAIN_METRICS: epoch={epoch}, train_loss={avg_train_loss:.6f}, "
-   289:                   f"val_loss={avg_val_loss:.6f}, nmse={nmse:.6f}, r2={r2:.4f}", flush=True)
-   290: 
-   291:             if nmse < best_val_nmse:
-   292:                 best_val_nmse = nmse
-   293:                 patience_counter = 0
-   294:                 torch.save(model.state_dict(), os.path.join(output_dir, f'best_model_{env_label}.pt'))
-   295:             else:
-   296:                 patience_counter += 1  # count evaluations, not epochs (budget-independent)
-   297:                 if patience_counter >= patience:
-   298:                     print(f"Early stopping at epoch {epoch} (patience={patience})")
-   299:                     break
-   300: 
-   301:     # ── Final Evaluation on the held-out TEST split ──
-   302:     print("\n=== Final Evaluation (held-out test split) ===")
-   303:     model.load_state_dict(torch.load(os.path.join(output_dir, f'best_model_{env_label}.pt'),
-   304:                                      weights_only=True))
-   305:     model.eval()
-   306:     all_preds, all_targets = [], []
-   307:     with torch.no_grad():
-   308:         for inputs, targets in test_loader:
-   309:             inputs, targets = inputs.to(device), targets.to(device)
-   310:             predictions = model(inputs)
-   311:             all_preds.append(predictions)
-   312:             all_targets.append(targets)
-   313: 
-   314:     all_preds = torch.cat(all_preds, dim=0)
-   315:     all_targets = torch.cat(all_targets, dim=0)
-   316: 
-   317:     final_nmse = compute_nmse(all_preds, all_targets)
-   318:     final_r2 = compute_r2(all_preds, all_targets)
-   319:     final_rmse = compute_rmse(all_preds, all_targets)
-   320: 
-   321:     # Per-group metrics: multi-level tendencies vs single-level outputs
-   322:     n_ml_out = 6 * N_LEVELS  # 360
-   323:     ml_preds, ml_targets = all_preds[:, :n_ml_out], all_targets[:, :n_ml_out]
-   324:     sl_preds, sl_targets = all_preds[:, n_ml_out:], all_targets[:, n_ml_out:]
-   325:     ml_nmse = compute_nmse(ml_preds, ml_targets)
-   326:     sl_nmse = compute_nmse(sl_preds, sl_targets)
+   260:         for inputs, targets in train_loader:
+   261:             inputs, targets = inputs.to(device), targets.to(device)
+   262:             optimizer.zero_grad()
+   263:             predictions = model(inputs)
+   264:             loss = criterion(predictions, targets)
+   265:             loss.backward()
+   266:             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+   267:             optimizer.step()
+   268:             train_loss += loss.item()
+   269:             n_batches += 1
+   270: 
+   271:         scheduler.step()
+   272:         avg_train_loss = train_loss / max(n_batches, 1)
+   273: 
+   274:         # ── Validation (used for early stopping; NOT for final reporting) ──
+   275:         if epoch % eval_interval == 0 or epoch == num_epochs:
+   276:             model.eval()
+   277:             all_preds, all_targets = [], []
+   278:             val_loss = 0.0
+   279:             n_val = 0
+   280:             with torch.no_grad():
+   281:                 for inputs, targets in val_loader:
+   282:                     inputs, targets = inputs.to(device), targets.to(device)
+   283:                     predictions = model(inputs)
+   284:                     val_loss += criterion(predictions, targets).item()
+   285:                     all_preds.append(predictions)
+   286:                     all_targets.append(targets)
+   287:                     n_val += 1
+   288: 
+   289:             avg_val_loss = val_loss / max(n_val, 1)
+   290:             all_preds = torch.cat(all_preds, dim=0)
+   291:             all_targets = torch.cat(all_targets, dim=0)
+   292: 
+   293:             nmse = compute_nmse(all_preds, all_targets)
+   294:             r2 = compute_r2(all_preds, all_targets)
+   295:             rmse = compute_rmse(all_preds, all_targets)
+   296: 
+   297:             elapsed = time.time() - t0
+   298:             lr_now = scheduler.get_last_lr()[0]
+   299:             print(f"Epoch {epoch}/{num_epochs}: train_loss={avg_train_loss:.6f}, "
+   300:                   f"val_loss={avg_val_loss:.6f}, nmse={nmse:.6f}, r2={r2:.4f}, "
+   301:                   f"rmse={rmse:.6f}, lr={lr_now:.6f}, time={elapsed:.1f}s")
+   302:             print(f"TRAIN_METRICS: epoch={epoch}, train_loss={avg_train_loss:.6f}, "
+   303:                   f"val_loss={avg_val_loss:.6f}, nmse={nmse:.6f}, r2={r2:.4f}", flush=True)
+   304: 
+   305:             if avg_val_loss < best_val_loss:
+   306:                 best_val_loss = avg_val_loss
+   307:                 patience_counter = 0
+   308:                 torch.save(model.state_dict(), os.path.join(output_dir, f'best_model_{env_label}.pt'))
+   309:             else:
+   310:                 patience_counter += 1  # count evaluations, not epochs (budget-independent)
+   311:                 if patience_counter >= patience:
+   312:                     print(f"Early stopping at epoch {epoch} (patience={patience})")
+   313:                     break
+   314: 
+   315:     # ── Final Evaluation on the held-out TEST split ──
+   316:     print("\n=== Final Evaluation (held-out test split) ===")
+   317:     model.load_state_dict(torch.load(os.path.join(output_dir, f'best_model_{env_label}.pt'),
+   318:                                      weights_only=True))
+   319:     model.eval()
+   320:     all_preds, all_targets = [], []
+   321:     with torch.no_grad():
+   322:         for inputs, targets in test_loader:
+   323:             inputs, targets = inputs.to(device), targets.to(device)
+   324:             predictions = model(inputs)
+   325:             all_preds.append(predictions)
+   326:             all_targets.append(targets)
    327: 
-   328:     print(f"Final NMSE: {final_nmse:.6f} (ML: {ml_nmse:.6f}, SL: {sl_nmse:.6f})")
-   329:     print(f"Final R²: {final_r2:.4f}")
-   330:     print(f"Final RMSE: {final_rmse:.6f}")
-   331:     print(f"TEST_METRICS: nmse={final_nmse:.6f}, r2={final_r2:.4f}, "
-   332:           f"rmse={final_rmse:.6f}, ml_nmse={ml_nmse:.6f}, sl_nmse={sl_nmse:.6f}",
-   333:           flush=True)
+   328:     all_preds = torch.cat(all_preds, dim=0)
+   329:     all_targets = torch.cat(all_targets, dim=0)
+   330: 
+   331:     final_nmse = compute_nmse(all_preds, all_targets)
+   332:     final_r2 = compute_r2(all_preds, all_targets)
+   333:     final_rmse = compute_rmse(all_preds, all_targets)
+   334: 
+   335:     # Per-group metrics: multi-level tendencies vs single-level outputs
+   336:     n_ml_out = 6 * N_LEVELS  # 360
+   337:     ml_preds, ml_targets = all_preds[:, :n_ml_out], all_targets[:, :n_ml_out]
+   338:     sl_preds, sl_targets = all_preds[:, n_ml_out:], all_targets[:, n_ml_out:]
+   339:     ml_nmse = compute_nmse(ml_preds, ml_targets)
+   340:     sl_nmse = compute_nmse(sl_preds, sl_targets)
+   341: 
+   342:     print(f"Final NMSE: {final_nmse:.6f} (ML: {ml_nmse:.6f}, SL: {sl_nmse:.6f})")
+   343:     print(f"Final R²: {final_r2:.4f}")
+   344:     print(f"Final RMSE: {final_rmse:.6f}")
+   345:     print(f"TEST_METRICS: nmse={final_nmse:.6f}, r2={final_r2:.4f}, "
+   346:           f"rmse={final_rmse:.6f}, ml_nmse={ml_nmse:.6f}, sl_nmse={sl_nmse:.6f}",
+   347:           flush=True)
+   348: 
+   349: 
+   350: # Run inside a function so the test dataset (with the held-out target outputs in
+   351: # test_dataset.outputs) is a local, NOT a module global the editable model can
+   352: # read. An honest forward(x) is unaffected.
+   353: if __name__ == '__main__':
+   354:     _main()
 ```
 
 ## Reference Baselines
@@ -494,16 +515,16 @@ Lines 86–147:
    149: # END EDITABLE REGION
    150: # ================================================================
 
-Lines 202–204:
-   199:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
-   200:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
-   201:     patience = 10
-   202:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
-   203:     # Allowed keys: learning_rate, weight_decay, patience.
-   204:     CONFIG_OVERRIDES = {}
-   205: 
-   206:     # Apply per-method hyperparameter overrides (fixed infrastructure)
-   207:     for _k, _v in CONFIG_OVERRIDES.items():
+Lines 212–214:
+   209:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
+   210:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
+   211:     patience = 10
+   212:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
+   213:     # Allowed keys: learning_rate, weight_decay, patience.
+   214:     CONFIG_OVERRIDES = {}
+   215: 
+   216:     # Apply per-method hyperparameter overrides (fixed infrastructure)
+   217:     for _k, _v in CONFIG_OVERRIDES.items():
 ```
 
 ### `ed` baseline — editable region  [READ-ONLY — reference implementation]
@@ -551,16 +572,16 @@ Lines 86–117:
    119: # END EDITABLE REGION
    120: # ================================================================
 
-Lines 172–174:
-   169:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
-   170:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
-   171:     patience = 10
-   172:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
-   173:     # Allowed keys: learning_rate, weight_decay, patience.
-   174:     CONFIG_OVERRIDES = {}
-   175: 
-   176:     # Apply per-method hyperparameter overrides (fixed infrastructure)
-   177:     for _k, _v in CONFIG_OVERRIDES.items():
+Lines 182–184:
+   179:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
+   180:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
+   181:     patience = 10
+   182:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
+   183:     # Allowed keys: learning_rate, weight_decay, patience.
+   184:     CONFIG_OVERRIDES = {}
+   185: 
+   186:     # Apply per-method hyperparameter overrides (fixed infrastructure)
+   187:     for _k, _v in CONFIG_OVERRIDES.items():
 ```
 
 ### `unet` baseline — editable region  [READ-ONLY — reference implementation]
@@ -699,16 +720,16 @@ Lines 86–208:
    210: # END EDITABLE REGION
    211: # ================================================================
 
-Lines 263–265:
-   260:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
-   261:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
-   262:     patience = 10
-   263:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
-   264:     # Allowed keys: learning_rate, weight_decay, patience.
-   265:     CONFIG_OVERRIDES = {}
-   266: 
-   267:     # Apply per-method hyperparameter overrides (fixed infrastructure)
-   268:     for _k, _v in CONFIG_OVERRIDES.items():
+Lines 273–275:
+   270:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
+   271:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
+   272:     patience = 10
+   273:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
+   274:     # Allowed keys: learning_rate, weight_decay, patience.
+   275:     CONFIG_OVERRIDES = {}
+   276: 
+   277:     # Apply per-method hyperparameter overrides (fixed infrastructure)
+   278:     for _k, _v in CONFIG_OVERRIDES.items():
 ```
 
 ### `hsr` baseline — editable region  [READ-ONLY — reference implementation]
@@ -807,16 +828,16 @@ Lines 86–168:
    170: # END EDITABLE REGION
    171: # ================================================================
 
-Lines 223–225:
-   220:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
-   221:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
-   222:     patience = 10
-   223:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
-   224:     # Allowed keys: learning_rate, weight_decay, patience.
-   225:     CONFIG_OVERRIDES = {}
-   226: 
-   227:     # Apply per-method hyperparameter overrides (fixed infrastructure)
-   228:     for _k, _v in CONFIG_OVERRIDES.items():
+Lines 233–235:
+   230:     weight_decay = float(os.environ.get('WEIGHT_DECAY', 1e-5))
+   231:     eval_interval = int(os.environ.get('EVAL_INTERVAL', 1))
+   232:     patience = 10
+   233:     # CONFIG_OVERRIDES: override training hyperparameters for your method.
+   234:     # Allowed keys: learning_rate, weight_decay, patience.
+   235:     CONFIG_OVERRIDES = {}
+   236: 
+   237:     # Apply per-method hyperparameter overrides (fixed infrastructure)
+   238:     for _k, _v in CONFIG_OVERRIDES.items():
 ```
 
 
