@@ -152,6 +152,30 @@ def load_problem(
     return X_train, y_train, X_test, y_test
 
 
+def _scrub_inputs(dim, sparsity, n_max_train, n_test, seeds) -> None:
+    """Delete the pre-generated input blobs from the workspace once they have
+    been loaded into memory, BEFORE any editable hook runs.
+
+    The editable optimizer (get_hyperparameters / init_state / step) only ever
+    receives gradients — never the raw arrays — so it has no legitimate need for
+    these files. Removing them means an edited optimizer cannot reopen the blob
+    to read the held-out ``y_test`` (and algebraically solve ``w_star``), nor the
+    full ``n_max`` training pool (and thereby recover ``w_star`` from more data
+    than the current sample size ``n`` and bypass the smallest-``n`` search). The
+    arrays then live only in this fixed driver's local scope.
+    """
+    inputs_dir = _inputs_dir()
+    for seed in seeds:
+        blob = os.path.join(
+            inputs_dir,
+            f"{_input_key(dim, sparsity, n_max_train, n_test, seed)}.npz.b64",
+        )
+        try:
+            os.remove(blob)
+        except OSError:
+            pass
+
+
 # ===================================================================
 # Two-window plateau stopping rule
 # ===================================================================
@@ -418,12 +442,15 @@ def _coarse_to_fine_search(
     grid = list(search_cfg.grid)
     seeds = list(range(master_seed, master_seed + search_cfg.num_seeds))
     threshold = search_cfg.success_seeds_required
-    hparams = get_hparams_fn(problem.dim, problem.sparsity, problem.delta)
-
-    # Load pre-generated clean datasets for all seeds at max training size.
-    # The generator (and the true w_star it builds) is host-only; here we only
-    # read the observable problem written into bench/_inputs/ by the scaffold.
     n_max_train = max(grid)
+
+    # Load pre-generated clean datasets for all seeds at max training size INTO
+    # MEMORY, then DELETE the on-disk blobs BEFORE any editable hook runs. The
+    # generator (and the true w_star it builds) is host-only and never enters
+    # this container; the editable optimizer only ever receives gradients, so
+    # once the files are scrubbed it cannot reopen them to read the held-out
+    # y_test (and algebraically solve w_star) or the full n_max training pool
+    # (and thereby bypass the smallest-n search).
     datasets: dict[int, tuple] = {}
     print(f"Loading datasets (n_max_train={n_max_train}, n_test={problem.n_test}) ...",
           flush=True)
@@ -431,7 +458,11 @@ def _coarse_to_fine_search(
         datasets[seed] = load_problem(
             problem.dim, problem.sparsity, n_max_train, problem.n_test, seed,
         )
+    _scrub_inputs(problem.dim, problem.sparsity, n_max_train, problem.n_test, seeds)
     print("Datasets ready.", flush=True)
+
+    # Editable hooks below are invoked only AFTER the input blobs are scrubbed.
+    hparams = get_hparams_fn(problem.dim, problem.sparsity, problem.delta)
 
     all_tested: dict[int, dict[str, Any]] = {}
     first_success_idx: int | None = None
