@@ -1,7 +1,7 @@
 """Kaiming initialization baseline for optimization-parity.
 
 Uses Kaiming normal initialization (He init) instead of Xavier uniform,
-paired with a moderately-sized slice of the labeled pool and tuned AdamW
+paired with a moderately-sized prefix of the (unlabeled) pool and tuned AdamW
 hyperparameters (lower weight decay, slightly higher learning rate).
 """
 
@@ -18,12 +18,11 @@ def init_model(model: nn.Sequential, config: TaskConfig) -> None:
 
 def make_dataset(
     x_pool: torch.Tensor,
-    y_pool: torch.Tensor,
     config: TaskConfig,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return a moderately-sized slice of the labeled pool (50k examples)."""
+) -> torch.Tensor:
+    """Return a moderately-sized prefix of the (unlabeled) pool (50k examples)."""
     num_examples = min(50_000, config.max_train_examples)
-    return x_pool[:num_examples], y_pool[:num_examples]
+    return torch.arange(num_examples)
 
 
 def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
@@ -40,8 +39,8 @@ OPS = [
     {
         "op": "replace",
         "file": _FILE,
-        "start_line": 242,
-        "end_line": 274,
+        "start_line": 306,
+        "end_line": 341,
         "content": _CONTENT,
     },
 ]

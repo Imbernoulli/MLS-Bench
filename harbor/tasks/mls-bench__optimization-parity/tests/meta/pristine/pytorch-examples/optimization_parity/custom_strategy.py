@@ -3,16 +3,19 @@
 The fixed evaluation trains a fixed two-layer MLP to learn hidden sparse parity
 functions and asks the agent to control only:
   1. model initialization
-  2. training-data construction (selecting/transforming the provided pool)
+  2. training-data selection (choosing which pool rows to train on)
   3. AdamW hyperparameters
 
-NOTE: The hidden parity secret S and the held-out test labels are NOT part of
-this program. The harness pre-generates the (unlabeled) training inputs and
-their labels for you and scores your predictions against held-out truth in a
-separate host-side process. Your editable hooks only ever see binary inputs and
-their labels — never the secret subset S, and never the test labels. The runner
-trains your model and emits its predictions on a held-out test set; the host
-regenerates the test labels and computes test accuracy.
+NOTE: The hidden parity secret S, the training-pool LABELS, and the held-out
+test labels are NOT visible to your editable hooks. The harness pre-generates
+the (unlabeled) training inputs and their labels; a FIXED driver loads the
+labels into its own memory, deletes them from disk, then hands your
+``make_dataset`` only the UNLABELED pool and attaches the held-out labels to the
+rows you pick. Your hooks therefore only ever see binary inputs — never a label,
+never the secret subset S, never the test labels. The runner trains your model
+and emits its predictions on a held-out test set; the host regenerates the test
+labels and computes test accuracy. A strategy must make gradient training learn
+the parity — it cannot recover the secret from labels.
 """
 
 from __future__ import annotations
@@ -181,7 +184,10 @@ def maybe_log_final_window(
 
 # =====================================================================
 # FIXED: held-out input loading (the harness pre-generates these; the
-# secret and the test labels are never present in this process)
+# secret and the test labels are never present in this process). The
+# training-pool LABELS are loaded here, in fixed code, and then scrubbed
+# from disk BEFORE any editable hook runs — so make_dataset() below only
+# ever sees the UNLABELED pool.
 # =====================================================================
 def _inputs_dir() -> str:
     """Directory holding the pre-generated parity inputs for this task."""
@@ -225,6 +231,10 @@ def load_train_labels(config: TaskConfig, seed: int, secret_index: int) -> torch
     Only the labels are provided (the secret that produced them is held out).
     The labels are bit-packed for one row per training example over the full
     ``max_train_examples`` pool; unpack to a float tensor in {0, 1}.
+
+    This is FIXED code, called only by ``_load_all_train_labels`` below, which
+    immediately deletes the on-disk blob afterward. It is never invoked from an
+    editable hook.
     """
     import numpy as np
 
@@ -234,6 +244,60 @@ def load_train_labels(config: TaskConfig, seed: int, secret_index: int) -> torch
         packed = np.frombuffer(base64.b64decode(f.read()), dtype=np.uint8)
     bits = np.unpackbits(packed)[: config.max_train_examples]
     return torch.from_numpy(bits.astype("float32"))
+
+
+def _load_all_train_labels(config: TaskConfig, seed: int) -> dict[int, torch.Tensor]:
+    """Load every hidden secret's training-pool labels into memory, then DELETE
+    the on-disk label blobs.
+
+    After this returns, the labels exist only inside this fixed driver's local
+    scope; the ``.labels.b64`` files are gone from the workspace, so the editable
+    ``make_dataset`` hook (which runs later) cannot open them to recover the
+    hidden secret. This is what keeps parity honest: the strategy must help
+    gradient training learn the parity rather than solve the secret from labels.
+    """
+    labels: dict[int, torch.Tensor] = {}
+    for secret_index in range(config.num_hidden_secrets):
+        labels[secret_index] = load_train_labels(config, seed, secret_index)
+    tag = _config_tag(config)
+    inputs_dir = _inputs_dir()
+    for secret_index in range(config.num_hidden_secrets):
+        blob = os.path.join(inputs_dir, f"{tag}_seed{seed}_s{secret_index}.labels.b64")
+        try:
+            os.remove(blob)
+        except OSError:
+            pass
+    return labels
+
+
+def _resolve_indices(
+    selection: object,
+    pool_size: int,
+    config: TaskConfig,
+) -> torch.Tensor:
+    """Validate the editable ``make_dataset`` output.
+
+    It must be a 1-D collection of integer row indices into the unlabeled pool
+    (repeats allowed for reweighting; any order). Fixed code then attaches the
+    held-out labels to exactly those rows — the strategy never picks a label.
+    """
+    idx = torch.as_tensor(selection).reshape(-1)
+    if not torch.is_floating_point(idx):
+        idx = idx.long()
+    else:
+        if not torch.all(idx == idx.long().to(idx.dtype)):
+            raise ValueError("make_dataset indices must be integers.")
+        idx = idx.long()
+    if idx.numel() == 0:
+        raise ValueError("make_dataset must return at least one row index.")
+    if idx.numel() > config.max_train_examples:
+        raise ValueError(
+            f"make_dataset selected {idx.numel()} rows, exceeds limit "
+            f"{config.max_train_examples}."
+        )
+    if int(idx.min()) < 0 or int(idx.max()) >= pool_size:
+        raise ValueError("make_dataset indices out of range for the training pool.")
+    return idx.contiguous()
 
 
 # =====================================================================
@@ -250,18 +314,21 @@ def init_model(model: nn.Sequential, config: TaskConfig) -> None:
 
 def make_dataset(
     x_pool: torch.Tensor,
-    y_pool: torch.Tensor,
     config: TaskConfig,
-) -> tuple[torch.Tensor, torch.Tensor]:
-    """Construct the training dataset from the provided labeled pool.
+) -> torch.Tensor:
+    """Select which training rows to use — you see only the UNLABELED pool.
 
-    The harness supplies a large pool of labeled binary examples (x_pool, y_pool)
-    drawn from the same distribution as the held-out test set. Select and/or
-    transform it however you like; the result must be a binary (x, y) pair (or a
-    dict with keys 'x' and 'y'). The hidden parity secret is never exposed.
+    ``x_pool`` is a large pool of binary inputs (shape [pool, n_features]) drawn
+    from the same distribution as the held-out test set. Return a 1-D LongTensor
+    of row indices into ``x_pool`` (repeats allowed for reweighting; any order).
+    The harness attaches the held-out labels to exactly the rows you pick and
+    trains on them.
+
+    You never see the labels or the hidden parity secret, so a strategy must make
+    gradient training learn the parity — it cannot solve the secret from labels.
     """
     num_examples = 4_096
-    return x_pool[:num_examples], y_pool[:num_examples]
+    return torch.arange(num_examples)
 
 
 def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
@@ -452,14 +519,21 @@ def run_benchmark(
         flush=True,
     )
 
+    # FIXED: load every secret's pool labels into memory and delete the on-disk
+    # blobs before any editable hook runs. Labels now live only in this local.
+    labels_by_secret = _load_all_train_labels(config, seed)
+
     results: list[RunResult] = []
 
     for secret_index in range(config.num_hidden_secrets):
         train_dataset_seed = seed * 10_000 + secret_index
         x_pool = gen_train_pool_x(config, train_dataset_seed)
-        y_pool = load_train_labels(config, seed, secret_index)
+        y_pool = labels_by_secret[secret_index]
+        # The editable hook only sees the UNLABELED pool and returns row indices;
+        # fixed code attaches the held-out labels to exactly those rows.
+        selected = _resolve_indices(make_dataset(x_pool, config), x_pool.shape[0], config)
         train_x, train_y = normalize_dataset(
-            make_dataset(x_pool, y_pool, config),
+            (x_pool.index_select(0, selected), y_pool.index_select(0, selected)),
             config,
         )
         test_x = gen_test_x(config, seed * 20_000 + secret_index)
