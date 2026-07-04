@@ -3,7 +3,7 @@
 
 cd /workspace
 
-python opt-vr-bench/custom_vr.py \
+python opt-vr-bench/vr_driver.py \
     --problem logistic \
     --seed ${SEED:-42} \
     --output-dir "${OUTPUT_DIR:-./output}"

@@ -428,5 +428,9 @@ def main() -> None:
     run_benchmark(args.dataset, args.seed, args.target_coverage, args.output_dir)
 
 
-if __name__ == "__main__":
+def _main():
     main()
+
+
+if __name__ == "__main__":
+    _main()

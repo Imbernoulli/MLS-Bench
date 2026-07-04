@@ -58,13 +58,18 @@ Available DEAP utilities:
 - `get_nondominated(population)` -> first non-dominated front.
 
 ## Evaluation
-Evaluated on benchmark problems (run with multiple seeds):
-- **ZDT1** (2D objectives, convex front, 30 variables, 200 generations).
-- **ZDT3** (2D objectives, disconnected front, 30 variables, 200 generations).
-- **DTLZ2** (3D objectives, spherical front, 12 variables, 250 generations).
-- **DTLZ1** (3D objectives, linear front with many local fronts, 7 variables, 400 generations).
+Your strategy is evaluated on a set of held-out continuous multi-objective
+benchmark problems drawn from the standard ZDT and DTLZ families (a mix of
+2- and 3-objective problems with convex, disconnected, and spherical/linear
+Pareto fronts), run with multiple seeds. The harness supplies your `CustomMOEA`
+with the objective functions to optimize and the problem configuration
+(population size, number of generations, variables, and bounds) at run time; the
+specific problem identity and its true Pareto front are held out and are not
+available to your program. Your strategy receives individuals whose objective
+values have already been evaluated — design it to work for both 2- and
+3-objective problems.
 
-Three metrics are reported:
+Three metrics are reported per problem:
 - **Hypervolume (HV)**: volume of objective space dominated by the Pareto front approximation. **Higher is better.**
 - **Inverted Generational Distance (IGD)**: average distance from true Pareto front points to nearest found solution. **Lower is better.**
 - **Spread**: uniformity of the Pareto front approximation. **Lower is better.**

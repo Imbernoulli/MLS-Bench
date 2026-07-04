@@ -12,7 +12,7 @@ In this benchmark the model architecture, optimizer family, batch size, training
 Edit the scaffold file `pytorch-examples/optimization_parity/custom_strategy.py` only inside the editable block containing:
 
 1. `init_model(model, config)`
-2. `make_dataset(secret, config, seed)`
+2. `make_dataset(x_pool, config)`
 3. `get_optimizer_config(config)`
 
 The benchmark is evaluated on three configurations: `(N=32, K=8)`, `(N=50, K=8)`, and `(N=64, K=8)`, all with `W = 512`.
@@ -28,11 +28,10 @@ The benchmark is evaluated on three configurations: `(N=32, K=8)`, `(N=50, K=8)`
 - Evaluation: 10 hidden secrets × 10 random epoch-orderings per secret = 100 runs; report mean held-out test accuracy.
 
 ## Interface Notes
+- The harness supplies a large pool of **unlabeled** binary training inputs `x_pool` drawn from the task distribution. You never see the labels or the hidden secret subset `S`: `make_dataset` returns which pool rows to train on, and the harness attaches the held-out labels to exactly those rows. Making gradient training learn the parity from the pool is the learning problem — you cannot recover `S` from labels.
 - `init_model(...)` must not depend on the hidden secret.
-- `make_dataset(...)` may use the provided secret and must return either `(x, y)` or `{"x": x, "y": y}`.
-- `x` must have shape `[num_examples, N]` with binary values only.
-- `y` must have shape `[num_examples]` (or `[num_examples, 1]`) with binary labels.
-- Training dataset size must stay `<= 12_800_000` examples.
+- `make_dataset(x_pool, config)` selects which pool rows to train on and must return a 1-D integer tensor of row indices into `x_pool` (repeats allowed for reweighting; any order).
+- Selected indices must lie in `[0, pool_size)`; the number of selected rows must stay `<= 12_800_000`.
 - `get_optimizer_config(...)` must return `lr`, `wd`, `beta1`, and `beta2`.
 
 ## Metric

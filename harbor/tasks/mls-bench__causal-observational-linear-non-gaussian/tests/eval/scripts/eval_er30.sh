@@ -3,6 +3,7 @@
 # Dense graph (~109 expected edges, avg ~3.6 parents/node) with limited samples.
 # Working directory is /workspace (causal-learn package root).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-non-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type er \
     --n_nodes 30 \

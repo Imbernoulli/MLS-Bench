@@ -1,6 +1,7 @@
 #!/bin/bash
 # Evaluate on ER20: Erdos-Renyi graph, 20 nodes, p=0.2, 1000 samples.
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type er \
     --n_nodes 20 \

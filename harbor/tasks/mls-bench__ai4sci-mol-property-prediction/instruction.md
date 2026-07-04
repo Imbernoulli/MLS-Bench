@@ -122,7 +122,7 @@ stay unchanged.
     25: import numpy as np
     26: import pandas as pd
     27: from collections import defaultdict
-    28: from dataclasses import dataclass
+    28: from dataclasses import dataclass, replace
     29: from typing import Optional, Dict, List, Tuple
     30: from pathlib import Path
     31: from scipy.spatial import distance_matrix as scipy_distance_matrix
@@ -595,8 +595,534 @@ stay unchanged.
    498:             'edge_index': gnn_feats['edge_index'],
    499:             'edge_attr': gnn_feats['edge_attr'],
    500:             'positions': torch.from_numpy(coordinates) if len(coordinates) > 0 else torch.zeros(1, 3),
-
-[truncated: showing at most 500 lines / 60000 bytes from Uni-Mol/custom_molprop.py]
+   501:             'num_atoms': gnn_feats['num_atoms'],
+   502:             # Uni-Mol format
+   503:             'tokens': torch.tensor(tokens, dtype=torch.long),
+   504:             'ext_coords': torch.from_numpy(ext_coords),
+   505:             'dist_matrix': torch.from_numpy(dist),
+   506:             'edge_types': torch.from_numpy(edge_type),
+   507:             'num_tokens': len(tokens),
+   508:             # Targets
+   509:             'targets': torch.tensor(t, dtype=torch.float32),
+   510:             'target_mask': torch.tensor(m, dtype=torch.float32),
+   511:             # SMILES (passed through for models that need molecule-level features)
+   512:             'smiles': smi,
+   513:             # Molecule index for TTA aggregation
+   514:             'mol_idx': idx if self.is_train else idx // self.conf_size,
+   515:         }
+   516: 
+   517:     def _build_gnn_features(self, smi, atoms_arr, coordinates):
+   518:         """Build GNN (sparse graph) features from SMILES for GNN-based models."""
+   519:         mol = Chem.MolFromSmiles(smi) if smi else None
+   520:         if mol is None:
+   521:             return {
+   522:                 'atom_feats': torch.zeros(1, ATOM_DIM),
+   523:                 'edge_index': torch.zeros(2, 0, dtype=torch.long),
+   524:                 'edge_attr': torch.zeros(0, EDGE_DIM),
+   525:                 'num_atoms': 1,
+   526:             }
+   527: 
+   528:         atom_feats_list = []
+   529:         for atom in mol.GetAtoms():
+   530:             atom_feats_list.append(atom_features(atom))
+   531:         atom_feats_t = torch.tensor(atom_feats_list, dtype=torch.float32)
+   532: 
+   533:         edge_indices = []
+   534:         edge_feats = []
+   535:         for bond in mol.GetBonds():
+   536:             i, j = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
+   537:             bf = bond_features(bond)
+   538:             edge_indices.extend([[i, j], [j, i]])
+   539:             edge_feats.extend([bf, bf])
+   540: 
+   541:         if len(edge_indices) > 0:
+   542:             edge_index = torch.tensor(edge_indices, dtype=torch.long).t()
+   543:             edge_attr = torch.tensor(edge_feats, dtype=torch.float32)
+   544:         else:
+   545:             edge_index = torch.zeros(2, 0, dtype=torch.long)
+   546:             edge_attr = torch.zeros(0, EDGE_DIM, dtype=torch.float32)
+   547: 
+   548:         return {
+   549:             'atom_feats': atom_feats_t,
+   550:             'edge_index': edge_index,
+   551:             'edge_attr': edge_attr,
+   552:             'num_atoms': atom_feats_t.size(0),
+   553:         }
+   554: 
+   555: 
+   556: def collate_mols(batch_list):
+   557:     """Collate variable-size molecular graphs into MolBatch."""
+   558:     atom_feats_list = []
+   559:     edge_index_list = []
+   560:     edge_attr_list = []
+   561:     batch_idx_list = []
+   562:     positions_list = []
+   563:     targets_list = []
+   564:     target_mask_list = []
+   565: 
+   566:     atom_offset = 0
+   567:     max_atoms = max(b['num_atoms'] for b in batch_list)
+   568:     max_tokens = max(b['num_tokens'] for b in batch_list)
+   569:     B = len(batch_list)
+   570: 
+   571:     # Dense tensors for GNN
+   572:     dense_atoms = torch.zeros(B, max_atoms, ATOM_DIM)
+   573:     dense_pos = torch.zeros(B, max_atoms, 3)
+   574:     dense_mask = torch.zeros(B, max_atoms)
+   575: 
+   576:     # Dense tensors for Uni-Mol
+   577:     tokens_padded = torch.full((B, max_tokens), UNIMOL_PAD_IDX, dtype=torch.long)
+   578:     dist_padded = torch.zeros(B, max_tokens, max_tokens)
+   579:     edge_types_padded = torch.zeros(B, max_tokens, max_tokens, dtype=torch.long)
+   580:     token_mask = torch.zeros(B, max_tokens)
+   581: 
+   582:     for i, b in enumerate(batch_list):
+   583:         n = b['num_atoms']
+   584:         nt = b['num_tokens']
+   585: 
+   586:         atom_feats_list.append(b['atom_feats'])
+   587:         positions_list.append(b['positions'])
+   588: 
+   589:         if b['edge_index'].size(1) > 0:
+   590:             edge_index_list.append(b['edge_index'] + atom_offset)
+   591:             edge_attr_list.append(b['edge_attr'])
+   592: 
+   593:         batch_idx_list.append(torch.full((n,), i, dtype=torch.long))
+   594: 
+   595:         # Dense format for GNN
+   596:         dense_atoms[i, :n] = b['atom_feats']
+   597:         pos = b['positions']
+   598:         if pos.size(0) <= max_atoms:
+   599:             dense_pos[i, :pos.size(0)] = pos
+   600:         dense_mask[i, :n] = 1.0
+   601: 
+   602:         # Dense format for Uni-Mol
+   603:         tokens_padded[i, :nt] = b['tokens']
+   604:         dist_padded[i, :nt, :nt] = b['dist_matrix']
+   605:         edge_types_padded[i, :nt, :nt] = b['edge_types']
+   606:         token_mask[i, :nt] = 1.0
+   607: 
+   608:         targets_list.append(b['targets'])
+   609:         target_mask_list.append(b['target_mask'])
+   610:         atom_offset += n
+   611: 
+   612:     # Build sparse tensors
+   613:     x = torch.cat(atom_feats_list, dim=0)
+   614:     batch_idx = torch.cat(batch_idx_list, dim=0)
+   615: 
+   616:     if edge_index_list:
+   617:         edge_index = torch.cat(edge_index_list, dim=1)
+   618:         edge_attr = torch.cat(edge_attr_list, dim=0)
+   619:     else:
+   620:         edge_index = torch.zeros(2, 0, dtype=torch.long)
+   621:         edge_attr = torch.zeros(0, EDGE_DIM)
+   622: 
+   623:     # Distance matrix for dense GNN format
+   624:     diff = dense_pos.unsqueeze(2) - dense_pos.unsqueeze(1)
+   625:     gnn_dist_matrix = torch.sqrt((diff ** 2).sum(-1) + 1e-8)
+   626: 
+   627:     targets = torch.stack(targets_list, dim=0)
+   628:     target_mask = torch.stack(target_mask_list, dim=0)
+   629: 
+   630:     return MolBatch(
+   631:         x=x, edge_index=edge_index, edge_attr=edge_attr, batch_idx=batch_idx,
+   632:         atom_features=dense_atoms, positions=dense_pos,
+   633:         dist_matrix=gnn_dist_matrix, mask=dense_mask,
+   634:         atom_tokens=tokens_padded, edge_types=edge_types_padded,
+   635:         targets=targets, target_mask=target_mask,
+   636:     ), dist_padded, token_mask
+   637: 
+   638: 
+   639: def collate_mols_wrapper(batch_list):
+   640:     """Wrapper that stores extra tensors inside MolBatch for access."""
+   641:     mol_batch, dist_padded, token_mask = collate_mols(batch_list)
+   642:     # Store Uni-Mol distance and token mask as extra attributes
+   643:     mol_batch._unimol_dist = dist_padded
+   644:     mol_batch._unimol_token_mask = token_mask
+   645:     mol_batch._mol_indices = torch.tensor([b['mol_idx'] for b in batch_list], dtype=torch.long)
+   646:     # SMILES list for models that compute molecule-level features (e.g. RDKit descriptors)
+   647:     mol_batch._smiles = [b.get('smiles', '') for b in batch_list]
+   648:     return mol_batch
+   649: 
+   650: 
+   651: def load_dataset_splits(dataset_name, data_dir, seed=42, conf_size=11):
+   652:     """Load pre-split train/valid/test data from official Uni-Mol LMDB files.
+   653: 
+   654:     Args:
+   655:         dataset_name: one of bbbp, bace, tox21, esol, freesolv, lipophilicity
+   656:         data_dir: path to the molecular_property_prediction directory
+   657:         seed: random seed for conformer sampling
+   658:         conf_size: number of conformers for TTA (val/test)
+   659: 
+   660:     Returns:
+   661:         dict of MoleculeDataset for train/valid/test, plus task_type and num_tasks
+   662:     """
+   663:     config = DATASET_CONFIG[dataset_name]
+   664:     lmdb_name = DATASET_LMDB_NAME[dataset_name]
+   665:     num_tasks = config['num_tasks']
+   666:     task_type = config['task_type']
+   667: 
+   668:     # Target normalization for regression tasks
+   669:     target_mean = None
+   670:     target_std = None
+   671:     if dataset_name in TARGET_NORM:
+   672:         norm = TARGET_NORM[dataset_name]
+   673:         target_mean = [norm['mean']] if not isinstance(norm['mean'], list) else norm['mean']
+   674:         target_std = [norm['std']] if not isinstance(norm['std'], list) else norm['std']
+   675: 
+   676:     datasets = {}
+   677:     for split in ['train', 'valid', 'test']:
+   678:         lmdb_path = os.path.join(data_dir, lmdb_name, f'{split}.lmdb')
+   679:         if not os.path.exists(lmdb_path):
+   680:             raise FileNotFoundError(f"LMDB file not found: {lmdb_path}")
+   681:         reader = LMDBReader(lmdb_path)
+   682:         is_train = (split == 'train')
+   683:         datasets[split] = MoleculeDataset(
+   684:             lmdb_reader=reader,
+   685:             num_tasks=num_tasks,
+   686:             dataset_name=dataset_name,
+   687:             seed=seed,
+   688:             is_train=is_train,
+   689:             conf_size=conf_size,
+   690:             target_mean=target_mean if task_type == 'regression' else None,
+   691:             target_std=target_std if task_type == 'regression' else None,
+   692:         )
+   693: 
+   694:     return datasets, task_type, num_tasks
+   695: 
+   696: 
+   697: # =====================================================================
+   698: # Training and evaluation
+   699: # =====================================================================
+   700: 
+   701: def train_epoch(model, loader, optimizer, task_type, device, scheduler=None):
+   702:     model.train()
+   703:     total_loss = 0.0
+   704:     n_batches = 0
+   705: 
+   706:     for batch in loader:
+   707:         batch = batch_to_device(batch, device)
+   708:         optimizer.zero_grad()
+   709: 
+   710:         preds = model(batch)
+   711: 
+   712:         if task_type == 'classification':
+   713:             bce = F.binary_cross_entropy_with_logits(
+   714:                 preds, batch.targets, reduction='none',
+   715:             )
+   716:             loss = (bce * batch.target_mask).sum() / batch.target_mask.sum().clamp(min=1)
+   717:         else:
+   718:             diff = (preds - batch.targets) ** 2
+   719:             loss = (diff * batch.target_mask).sum() / batch.target_mask.sum().clamp(min=1)
+   720: 
+   721:         loss.backward()
+   722:         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+   723:         optimizer.step()
+   724:         if scheduler is not None:
+   725:             scheduler.step()
+   726: 
+   727:         total_loss += loss.item()
+   728:         n_batches += 1
+   729: 
+   730:     return total_loss / max(n_batches, 1)
+   731: 
+   732: 
+   733: @torch.no_grad()
+   734: def evaluate(model, loader, task_type, device, dataset_name=None, is_tta=True, conf_size=11):
+   735:     """Evaluate model. For TTA (val/test): average predictions over conformers per molecule."""
+   736:     model.eval()
+   737:     all_preds = []
+   738:     all_targets = []
+   739:     all_masks = []
+   740:     all_mol_indices = []
+   741: 
+   742:     for batch in loader:
+   743:         batch = batch_to_device(batch, device)
+   744:         # Withhold the held-out targets from the model at evaluation: keep the
+   745:         # true targets here (fixed harness scope) for the metric, and hand the
+   746:         # model a batch whose targets are zeroed so forward() cannot read off
+   747:         # the answer. forward() uses only graph features, so honest predictions
+   748:         # are unchanged.
+   749:         true_targets = batch.targets
+   750:         # dataclasses.replace() rebuilds a fresh batch with only declared fields,
+   751:         # which drops the dynamically-attached _mol_indices used for TTA
+   752:         # conformer-averaging below. Preserve it so honest TTA aggregation runs.
+   753:         _saved_mol_idx = getattr(batch, '_mol_indices', None)
+   754:         batch = replace(batch, targets=torch.zeros_like(batch.targets))
+   755:         if _saved_mol_idx is not None:
+   756:             batch._mol_indices = _saved_mol_idx
+   757:         preds = model(batch)
+   758:         all_preds.append(preds.cpu())
+   759:         all_targets.append(true_targets.cpu())
+   760:         all_masks.append(batch.target_mask.cpu())
+   761:         if hasattr(batch, '_mol_indices'):
+   762:             all_mol_indices.append(batch._mol_indices.cpu())
+   763: 
+   764:     if not all_preds:
+   765:         return (0.0, 'rocauc') if task_type == 'classification' else (float('inf'), 'rmse')
+   766: 
+   767:     preds = torch.cat(all_preds, dim=0)
+   768:     targets = torch.cat(all_targets, dim=0)
+   769:     masks = torch.cat(all_masks, dim=0)
+   770: 
+   771:     # TTA aggregation: average predictions over conformers per molecule
+   772:     if is_tta and all_mol_indices:
+   773:         mol_indices = torch.cat(all_mol_indices, dim=0)
+   774:         unique_mols = mol_indices.unique(sorted=True)
+   775:         agg_preds = []
+   776:         agg_targets = []
+   777:         agg_masks = []
+   778:         for mol_id in unique_mols:
+   779:             sel = mol_indices == mol_id
+   780:             agg_preds.append(preds[sel].mean(dim=0))
+   781:             agg_targets.append(targets[sel][0])  # targets same for all conformers
+   782:             agg_masks.append(masks[sel][0])
+   783:         preds = torch.stack(agg_preds, dim=0)
+   784:         targets = torch.stack(agg_targets, dim=0)
+   785:         masks = torch.stack(agg_masks, dim=0)
+   786: 
+   787:     # Denormalize predictions for regression tasks before computing RMSE
+   788:     if task_type == 'regression' and dataset_name in TARGET_NORM:
+   789:         norm = TARGET_NORM[dataset_name]
+   790:         mean = norm['mean'] if isinstance(norm['mean'], list) else [norm['mean']]
+   791:         std = norm['std'] if isinstance(norm['std'], list) else [norm['std']]
+   792:         mean_t = torch.tensor(mean, dtype=preds.dtype)
+   793:         std_t = torch.tensor(std, dtype=preds.dtype)
+   794:         preds = preds * std_t + mean_t
+   795:         targets = targets * std_t + mean_t
+   796: 
+   797:     if task_type == 'classification':
+   798:         from sklearn.metrics import roc_auc_score
+   799:         scores = []
+   800:         for t in range(preds.size(1)):
+   801:             valid = masks[:, t] > 0
+   802:             if valid.sum() < 2:
+   803:                 continue
+   804:             y_true = targets[valid, t].numpy()
+   805:             y_score = torch.sigmoid(preds[valid, t]).numpy()
+   806:             if len(np.unique(y_true)) < 2:
+   807:                 continue
+   808:             try:
+   809:                 scores.append(roc_auc_score(y_true, y_score))
+   810:             except ValueError:
+   811:                 continue
+   812:         metric = float(np.mean(scores)) if scores else 0.0
+   813:         return metric, 'rocauc'
+   814:     else:
+   815:         diff_sq = ((preds - targets) ** 2 * masks).sum() / masks.sum().clamp(min=1)
+   816:         rmse = float(torch.sqrt(diff_sq))
+   817:         return rmse, 'rmse'
+   818: 
+   819: 
+   820: def batch_to_device(batch, device):
+   821:     new_batch = MolBatch(
+   822:         x=batch.x.to(device),
+   823:         edge_index=batch.edge_index.to(device),
+   824:         edge_attr=batch.edge_attr.to(device),
+   825:         batch_idx=batch.batch_idx.to(device),
+   826:         atom_features=batch.atom_features.to(device),
+   827:         positions=batch.positions.to(device),
+   828:         dist_matrix=batch.dist_matrix.to(device),
+   829:         mask=batch.mask.to(device),
+   830:         atom_tokens=batch.atom_tokens.to(device),
+   831:         edge_types=batch.edge_types.to(device),
+   832:         targets=batch.targets.to(device),
+   833:         target_mask=batch.target_mask.to(device),
+   834:     )
+   835:     # Transfer extra attributes
+   836:     if hasattr(batch, '_unimol_dist'):
+   837:         new_batch._unimol_dist = batch._unimol_dist.to(device)
+   838:     if hasattr(batch, '_unimol_token_mask'):
+   839:         new_batch._unimol_token_mask = batch._unimol_token_mask.to(device)
+   840:     if hasattr(batch, '_mol_indices'):
+   841:         new_batch._mol_indices = batch._mol_indices
+   842:     if hasattr(batch, '_smiles'):
+   843:         new_batch._smiles = batch._smiles
+   844:     return new_batch
+   845: 
+   846: 
+   847: def load_pretrained_weights(model, ckpt_path):
+   848:     """Load pretrained weights with detailed debugging output.
+   849:     Prints number of loaded keys and names of keys that failed to load.
+   850:     """
+   851:     if not os.path.exists(ckpt_path):
+   852:         print(f"[Checkpoint] Pretrained weights not found at {ckpt_path}")
+   853:         return
+   854: 
+   855:     ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+   856:     state = ckpt.get("model", ckpt)
+   857: 
+   858:     own_state = model.state_dict()
+   859:     loaded_keys = []
+   860:     missing_keys = []
+   861:     shape_mismatch_keys = []
+   862: 
+   863:     for key, val in state.items():
+   864:         if key in own_state:
+   865:             if own_state[key].shape == val.shape:
+   866:                 own_state[key].copy_(val)
+   867:                 loaded_keys.append(key)
+   868:             else:
+   869:                 shape_mismatch_keys.append(
+   870:                     f"  {key}: ckpt={list(val.shape)} vs model={list(own_state[key].shape)}")
+   871:         else:
+   872:             missing_keys.append(key)
+   873: 
+   874:     model.load_state_dict(own_state, strict=False)
+   875: 
+   876:     print(f"[Checkpoint] Successfully loaded {len(loaded_keys)} keys")
+   877:     if shape_mismatch_keys:
+   878:         print(f"[Checkpoint] Shape mismatch ({len(shape_mismatch_keys)} keys):")
+   879:         for s in shape_mismatch_keys[:20]:
+   880:             print(s)
+   881:     if missing_keys:
+   882:         print(f"[Checkpoint] Missing in model ({len(missing_keys)} keys):")
+   883:         for k in missing_keys[:20]:
+   884:             print(f"  {k}")
+   885:     not_loaded = [k for k in own_state if k not in state]
+   886:     if not_loaded:
+   887:         print(f"[Checkpoint] Not in checkpoint ({len(not_loaded)} keys):")
+   888:         for k in not_loaded[:20]:
+   889:             print(f"  {k}")
+   890: 
+   891: 
+   892: def train_and_evaluate(args):
+   893:     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+   894:     print(f"Using device: {device}")
+   895: 
+   896:     # Load pre-split data from official LMDB files
+   897:     datasets, task_type, num_tasks = load_dataset_splits(
+   898:         args.dataset, args.data_dir, seed=args.seed, conf_size=11
+   899:     )
+   900:     train_ds = datasets['train']
+   901:     val_ds = datasets['valid']
+   902:     test_ds = datasets['test']
+   903: 
+   904:     print(f"Dataset: {args.dataset}, type: {task_type}, tasks: {num_tasks}")
+   905:     print(f"Split: train={train_ds.n_molecules}, val={val_ds.n_molecules}, test={test_ds.n_molecules}")
+   906:     print(f"TTA conf_size: {val_ds.conf_size} (val/test datasets expanded)")
+   907: 
+   908:     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+   909:                               collate_fn=collate_mols_wrapper, num_workers=2, drop_last=True)
+   910:     val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False,
+   911:                             collate_fn=collate_mols_wrapper, num_workers=2)
+   912:     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
+   913:                              collate_fn=collate_mols_wrapper, num_workers=2)
+   914: 
+   915:     # Model — baseline implementations may honor `pooler_dropout` attr on the
+   916:     # class (e.g. Uni-Mol baseline) to match reference per-dataset settings.
+   917:     MoleculeModel.pooler_dropout = args.pooler_dropout
+   918:     model = MoleculeModel(
+   919:         atom_dim=ATOM_DIM,
+   920:         edge_dim=EDGE_DIM,
+   921:         num_tasks=num_tasks,
+   922:         task_type=task_type,
+   923:     ).to(device)
+   924:     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+   925: 
+   926:     # Optimizer: AdamW with betas matching Uni-Mol reference (eps=1e-6)
+   927:     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr,
+   928:                                   betas=(0.9, 0.99), eps=1e-6,
+   929:                                   weight_decay=1e-5)
+   930: 
+   931:     # Polynomial decay with linear warmup (Uni-Mol reference scheduler).
+   932:     # Steps computed from loader length * epochs.
+   933:     steps_per_epoch = max(len(train_loader), 1)
+   934:     total_steps = max(steps_per_epoch * args.epochs, 1)
+   935:     warmup_steps = max(int(total_steps * args.warmup_ratio), 1)
+   936: 
+   937:     def lr_lambda(step):
+   938:         if step < warmup_steps:
+   939:             return float(step) / float(warmup_steps)
+   940:         # Polynomial decay with power=1.0 to near-zero over remaining steps
+   941:         progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+   942:         progress = min(progress, 1.0)
+   943:         return max(1.0 - progress, 0.0)
+   944: 
+   945:     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
+   946: 
+   947:     # Training with early stopping
+   948:     best_val_metric = None
+   949:     best_epoch = 0
+   950:     patience_counter = 0
+   951:     patience = 20
+   952: 
+   953:     for epoch in range(1, args.epochs + 1):
+   954:         # Update training set epoch so per-molecule conformer choice varies
+   955:         if hasattr(train_ds, 'set_epoch'):
+   956:             train_ds.set_epoch(epoch)
+   957:         train_loss = train_epoch(model, train_loader, optimizer, task_type, device,
+   958:                                  scheduler=scheduler)
+   959: 
+   960:         val_metric, metric_name = evaluate(
+   961:             model, val_loader, task_type, device,
+   962:             dataset_name=args.dataset, is_tta=True, conf_size=11)
+   963: 
+   964:         cur_lr = optimizer.param_groups[0]['lr']
+   965:         print(f"TRAIN_METRICS epoch={epoch} loss={train_loss:.6f} lr={cur_lr:.2e} val_{metric_name}={val_metric:.6f}")
+   966: 
+   967:         # Early stopping logic
+   968:         improved = False
+   969:         if best_val_metric is None:
+   970:             improved = True
+   971:         elif task_type == 'classification' and val_metric > best_val_metric:
+   972:             improved = True
+   973:         elif task_type == 'regression' and val_metric < best_val_metric:
+   974:             improved = True
+   975: 
+   976:         if improved:
+   977:             best_val_metric = val_metric
+   978:             best_epoch = epoch
+   979:             patience_counter = 0
+   980:             # Save best model
+   981:             os.makedirs(args.output_dir, exist_ok=True)
+   982:             torch.save(model.state_dict(), os.path.join(args.output_dir, 'best_model.pt'))
+   983:         else:
+   984:             patience_counter += 1
+   985:             if patience_counter >= patience:
+   986:                 print(f"Early stopping at epoch {epoch}. Best epoch: {best_epoch}")
+   987:                 break
+   988: 
+   989:     # Load best model and evaluate on test set
+   990:     model.load_state_dict(torch.load(os.path.join(args.output_dir, 'best_model.pt'), weights_only=True))
+   991:     test_metric, metric_name = evaluate(
+   992:         model, test_loader, task_type, device,
+   993:         dataset_name=args.dataset, is_tta=True, conf_size=11)
+   994:     print(f"TEST_METRICS {metric_name}={test_metric:.6f}")
+   995:     print(f"Best val {metric_name}: {best_val_metric:.6f} at epoch {best_epoch}")
+   996: 
+   997: 
+   998: def main():
+   999:     parser = argparse.ArgumentParser(description="Molecular Property Prediction")
+  1000:     parser.add_argument('--dataset', type=str, required=True,
+  1001:                         choices=['bbbp', 'bace', 'tox21', 'esol', 'freesolv', 'lipophilicity'])
+  1002:     parser.add_argument('--data-dir', type=str, required=True,
+  1003:                         help='Path to molecular_property_prediction directory')
+  1004:     parser.add_argument('--task-type', type=str, default=None,
+  1005:                         help='Override task type (classification/regression)')
+  1006:     parser.add_argument('--num-tasks', type=int, default=None)
+  1007:     parser.add_argument('--epochs', type=int, default=100)
+  1008:     parser.add_argument('--batch-size', type=int, default=32)
+  1009:     parser.add_argument('--lr', type=float, default=1e-3)
+  1010:     parser.add_argument('--seed', type=int, default=42)
+  1011:     parser.add_argument('--output-dir', type=str, default='./output')
+  1012:     parser.add_argument('--warmup-ratio', type=float, default=0.0,
+  1013:                         help='Linear warmup fraction of total training steps')
+  1014:     parser.add_argument('--pooler-dropout', type=float, default=0.0,
+  1015:                         help='Dropout on CLS pooler features (Uni-Mol style)')
+  1016:     args = parser.parse_args()
+  1017: 
+  1018:     # Set seeds
+  1019:     torch.manual_seed(args.seed)
+  1020:     np.random.seed(args.seed)
+  1021:     if torch.cuda.is_available():
+  1022:         torch.cuda.manual_seed_all(args.seed)
+  1023: 
+  1024:     train_and_evaluate(args)
+  1025: 
+  1026: 
+  1027: if __name__ == '__main__':
+  1028:     main()
 ```
 
 ## Parameter Budget
@@ -620,7 +1146,7 @@ a baseline reproduction.
 In `Uni-Mol/custom_molprop.py`:
 
 ```python
-Lines 115–351:
+Lines 115–116:
    112: 
    113: # =====================================================================
    114: # EDITABLE SECTION START — MoleculeModel + helper modules
@@ -629,241 +1155,6 @@ Lines 115–351:
    117: # =====================================================================
    118: 
    119: from rdkit.Chem import Descriptors as _Descriptors
-   120: from rdkit.Chem import rdMolDescriptors as _rdMolDescriptors
-   121: from rdkit.Chem import MolFromSmiles as _MolFromSmiles
-   122: 
-   123: 
-   124: # --------------------- RDKit 2D molecular descriptors -----------------
-   125: # A compact subset of normalized RDKit 2D descriptors that have been
-   126: # shown to improve D-MPNN on physicochemical / biophysical tasks (Yang
-   127: # et al. 2019, "rdkit_2d_normalized" features generator).  We compute
-   128: # them once per SMILES and per-feature standardize using running stats
-   129: # accumulated over the training batches — a robust approximation of
-   130: # chemprop's pre-computed Welford normalization.
-   131: 
-   132: def _rdkit_2d_descriptors(smi):
-   133:     """Compute a fixed-length RDKit 2D descriptor vector for a SMILES."""
-   134:     if not smi:
-   135:         return [0.0] * 17
-   136:     mol = _MolFromSmiles(smi)
-   137:     if mol is None:
-   138:         return [0.0] * 17
-   139:     feats = [
-   140:         _Descriptors.MolWt(mol),
-   141:         _Descriptors.MolLogP(mol),
-   142:         _Descriptors.NumHDonors(mol),
-   143:         _Descriptors.NumHAcceptors(mol),
-   144:         _Descriptors.TPSA(mol),
-   145:         _Descriptors.NumRotatableBonds(mol),
-   146:         _Descriptors.NumAromaticRings(mol),
-   147:         _Descriptors.NumAliphaticRings(mol),
-   148:         _Descriptors.HeavyAtomCount(mol),
-   149:         _Descriptors.RingCount(mol),
-   150:         _Descriptors.FractionCSP3(mol),
-   151:         _Descriptors.NumHeteroatoms(mol),
-   152:         _rdMolDescriptors.CalcNumSaturatedRings(mol),
-   153:         _rdMolDescriptors.CalcNumAromaticHeterocycles(mol),
-   154:         _rdMolDescriptors.CalcNumAliphaticHeterocycles(mol),
-   155:         _Descriptors.MolMR(mol),
-   156:         _Descriptors.LabuteASA(mol),
-   157:     ]
-   158:     # NaN / inf guard
-   159:     cleaned = []
-   160:     for v in feats:
-   161:         try:
-   162:             v = float(v)
-   163:             if math.isnan(v) or math.isinf(v):
-   164:                 v = 0.0
-   165:         except Exception:
-   166:             v = 0.0
-   167:         cleaned.append(v)
-   168:     return cleaned
-   169: 
-   170: 
-   171: _RDKIT_FEAT_DIM = 17
-   172: 
-   173: 
-   174: class _RunningNormalizer(nn.Module):
-   175:     """Running mean/std normalizer for RDKit features (BatchNorm-style)."""
-   176: 
-   177:     def __init__(self, dim, momentum=0.01):
-   178:         super().__init__()
-   179:         self.dim = dim
-   180:         self.momentum = momentum
-   181:         self.register_buffer('running_mean', torch.zeros(dim))
-   182:         self.register_buffer('running_std', torch.ones(dim))
-   183: 
-   184:     def forward(self, x):
-   185:         if self.training:
-   186:             with torch.no_grad():
-   187:                 mean = x.mean(dim=0)
-   188:                 std = x.std(dim=0).clamp(min=1e-6)
-   189:                 self.running_mean.mul_(1 - self.momentum).add_(self.momentum * mean)
-   190:                 self.running_std.mul_(1 - self.momentum).add_(self.momentum * std)
-   191:         return (x - self.running_mean) / self.running_std.clamp(min=1e-6)
-   192: 
-   193: 
-   194: class DMPNNEncoder(nn.Module):
-   195:     """Directed Message Passing Neural Network (Yang et al., 2019).
-   196: 
-   197:     Bond-level messages flow along directed edges; each message passing step
-   198:     computes new edge messages from incoming atom messages minus the reverse
-   199:     edge contribution to avoid message collision.
-   200:     """
-   201: 
-   202:     def __init__(self, atom_dim, edge_dim, hidden_dim=300, depth=3, dropout=0.0):
-   203:         super().__init__()
-   204:         self.hidden_dim = hidden_dim
-   205:         self.depth = depth
-   206: 
-   207:         # Initial bond message: linear over [atom_src || bond_attr]
-   208:         self.W_i = nn.Linear(atom_dim + edge_dim, hidden_dim, bias=False)
-   209:         # Shared message-update weight (chemprop default)
-   210:         self.W_h = nn.Linear(hidden_dim, hidden_dim, bias=False)
-   211:         # Final atom-level readout combine
-   212:         self.W_o = nn.Linear(atom_dim + hidden_dim, hidden_dim)
-   213:         self.dropout = nn.Dropout(dropout)
-   214:         self.act = nn.ReLU()
-   215: 
-   216:     def forward(self, x, edge_index, edge_attr, batch_idx):
-   217:         """
-   218:         x: [total_atoms, atom_dim]
-   219:         edge_index: [2, total_edges] (bidirectional, paired as [i,j],[j,i])
-   220:         edge_attr: [total_edges, edge_dim]
-   221:         batch_idx: [total_atoms]
-   222:         """
-   223:         src, dst = edge_index
-   224:         num_atoms = x.size(0)
-   225:         num_edges = edge_index.size(1)
-   226: 
-   227:         if num_edges == 0:
-   228:             # Fallback for atom-only molecules
-   229:             atom_hidden = self.act(self.W_o(torch.cat([x, torch.zeros(num_atoms, self.hidden_dim, device=x.device)], dim=-1)))
-   230:             return self.dropout(atom_hidden)
-   231: 
-   232:         # Reverse edge index: edges are added in pairs (i->j, j->i),
-   233:         # so reverse of edge e is e XOR 1.
-   234:         rev_edge_idx = torch.arange(num_edges, device=x.device) ^ 1
-   235:         rev_edge_idx = rev_edge_idx.clamp(max=num_edges - 1)
-   236: 
-   237:         # Initial bond input: source atom features concatenated with bond features
-   238:         bond_input = torch.cat([x[src], edge_attr], dim=-1)
-   239:         h0 = self.act(self.W_i(bond_input))  # [num_edges, hidden]
-   240:         h = h0
-   241: 
-   242:         # Message passing for depth-1 steps (chemprop convention)
-   243:         for _ in range(self.depth - 1):
-   244:             # Aggregate incoming messages to each atom
-   245:             atom_msg = torch.zeros(num_atoms, self.hidden_dim, device=x.device)
-   246:             atom_msg.index_add_(0, dst, h)
-   247: 
-   248:             # New edge message: a_v - h_{v->u}^{rev} (avoid passing back)
-   249:             new_h = atom_msg[src] - h[rev_edge_idx]
-   250:             new_h = self.W_h(new_h)
-   251:             # Residual on h0 (chemprop style)
-   252:             new_h = self.act(h0 + new_h)
-   253:             new_h = self.dropout(new_h)
-   254:             h = new_h
-   255: 
-   256:         # Final atom messages
-   257:         atom_msg = torch.zeros(num_atoms, self.hidden_dim, device=x.device)
-   258:         atom_msg.index_add_(0, dst, h)
-   259: 
-   260:         # Combine atom features with aggregated bond messages
-   261:         atom_hidden = self.act(self.W_o(torch.cat([x, atom_msg], dim=-1)))
-   262:         atom_hidden = self.dropout(atom_hidden)
-   263:         return atom_hidden
-   264: 
-   265: 
-   266: class MoleculeModel(nn.Module):
-   267:     """D-MPNN with RDKit 2D normalized molecular descriptors.
-   268: 
-   269:     Configuration follows Yang et al. 2019 chemprop defaults:
-   270:       - hidden_dim = 300
-   271:       - depth = 3 message passing steps
-   272:       - sum readout per graph
-   273:       - 2-layer FFN head with hidden=300
-   274:       - RDKit 2D descriptors concatenated at the readout ("+features" mode)
-   275:     """
-   276: 
-   277:     def __init__(self, atom_dim: int, edge_dim: int, num_tasks: int, task_type: str):
-   278:         super().__init__()
-   279:         self.num_tasks = num_tasks
-   280:         self.task_type = task_type
-   281:         hidden_dim = 300
-   282:         depth = 3
-   283:         # `pooler_dropout` may be set by the training driver to vary dropout
-   284:         # per dataset (e.g. BACE/Tox21=0.1, BBBP=0.0, regression tasks=0.1-0.2)
-   285:         dropout = float(getattr(type(self), "pooler_dropout", 0.0))
-   286: 
-   287:         self.encoder = DMPNNEncoder(
-   288:             atom_dim=atom_dim,
-   289:             edge_dim=edge_dim,
-   290:             hidden_dim=hidden_dim,
-   291:             depth=depth,
-   292:             dropout=dropout,
-   293:         )
-   294: 
-   295:         # RDKit 2D descriptor branch
-   296:         self.feat_norm = _RunningNormalizer(_RDKIT_FEAT_DIM)
-   297: 
-   298:         # 2-layer FFN head over [graph_embed || rdkit_features]
-   299:         readout_in = hidden_dim + _RDKIT_FEAT_DIM
-   300:         self.readout = nn.Sequential(
-   301:             nn.Linear(readout_in, hidden_dim),
-   302:             nn.ReLU(),
-   303:             nn.Dropout(dropout),
-   304:             nn.Linear(hidden_dim, num_tasks),
-   305:         )
-   306: 
-   307:         # Lazy SMILES->feature cache (shared across forward calls)
-   308:         self._smi_cache = {}
-   309: 
-   310:     def _batch_rdkit_features(self, batch):
-   311:         """Compute RDKit features for the molecules in this batch.
-   312: 
-   313:         Uses LMDB SMILES via the dataset wrapper.  When SMILES are not
-   314:         available (no `_smiles` attr), falls back to a zero vector — the
-   315:         running normalizer will then produce zeros, leaving the GNN
-   316:         branch unaffected.
-   317:         """
-   318:         smiles = getattr(batch, "_smiles", None)
-   319:         if smiles is None:
-   320:             num_graphs = int(batch.batch_idx.max().item()) + 1
-   321:             return torch.zeros(num_graphs, _RDKIT_FEAT_DIM,
-   322:                                device=batch.x.device)
-   323: 
-   324:         feats = []
-   325:         for smi in smiles:
-   326:             if smi in self._smi_cache:
-   327:                 feats.append(self._smi_cache[smi])
-   328:             else:
-   329:                 f = _rdkit_2d_descriptors(smi)
-   330:                 self._smi_cache[smi] = f
-   331:                 feats.append(f)
-   332:         return torch.tensor(feats, dtype=torch.float32, device=batch.x.device)
-   333: 
-   334:     def forward(self, batch):
-   335:         atom_hidden = self.encoder(batch.x, batch.edge_index, batch.edge_attr, batch.batch_idx)
-   336: 
-   337:         # Sum pooling per graph (chemprop default)
-   338:         num_graphs = int(batch.batch_idx.max().item()) + 1
-   339:         graph_embed = torch.zeros(num_graphs, atom_hidden.size(-1), device=atom_hidden.device)
-   340:         graph_embed.index_add_(0, batch.batch_idx, atom_hidden)
-   341: 
-   342:         # RDKit feature branch (per-graph)
-   343:         rdkit_feats = self._batch_rdkit_features(batch)
-   344:         rdkit_feats = self.feat_norm(rdkit_feats)
-   345: 
-   346:         combined = torch.cat([graph_embed, rdkit_feats], dim=-1)
-   347:         return self.readout(combined)
-   348: 
-   349: # =====================================================================
-   350: # EDITABLE SECTION END
-   351: # =====================================================================
-   352: 
-   353: 
-   354: # =====================================================================
 ```
 
 ### `unimol` baseline — editable region  [READ-ONLY — reference implementation]
@@ -871,7 +1162,7 @@ Lines 115–351:
 In `Uni-Mol/custom_molprop.py`:
 
 ```python
-Lines 115–606:
+Lines 115–116:
    112: 
    113: # =====================================================================
    114: # EDITABLE SECTION START — MoleculeModel + helper modules
@@ -880,496 +1171,6 @@ Lines 115–606:
    117: # =====================================================================
    118: 
    119: import os as _os
-   120: import logging as _logging
-   121: 
-   122: _logger = _logging.getLogger(__name__)
-   123: 
-   124: # --------------- Uni-Mol dictionary (mirrors dict.txt) ----------------
-   125: # The pretrained model uses a token vocabulary.  We map atomic numbers
-   126: # from the featurisation to dictionary indices so that we can re-use the
-   127: # pretrained ``embed_tokens`` embedding and edge-type Gaussian layer.
-   128: # dict.txt ordering:
-   129: #   [PAD]=0, [CLS]=1, [SEP]=2, [UNK]=3, C=4, N=5, O=6, S=7, H=8,
-   130: #   Cl=9, F=10, Br=11, I=12, Si=13, P=14, B=15, Na=16, K=17, Al=18,
-   131: #   Ca=19, Sn=20, As=21, Hg=22, Fe=23, Zn=24, Cr=25, Se=26, Gd=27,
-   132: #   Au=28, Li=29
-   133: _ELEM_TO_DICT_IDX = {
-   134:     6: 4, 7: 5, 8: 6, 16: 7, 1: 8, 17: 9, 9: 10, 35: 11,
-   135:     53: 12, 14: 13, 15: 14, 5: 15, 11: 16, 19: 17, 13: 18,
-   136:     20: 19, 50: 20, 33: 21, 80: 22, 26: 23, 30: 24, 24: 25,
-   137:     34: 26, 64: 27, 79: 28, 3: 29,
-   138: }
-   139: _DICT_SIZE = 31  # 30 atoms + [MASK] token to match pretrained checkpoint
-   140: _PAD_IDX = 0
-   141: _CLS_IDX = 1
-   142: _SEP_IDX = 2
-   143: _UNK_IDX = 3
-   144: 
-   145: 
-   146: def _atomic_num_from_features(atom_feat):
-   147:     """Extract atomic number from the one-hot atom feature vector.
-   148:     The first 118 elements encode atomic_num (1..118).
-   149:     """
-   150:     idx = atom_feat[:118].argmax().item()
-   151:     if atom_feat[idx].item() < 0.5:
-   152:         return 0
-   153:     return idx + 1
-   154: 
-   155: 
-   156: def _atoms_to_tokens(atom_features_dense, mask):
-   157:     """Convert dense atom features [B, N, D] + mask [B, N] to token ids [B, N+2].
-   158:     Prepends [CLS] and appends [SEP], matching the reference data pipeline.
-   159:     Padding positions get PAD token.
-   160:     """
-   161:     B, N, D = atom_features_dense.shape
-   162:     device = atom_features_dense.device
-   163: 
-   164:     tokens = torch.full((B, N), _PAD_IDX, dtype=torch.long, device=device)
-   165:     for b in range(B):
-   166:         for i in range(N):
-   167:             if mask[b, i].item() > 0.5:
-   168:                 anum = _atomic_num_from_features(atom_features_dense[b, i])
-   169:                 tokens[b, i] = _ELEM_TO_DICT_IDX.get(anum, _UNK_IDX)
-   170: 
-   171:     cls_col = torch.full((B, 1), _CLS_IDX, dtype=torch.long, device=device)
-   172:     sep_col = torch.full((B, 1), _SEP_IDX, dtype=torch.long, device=device)
-   173:     tokens = torch.cat([cls_col, tokens, sep_col], dim=1)  # [B, N+2]
-   174:     return tokens
-   175: 
-   176: 
-   177: def _extend_dist_and_mask(dist_matrix, mask):
-   178:     """Extend distance matrix and mask for [CLS] and [SEP] tokens.
-   179:     Returns dist [B, N+2, N+2] and padding_mask [B, N+2] (True=pad).
-   180:     """
-   181:     B, N, _ = dist_matrix.shape
-   182:     device = dist_matrix.device
-   183:     dist = torch.zeros(B, N + 2, N + 2, device=device, dtype=dist_matrix.dtype)
-   184:     dist[:, 1:N+1, 1:N+1] = dist_matrix
-   185: 
-   186:     ext_mask = torch.zeros(B, N + 2, device=device, dtype=mask.dtype)
-   187:     ext_mask[:, 0] = 1.0    # CLS always valid
-   188:     ext_mask[:, 1:N+1] = mask
-   189:     ext_mask[:, N+1] = 1.0  # SEP always valid
-   190: 
-   191:     padding_mask = (ext_mask < 0.5)  # True = padded
-   192:     return dist, padding_mask
-   193: 
-   194: 
-   195: # -------------------- Gaussian Distance Encoding ---------------------
-   196: 
-   197: @torch.jit.script
-   198: def _gaussian(x, mean, std):
-   199:     pi = 3.14159
-   200:     a = (2.0 * pi) ** 0.5
-   201:     return torch.exp(-0.5 * (((x - mean) / std) ** 2)) / (a * std)
-   202: 
-   203: 
-   204: class GaussianLayer(nn.Module):
-   205:     """Edge-type-dependent Gaussian distance encoding.
-   206:     Each atom-pair type (i,j) has its own learned scaling (mul) and bias.
-   207:     This is critical: it lets the model distinguish C-C, C-N, C-O etc.
-   208:     """
-   209:     def __init__(self, K=128, edge_types=1024):
-   210:         super().__init__()
-   211:         self.K = K
-   212:         self.means = nn.Embedding(1, K)
-   213:         self.stds = nn.Embedding(1, K)
-   214:         self.mul = nn.Embedding(edge_types, 1)
-   215:         self.bias = nn.Embedding(edge_types, 1)
-   216:         nn.init.uniform_(self.means.weight, 0, 3)
-   217:         nn.init.uniform_(self.stds.weight, 0, 3)
-   218:         nn.init.constant_(self.bias.weight, 0)
-   219:         nn.init.constant_(self.mul.weight, 1)
-   220: 
-   221:     def forward(self, x, edge_type):
-   222:         mul = self.mul(edge_type).type_as(x)
-   223:         bias = self.bias(edge_type).type_as(x)
-   224:         x = mul * x.unsqueeze(-1) + bias
-   225:         x = x.expand(-1, -1, -1, self.K)
-   226:         mean = self.means.weight.float().view(-1)
-   227:         std = self.stds.weight.float().view(-1).abs() + 1e-5
-   228:         return _gaussian(x.float(), mean, std).type_as(self.means.weight)
-   229: 
-   230: 
-   231: # -------------------- Helper Heads -----------------------------------
-   232: 
-   233: class NonLinearHead(nn.Module):
-   234:     """Two-layer MLP with GELU activation for projecting Gaussian features."""
-   235:     def __init__(self, input_dim, out_dim, hidden=None):
-   236:         super().__init__()
-   237:         hidden = input_dim if not hidden else hidden
-   238:         self.linear1 = nn.Linear(input_dim, hidden)
-   239:         self.linear2 = nn.Linear(hidden, out_dim)
-   240: 
-   241:     def forward(self, x):
-   242:         return self.linear2(F.gelu(self.linear1(x)))
-   243: 
-   244: 
-   245: class ClassificationHead(nn.Module):
-   246:     """Head for molecule-level prediction via [CLS] token.
-   247:     Reference Uni-Mol uses simple dropout + linear (no hidden dense/tanh).
-   248:     """
-   249:     def __init__(self, input_dim, inner_dim, num_classes, pooler_dropout=0.2):
-   250:         super().__init__()
-   251:         self.dropout = nn.Dropout(p=pooler_dropout)
-   252:         self.out_proj = nn.Linear(input_dim, num_classes)
-   253: 
-   254:     def forward(self, features):
-   255:         x = features[:, 0, :]  # [CLS] token
-   256:         x = self.dropout(x)
-   257:         return self.out_proj(x)
-   258: 
-   259: 
-   260: # -------------------- Transformer Encoder With Pair -------------------
-   261: 
-   262: class SelfMultiheadAttention(nn.Module):
-   263:     """Multi-head self-attention with fused QKV projection."""
-   264:     def __init__(self, embed_dim, num_heads, dropout=0.1):
-   265:         super().__init__()
-   266:         self.embed_dim = embed_dim
-   267:         self.num_heads = num_heads
-   268:         self.head_dim = embed_dim // num_heads
-   269:         self.scaling = self.head_dim ** -0.5
-   270:         self.dropout = dropout
-   271:         self.in_proj = nn.Linear(embed_dim, embed_dim * 3)
-   272:         self.out_proj = nn.Linear(embed_dim, embed_dim)
-   273: 
-   274:     def forward(self, query, key_padding_mask=None, attn_bias=None,
-   275:                 return_attn=False):
-   276:         bsz, tgt_len, _ = query.size()
-   277:         q, k, v = self.in_proj(query).chunk(3, dim=-1)
-   278: 
-   279:         def reshape(t):
-   280:             return t.view(bsz, -1, self.num_heads, self.head_dim) \
-   281:                     .transpose(1, 2).contiguous() \
-   282:                     .view(bsz * self.num_heads, -1, self.head_dim)
-   283: 
-   284:         q = reshape(q) * self.scaling
-   285:         k = reshape(k)
-   286:         v = reshape(v)
-   287:         src_len = k.size(1)
-   288: 
-   289:         attn_weights = torch.bmm(q, k.transpose(1, 2))
-   290: 
-   291:         if key_padding_mask is not None:
-   292:             attn_weights = attn_weights.view(bsz, self.num_heads, tgt_len, src_len)
-   293:             attn_weights.masked_fill_(
-   294:                 key_padding_mask.unsqueeze(1).unsqueeze(2).to(torch.bool),
-   295:                 float("-inf"),
-   296:             )
-   297:             attn_weights = attn_weights.view(bsz * self.num_heads, tgt_len, src_len)
-   298: 
-   299:         if not return_attn:
-   300:             aw = attn_weights
-   301:             if attn_bias is not None:
-   302:                 aw = aw + attn_bias
-   303:             attn = F.dropout(F.softmax(aw, dim=-1),
-   304:                              p=self.dropout, training=self.training)
-   305:         else:
-   306:             attn_weights = attn_weights + attn_bias
-   307:             attn = F.dropout(F.softmax(attn_weights.clone(), dim=-1),
-   308:                              p=self.dropout, training=self.training)
-   309: 
-   310:         o = torch.bmm(attn, v)
-   311:         o = o.view(bsz, self.num_heads, tgt_len, self.head_dim) \
-   312:              .transpose(1, 2).contiguous() \
-   313:              .view(bsz, tgt_len, self.embed_dim)
-   314:         o = self.out_proj(o)
-   315:         if not return_attn:
-   316:             return o
-   317:         return o, attn_weights, attn
-   318: 
-   319: 
-   320: class UniMolEncoderLayer(nn.Module):
-   321:     """Pre-LN Transformer encoder layer (matches reference)."""
-   322:     def __init__(self, embed_dim, ffn_embed_dim, attention_heads,
-   323:                  dropout=0.1, attention_dropout=0.1, activation_dropout=0.0):
-   324:         super().__init__()
-   325:         self.dropout = dropout
-   326:         self.activation_dropout = activation_dropout
-   327:         self.self_attn = SelfMultiheadAttention(
-   328:             embed_dim, attention_heads, dropout=attention_dropout)
-   329:         self.self_attn_layer_norm = nn.LayerNorm(embed_dim)
-   330:         self.fc1 = nn.Linear(embed_dim, ffn_embed_dim)
-   331:         self.fc2 = nn.Linear(ffn_embed_dim, embed_dim)
-   332:         self.final_layer_norm = nn.LayerNorm(embed_dim)
-   333: 
-   334:     def forward(self, x, padding_mask=None, attn_bias=None, return_attn=False):
-   335:         residual = x
-   336:         x = self.self_attn_layer_norm(x)
-   337:         x = self.self_attn(query=x, key_padding_mask=padding_mask,
-   338:                            attn_bias=attn_bias, return_attn=return_attn)
-   339:         if return_attn:
-   340:             x, attn_weights, attn_probs = x
-   341:         x = F.dropout(x, p=self.dropout, training=self.training)
-   342:         x = residual + x
-   343: 
-   344:         residual = x
-   345:         x = self.final_layer_norm(x)
-   346:         x = F.gelu(self.fc1(x))
-   347:         x = F.dropout(x, p=self.activation_dropout, training=self.training)
-   348:         x = self.fc2(x)
-   349:         x = F.dropout(x, p=self.dropout, training=self.training)
-   350:         x = residual + x
-   351: 
-   352:         if not return_attn:
-   353:             return x
-   354:         return x, attn_weights, attn_probs
-   355: 
-   356: 
-   357: class TransformerEncoderWithPair(nn.Module):
-   358:     """Transformer encoder that tracks and updates pair (attention bias)
-   359:     representations through layers — a key Uni-Mol architectural feature.
-   360:     """
-   361:     def __init__(self, encoder_layers, embed_dim, ffn_embed_dim,
-   362:                  attention_heads, emb_dropout=0.1, dropout=0.1,
-   363:                  attention_dropout=0.1, activation_dropout=0.0):
-   364:         super().__init__()
-   365:         self.emb_dropout = emb_dropout
-   366:         self.embed_dim = embed_dim
-   367:         self.attention_heads = attention_heads
-   368:         self.emb_layer_norm = nn.LayerNorm(embed_dim)
-   369:         self.final_layer_norm = nn.LayerNorm(embed_dim)
-   370:         self.final_head_layer_norm = nn.LayerNorm(attention_heads)
-   371:         self.layers = nn.ModuleList([
-   372:             UniMolEncoderLayer(
-   373:                 embed_dim=embed_dim, ffn_embed_dim=ffn_embed_dim,
-   374:                 attention_heads=attention_heads, dropout=dropout,
-   375:                 attention_dropout=attention_dropout,
-   376:                 activation_dropout=activation_dropout,
-   377:             )
-   378:             for _ in range(encoder_layers)
-   379:         ])
-   380: 
-   381:     def forward(self, emb, attn_mask=None, padding_mask=None):
-   382:         bsz, seq_len = emb.size(0), emb.size(1)
-   383:         x = self.emb_layer_norm(emb)
-   384:         x = F.dropout(x, p=self.emb_dropout, training=self.training)
-   385: 
-   386:         if padding_mask is not None:
-   387:             x = x * (1 - padding_mask.unsqueeze(-1).type_as(x))
-   388: 
-   389:         input_attn_mask = attn_mask
-   390:         input_padding_mask = padding_mask
-   391: 
-   392:         def fill_attn_mask(am, pm, fill_val=float("-inf")):
-   393:             if am is not None and pm is not None:
-   394:                 am = am.view(bsz, -1, seq_len, seq_len)
-   395:                 am.masked_fill_(
-   396:                     pm.unsqueeze(1).unsqueeze(2).to(torch.bool), fill_val)
-   397:                 am = am.view(-1, seq_len, seq_len)
-   398:                 pm = None
-   399:             return am, pm
-   400: 
-   401:         assert attn_mask is not None
-   402:         attn_mask, padding_mask = fill_attn_mask(attn_mask, padding_mask)
-   403: 
-   404:         for layer in self.layers:
-   405:             x, attn_mask, _ = layer(
-   406:                 x, padding_mask=padding_mask,
-   407:                 attn_bias=attn_mask, return_attn=True)
-   408: 
-   409:         x = self.final_layer_norm(x)
-   410: 
-   411:         # Compute pair representations
-   412:         delta_pair_repr = attn_mask - input_attn_mask
-   413:         delta_pair_repr, _ = fill_attn_mask(
-   414:             delta_pair_repr, input_padding_mask, 0)
-   415:         attn_mask = attn_mask.view(
-   416:             bsz, -1, seq_len, seq_len).permute(0, 2, 3, 1).contiguous()
-   417:         delta_pair_repr = delta_pair_repr.view(
-   418:             bsz, -1, seq_len, seq_len).permute(0, 2, 3, 1).contiguous()
-   419:         delta_pair_repr = self.final_head_layer_norm(delta_pair_repr)
-   420: 
-   421:         return x, attn_mask, delta_pair_repr
-   422: 
-   423: 
-   424: # -------------------- Main Model ------------------------------------
-   425: 
-   426: class MoleculeModel(nn.Module):
-   427:     """Uni-Mol: SE(3)-invariant Transformer with pretrained weights.
-   428: 
-   429:     Architecture: 15 layers, 512 hidden dim, 64 attention heads, 2048 FFN
-   430:     dim (~86M parameters).  Uses edge-type-dependent Gaussian distance
-   431:     encoding and pair representation tracking through the encoder layers.
-   432:     Loads pretrained weights from the checkpoint at build time.
-   433:     """
-   434: 
-   435:     def __init__(self, atom_dim: int, edge_dim: int, num_tasks: int,
-   436:                  task_type: str):
-   437:         super().__init__()
-   438:         self.num_tasks = num_tasks
-   439:         self.task_type = task_type
-   440: 
-   441:         # Architecture (matches reference base_architecture)
-   442:         embed_dim = 512
-   443:         ffn_embed_dim = 2048
-   444:         attention_heads = 64
-   445:         encoder_layers = 15
-   446:         dropout = 0.1
-   447:         attention_dropout = 0.1
-   448:         K = 128
-   449:         n_edge_type = _DICT_SIZE * _DICT_SIZE  # 961
-   450: 
-   451:         self.embed_dim = embed_dim
-   452:         self.attention_heads = attention_heads
-   453: 
-   454:         # Token embedding (will be loaded from pretrained)
-   455:         self.embed_tokens = nn.Embedding(
-   456:             _DICT_SIZE, embed_dim, padding_idx=_PAD_IDX)
-   457: 
-   458:         # Edge-type dependent Gaussian distance encoding
-   459:         self.gbf = GaussianLayer(K, n_edge_type)
-   460:         self.gbf_proj = NonLinearHead(K, attention_heads)
-   461: 
-   462:         # Transformer encoder with pair tracking
-   463:         self.encoder = TransformerEncoderWithPair(
-   464:             encoder_layers=encoder_layers,
-   465:             embed_dim=embed_dim,
-   466:             ffn_embed_dim=ffn_embed_dim,
-   467:             attention_heads=attention_heads,
-   468:             emb_dropout=dropout,
-   469:             dropout=dropout,
-   470:             attention_dropout=attention_dropout,
-   471:             activation_dropout=0.0,
-   472:         )
-   473: 
-   474:         # Classification / regression head.  `pooler_dropout` may be set as a
-   475:         # class attribute by the training driver to match reference per-dataset
-   476:         # settings (e.g. FreeSolv/ESOL use 0.2 per Uni-Mol README).
-   477:         pooler_dropout = getattr(type(self), "pooler_dropout", 0.0)
-   478:         self.cls_head = ClassificationHead(
-   479:             input_dim=embed_dim,
-   480:             inner_dim=embed_dim,
-   481:             num_classes=num_tasks,
-   482:             pooler_dropout=pooler_dropout,
-   483:         )
-   484: 
-   485:         # Initialise, then load pretrained weights
-   486:         self.apply(self._init_weights)
-   487:         self._load_pretrained()
-   488: 
-   489:     @staticmethod
-   490:     def _init_weights(module):
-   491:         """BERT-style weight initialisation."""
-   492:         if isinstance(module, nn.Linear):
-   493:             nn.init.normal_(module.weight, mean=0.0, std=0.02)
-   494:             if module.bias is not None:
-   495:                 nn.init.zeros_(module.bias)
-   496:         elif isinstance(module, nn.Embedding):
-   497:             nn.init.normal_(module.weight, mean=0.0, std=0.02)
-   498:             if module.padding_idx is not None:
-   499:                 nn.init.zeros_(module.weight[module.padding_idx])
-   500:         elif isinstance(module, nn.LayerNorm):
-   501:             nn.init.ones_(module.weight)
-   502:             nn.init.zeros_(module.bias)
-   503: 
-   504:     def _load_pretrained(self):
-   505:         """Load pretrained encoder + GBF weights from checkpoint."""
-   506:         ckpt_path = "/data/unimol_weights/mol_pre_all_h_220816.pt"
-   507:         if not _os.path.exists(ckpt_path):
-   508:             _logger.warning(
-   509:                 "Pretrained weights not found at %s — training from scratch",
-   510:                 ckpt_path)
-   511:             return
-   512: 
-   513:         ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
-   514:         state = ckpt.get("model", ckpt)
-   515: 
-   516:         # Remap checkpoint keys from fairseq/unicore format to our flat format
-   517:         remapped = {}
-   518:         for key, val in state.items():
-   519:             if any(s in key for s in ["classification_head", "lm_head",
-   520:                                        "dist_head", "pair2coord_proj"]):
-   521:                 continue
-   522:             new_key = key
-   523:             new_key = new_key.replace("encoder.sentence_encoder.", "encoder.")
-   524:             new_key = new_key.replace("encoder.gbf", "gbf")
-   525:             new_key = new_key.replace("encoder.embed_tokens", "embed_tokens")
-   526:             remapped[new_key] = val
-   527: 
-   528:         own_state = self.state_dict()
-   529:         loaded_keys, skipped_shape, skipped_missing = [], [], []
-   530: 
-   531:         for key, val in remapped.items():
-   532:             if key in own_state:
-   533:                 if own_state[key].shape == val.shape:
-   534:                     own_state[key].copy_(val)
-   535:                     loaded_keys.append(key)
-   536:                 else:
-   537:                     skipped_shape.append(f"  {key}: ckpt={list(val.shape)} model={list(own_state[key].shape)}")
-   538:             else:
-   539:                 skipped_missing.append(key)
-   540: 
-   541:         self.load_state_dict(own_state, strict=False)
-   542:         print(f"[Checkpoint] Loaded {len(loaded_keys)} keys successfully")
-   543:         if skipped_shape:
-   544:             print(f"[Checkpoint] Shape mismatch ({len(skipped_shape)} keys):")
-   545:             for s in skipped_shape:
-   546:                 print(s)
-   547:         if skipped_missing:
-   548:             print(f"[Checkpoint] Missing in model ({len(skipped_missing)} keys):")
-   549:             for k in skipped_missing[:10]:
-   550:                 print(f"  {k}")
-   551:             if len(skipped_missing) > 10:
-   552:                 print(f"  ... and {len(skipped_missing)-10} more")
-   553:         # Also show model keys NOT in checkpoint
-   554:         not_loaded = [k for k in own_state if k not in set(loaded_keys)]
-   555:         if not_loaded:
-   556:             print(f"[Checkpoint] Model keys NOT loaded ({len(not_loaded)}):")
-   557:             for k in not_loaded[:10]:
-   558:                 print(f"  {k}")
-   559:             if len(not_loaded) > 10:
-   560:                 print(f"  ... and {len(not_loaded)-10} more")
-   561: 
-   562:     def forward(self, batch):
-   563:         """Forward pass using dense batch format.
-   564: 
-   565:         Args:
-   566:             batch: MolBatch with atom_features [B, N, D],
-   567:                    dist_matrix [B, N, N], mask [B, N].
-   568:         Returns:
-   569:             predictions: [B, num_tasks]
-   570:         """
-   571:         B, N, _ = batch.atom_features.shape
-   572:         device = batch.atom_features.device
-   573: 
-   574:         # Map atom features to dictionary tokens
-   575:         tokens = _atoms_to_tokens(batch.atom_features, batch.mask)  # [B, N+2]
-   576: 
-   577:         # Extend distance matrix / mask for [CLS] and [SEP]
-   578:         dist, padding_mask = _extend_dist_and_mask(
-   579:             batch.dist_matrix, batch.mask)
-   580:         seq_len = N + 2
-   581: 
-   582:         # Edge types: token_i * dict_size + token_j
-   583:         edge_type = tokens.unsqueeze(1) * _DICT_SIZE + tokens.unsqueeze(2)
-   584: 
-   585:         # Gaussian features with edge-type-dependent scaling
-   586:         gbf_feature = self.gbf(dist, edge_type)         # [B, S, S, K]
-   587:         attn_bias = self.gbf_proj(gbf_feature)           # [B, S, S, H]
-   588:         attn_bias = attn_bias.permute(0, 3, 1, 2).contiguous()  # [B, H, S, S]
-   589:         attn_bias = attn_bias.view(-1, seq_len, seq_len)  # [B*H, S, S]
-   590: 
-   591:         # Token embeddings
-   592:         x = self.embed_tokens(tokens)  # [B, S, D]
-   593: 
-   594:         # Run encoder (with pair representation tracking)
-   595:         encoder_rep, pair_rep, delta_pair_repr = self.encoder(
-   596:             x, attn_mask=attn_bias,
-   597:             padding_mask=padding_mask if padding_mask.any() else None,
-   598:         )
-   599: 
-   600:         # Predict via [CLS] token
-   601:         return self.cls_head(encoder_rep)  # [B, num_tasks]
-   602: 
-   603: 
-   604: # =====================================================================
-   605: # EDITABLE SECTION END
-   606: # =====================================================================
-   607: 
-   608: 
-   609: # =====================================================================
 ```
 
 ### `gin` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1377,7 +1178,7 @@ Lines 115–606:
 In `Uni-Mol/custom_molprop.py`:
 
 ```python
-Lines 115–203:
+Lines 115–202:
    112: 
    113: # =====================================================================
    114: # EDITABLE SECTION START — MoleculeModel + helper modules
@@ -1472,7 +1273,6 @@ Lines 115–203:
    203: 
    204: 
    205: 
-   206: # =====================================================================
 ```
 
 

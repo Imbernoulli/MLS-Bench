@@ -212,7 +212,7 @@ def evaluate(model, data):
 # =====================================================================
 # FIXED: Main
 # =====================================================================
-if __name__ == "__main__":
+def _main():
     # Reproducibility
     random.seed(SEED)
     np.random.seed(SEED)
@@ -320,3 +320,10 @@ if __name__ == "__main__":
           f"macro_f1={final['test_f1']:.4f}", flush=True)
     print(f"Final test accuracy: {100 * final['test_acc']:.2f}%", flush=True)
     print(f"Final test macro F1: {100 * final['test_f1']:.2f}%", flush=True)
+
+
+# Run the training/eval inside a function so the loaded graph (incl. the
+# held-out test-node labels in `data.y`) is a local — NOT a module global the
+# editable model can read. An honest forward(x, edge_index) is unaffected.
+if __name__ == "__main__":
+    _main()

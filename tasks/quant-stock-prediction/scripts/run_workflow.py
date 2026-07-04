@@ -103,6 +103,15 @@ def main():
     region = REG_CN if region_str == "cn" else REG_CN
     qlib.init(provider_uri=provider_uri, region=region, kernels=1)
 
+    # Install the held-out-label guard (FIXED, non-editable). Hands the
+    # editable CustomModel.predict() a label-free view of the dataset so it
+    # cannot read the IC/RankIC scoring label out of the object it receives;
+    # the scorer and backtest keep using the untouched original dataset.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import _label_guard
+
+    _label_guard.install()
+
     print(f"SEED={seed}")
 
     # Run the workflow

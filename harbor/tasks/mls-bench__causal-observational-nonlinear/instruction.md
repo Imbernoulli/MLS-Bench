@@ -68,8 +68,6 @@ stay unchanged.
 
 Other files you may **read** for context (do not modify):
 - `causal-learn/bench/run_eval.py`
-- `causal-learn/bench/data_gen.py`
-- `causal-learn/bench/metrics.py`
 
 
 ## Readable Context

@@ -11,7 +11,7 @@
   "ClimaX/configs/global_forecast_climax.yaml": "ac1138332eff49b35d669b155232ac865f377a5f7e2f435f70569981410fa943",
   "ClimaX/configs/pretrain_climax.yaml": "38ad0714eff479c4cfb80bb32997041f4af5d7308273e7748beb741b208d2e27",
   "ClimaX/configs/regional_forecast_climax.yaml": "059d321f503826a7837bd673837fbba7cdc0d37b04baa0c73cf3ec3e2d340103",
-  "ClimaX/custom_forecast.py": "84ea7d13f138bc9a060e868f6f7fd4111415f5866aa393c43fa06cc5452cc549",
+  "ClimaX/custom_forecast.py": "048585df8cf124b120121a699927fd789c02b3bdde906ba4966635a74d80af61",
   "ClimaX/docker/Dockerfile": "64c51499de20433656ddd759c0b7eb6432214b179262fda2315c896327121175",
   "ClimaX/docker/environment.yml": "24c47769250a2c2d45565b19a6c82bc957bb476c3c44400b82b315472cca7189",
   "ClimaX/docs/assets/images/climax-coverfigure.png": "253f5cc18a02d82a1c6a4b14d368ef0cad1c915f8cd3af62231ba588c5e23c44",

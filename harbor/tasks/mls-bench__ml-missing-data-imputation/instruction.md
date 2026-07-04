@@ -74,9 +74,9 @@ stay unchanged.
      5: section to implement a novel imputation algorithm.
      6: 
      7: Datasets (selected by $ENV):
-     8:   - breast_cancer:  Classification, 569 samples x 30 features (binary)
-     9:   - wine:           Classification, 178 samples x 13 features (3-class)
-    10:   - california:     Regression, 20640 samples x 8 features (continuous target)
+     8:   - Several standard tabular datasets are used for evaluation (a mix of
+     9:     classification and regression); the specific datasets, shapes, and
+    10:     train/eval splits are withheld from this file so the imputer must generalize.
     11: 
     12: Missing patterns: MCAR (Missing Completely At Random) at 20% rate.
     13: 
@@ -89,7 +89,7 @@ stay unchanged.
     20: import sys
     21: import warnings
     22: import numpy as np
-    23: from sklearn.datasets import load_breast_cancer, load_wine, fetch_california_housing
+    23: # (dataset loaders live in the host-only scoring module; the eval datasets are not named here)
     24: from sklearn.model_selection import cross_val_score, StratifiedKFold, KFold
     25: from sklearn.preprocessing import StandardScaler
     26: from sklearn.ensemble import GradientBoostingClassifier, GradientBoostingRegressor
@@ -199,135 +199,63 @@ stay unchanged.
    130: 
    131: 
    132: # ================================================================
-   133: # FIXED -- do not modify below this line
+   133: # FIXED -- input loading + prediction emit (do not modify below this line)
    134: # ================================================================
-   135: 
-   136: 
-   137: def load_dataset(env_name, seed=42):
-   138:     """Load dataset and return X, y, and task type."""
-   139:     if env_name == "breast_cancer":
-   140:         data = load_breast_cancer()
-   141:         return data.data, data.target, "classification"
-   142:     elif env_name == "wine":
-   143:         data = load_wine()
-   144:         return data.data, data.target, "classification"
-   145:     elif env_name == "california":
-   146:         data = fetch_california_housing()
-   147:         # Subsample for speed (use first 5000 samples)
-   148:         rng = np.random.RandomState(seed)
-   149:         idx = rng.choice(len(data.data), min(5000, len(data.data)), replace=False)
-   150:         return data.data[idx], data.target[idx], "regression"
-   151:     else:
-   152:         raise ValueError(f"Unknown environment: {env_name}")
-   153: 
-   154: 
-   155: def introduce_missing(X, missing_rate=0.20, seed=42):
-   156:     """Introduce MCAR missing values at the given rate.
+   135: # The true matrix, the missingness mask, the labels, the dataset identity, and
+   136: # the metrics all live in a host-only module the agent's process cannot import.
+   137: # This program only loads the pre-generated masked matrix, runs the imputer, and
+   138: # emits the imputed matrix; the host-side parser regenerates the truth and
+   139: # scores it with the same RMSE + downstream metrics.
+   140: 
+   141: 
+   142: def _impute_inputs_dir():
+   143:     d = os.environ.get("IMPUTE_INPUTS_DIR")
+   144:     if d:
+   145:         return d
+   146:     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_impute_inputs")
+   147: 
+   148: 
+   149: def _load_input(env_name, seed):
+   150:     import io as _io
+   151:     import base64 as _b64
+   152:     path = os.path.join(_impute_inputs_dir(), f"{env_name}_seed{seed}.npy.b64")
+   153:     with open(path, "r") as f:
+   154:         raw = _b64.b64decode(f.read())
+   155:     return np.load(_io.BytesIO(raw))
+   156: 
    157: 
-   158:     Returns:
-   159:         X_missing: array with NaN for missing values
-   160:         mask: boolean array, True where values were made missing
-   161:     """
-   162:     rng = np.random.RandomState(seed)
-   163:     mask = rng.random(X.shape) < missing_rate
-   164:     # Don't make entire rows or columns missing
-   165:     for i in range(X.shape[0]):
-   166:         if mask[i].all():
-   167:             mask[i, rng.randint(X.shape[1])] = False
-   168:     for j in range(X.shape[1]):
-   169:         if mask[:, j].all():
-   170:             mask[rng.randint(X.shape[0]), j] = False
-   171:     X_missing = X.copy()
-   172:     X_missing[mask] = np.nan
-   173:     return X_missing, mask
-   174: 
-   175: 
-   176: def compute_imputation_rmse(X_true, X_imputed, mask):
-   177:     """Compute RMSE only on the artificially missing entries."""
-   178:     true_vals = X_true[mask]
-   179:     imputed_vals = X_imputed[mask]
-   180:     return np.sqrt(mean_squared_error(true_vals, imputed_vals))
+   158: def main():
+   159:     import base64 as _b64
+   160:     env = os.environ.get("ENV", "")
+   161:     if not env:
+   162:         raise SystemExit("ENV not set")
+   163:     seed = int(os.environ.get("SEED", "42"))
+   164:     print(f"=== Missing Data Imputation benchmark: {env} (seed={seed}) ===", flush=True)
+   165: 
+   166:     X_missing = _load_input(env, seed)
+   167:     print(f"Input: samples={X_missing.shape[0]}, features={X_missing.shape[1]}", flush=True)
+   168: 
+   169:     print("TRAIN_METRICS stage=fitting", flush=True)
+   170:     imputer = CustomImputer(random_state=seed)
+   171:     X_imputed = imputer.fit_transform(X_missing)
+   172:     print("TRAIN_METRICS stage=done", flush=True)
+   173: 
+   174:     X_imputed = np.asarray(X_imputed, dtype=np.float64)
+   175:     if np.isnan(X_imputed).any():
+   176:         print("WARNING: Imputed data still contains NaN! Filling with column means.", flush=True)
+   177:         col_means = np.nanmean(X_imputed, axis=0)
+   178:         for j in range(X_imputed.shape[1]):
+   179:             nan_mask = np.isnan(X_imputed[:, j])
+   180:             X_imputed[nan_mask, j] = col_means[j]
    181: 
-   182: 
-   183: def compute_downstream_score(X_imputed, y, task_type, seed=42):
-   184:     """Compute downstream predictive performance using cross-validation."""
-   185:     if task_type == "classification":
-   186:         model = GradientBoostingClassifier(
-   187:             n_estimators=100, max_depth=3, random_state=seed
-   188:         )
-   189:         cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-   190:         scores = cross_val_score(model, X_imputed, y, cv=cv, scoring="accuracy")
-   191:     else:
-   192:         model = GradientBoostingRegressor(
-   193:             n_estimators=100, max_depth=3, random_state=seed
-   194:         )
-   195:         cv = KFold(n_splits=5, shuffle=True, random_state=seed)
-   196:         scores = cross_val_score(model, X_imputed, y, cv=cv, scoring="r2")
-   197:     return scores.mean()
-   198: 
-   199: 
-   200: def main():
-   201:     env = os.environ.get("ENV", "breast_cancer")
-   202:     seed = int(os.environ.get("SEED", "42"))
-   203: 
-   204:     print(f"=== Missing Data Imputation benchmark: {env} (seed={seed}) ===", flush=True)
-   205: 
-   206:     # Load data
-   207:     X_raw, y, task_type = load_dataset(env, seed=seed)
-   208: 
-   209:     # Standardize features (on full data, before introducing missing values)
-   210:     scaler = StandardScaler()
-   211:     X_scaled = scaler.fit_transform(X_raw)
-   212: 
-   213:     print(
-   214:         f"Dataset: {env}, samples={X_scaled.shape[0]}, features={X_scaled.shape[1]}, "
-   215:         f"task={task_type}",
-   216:         flush=True,
-   217:     )
-   218: 
-   219:     # Introduce missing values (MCAR at 20%)
-   220:     X_missing, mask = introduce_missing(X_scaled, missing_rate=0.20, seed=seed)
-   221:     n_missing = mask.sum()
-   222:     print(
-   223:         f"Missing entries: {n_missing} / {X_scaled.size} "
-   224:         f"({100 * n_missing / X_scaled.size:.1f}%)",
-   225:         flush=True,
-   226:     )
-   227: 
-   228:     # Run custom imputer
-   229:     print("TRAIN_METRICS stage=fitting", flush=True)
-   230:     imputer = CustomImputer(random_state=seed)
-   231:     X_imputed = imputer.fit_transform(X_missing)
-   232:     print("TRAIN_METRICS stage=done", flush=True)
-   233: 
-   234:     # Check for remaining NaN
-   235:     if np.isnan(X_imputed).any():
-   236:         print("WARNING: Imputed data still contains NaN! Filling with column means.", flush=True)
-   237:         col_means = np.nanmean(X_imputed, axis=0)
-   238:         for j in range(X_imputed.shape[1]):
-   239:             nan_mask = np.isnan(X_imputed[:, j])
-   240:             X_imputed[nan_mask, j] = col_means[j]
-   241: 
-   242:     # Compute imputation RMSE
-   243:     rmse = compute_imputation_rmse(X_scaled, X_imputed, mask)
-   244:     print(f"TRAIN_METRICS rmse={rmse:.6f}", flush=True)
-   245: 
-   246:     # Compute downstream score
-   247:     downstream = compute_downstream_score(X_imputed, y, task_type, seed=seed)
-   248:     print(f"TRAIN_METRICS downstream_score={downstream:.6f}", flush=True)
-   249: 
-   250:     # Also compute baseline (no missing data) downstream score for reference
-   251:     baseline_score = compute_downstream_score(X_scaled, y, task_type, seed=seed)
-   252:     print(f"TRAIN_METRICS baseline_no_missing={baseline_score:.6f}", flush=True)
-   253: 
-   254:     # Final metrics
-   255:     print(f"TEST_METRICS rmse={rmse:.6f} downstream_score={downstream:.6f}", flush=True)
-   256: 
-   257:     print("Done.", flush=True)
-   258: 
-   259: 
-   260: if __name__ == "__main__":
-   261:     main()
+   182:     payload = _b64.b64encode(np.ascontiguousarray(X_imputed, dtype=np.float64).tobytes()).decode("ascii")
+   183:     print(f"IMPUTE_PRED env={env} seed={seed} rows={X_imputed.shape[0]} cols={X_imputed.shape[1]} "
+   184:           f"X_imputed={payload}", flush=True)
+   185:     print("Done.", flush=True)
+   186: 
+   187: 
+   188: if __name__ == "__main__":
+   189:     main()
 ```
 
 ## Reference Baselines
@@ -344,7 +272,7 @@ a baseline reproduction.
 In `scikit-learn/custom_imputation.py`:
 
 ```python
-Lines 36–73:
+Lines 36–37:
     33: # FIXED -- do not modify above this line
     34: # ================================================================
     35: 
@@ -353,42 +281,6 @@ Lines 36–73:
     38: # ================================================================
     39: 
     40: 
-    41: class CustomImputer(BaseEstimator, TransformerMixin):
-    42:     """Mean Imputation: replace missing values with column means."""
-    43: 
-    44:     def __init__(self, random_state=42, max_iter=10):
-    45:         self.random_state = random_state
-    46:         self.max_iter = max_iter
-    47: 
-    48:     def fit(self, X, y=None):
-    49:         self.statistics_ = np.nanmean(X, axis=0)
-    50:         return self
-    51: 
-    52:     def transform(self, X):
-    53:         X_imputed = X.copy()
-    54:         for j in range(X.shape[1]):
-    55:             mask = np.isnan(X_imputed[:, j])
-    56:             X_imputed[mask, j] = self.statistics_[j]
-    57:         return X_imputed
-    58: 
-    59:     def fit_transform(self, X, y=None):
-    60:         return self.fit(X, y).transform(X)
-    61: 
-    62: 
-    63: def compute_feature_correlations(X):
-    64:     n_features = X.shape[1]
-    65:     corr = np.eye(n_features)
-    66:     for i in range(n_features):
-    67:         for j in range(i + 1, n_features):
-    68:             mask = ~(np.isnan(X[:, i]) | np.isnan(X[:, j]))
-    69:             if mask.sum() > 2:
-    70:                 c = np.corrcoef(X[mask, i], X[mask, j])[0, 1]
-    71:                 corr[i, j] = corr[j, i] = c if not np.isnan(c) else 0.0
-    72:     return corr
-    73: 
-    74: # ================================================================
-    75: # FIXED -- do not modify below this line
-    76: # ================================================================
 ```
 
 ### `knn` baseline — editable region  [READ-ONLY — reference implementation]
@@ -396,7 +288,7 @@ Lines 36–73:
 In `scikit-learn/custom_imputation.py`:
 
 ```python
-Lines 36–84:
+Lines 36–37:
     33: # FIXED -- do not modify above this line
     34: # ================================================================
     35: 
@@ -405,53 +297,6 @@ Lines 36–84:
     38: # ================================================================
     39: 
     40: 
-    41: class CustomImputer(BaseEstimator, TransformerMixin):
-    42:     """KNN Imputation: impute using K-nearest neighbors.
-    43: 
-    44:     Uses sklearn.impute.KNNImputer with n_neighbors=5, distance weighting.
-    45:     Reference: Troyanskaya et al. (2001).
-    46:     """
-    47: 
-    48:     def __init__(self, random_state=42, max_iter=10):
-    49:         self.random_state = random_state
-    50:         self.max_iter = max_iter
-    51:         self.n_neighbors = 5
-    52: 
-    53:     def fit(self, X, y=None):
-    54:         from sklearn.impute import KNNImputer
-    55:         self._imputer = KNNImputer(
-    56:             n_neighbors=self.n_neighbors,
-    57:             weights="distance",
-    58:         )
-    59:         self._imputer.fit(X)
-    60:         return self
-    61: 
-    62:     def transform(self, X):
-    63:         return self._imputer.transform(X)
-    64: 
-    65:     def fit_transform(self, X, y=None):
-    66:         from sklearn.impute import KNNImputer
-    67:         self._imputer = KNNImputer(
-    68:             n_neighbors=self.n_neighbors,
-    69:             weights="distance",
-    70:         )
-    71:         return self._imputer.fit_transform(X)
-    72: 
-    73: 
-    74: def compute_feature_correlations(X):
-    75:     n_features = X.shape[1]
-    76:     corr = np.eye(n_features)
-    77:     for i in range(n_features):
-    78:         for j in range(i + 1, n_features):
-    79:             mask = ~(np.isnan(X[:, i]) | np.isnan(X[:, j]))
-    80:             if mask.sum() > 2:
-    81:                 c = np.corrcoef(X[mask, i], X[mask, j])[0, 1]
-    82:                 corr[i, j] = corr[j, i] = c if not np.isnan(c) else 0.0
-    83:     return corr
-    84: 
-    85: # ================================================================
-    86: # FIXED -- do not modify below this line
-    87: # ================================================================
 ```
 
 ### `mice` baseline — editable region  [READ-ONLY — reference implementation]
@@ -459,7 +304,7 @@ Lines 36–84:
 In `scikit-learn/custom_imputation.py`:
 
 ```python
-Lines 36–97:
+Lines 36–37:
     33: # FIXED -- do not modify above this line
     34: # ================================================================
     35: 
@@ -468,66 +313,6 @@ Lines 36–97:
     38: # ================================================================
     39: 
     40: 
-    41: class CustomImputer(BaseEstimator, TransformerMixin):
-    42:     """MICE: Multiple Imputation by Chained Equations.
-    43: 
-    44:     Uses sklearn.impute.IterativeImputer with BayesianRidge estimator.
-    45:     Reference: van Buuren & Groothuis-Oudshoorn (2011).
-    46:     """
-    47: 
-    48:     def __init__(self, random_state=42, max_iter=30):
-    49:         self.random_state = random_state
-    50:         self.max_iter = max_iter
-    51: 
-    52:     def fit(self, X, y=None):
-    53:         from sklearn.experimental import enable_iterative_imputer  # noqa
-    54:         from sklearn.impute import IterativeImputer
-    55:         from sklearn.linear_model import BayesianRidge
-    56: 
-    57:         self._imputer = IterativeImputer(
-    58:             estimator=BayesianRidge(),
-    59:             max_iter=self.max_iter,
-    60:             random_state=self.random_state,
-    61:             imputation_order="ascending",
-    62:             initial_strategy="mean",
-    63:             tol=1e-3,
-    64:         )
-    65:         self._imputer.fit(X)
-    66:         return self
-    67: 
-    68:     def transform(self, X):
-    69:         return self._imputer.transform(X)
-    70: 
-    71:     def fit_transform(self, X, y=None):
-    72:         from sklearn.experimental import enable_iterative_imputer  # noqa
-    73:         from sklearn.impute import IterativeImputer
-    74:         from sklearn.linear_model import BayesianRidge
-    75: 
-    76:         self._imputer = IterativeImputer(
-    77:             estimator=BayesianRidge(),
-    78:             max_iter=self.max_iter,
-    79:             random_state=self.random_state,
-    80:             imputation_order="ascending",
-    81:             initial_strategy="mean",
-    82:             tol=1e-3,
-    83:         )
-    84:         return self._imputer.fit_transform(X)
-    85: 
-    86: 
-    87: def compute_feature_correlations(X):
-    88:     n_features = X.shape[1]
-    89:     corr = np.eye(n_features)
-    90:     for i in range(n_features):
-    91:         for j in range(i + 1, n_features):
-    92:             mask = ~(np.isnan(X[:, i]) | np.isnan(X[:, j]))
-    93:             if mask.sum() > 2:
-    94:                 c = np.corrcoef(X[mask, i], X[mask, j])[0, 1]
-    95:                 corr[i, j] = corr[j, i] = c if not np.isnan(c) else 0.0
-    96:     return corr
-    97: 
-    98: # ================================================================
-    99: # FIXED -- do not modify below this line
-   100: # ================================================================
 ```
 
 ### `missforest` baseline — editable region  [READ-ONLY — reference implementation]
@@ -535,7 +320,7 @@ Lines 36–97:
 In `scikit-learn/custom_imputation.py`:
 
 ```python
-Lines 36–145:
+Lines 36–37:
     33: # FIXED -- do not modify above this line
     34: # ================================================================
     35: 
@@ -544,114 +329,6 @@ Lines 36–145:
     38: # ================================================================
     39: 
     40: 
-    41: class CustomImputer(BaseEstimator, TransformerMixin):
-    42:     """MissForest: Iterative Random Forest imputation.
-    43: 
-    44:     Implements the MissForest algorithm (Stekhoven & Buehlmann, 2012):
-    45:     1. Initial imputation with column means
-    46:     2. For each iteration:
-    47:        a. Sort features by missingness (ascending)
-    48:        b. For each feature with missing values:
-    49:           - Train RandomForest on observed entries using all other features
-    50:           - Predict missing entries
-    51:        c. Check convergence (normalized difference < tol)
-    52:     3. Return when converged or max_iter reached
-    53: 
-    54:     Reference: Bioinformatics 28(1):112-118, 2012.
-    55:     """
-    56: 
-    57:     def __init__(self, random_state=42, max_iter=10):
-    58:         self.random_state = random_state
-    59:         self.max_iter = max_iter
-    60:         self.n_estimators = 100
-    61:         self.tol = 1e-4
-    62: 
-    63:     def fit(self, X, y=None):
-    64:         # Store the fitted state by running fit_transform internally
-    65:         self._X_fitted = X.copy()
-    66:         self._fit_transform_internal(X)
-    67:         return self
-    68: 
-    69:     def transform(self, X):
-    70:         return self._fit_transform_internal(X)
-    71: 
-    72:     def fit_transform(self, X, y=None):
-    73:         return self._fit_transform_internal(X)
-    74: 
-    75:     def _fit_transform_internal(self, X):
-    76:         from sklearn.ensemble import RandomForestRegressor
-    77: 
-    78:         X_imp = X.copy()
-    79:         n_samples, n_features = X_imp.shape
-    80: 
-    81:         # Step 1: Initial imputation with column means
-    82:         col_means = np.nanmean(X_imp, axis=0)
-    83:         for j in range(n_features):
-    84:             mask_j = np.isnan(X_imp[:, j])
-    85:             X_imp[mask_j, j] = col_means[j]
-    86: 
-    87:         # Identify which features have missing values and sort by missingness
-    88:         miss_count = np.isnan(X).sum(axis=0)
-    89:         features_with_missing = np.where(miss_count > 0)[0]
-    90:         # Sort by number of missing values (ascending)
-    91:         features_with_missing = features_with_missing[
-    92:             np.argsort(miss_count[features_with_missing])
-    93:         ]
-    94: 
-    95:         if len(features_with_missing) == 0:
-    96:             return X_imp
-    97: 
-    98:         # Step 2: Iterative imputation
-    99:         for iteration in range(self.max_iter):
-   100:             X_prev = X_imp.copy()
-   101: 
-   102:             for j in features_with_missing:
-   103:                 # Observed and missing indices for feature j
-   104:                 obs_mask = ~np.isnan(X[:, j])
-   105:                 mis_mask = np.isnan(X[:, j])
-   106: 
-   107:                 if mis_mask.sum() == 0:
-   108:                     continue
-   109: 
-   110:                 # Predictor features (all except j)
-   111:                 other_features = [k for k in range(n_features) if k != j]
-   112:                 X_train = X_imp[obs_mask][:, other_features]
-   113:                 y_train = X[obs_mask, j]  # Use original observed values
-   114:                 X_pred = X_imp[mis_mask][:, other_features]
-   115: 
-   116:                 # Train random forest and predict
-   117:                 rf = RandomForestRegressor(
-   118:                     n_estimators=self.n_estimators,
-   119:                     max_features="sqrt",
-   120:                     random_state=self.random_state,
-   121:                     n_jobs=-1,
-   122:                 )
-   123:                 rf.fit(X_train, y_train)
-   124:                 X_imp[mis_mask, j] = rf.predict(X_pred)
-   125: 
-   126:             # Step 3: Check convergence
-   127:             diff = np.sum((X_imp - X_prev) ** 2)
-   128:             denom = np.sum(X_imp ** 2)
-   129:             if denom > 0 and diff / denom < self.tol:
-   130:                 break
-   131: 
-   132:         return X_imp
-   133: 
-   134: 
-   135: def compute_feature_correlations(X):
-   136:     n_features = X.shape[1]
-   137:     corr = np.eye(n_features)
-   138:     for i in range(n_features):
-   139:         for j in range(i + 1, n_features):
-   140:             mask = ~(np.isnan(X[:, i]) | np.isnan(X[:, j]))
-   141:             if mask.sum() > 2:
-   142:                 c = np.corrcoef(X[mask, i], X[mask, j])[0, 1]
-   143:                 corr[i, j] = corr[j, i] = c if not np.isnan(c) else 0.0
-   144:     return corr
-   145: 
-   146: # ================================================================
-   147: # FIXED -- do not modify below this line
-   148: # ================================================================
 ```
 
 ### `gain` baseline — editable region  [READ-ONLY — reference implementation]
@@ -659,7 +336,7 @@ Lines 36–145:
 In `scikit-learn/custom_imputation.py`:
 
 ```python
-Lines 36–102:
+Lines 36–37:
     33: # FIXED -- do not modify above this line
     34: # ================================================================
     35: 
@@ -668,71 +345,6 @@ Lines 36–102:
     38: # ================================================================
     39: 
     40: 
-    41: class CustomImputer(BaseEstimator, TransformerMixin):
-    42:     """Iterative imputation with ExtraTreesRegressor.
-    43: 
-    44:     Uses sklearn's IterativeImputer with ExtraTreesRegressor as the
-    45:     estimator. ExtraTrees captures non-linear feature dependencies
-    46:     (similar to GAIN's goal) but converges reliably. Each feature
-    47:     with missing values is modeled as a function of all other features,
-    48:     iterated in round-robin until convergence.
-    49: 
-    50:     This replaces the original numpy GAIN (GAN) baseline which could
-    51:     not converge due to incomplete backpropagation.
-    52:     """
-    53: 
-    54:     def __init__(self, random_state=42, max_iter=10):
-    55:         self.random_state = random_state
-    56:         self.max_iter = max_iter
-    57:         self.n_estimators = 100
-    58: 
-    59:     def _make_imputer(self):
-    60:         from sklearn.experimental import enable_iterative_imputer  # noqa
-    61:         from sklearn.impute import IterativeImputer
-    62:         from sklearn.ensemble import ExtraTreesRegressor
-    63: 
-    64:         estimator = ExtraTreesRegressor(
-    65:             n_estimators=self.n_estimators,
-    66:             max_features="sqrt",
-    67:             random_state=self.random_state,
-    68:             n_jobs=-1,
-    69:         )
-    70:         return IterativeImputer(
-    71:             estimator=estimator,
-    72:             max_iter=self.max_iter,
-    73:             random_state=self.random_state,
-    74:             imputation_order="ascending",
-    75:             initial_strategy="mean",
-    76:             tol=1e-3,
-    77:         )
-    78: 
-    79:     def fit(self, X, y=None):
-    80:         self._imputer = self._make_imputer()
-    81:         self._imputer.fit(X)
-    82:         return self
-    83: 
-    84:     def transform(self, X):
-    85:         return self._imputer.transform(X)
-    86: 
-    87:     def fit_transform(self, X, y=None):
-    88:         self._imputer = self._make_imputer()
-    89:         return self._imputer.fit_transform(X)
-    90: 
-    91: 
-    92: def compute_feature_correlations(X):
-    93:     n_features = X.shape[1]
-    94:     corr = np.eye(n_features)
-    95:     for i in range(n_features):
-    96:         for j in range(i + 1, n_features):
-    97:             mask = ~(np.isnan(X[:, i]) | np.isnan(X[:, j]))
-    98:             if mask.sum() > 2:
-    99:                 c = np.corrcoef(X[mask, i], X[mask, j])[0, 1]
-   100:                 corr[i, j] = corr[j, i] = c if not np.isnan(c) else 0.0
-   101:     return corr
-   102: 
-   103: # ================================================================
-   104: # FIXED -- do not modify below this line
-   105: # ================================================================
 ```
 
 

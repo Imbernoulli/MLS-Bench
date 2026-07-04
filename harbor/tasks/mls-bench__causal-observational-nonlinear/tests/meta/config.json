@@ -1,6 +1,9 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
   "use_cuda": false,
   "test_cmds": [
     {
@@ -67,27 +70,6 @@
           "end": -1
         }
       ]
-    },
-    {
-      "filename": "causal-learn/bench/data_gen.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
-      ]
-    },
-    {
-      "filename": "causal-learn/bench/metrics.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
-      ]
     }
-  ],
-  "seeds": [
-    42
   ]
 }

@@ -1,6 +1,7 @@
 #!/bin/bash
 # Noisy variant: ER10-Hard (p=0.5, 200 samples) + higher noise (noise_scale=2.5).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type er \
     --n_nodes 10 \

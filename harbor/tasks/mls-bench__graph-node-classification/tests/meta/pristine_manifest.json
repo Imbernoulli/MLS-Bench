@@ -97,7 +97,7 @@
   "pytorch-geometric/benchmark/utils/hetero_sage.py": "2c739592f5835da5e6149c34858e70e44cbafe6dad5d26730a19ca4768c08ec6",
   "pytorch-geometric/benchmark/utils/utils.py": "a7e80a076e1fea7d515acd7a2924109cd998ff4a4758458059beb6e1eb92dbba",
   "pytorch-geometric/codecov.yml": "5843d575795662b29c22da1502b9476df41365aebef25914aaa5ff5807b2c2d1",
-  "pytorch-geometric/custom_nodecls.py": "faca64cb66eec521efdf4a02f1115aa7b6a8887368ae3f1f288be97c6a70c756",
+  "pytorch-geometric/custom_nodecls.py": "8e91f34acf08e53065c6667ef6c19a1e264fc5dc99876826d892016f44172e2a",
   "pytorch-geometric/docker/Dockerfile": "244bc12f1cfb78ca8436f743d35a1792f78785c588ee983c1408b3f0a6563349",
   "pytorch-geometric/docker/Dockerfile.xpu": "013232647d6609c954e46e6159e3aa1d75781e6b4a5c13cb2dcb6d2fd509650a",
   "pytorch-geometric/docker/README.md": "72529cb19240c71991a331ac522ab0ed1c1780a8b4badc1ae453742760508d80",

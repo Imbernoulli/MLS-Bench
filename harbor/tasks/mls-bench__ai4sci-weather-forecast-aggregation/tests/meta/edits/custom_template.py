@@ -608,7 +608,7 @@ def load_pretrained_weights(model, pretrained_path, img_size):
     print(f"Loaded {len(filtered)} keys. Missing: {len(msg.missing_keys)}, Unexpected: {len(msg.unexpected_keys)}")
 
 
-if __name__ == "__main__":
+def _main():
     # ── Configuration from environment ──
     output_dir = os.environ.get("OUTPUT_DIR", "out")
     seed = int(os.environ.get("SEED", 42))
@@ -890,3 +890,10 @@ if __name__ == "__main__":
     print(f"TEST_METRICS: {', '.join(metrics_parts)}", flush=True)
 
     print("Done.")
+
+
+# Run inside a function so the per-batch true target tensors held in the
+# eval loops are locals, not module globals reachable by the editable model
+# during forward(). An honest aggregator is unaffected.
+if __name__ == "__main__":
+    _main()

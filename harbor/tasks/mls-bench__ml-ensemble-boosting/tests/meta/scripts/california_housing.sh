@@ -1,9 +1,7 @@
 #!/bin/bash
-# Train boosted ensemble on California Housing (regression)
+# Train boosted ensemble on the california_housing environment.
+set -e
 cd /workspace
-python scikit-learn/custom_boosting.py \
-    --dataset california_housing --task regression \
-    --n-rounds 200 --max-depth 3 --learning-rate 0.1 \
-    --test-size 0.2 \
-    --seed ${SEED:-42} \
-    --output-dir ${OUTPUT_DIR:-./output}
+python "/tests/eval/_inputgen/apply.py" "ml-ensemble-boosting" /workspace
+ENV=16d2b29d7afb SEED=${SEED:-42} OUTPUT_DIR=${OUTPUT_DIR:-./output} \
+    python -u scikit-learn/custom_boosting.py

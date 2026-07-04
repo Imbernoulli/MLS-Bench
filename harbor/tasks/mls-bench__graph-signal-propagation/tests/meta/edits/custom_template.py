@@ -184,7 +184,7 @@ def cheby(i, x):
 def train_step(model, optimizer, data):
     model.train()
     optimizer.zero_grad()
-    out = model(data)[data.train_mask]
+    out = model(_mask_y(data))[data.train_mask]  # mask labels at train too (forward never sees y; loss below uses real train labels)
     loss = F.nll_loss(out, data.y[data.train_mask])
     loss.backward()
     optimizer.step()
@@ -193,7 +193,7 @@ def train_step(model, optimizer, data):
 
 def evaluate(model, data):
     model.eval()
-    logits = model(data)
+    logits = model(_mask_y(data))
     accs, losses = [], []
     for mask_name in ["train_mask", "val_mask", "test_mask"]:
         mask = getattr(data, mask_name)
@@ -311,7 +311,21 @@ class CustomFilter(nn.Module):
 # =====================================================================
 # FIXED: Main training and evaluation script
 # =====================================================================
-if __name__ == "__main__":
+def _mask_y(data):
+    """Return a clone with node labels withheld (set to -1) so the editable
+    filter's forward(data) cannot read off the held-out labels at evaluation.
+    Honest filters use only data.x/edge_index, so predictions are unchanged;
+    the metric below still uses the real data.y."""
+    c = data.clone()
+    c.y = torch.full_like(data.y, -1)
+    return c
+
+
+def _main():
+    # Run inside a function so the loaded graph (incl. the held-out test-node
+    # labels in data.y / data_split.y) is a local, NOT a module global the
+    # editable CustomFilter/CustomProp can read. An honest forward(data) that
+    # uses only data.x/edge_index is unaffected (_mask_y still masks the arg).
     os.makedirs(OUTPUT_DIR, exist_ok=True)
     print(f"Dataset: {DATASET_NAME}, Seed: {SEED}", flush=True)
     print(f"Config: hidden={HIDDEN}, K={K}, alpha={ALPHA}, "
@@ -416,3 +430,6 @@ if __name__ == "__main__":
         f"Result: {DATASET_NAME} accuracy = {100*mean_acc:.2f} +/- {100*std_acc:.2f}%",
         flush=True,
     )
+
+if __name__ == "__main__":
+    _main()

@@ -15,7 +15,7 @@ import argparse
 import warnings
 import numpy as np
 import pandas as pd
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Dict, List, Tuple
 
 import torch
@@ -359,9 +359,15 @@ def evaluate(model, loader, device):
 
     for batch in loader:
         batch = batch_to_device(batch, device)
+        # Withhold the held-out targets from the model at evaluation: it must
+        # score on features only. The true labels are kept here (fixed harness
+        # scope) for the metric and are never placed in the batch the model's
+        # forward() receives — so a model cannot read off the answer.
+        true_labels = batch.labels
+        batch = replace(batch, labels=torch.zeros_like(batch.labels))
         pred = model(batch)
         all_preds.append(pred.cpu().numpy())
-        all_labels.append(batch.labels.cpu().numpy())
+        all_labels.append(true_labels.cpu().numpy())
 
     preds = np.concatenate(all_preds)
     labels = np.concatenate(all_labels)

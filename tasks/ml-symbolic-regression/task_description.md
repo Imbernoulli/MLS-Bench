@@ -42,9 +42,14 @@ def evolve_one_generation(population, fitnesses, X_train, y_train,
 Available helpers from the skeleton: `safe_evaluate(tree, X)`, `generate_tree('grow'|'full', max_depth, n_features)`, `Tree.copy/size/depth/get_all_nodes()`. Reference code that may be read for context: `gplearn/gplearn/genetic.py`, `gplearn/gplearn/_program.py`, `gplearn/gplearn/fitness.py`. The output must remain an executable symbolic expression, not a black-box predictor.
 
 ## Fixed Pipeline & Evaluation
-Benchmarks (standard symbolic-regression problems):
-- **Nguyen-7** — univariate, transcendental: `log(x+1) + log(x^2+1)`, `x ∈ [0, 2]`.
-- **Nguyen-10** — bivariate, trigonometric: `2 * sin(x) * cos(y)`, `(x, y) ∈ [-1, 1]^2`.
-- **Koza-3** — univariate polynomial: `x^6 - 2*x^4 + x^2`, `x ∈ [-1, 1]`.
+Your GP is evaluated on a held-out suite of standard symbolic-regression
+benchmarks drawn from the usual families (low-dimensional univariate and
+bivariate targets — polynomial, transcendental, and trigonometric). The exact
+target functions are **not** disclosed: at run time the fixed driver hands your
+search only sampled `(X_train, y_train)` training pairs and a set of test inputs
+`X_test`. Your search must fit those samples and produce an executable
+expression; the best evolved expression is evaluated on the held-out test inputs
+by a host-side scorer.
 
-Metric: **R²** on a held-out test set (higher is better; max 1.0). RMSE and discovered expression details are reported as feedback.
+Metric: **R²** on the held-out test set (higher is better; max 1.0). A train-set
+fit summary (train R² and the discovered expression) is reported as feedback.

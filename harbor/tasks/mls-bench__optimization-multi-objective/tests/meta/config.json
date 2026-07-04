@@ -1,6 +1,9 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
   "test_cmds": [
     {
       "cmd": "scripts/zdt1.sh",
@@ -67,13 +70,10 @@
       ],
       "edit": [
         {
-          "start": 297,
-          "end": 441
+          "start": 159,
+          "end": 303
         }
       ]
     }
-  ],
-  "seeds": [
-    42
   ]
 }

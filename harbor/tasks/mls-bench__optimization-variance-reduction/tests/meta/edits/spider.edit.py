@@ -134,8 +134,8 @@ OPS = [
     {
         "op": "replace",
         "file": _FILE,
-        "start_line": 286,
-        "end_line": 370,
+        "start_line": 96,
+        "end_line": 177,
         "content": _CONTENT,
     },
 ]

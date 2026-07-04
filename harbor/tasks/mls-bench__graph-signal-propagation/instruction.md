@@ -283,7 +283,7 @@ stay unchanged.
    184: def train_step(model, optimizer, data):
    185:     model.train()
    186:     optimizer.zero_grad()
-   187:     out = model(data)[data.train_mask]
+   187:     out = model(_mask_y(data))[data.train_mask]  # mask labels at train too (forward never sees y; loss below uses real train labels)
    188:     loss = F.nll_loss(out, data.y[data.train_mask])
    189:     loss.backward()
    190:     optimizer.step()
@@ -292,7 +292,7 @@ stay unchanged.
    193: 
    194: def evaluate(model, data):
    195:     model.eval()
-   196:     logits = model(data)
+   196:     logits = model(_mask_y(data))
    197:     accs, losses = [], []
    198:     for mask_name in ["train_mask", "val_mask", "test_mask"]:
    199:         mask = getattr(data, mask_name)
@@ -410,111 +410,121 @@ stay unchanged.
    311: # =====================================================================
    312: # FIXED: Main training and evaluation script
    313: # =====================================================================
-   314: if __name__ == "__main__":
-   315:     os.makedirs(OUTPUT_DIR, exist_ok=True)
-   316:     print(f"Dataset: {DATASET_NAME}, Seed: {SEED}", flush=True)
-   317:     print(f"Config: hidden={HIDDEN}, K={K}, alpha={ALPHA}, "
-   318:           f"dropout={DROPOUT}, dprate={DPRATE}, lr={LR}", flush=True)
-   319: 
-   320:     # Load dataset
-   321:     dataset = load_dataset(DATASET_NAME)
-   322:     data = dataset[0]
-   323:     num_features = dataset.num_features
-   324:     num_classes = dataset.num_classes
-   325: 
-   326:     # Compute split sizes
-   327:     percls_trn = int(round(TRAIN_RATE * len(data.y) / num_classes))
-   328:     val_lb = int(round(VAL_RATE * len(data.y)))
+   314: def _mask_y(data):
+   315:     """Return a clone with node labels withheld (set to -1) so the editable
+   316:     filter's forward(data) cannot read off the held-out labels at evaluation.
+   317:     Honest filters use only data.x/edge_index, so predictions are unchanged;
+   318:     the metric below still uses the real data.y."""
+   319:     c = data.clone()
+   320:     c.y = torch.full_like(data.y, -1)
+   321:     return c
+   322: 
+   323: 
+   324: if __name__ == "__main__":
+   325:     os.makedirs(OUTPUT_DIR, exist_ok=True)
+   326:     print(f"Dataset: {DATASET_NAME}, Seed: {SEED}", flush=True)
+   327:     print(f"Config: hidden={HIDDEN}, K={K}, alpha={ALPHA}, "
+   328:           f"dropout={DROPOUT}, dprate={DPRATE}, lr={LR}", flush=True)
    329: 
-   330:     results = []
-   331:     for run_idx in range(RUNS):
-   332:         run_seed = (FIXED_SEEDS[run_idx] + SEED - 42) & 0xFFFFFFFF
-   333:         set_seed(run_seed)
-   334: 
-   335:         # Create data split
-   336:         data_split = random_splits(data, num_classes, percls_trn, val_lb, seed=run_seed)
-   337: 
-   338:         # Build model
-   339:         model = CustomFilter(
-   340:             num_features=num_features,
-   341:             num_classes=num_classes,
-   342:             hidden=HIDDEN,
-   343:             K=K,
-   344:             alpha=ALPHA,
-   345:             dropout=DROPOUT,
-   346:             dprate=DPRATE,
-   347:         ).to(DEVICE)
-   348: 
-   349:         data_split = data_split.to(DEVICE)
-   350: 
-   351:         # Allow model to override training hyperparameters via attributes
-   352:         lr = getattr(model, 'custom_lr', LR)
-   353:         wd = getattr(model, 'custom_wd', WEIGHT_DECAY)
-   354:         prop_lr = getattr(model, 'custom_prop_lr', PROP_LR)
-   355:         prop_wd = getattr(model, 'custom_prop_wd', PROP_WD)
-   356: 
-   357:         # Check if model has separate propagation parameters
-   358:         prop_params = []
-   359:         other_params = []
-   360:         for name, param in model.named_parameters():
-   361:             if "prop" in name:
-   362:                 prop_params.append(param)
-   363:             else:
-   364:                 other_params.append(param)
-   365: 
-   366:         if prop_params:
-   367:             optimizer = torch.optim.Adam([
-   368:                 {"params": other_params, "lr": lr, "weight_decay": wd},
-   369:                 {"params": prop_params, "lr": prop_lr, "weight_decay": prop_wd},
-   370:             ])
-   371:         else:
-   372:             optimizer = torch.optim.Adam(
-   373:                 model.parameters(), lr=lr, weight_decay=wd
-   374:             )
+   330:     # Load dataset
+   331:     dataset = load_dataset(DATASET_NAME)
+   332:     data = dataset[0]
+   333:     num_features = dataset.num_features
+   334:     num_classes = dataset.num_classes
+   335: 
+   336:     # Compute split sizes
+   337:     percls_trn = int(round(TRAIN_RATE * len(data.y) / num_classes))
+   338:     val_lb = int(round(VAL_RATE * len(data.y)))
+   339: 
+   340:     results = []
+   341:     for run_idx in range(RUNS):
+   342:         run_seed = (FIXED_SEEDS[run_idx] + SEED - 42) & 0xFFFFFFFF
+   343:         set_seed(run_seed)
+   344: 
+   345:         # Create data split
+   346:         data_split = random_splits(data, num_classes, percls_trn, val_lb, seed=run_seed)
+   347: 
+   348:         # Build model
+   349:         model = CustomFilter(
+   350:             num_features=num_features,
+   351:             num_classes=num_classes,
+   352:             hidden=HIDDEN,
+   353:             K=K,
+   354:             alpha=ALPHA,
+   355:             dropout=DROPOUT,
+   356:             dprate=DPRATE,
+   357:         ).to(DEVICE)
+   358: 
+   359:         data_split = data_split.to(DEVICE)
+   360: 
+   361:         # Allow model to override training hyperparameters via attributes
+   362:         lr = getattr(model, 'custom_lr', LR)
+   363:         wd = getattr(model, 'custom_wd', WEIGHT_DECAY)
+   364:         prop_lr = getattr(model, 'custom_prop_lr', PROP_LR)
+   365:         prop_wd = getattr(model, 'custom_prop_wd', PROP_WD)
+   366: 
+   367:         # Check if model has separate propagation parameters
+   368:         prop_params = []
+   369:         other_params = []
+   370:         for name, param in model.named_parameters():
+   371:             if "prop" in name:
+   372:                 prop_params.append(param)
+   373:             else:
+   374:                 other_params.append(param)
    375: 
-   376:         # Training loop with early stopping
-   377:         best_val_loss = float("inf")
-   378:         best_test_acc = 0.0
-   379:         val_loss_history = []
-   380: 
-   381:         for epoch in range(EPOCHS):
-   382:             train_loss = train_step(model, optimizer, data_split)
-   383:             accs, losses = evaluate(model, data_split)
-   384:             train_acc, val_acc, test_acc = accs
-   385:             _, val_loss, _ = losses
-   386: 
-   387:             if val_loss < best_val_loss:
-   388:                 best_val_loss = val_loss
-   389:                 best_test_acc = test_acc
+   376:         if prop_params:
+   377:             optimizer = torch.optim.Adam([
+   378:                 {"params": other_params, "lr": lr, "weight_decay": wd},
+   379:                 {"params": prop_params, "lr": prop_lr, "weight_decay": prop_wd},
+   380:             ])
+   381:         else:
+   382:             optimizer = torch.optim.Adam(
+   383:                 model.parameters(), lr=lr, weight_decay=wd
+   384:             )
+   385: 
+   386:         # Training loop with early stopping
+   387:         best_val_loss = float("inf")
+   388:         best_test_acc = 0.0
+   389:         val_loss_history = []
    390: 
-   391:             if epoch % 100 == 0:
-   392:                 print(
-   393:                     f"TRAIN_METRICS run={run_idx} epoch={epoch} "
-   394:                     f"train_loss={train_loss:.4f} val_acc={val_acc:.4f} "
-   395:                     f"test_acc={test_acc:.4f}",
-   396:                     flush=True,
-   397:                 )
-   398: 
-   399:             val_loss_history.append(val_loss)
-   400:             if EARLY_STOPPING > 0 and epoch > EARLY_STOPPING:
-   401:                 recent = torch.tensor(val_loss_history[-(EARLY_STOPPING + 1):-1])
-   402:                 if val_loss > recent.mean().item():
-   403:                     break
-   404: 
-   405:         results.append(best_test_acc)
-   406:         print(
-   407:             f"TRAIN_METRICS run={run_idx} final best_test_acc={best_test_acc:.4f}",
-   408:             flush=True,
-   409:         )
-   410: 
-   411:     # Aggregate results across runs
-   412:     mean_acc = np.mean(results)
-   413:     std_acc = np.std(results)
-   414:     print(f"TEST_METRICS accuracy={mean_acc:.4f} std={std_acc:.4f}", flush=True)
-   415:     print(
-   416:         f"Result: {DATASET_NAME} accuracy = {100*mean_acc:.2f} +/- {100*std_acc:.2f}%",
-   417:         flush=True,
-   418:     )
+   391:         for epoch in range(EPOCHS):
+   392:             train_loss = train_step(model, optimizer, data_split)
+   393:             accs, losses = evaluate(model, data_split)
+   394:             train_acc, val_acc, test_acc = accs
+   395:             _, val_loss, _ = losses
+   396: 
+   397:             if val_loss < best_val_loss:
+   398:                 best_val_loss = val_loss
+   399:                 best_test_acc = test_acc
+   400: 
+   401:             if epoch % 100 == 0:
+   402:                 print(
+   403:                     f"TRAIN_METRICS run={run_idx} epoch={epoch} "
+   404:                     f"train_loss={train_loss:.4f} val_acc={val_acc:.4f} "
+   405:                     f"test_acc={test_acc:.4f}",
+   406:                     flush=True,
+   407:                 )
+   408: 
+   409:             val_loss_history.append(val_loss)
+   410:             if EARLY_STOPPING > 0 and epoch > EARLY_STOPPING:
+   411:                 recent = torch.tensor(val_loss_history[-(EARLY_STOPPING + 1):-1])
+   412:                 if val_loss > recent.mean().item():
+   413:                     break
+   414: 
+   415:         results.append(best_test_acc)
+   416:         print(
+   417:             f"TRAIN_METRICS run={run_idx} final best_test_acc={best_test_acc:.4f}",
+   418:             flush=True,
+   419:         )
+   420: 
+   421:     # Aggregate results across runs
+   422:     mean_acc = np.mean(results)
+   423:     std_acc = np.std(results)
+   424:     print(f"TEST_METRICS accuracy={mean_acc:.4f} std={std_acc:.4f}", flush=True)
+   425:     print(
+   426:         f"Result: {DATASET_NAME} accuracy = {100*mean_acc:.2f} +/- {100*std_acc:.2f}%",
+   427:         flush=True,
+   428:     )
 ```
 
 ## Reference Baselines

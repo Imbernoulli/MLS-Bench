@@ -11,6 +11,7 @@ if [[ "${MLS_BENCH_SMOKE:-0}" == "1" ]]; then
   EXTRA_ARGS+=(--smoke)
 fi
 
+python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace
 python RAIN/opt_diagonal_net/custom_optimizer.py \
   --seed "${SEED:-42}" \
   --label "${ENV:-d500_k10_s01}" \

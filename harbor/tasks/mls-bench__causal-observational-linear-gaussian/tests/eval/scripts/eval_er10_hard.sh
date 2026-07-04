@@ -1,6 +1,7 @@
 #!/bin/bash
 # Hard variant: ER10 with denser graph (p=0.5) and fewer samples (200).
 
+python "/tests/eval/_inputgen/apply.py" "causal-observational-linear-gaussian" /workspace
 python -u bench/run_eval.py \
     --graph_type er \
     --n_nodes 10 \

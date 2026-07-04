@@ -79,8 +79,6 @@ stay unchanged.
 
 Other files you may **read** for context (do not modify):
 - `causal-bnlearn/bench/run_eval.py`
-- `causal-bnlearn/bench/data_gen.py`
-- `causal-bnlearn/bench/metrics.py`
 
 
 ## Readable Context
@@ -120,40 +118,35 @@ a baseline reproduction.
 In `causal-bnlearn/bench/custom_algorithm.py`:
 
 ```python
-Lines 3–32:
+Lines 3–27:
      1: import numpy as np
      2: from causallearn.graph.GeneralGraph import GeneralGraph
-     3: from causallearn.graph.GraphNode import GraphNode
-     4: 
-     5: # =====================================================================
-     6: # EDITABLE: implement run_causal_discovery below
-     7: # =====================================================================
-     8: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
-     9:     """
-    10:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
-    11:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
-    12:     """
-    13:     from causallearn.utils.PCUtils import SkeletonDiscovery, Meek, UCSepset
-    14:     from causallearn.utils.cit import CIT
-    15: 
-    16:     alpha = 0.05
-    17:     indep_test = CIT(X, "chisq")
-    18: 
-    19:     # Step 1: skeleton discovery via chi-squared CI tests (stable PC)
-    20:     cg_1 = SkeletonDiscovery.skeleton_discovery(
-    21:         X, alpha, indep_test, stable=True,
-    22:         background_knowledge=None, verbose=False,
-    23:         show_progress=False, node_names=None,
-    24:     )
-    25: 
-    26:     # Step 2: orient unshielded colliders using UC-sepset rule (priority=2)
-    27:     cg_2 = UCSepset.uc_sepset(cg_1, 2, background_knowledge=None)
-    28: 
-    29:     # Step 3: complete orientation with Meek rules
-    30:     cg = Meek.meek(cg_2, background_knowledge=None)
-    31: 
-    32:     return cg.G
-    33: # =====================================================================
+     3: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
+     4:     """
+     5:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
+     6:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
+     7:     """
+     8:     from causallearn.utils.PCUtils import SkeletonDiscovery, Meek, UCSepset
+     9:     from causallearn.utils.cit import CIT
+    10: 
+    11:     alpha = 0.05
+    12:     indep_test = CIT(X, "chisq")
+    13: 
+    14:     # Step 1: skeleton discovery via chi-squared CI tests (stable PC)
+    15:     cg_1 = SkeletonDiscovery.skeleton_discovery(
+    16:         X, alpha, indep_test, stable=True,
+    17:         background_knowledge=None, verbose=False,
+    18:         show_progress=False, node_names=None,
+    19:     )
+    20: 
+    21:     # Step 2: orient unshielded colliders using UC-sepset rule (priority=2)
+    22:     cg_2 = UCSepset.uc_sepset(cg_1, 2, background_knowledge=None)
+    23: 
+    24:     # Step 3: complete orientation with Meek rules
+    25:     cg = Meek.meek(cg_2, background_knowledge=None)
+    26: 
+    27:     return cg.G
+    28: # =====================================================================
 ```
 
 ### `ges` baseline — editable region  [READ-ONLY — reference implementation]
@@ -161,28 +154,23 @@ Lines 3–32:
 In `causal-bnlearn/bench/custom_algorithm.py`:
 
 ```python
-Lines 3–20:
+Lines 3–15:
      1: import numpy as np
      2: from causallearn.graph.GeneralGraph import GeneralGraph
-     3: from causallearn.graph.GraphNode import GraphNode
-     4: 
-     5: # =====================================================================
-     6: # EDITABLE: implement run_causal_discovery below
-     7: # =====================================================================
-     8: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
-     9:     """
-    10:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
-    11:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
-    12:     """
-    13:     from causallearn.search.ScoreBased.GES import ges
-    14: 
-    15:     result = ges(
-    16:         X,
-    17:         score_func="local_score_BDeu",
-    18:         parameters={"sample_prior": 1.0, "structure_prior": 1.0},
-    19:     )
-    20:     return result["G"]
-    21: # =====================================================================
+     3: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
+     4:     """
+     5:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
+     6:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
+     7:     """
+     8:     from causallearn.search.ScoreBased.GES import ges
+     9: 
+    10:     result = ges(
+    11:         X,
+    12:         score_func="local_score_BDeu",
+    13:         parameters={"sample_prior": 1.0, "structure_prior": 1.0},
+    14:     )
+    15:     return result["G"]
+    16: # =====================================================================
 ```
 
 ### `grasp` baseline — editable region  [READ-ONLY — reference implementation]
@@ -190,29 +178,24 @@ Lines 3–20:
 In `causal-bnlearn/bench/custom_algorithm.py`:
 
 ```python
-Lines 3–21:
+Lines 3–16:
      1: import numpy as np
      2: from causallearn.graph.GeneralGraph import GeneralGraph
-     3: from causallearn.graph.GraphNode import GraphNode
-     4: 
-     5: # =====================================================================
-     6: # EDITABLE: implement run_causal_discovery below
-     7: # =====================================================================
-     8: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
-     9:     """
-    10:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
-    11:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
-    12:     """
-    13:     from causallearn.search.PermutationBased.GRaSP import grasp
-    14: 
-    15:     G = grasp(
-    16:         X,
-    17:         score_func="local_score_BDeu",
-    18:         depth=3,
-    19:         parameters={"sample_prior": 1.0, "structure_prior": 1.0},
-    20:     )
-    21:     return G
-    22: # =====================================================================
+     3: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
+     4:     """
+     5:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
+     6:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
+     7:     """
+     8:     from causallearn.search.PermutationBased.GRaSP import grasp
+     9: 
+    10:     G = grasp(
+    11:         X,
+    12:         score_func="local_score_BDeu",
+    13:         depth=3,
+    14:         parameters={"sample_prior": 1.0, "structure_prior": 1.0},
+    15:     )
+    16:     return G
+    17: # =====================================================================
 ```
 
 ### `boss` baseline — editable region  [READ-ONLY — reference implementation]
@@ -220,28 +203,23 @@ Lines 3–21:
 In `causal-bnlearn/bench/custom_algorithm.py`:
 
 ```python
-Lines 3–20:
+Lines 3–15:
      1: import numpy as np
      2: from causallearn.graph.GeneralGraph import GeneralGraph
-     3: from causallearn.graph.GraphNode import GraphNode
-     4: 
-     5: # =====================================================================
-     6: # EDITABLE: implement run_causal_discovery below
-     7: # =====================================================================
-     8: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
-     9:     """
-    10:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
-    11:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
-    12:     """
-    13:     from causallearn.search.PermutationBased.BOSS import boss
-    14: 
-    15:     G = boss(
-    16:         X,
-    17:         score_func="local_score_BDeu",
-    18:         parameters={"sample_prior": 1.0, "structure_prior": 1.0},
-    19:     )
-    20:     return G
-    21: # =====================================================================
+     3: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
+     4:     """
+     5:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
+     6:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
+     7:     """
+     8:     from causallearn.search.PermutationBased.BOSS import boss
+     9: 
+    10:     G = boss(
+    11:         X,
+    12:         score_func="local_score_BDeu",
+    13:         parameters={"sample_prior": 1.0, "structure_prior": 1.0},
+    14:     )
+    15:     return G
+    16: # =====================================================================
 ```
 
 ### `hc` baseline — editable region  [READ-ONLY — reference implementation]
@@ -249,137 +227,132 @@ Lines 3–20:
 In `causal-bnlearn/bench/custom_algorithm.py`:
 
 ```python
-Lines 3–129:
+Lines 3–124:
      1: import numpy as np
      2: from causallearn.graph.GeneralGraph import GeneralGraph
-     3: from causallearn.graph.GraphNode import GraphNode
-     4: 
-     5: # =====================================================================
-     6: # EDITABLE: implement run_causal_discovery below
-     7: # =====================================================================
-     8: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
-     9:     """
-    10:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
-    11:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
-    12:     """
-    13:     from causallearn.score.LocalScoreFunctionClass import LocalScoreClass
-    14:     from causallearn.score.LocalScoreFunction import local_score_BDeu
-    15:     from causallearn.utils.DAG2CPDAG import dag2cpdag
-    16: 
-    17:     N = X.shape[1]
-    18:     # Pass parameters=None so local_score_BDeu auto-computes r_i_map from data
-    19:     score_func = LocalScoreClass(
-    20:         data=X, local_score_fun=local_score_BDeu, parameters=None
-    21:     )
-    22: 
-    23:     nodes = [GraphNode(f"X{i + 1}") for i in range(N)]
-    24:     adj = np.zeros((N, N), dtype=int)
+     3: def run_causal_discovery(X: np.ndarray) -> GeneralGraph:
+     4:     """
+     5:     Input:  X of shape (n_samples, n_variables), integer-encoded discrete data
+     6:     Output: estimated CPDAG as causallearn.graph.GeneralGraph.GeneralGraph
+     7:     """
+     8:     from causallearn.score.LocalScoreFunctionClass import LocalScoreClass
+     9:     from causallearn.score.LocalScoreFunction import local_score_BDeu
+    10:     from causallearn.utils.DAG2CPDAG import dag2cpdag
+    11: 
+    12:     N = X.shape[1]
+    13:     # Pass parameters=None so local_score_BDeu auto-computes r_i_map from data
+    14:     score_func = LocalScoreClass(
+    15:         data=X, local_score_fun=local_score_BDeu, parameters=None
+    16:     )
+    17: 
+    18:     nodes = [GraphNode(f"X{i + 1}") for i in range(N)]
+    19:     adj = np.zeros((N, N), dtype=int)
+    20: 
+    21:     # Cache local scores (one per node)
+    22:     local_scores = np.zeros(N)
+    23:     for j in range(N):
+    24:         local_scores[j] = score_func.score(j, [])
     25: 
-    26:     # Cache local scores (one per node)
-    27:     local_scores = np.zeros(N)
-    28:     for j in range(N):
-    29:         local_scores[j] = score_func.score(j, [])
-    30: 
-    31:     def _has_path(src, tgt):
-    32:         """DFS check: is there a directed path from src to tgt in adj?"""
-    33:         visited = set()
-    34:         stack = [src]
-    35:         while stack:
-    36:             node = stack.pop()
-    37:             if node == tgt:
-    38:                 return True
-    39:             if node in visited:
-    40:                 continue
-    41:             visited.add(node)
-    42:             for c in np.where(adj[node] == 1)[0]:
-    43:                 if int(c) not in visited:
-    44:                     stack.append(int(c))
-    45:         return False
-    46: 
-    47:     # Greedy hill-climbing: add / delete / reverse
-    48:     improved = True
-    49:     while improved:
-    50:         improved = False
-    51:         best_delta = 0.0
-    52:         best_op = None
+    26:     def _has_path(src, tgt):
+    27:         """DFS check: is there a directed path from src to tgt in adj?"""
+    28:         visited = set()
+    29:         stack = [src]
+    30:         while stack:
+    31:             node = stack.pop()
+    32:             if node == tgt:
+    33:                 return True
+    34:             if node in visited:
+    35:                 continue
+    36:             visited.add(node)
+    37:             for c in np.where(adj[node] == 1)[0]:
+    38:                 if int(c) not in visited:
+    39:                     stack.append(int(c))
+    40:         return False
+    41: 
+    42:     # Greedy hill-climbing: add / delete / reverse
+    43:     improved = True
+    44:     while improved:
+    45:         improved = False
+    46:         best_delta = 0.0
+    47:         best_op = None
+    48: 
+    49:         for i in range(N):
+    50:             for j in range(N):
+    51:                 if i == j:
+    52:                     continue
     53: 
-    54:         for i in range(N):
-    55:             for j in range(N):
-    56:                 if i == j:
-    57:                     continue
-    58: 
-    59:                 if adj[i, j] == 0 and adj[j, i] == 0:
-    60:                     # --- Try ADD i -> j (only if no cycle) ---
-    61:                     if not _has_path(j, i):
-    62:                         pj_new = sorted(
-    63:                             np.where(adj[:, j] == 1)[0].tolist() + [i]
-    64:                         )
-    65:                         new_sj = score_func.score(j, pj_new)
-    66:                         delta = new_sj - local_scores[j]
-    67:                         if delta < best_delta - 1e-6:
-    68:                             best_delta = delta
-    69:                             best_op = ("add", i, j)
-    70: 
-    71:                 elif adj[i, j] == 1:
-    72:                     # --- Try DELETE i -> j ---
-    73:                     pj_new = [
-    74:                         p for p in np.where(adj[:, j] == 1)[0] if p != i
-    75:                     ]
-    76:                     new_sj = score_func.score(j, sorted(pj_new))
-    77:                     delta = new_sj - local_scores[j]
-    78:                     if delta < best_delta - 1e-6:
-    79:                         best_delta = delta
-    80:                         best_op = ("delete", i, j)
-    81: 
-    82:                     # --- Try REVERSE i -> j  to  j -> i ---
-    83:                     adj[i, j] = 0  # temporarily remove
-    84:                     if not _has_path(i, j):
-    85:                         pj_del = sorted(
-    86:                             np.where(adj[:, j] == 1)[0].tolist()
-    87:                         )
-    88:                         new_sj = score_func.score(j, pj_del)
-    89:                         pi_new = sorted(
-    90:                             np.where(adj[:, i] == 1)[0].tolist() + [j]
+    54:                 if adj[i, j] == 0 and adj[j, i] == 0:
+    55:                     # --- Try ADD i -> j (only if no cycle) ---
+    56:                     if not _has_path(j, i):
+    57:                         pj_new = sorted(
+    58:                             np.where(adj[:, j] == 1)[0].tolist() + [i]
+    59:                         )
+    60:                         new_sj = score_func.score(j, pj_new)
+    61:                         delta = new_sj - local_scores[j]
+    62:                         if delta < best_delta - 1e-6:
+    63:                             best_delta = delta
+    64:                             best_op = ("add", i, j)
+    65: 
+    66:                 elif adj[i, j] == 1:
+    67:                     # --- Try DELETE i -> j ---
+    68:                     pj_new = [
+    69:                         p for p in np.where(adj[:, j] == 1)[0] if p != i
+    70:                     ]
+    71:                     new_sj = score_func.score(j, sorted(pj_new))
+    72:                     delta = new_sj - local_scores[j]
+    73:                     if delta < best_delta - 1e-6:
+    74:                         best_delta = delta
+    75:                         best_op = ("delete", i, j)
+    76: 
+    77:                     # --- Try REVERSE i -> j  to  j -> i ---
+    78:                     adj[i, j] = 0  # temporarily remove
+    79:                     if not _has_path(i, j):
+    80:                         pj_del = sorted(
+    81:                             np.where(adj[:, j] == 1)[0].tolist()
+    82:                         )
+    83:                         new_sj = score_func.score(j, pj_del)
+    84:                         pi_new = sorted(
+    85:                             np.where(adj[:, i] == 1)[0].tolist() + [j]
+    86:                         )
+    87:                         new_si = score_func.score(i, pi_new)
+    88:                         delta = (
+    89:                             (new_sj - local_scores[j])
+    90:                             + (new_si - local_scores[i])
     91:                         )
-    92:                         new_si = score_func.score(i, pi_new)
-    93:                         delta = (
-    94:                             (new_sj - local_scores[j])
-    95:                             + (new_si - local_scores[i])
-    96:                         )
-    97:                         if delta < best_delta - 1e-6:
-    98:                             best_delta = delta
-    99:                             best_op = ("reverse", i, j)
-   100:                     adj[i, j] = 1  # restore
-   101: 
-   102:         if best_op is not None:
-   103:             op_type, i, j = best_op
-   104:             if op_type == "add":
-   105:                 adj[i, j] = 1
-   106:             elif op_type == "delete":
-   107:                 adj[i, j] = 0
-   108:             elif op_type == "reverse":
-   109:                 adj[i, j] = 0
-   110:                 adj[j, i] = 1
-   111:             # Recompute affected local scores
-   112:             local_scores[j] = score_func.score(
-   113:                 j, sorted(np.where(adj[:, j] == 1)[0].tolist())
-   114:             )
-   115:             if op_type == "reverse":
-   116:                 local_scores[i] = score_func.score(
-   117:                     i, sorted(np.where(adj[:, i] == 1)[0].tolist())
-   118:                 )
-   119:             improved = True
-   120: 
-   121:     # Build GeneralGraph from learned DAG
-   122:     G = GeneralGraph(nodes)
-   123:     for i in range(N):
-   124:         for j in range(N):
-   125:             if adj[i, j] == 1:
-   126:                 G.add_directed_edge(nodes[i], nodes[j])
-   127: 
-   128:     G = dag2cpdag(G)
-   129:     return G
-   130: # =====================================================================
+    92:                         if delta < best_delta - 1e-6:
+    93:                             best_delta = delta
+    94:                             best_op = ("reverse", i, j)
+    95:                     adj[i, j] = 1  # restore
+    96: 
+    97:         if best_op is not None:
+    98:             op_type, i, j = best_op
+    99:             if op_type == "add":
+   100:                 adj[i, j] = 1
+   101:             elif op_type == "delete":
+   102:                 adj[i, j] = 0
+   103:             elif op_type == "reverse":
+   104:                 adj[i, j] = 0
+   105:                 adj[j, i] = 1
+   106:             # Recompute affected local scores
+   107:             local_scores[j] = score_func.score(
+   108:                 j, sorted(np.where(adj[:, j] == 1)[0].tolist())
+   109:             )
+   110:             if op_type == "reverse":
+   111:                 local_scores[i] = score_func.score(
+   112:                     i, sorted(np.where(adj[:, i] == 1)[0].tolist())
+   113:                 )
+   114:             improved = True
+   115: 
+   116:     # Build GeneralGraph from learned DAG
+   117:     G = GeneralGraph(nodes)
+   118:     for i in range(N):
+   119:         for j in range(N):
+   120:             if adj[i, j] == 1:
+   121:                 G.add_directed_edge(nodes[i], nodes[j])
+   122: 
+   123:     G = dag2cpdag(G)
+   124:     return G
+   125: # =====================================================================
 ```
 
 

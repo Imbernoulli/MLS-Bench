@@ -25,7 +25,7 @@ import warnings
 import numpy as np
 import pandas as pd
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 from scipy.spatial import distance_matrix as scipy_distance_matrix
@@ -741,9 +741,22 @@ def evaluate(model, loader, task_type, device, dataset_name=None, is_tta=True, c
 
     for batch in loader:
         batch = batch_to_device(batch, device)
+        # Withhold the held-out targets from the model at evaluation: keep the
+        # true targets here (fixed harness scope) for the metric, and hand the
+        # model a batch whose targets are zeroed so forward() cannot read off
+        # the answer. forward() uses only graph features, so honest predictions
+        # are unchanged.
+        true_targets = batch.targets
+        # dataclasses.replace() rebuilds a fresh batch with only declared fields,
+        # which drops the dynamically-attached _mol_indices used for TTA
+        # conformer-averaging below. Preserve it so honest TTA aggregation runs.
+        _saved_mol_idx = getattr(batch, '_mol_indices', None)
+        batch = replace(batch, targets=torch.zeros_like(batch.targets))
+        if _saved_mol_idx is not None:
+            batch._mol_indices = _saved_mol_idx
         preds = model(batch)
         all_preds.append(preds.cpu())
-        all_targets.append(batch.targets.cpu())
+        all_targets.append(true_targets.cpu())
         all_masks.append(batch.target_mask.cpu())
         if hasattr(batch, '_mol_indices'):
             all_mol_indices.append(batch._mol_indices.cpu())
