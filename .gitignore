@@ -3,6 +3,11 @@ vendor/external_packages/
 vendor/images/
 vendor/workspace/
 
+# Held-out answer generators: dev-side only. The answer for each task travels
+# INSIDE its harbor bundle (harbor/tasks/*/tests/); a standalone holdout/ at the
+# repo root must never be published. Anchored so harbor/.../holdout/ is untouched.
+/holdout/
+
 # Config (runtime configs may contain secrets)
 configs/*
 !configs/react.yaml
