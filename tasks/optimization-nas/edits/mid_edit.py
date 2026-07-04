@@ -17,17 +17,24 @@ workspace-setup time) every (dataset, seed) combination is materialized once
 and kept, so repeated tests in the same workspace keep working.
 """
 
+import importlib.util as _ilu
 import json
 import os
-import sys
 from pathlib import Path
 
 _HERE = Path(__file__).resolve()
 _TASK_DIR = _HERE.parents[1]            # tasks/optimization-nas
 _PROJECT_ROOT = _HERE.parents[3]        # repo root (or the _inputgen root in Harbor)
 _HOLDOUT_DIR = _PROJECT_ROOT / "holdout" / "optimization-nas"
-sys.path.insert(0, str(_HOLDOUT_DIR))
-import dgp  # host-/verifier-only table provider (never shipped to the agent)
+# Load the host-/verifier-only table provider under a UNIQUE module name (not a
+# bare ``import dgp``): several tasks ship a holdout/<task>/dgp.py, and any
+# context that execs multiple tasks' mid_edits in one process (e.g. the website
+# exporter scripts/build_site_data.py) would otherwise collide on
+# sys.modules["dgp"]. Native setup and the Harbor inputgen exec one task per
+# process, so this is belt-and-suspenders there.
+_dgp_spec = _ilu.spec_from_file_location("optimization_nas_dgp", str(_HOLDOUT_DIR / "dgp.py"))
+dgp = _ilu.module_from_spec(_dgp_spec)
+_dgp_spec.loader.exec_module(dgp)
 
 _TEMPLATE_PATH = _HERE.parent / "custom_template.py"
 _CUSTOM_PY = _TEMPLATE_PATH.read_text()
