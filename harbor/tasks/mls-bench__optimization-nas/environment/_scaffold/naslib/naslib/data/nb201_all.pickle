@@ -1,0 +1,4 @@
+NAS-Bench-201 accuracy tables are not available in the agent workspace.
+The harness materializes the validation table for the active dataset at
+evaluation time; the held-out test accuracy of the final architecture is
+joined outside this process after the search reports FINAL_ARCH.
