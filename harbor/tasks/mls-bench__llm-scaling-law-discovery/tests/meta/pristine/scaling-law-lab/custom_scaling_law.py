@@ -244,21 +244,31 @@ def run_benchmark(benchmark: str, seed: int, output_dir: str) -> None:
 
     train_r2 = r2_score(data.y_train, train_pred)
     train_mae = mean_absolute_error(data.y_train, train_pred)
-    test_r2 = r2_score(data.y_test, test_pred)
-    test_mae = mean_absolute_error(data.y_test, test_pred)
-    test_rmse = float(np.sqrt(mean_squared_error(data.y_test, test_pred)))
-    test_nmae = float(test_mae / (np.std(data.y_test) + EPS))
+
+    n_test = len(data.X_num_test)
+    test_pred = np.asarray(test_pred, dtype=float).reshape(-1)
+    if test_pred.shape[0] != n_test:
+        print(
+            f"ERROR: predict() returned {test_pred.shape[0]} predictions "
+            f"for {n_test} test rows.",
+            flush=True,
+        )
+        raise SystemExit(1)
 
     n_features = int(getattr(model, "num_features_", data.X_num_train.shape[1]))
     print(
         "TRAIN_METRICS "
-        f"n_train={len(data.y_train)} n_test={len(data.y_test)} "
+        f"n_train={len(data.y_train)} n_test={n_test} "
         f"n_features={n_features} train_r2={train_r2:.6f} train_mae={train_mae:.6f}",
         flush=True,
     )
+    # The held-out test targets never enter this process (the baked test
+    # JSONLs carry features only): report the predictions and let the
+    # harness score them externally.
     print(
-        "TEST_METRICS "
-        f"r2={test_r2:.6f} mae={test_mae:.6f} rmse={test_rmse:.6f} nmae={test_nmae:.6f}",
+        "SLD_PRED "
+        f"benchmark={benchmark} "
+        f"y_pred={json.dumps([float(v) for v in test_pred])}",
         flush=True,
     )
 
@@ -269,14 +279,7 @@ def run_benchmark(benchmark: str, seed: int, output_dir: str) -> None:
             {
                 "benchmark": benchmark,
                 "target": data.target_name,
-                "y_true": data.y_test.tolist(),
-                "y_pred": np.asarray(test_pred).tolist(),
-                "metrics": {
-                    "r2": test_r2,
-                    "mae": float(test_mae),
-                    "rmse": test_rmse,
-                    "nmae": test_nmae,
-                },
+                "y_pred": [float(v) for v in test_pred],
             },
             f,
             indent=2,

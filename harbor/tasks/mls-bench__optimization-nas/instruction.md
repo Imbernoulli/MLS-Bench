@@ -84,7 +84,7 @@ stay unchanged.
     15: import sys
     16: import time
     17: import random
-    18: import pickle
+    18: import json
     19: import copy
     20: import numpy as np
     21: from pathlib import Path
@@ -187,43 +187,43 @@ stay unchanged.
    118: 
    119: 
    120: class BenchmarkAPI:
-   121:     """Wrapper for querying NAS-Bench-201 with a hard validation-query budget."""
+   121:     """Wrapper for querying NAS-Bench-201 with a hard validation-query budget.
    122: 
-   123:     def __init__(self, data, dataset_key, query_budget):
-   124:         self.data = data
-   125:         self.dataset_key = dataset_key
-   126:         self.query_budget = int(query_budget)
-   127:         self.query_count = 0
-   128:         self._cache = {}  # repeated queries don't cost extra but still count
-   129: 
-   130:     @property
-   131:     def remaining_budget(self):
-   132:         return max(0, self.query_budget - self.query_count)
-   133: 
-   134:     def query_val_accuracy(self, op_indices):
-   135:         """Query validation accuracy (counts against the budget).
-   136: 
-   137:         For cifar10, validation accuracy is from the 'cifar10-valid' split.
-   138:         For cifar100 and ImageNet16-120, validation accuracy uses 'eval_acc1es'
-   139:         from the respective split (standard NAS-Bench-201 search protocol).
-   140:         """
-   141:         if self.query_count >= self.query_budget:
-   142:             raise BudgetExceededError(
-   143:                 f"Validation query budget of {self.query_budget} exhausted."
-   144:             )
-   145:         self.query_count += 1
-   146:         arch_str = op_indices_to_arch_str(op_indices)
-   147:         if self.dataset_key == "cifar10":
-   148:             return self.data[arch_str]["cifar10-valid"]["eval_acc1es"]
-   149:         else:
-   150:             return self.data[arch_str][self.dataset_key]["eval_acc1es"]
-   151: 
-   152:     # --- Harness-only methods (not counted against the agent's budget) ---
-   153: 
-   154:     def _query_test_accuracy_unbudgeted(self, op_indices):
-   155:         """Query final test accuracy — only called by the harness after search."""
-   156:         arch_str = op_indices_to_arch_str(op_indices)
-   157:         return self.data[arch_str][self.dataset_key]["eval_acc1es"]
+   123:     Only the VALIDATION-accuracy table for the active dataset exists in this
+   124:     process, captured privately below. The held-out TEST accuracy of the
+   125:     final architecture is looked up by the harness afterwards, outside this
+   126:     process (see the FINAL_ARCH report in the main entry point).
+   127:     """
+   128: 
+   129:     def __init__(self, val_table, dataset_key, query_budget):
+   130:         self.dataset_key = dataset_key
+   131:         self.query_budget = int(query_budget)
+   132:         self.query_count = 0
+   133:         self._cache = {}  # repeated queries don't cost extra but still count
+   134:         val = dict(val_table)
+   135: 
+   136:         def _val_lookup(arch_str):
+   137:             return val[arch_str]
+   138: 
+   139:         self._val_lookup = _val_lookup
+   140: 
+   141:     @property
+   142:     def remaining_budget(self):
+   143:         return max(0, self.query_budget - self.query_count)
+   144: 
+   145:     def query_val_accuracy(self, op_indices):
+   146:         """Query validation accuracy (counts against the budget).
+   147: 
+   148:         For cifar10, validation accuracy is from the 'cifar10-valid' split.
+   149:         For cifar100 and ImageNet16-120, validation accuracy uses 'eval_acc1es'
+   150:         from the respective split (standard NAS-Bench-201 search protocol).
+   151:         """
+   152:         if self.query_count >= self.query_budget:
+   153:             raise BudgetExceededError(
+   154:                 f"Validation query budget of {self.query_budget} exhausted."
+   155:             )
+   156:         self.query_count += 1
+   157:         return self._val_lookup(op_indices_to_arch_str(op_indices))
    158: 
    159: 
    160: # =====================================================================
@@ -303,101 +303,112 @@ stay unchanged.
    234: 
    235: 
    236: # =====================================================================
-   237: # FIXED: Main entry point — search + evaluation
+   237: # FIXED: Main entry point — search + final-architecture report
    238: # =====================================================================
-   239: if __name__ == "__main__":
-   240:     # ── Configuration from environment ──
-   241:     seed = int(os.environ.get("SEED", 42))
-   242:     output_dir = os.environ.get("OUTPUT_DIR", "/tmp/nas_output")
-   243:     env_name = os.environ.get("ENV", "cifar10")
-   244:     num_epochs = int(os.environ.get("NAS_EPOCHS", 30))  # sample-efficient: K=30
-   245: 
-   246:     os.makedirs(output_dir, exist_ok=True)
-   247: 
-   248:     # ── Seeding ──
-   249:     random.seed(seed)
-   250:     np.random.seed(seed)
-   251: 
-   252:     # ── Map environment name to dataset key ──
-   253:     dataset_key = DATASET_MAP.get(env_name)
-   254:     if dataset_key is None:
-   255:         print(f"ERROR: Unknown environment '{env_name}'. Must be one of: {list(DATASET_MAP.keys())}")
-   256:         sys.exit(1)
-   257: 
-   258:     # ── Load NAS-Bench-201 benchmark data ──
-   259:     _candidates = [
-   260:         Path("/workspace/naslib/naslib/data/nb201_all.pickle"),
-   261:         Path(__file__).resolve().parent / "naslib" / "data" / "nb201_all.pickle",
-   262:         Path(__file__).resolve().parent / "data" / "nb201_all.pickle",
-   263:         Path("naslib/data/nb201_all.pickle"),
-   264:         Path("data/nb201_all.pickle"),
-   265:     ]
-   266:     data_path = None
-   267:     for _p in _candidates:
-   268:         if _p.exists():
-   269:             data_path = _p
-   270:             break
-   271:     if data_path is None:
-   272:         print(f"ERROR: Benchmark data not found. Searched: {[str(p) for p in _candidates]}")
-   273:         sys.exit(1)
+   239: def _load_val_table(env_name, seed):
+   240:     """Load this run's validation table and (when the harness marks the
+   241:     materialized inputs as ephemeral, i.e. re-created for every evaluation)
+   242:     delete the on-disk copy BEFORE any editable code runs."""
+   243:     path = (
+   244:         Path(__file__).resolve().parent
+   245:         / "naslib"
+   246:         / "data"
+   247:         / f"nb201_tables_{env_name}_s{seed}.json"
+   248:     )
+   249:     if not path.exists():
+   250:         print(f"ERROR: validation table not found: {path}", flush=True)
+   251:         sys.exit(1)
+   252:     with open(path) as f:
+   253:         tables = json.load(f)
+   254:     if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
+   255:         try:
+   256:             os.remove(path)
+   257:         except OSError:
+   258:             pass
+   259:     return tables["val"]
+   260: 
+   261: 
+   262: def _main():
+   263:     # ── Configuration from environment ──
+   264:     seed = int(os.environ.get("SEED", 42))
+   265:     output_dir = os.environ.get("OUTPUT_DIR", "/tmp/nas_output")
+   266:     env_name = os.environ.get("ENV", "cifar10")
+   267:     num_epochs = int(os.environ.get("NAS_EPOCHS", 30))  # sample-efficient: K=30
+   268: 
+   269:     os.makedirs(output_dir, exist_ok=True)
+   270: 
+   271:     # ── Seeding ──
+   272:     random.seed(seed)
+   273:     np.random.seed(seed)
    274: 
-   275:     print(f"Loading NAS-Bench-201 data from {data_path}...", flush=True)
-   276:     with open(data_path, "rb") as f:
-   277:         nb201_data = pickle.load(f)
-   278:     print(f"Loaded {len(nb201_data)} architectures.", flush=True)
-   279: 
-   280:     # ── Create benchmark API with strict budget ──
-   281:     api = BenchmarkAPI(nb201_data, dataset_key, query_budget=num_epochs)
-   282: 
-   283:     # ── Run search ──
-   284:     print(f"Starting sample-efficient NAS on {env_name} (dataset={dataset_key}) "
-   285:           f"with budget={num_epochs} queries, seed={seed}", flush=True)
-   286: 
-   287:     optimizer = NASOptimizer(api, num_epochs, seed)
-   288: 
-   289:     start_time = time.time()
-   290:     for epoch in range(num_epochs):
-   291:         if api.remaining_budget <= 0:
-   292:             print(f"Budget exhausted at epoch {epoch}; stopping search.", flush=True)
-   293:             break
-   294:         try:
-   295:             metrics = optimizer.search_step(epoch)
-   296:         except BudgetExceededError as e:
-   297:             print(f"BUDGET EXCEEDED at epoch {epoch}: {e}", flush=True)
-   298:             break
-   299: 
-   300:         # Log training metrics every step (K=30 is small)
-   301:         elapsed = time.time() - start_time
-   302:         metrics_str = " ".join(
-   303:             f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
-   304:             for k, v in metrics.items()
-   305:         )
-   306:         print(f"TRAIN_METRICS epoch={epoch+1} {metrics_str} "
-   307:               f"elapsed={elapsed:.1f}s", flush=True)
-   308: 
-   309:     # ── Final evaluation (UNBUDGETED) ──
-   310:     best_arch = optimizer.get_best_architecture()
-   311:     if best_arch is None:
-   312:         print("ERROR: No architecture found during search!", flush=True)
-   313:         sys.exit(1)
-   314:     if not is_valid_arch(best_arch):
-   315:         print(f"ERROR: Returned architecture {best_arch} is invalid.", flush=True)
-   316:         sys.exit(1)
-   317: 
-   318:     best_arch_str = op_indices_to_arch_str(best_arch)
-   319:     test_acc = api._query_test_accuracy_unbudgeted(best_arch)
-   320:     total_queries = api.query_count
-   321:     total_time = time.time() - start_time
-   322: 
-   323:     print(f"\n{'='*60}", flush=True)
-   324:     print(f"Search complete on {env_name} (dataset={dataset_key})", flush=True)
-   325:     print(f"Best architecture: {best_arch} -> {best_arch_str}", flush=True)
-   326:     print(f"Total val queries used: {total_queries} / {num_epochs}", flush=True)
-   327:     print(f"Total time: {total_time:.1f}s", flush=True)
-   328:     print(f"{'='*60}", flush=True)
+   275:     # ── Map environment name to dataset key ──
+   276:     dataset_key = DATASET_MAP.get(env_name)
+   277:     if dataset_key is None:
+   278:         print(f"ERROR: Unknown environment '{env_name}'. Must be one of: {list(DATASET_MAP.keys())}")
+   279:         sys.exit(1)
+   280: 
+   281:     # ── Load this run's validation table (test accuracies stay outside) ──
+   282:     val_table = _load_val_table(env_name, seed)
+   283:     print(f"Loaded validation table for {env_name} "
+   284:           f"({len(val_table)} architectures).", flush=True)
+   285: 
+   286:     # ── Create benchmark API with strict budget ──
+   287:     api = BenchmarkAPI(val_table, dataset_key, query_budget=num_epochs)
+   288:     del val_table
+   289: 
+   290:     # ── Run search ──
+   291:     print(f"Starting sample-efficient NAS on {env_name} (dataset={dataset_key}) "
+   292:           f"with budget={num_epochs} queries, seed={seed}", flush=True)
+   293: 
+   294:     optimizer = NASOptimizer(api, num_epochs, seed)
+   295: 
+   296:     start_time = time.time()
+   297:     for epoch in range(num_epochs):
+   298:         if api.remaining_budget <= 0:
+   299:             print(f"Budget exhausted at epoch {epoch}; stopping search.", flush=True)
+   300:             break
+   301:         try:
+   302:             metrics = optimizer.search_step(epoch)
+   303:         except BudgetExceededError as e:
+   304:             print(f"BUDGET EXCEEDED at epoch {epoch}: {e}", flush=True)
+   305:             break
+   306: 
+   307:         # Log training metrics every step (K=30 is small)
+   308:         elapsed = time.time() - start_time
+   309:         metrics_str = " ".join(
+   310:             f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
+   311:             for k, v in metrics.items()
+   312:         )
+   313:         print(f"TRAIN_METRICS epoch={epoch+1} {metrics_str} "
+   314:               f"elapsed={elapsed:.1f}s", flush=True)
+   315: 
+   316:     # ── Final-architecture report (the held-out test accuracy is looked ──
+   317:     # ── up by the harness outside this process)                         ──
+   318:     best_arch = optimizer.get_best_architecture()
+   319:     if best_arch is None:
+   320:         print("ERROR: No architecture found during search!", flush=True)
+   321:         sys.exit(1)
+   322:     if not is_valid_arch(best_arch):
+   323:         print(f"ERROR: Returned architecture {best_arch} is invalid.", flush=True)
+   324:         sys.exit(1)
+   325: 
+   326:     best_arch_str = op_indices_to_arch_str(best_arch)
+   327:     total_queries = api.query_count
+   328:     total_time = time.time() - start_time
    329: 
-   330:     # Output test metric for parser
-   331:     print(f"TEST_METRICS test_accuracy={test_acc:.4f}", flush=True)
+   330:     print(f"\n{'='*60}", flush=True)
+   331:     print(f"Search complete on {env_name} (dataset={dataset_key})", flush=True)
+   332:     print(f"Best architecture: {best_arch} -> {best_arch_str}", flush=True)
+   333:     print(f"Total val queries used: {total_queries} / {num_epochs}", flush=True)
+   334:     print(f"Total time: {total_time:.1f}s", flush=True)
+   335:     print(f"{'='*60}", flush=True)
+   336: 
+   337:     # Report the chosen architecture for external (held-out) evaluation
+   338:     print(f"FINAL_ARCH arch={best_arch_str} queries={total_queries}", flush=True)
+   339: 
+   340: 
+   341: if __name__ == "__main__":
+   342:     _main()
 ```
 
 ## Reference Baselines

@@ -15,7 +15,7 @@ import os
 import sys
 import time
 import random
-import pickle
+import json
 import copy
 import numpy as np
 from pathlib import Path
@@ -118,14 +118,25 @@ def path_encoding(op_indices):
 
 
 class BenchmarkAPI:
-    """Wrapper for querying NAS-Bench-201 with a hard validation-query budget."""
+    """Wrapper for querying NAS-Bench-201 with a hard validation-query budget.
 
-    def __init__(self, data, dataset_key, query_budget):
-        self.data = data
+    Only the VALIDATION-accuracy table for the active dataset exists in this
+    process, captured privately below. The held-out TEST accuracy of the
+    final architecture is looked up by the harness afterwards, outside this
+    process (see the FINAL_ARCH report in the main entry point).
+    """
+
+    def __init__(self, val_table, dataset_key, query_budget):
         self.dataset_key = dataset_key
         self.query_budget = int(query_budget)
         self.query_count = 0
         self._cache = {}  # repeated queries don't cost extra but still count
+        val = dict(val_table)
+
+        def _val_lookup(arch_str):
+            return val[arch_str]
+
+        self._val_lookup = _val_lookup
 
     @property
     def remaining_budget(self):
@@ -143,18 +154,7 @@ class BenchmarkAPI:
                 f"Validation query budget of {self.query_budget} exhausted."
             )
         self.query_count += 1
-        arch_str = op_indices_to_arch_str(op_indices)
-        if self.dataset_key == "cifar10":
-            return self.data[arch_str]["cifar10-valid"]["eval_acc1es"]
-        else:
-            return self.data[arch_str][self.dataset_key]["eval_acc1es"]
-
-    # --- Harness-only methods (not counted against the agent's budget) ---
-
-    def _query_test_accuracy_unbudgeted(self, op_indices):
-        """Query final test accuracy — only called by the harness after search."""
-        arch_str = op_indices_to_arch_str(op_indices)
-        return self.data[arch_str][self.dataset_key]["eval_acc1es"]
+        return self._val_lookup(op_indices_to_arch_str(op_indices))
 
 
 # =====================================================================
@@ -234,9 +234,32 @@ class NASOptimizer:
 
 
 # =====================================================================
-# FIXED: Main entry point — search + evaluation
+# FIXED: Main entry point — search + final-architecture report
 # =====================================================================
-if __name__ == "__main__":
+def _load_val_table(env_name, seed):
+    """Load this run's validation table and (when the harness marks the
+    materialized inputs as ephemeral, i.e. re-created for every evaluation)
+    delete the on-disk copy BEFORE any editable code runs."""
+    path = (
+        Path(__file__).resolve().parent
+        / "naslib"
+        / "data"
+        / f"nb201_tables_{env_name}_s{seed}.json"
+    )
+    if not path.exists():
+        print(f"ERROR: validation table not found: {path}", flush=True)
+        sys.exit(1)
+    with open(path) as f:
+        tables = json.load(f)
+    if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    return tables["val"]
+
+
+def _main():
     # ── Configuration from environment ──
     seed = int(os.environ.get("SEED", 42))
     output_dir = os.environ.get("OUTPUT_DIR", "/tmp/nas_output")
@@ -255,30 +278,14 @@ if __name__ == "__main__":
         print(f"ERROR: Unknown environment '{env_name}'. Must be one of: {list(DATASET_MAP.keys())}")
         sys.exit(1)
 
-    # ── Load NAS-Bench-201 benchmark data ──
-    _candidates = [
-        Path("/workspace/naslib/naslib/data/nb201_all.pickle"),
-        Path(__file__).resolve().parent / "naslib" / "data" / "nb201_all.pickle",
-        Path(__file__).resolve().parent / "data" / "nb201_all.pickle",
-        Path("naslib/data/nb201_all.pickle"),
-        Path("data/nb201_all.pickle"),
-    ]
-    data_path = None
-    for _p in _candidates:
-        if _p.exists():
-            data_path = _p
-            break
-    if data_path is None:
-        print(f"ERROR: Benchmark data not found. Searched: {[str(p) for p in _candidates]}")
-        sys.exit(1)
-
-    print(f"Loading NAS-Bench-201 data from {data_path}...", flush=True)
-    with open(data_path, "rb") as f:
-        nb201_data = pickle.load(f)
-    print(f"Loaded {len(nb201_data)} architectures.", flush=True)
+    # ── Load this run's validation table (test accuracies stay outside) ──
+    val_table = _load_val_table(env_name, seed)
+    print(f"Loaded validation table for {env_name} "
+          f"({len(val_table)} architectures).", flush=True)
 
     # ── Create benchmark API with strict budget ──
-    api = BenchmarkAPI(nb201_data, dataset_key, query_budget=num_epochs)
+    api = BenchmarkAPI(val_table, dataset_key, query_budget=num_epochs)
+    del val_table
 
     # ── Run search ──
     print(f"Starting sample-efficient NAS on {env_name} (dataset={dataset_key}) "
@@ -306,7 +313,8 @@ if __name__ == "__main__":
         print(f"TRAIN_METRICS epoch={epoch+1} {metrics_str} "
               f"elapsed={elapsed:.1f}s", flush=True)
 
-    # ── Final evaluation (UNBUDGETED) ──
+    # ── Final-architecture report (the held-out test accuracy is looked ──
+    # ── up by the harness outside this process)                         ──
     best_arch = optimizer.get_best_architecture()
     if best_arch is None:
         print("ERROR: No architecture found during search!", flush=True)
@@ -316,7 +324,6 @@ if __name__ == "__main__":
         sys.exit(1)
 
     best_arch_str = op_indices_to_arch_str(best_arch)
-    test_acc = api._query_test_accuracy_unbudgeted(best_arch)
     total_queries = api.query_count
     total_time = time.time() - start_time
 
@@ -327,5 +334,9 @@ if __name__ == "__main__":
     print(f"Total time: {total_time:.1f}s", flush=True)
     print(f"{'='*60}", flush=True)
 
-    # Output test metric for parser
-    print(f"TEST_METRICS test_accuracy={test_acc:.4f}", flush=True)
+    # Report the chosen architecture for external (held-out) evaluation
+    print(f"FINAL_ARCH arch={best_arch_str} queries={total_queries}", flush=True)
+
+
+if __name__ == "__main__":
+    _main()

@@ -323,56 +323,59 @@ Other files you may **read** for context (do not modify):
    244: 
    245:     train_r2 = r2_score(data.y_train, train_pred)
    246:     train_mae = mean_absolute_error(data.y_train, train_pred)
-   247:     test_r2 = r2_score(data.y_test, test_pred)
-   248:     test_mae = mean_absolute_error(data.y_test, test_pred)
-   249:     test_rmse = float(np.sqrt(mean_squared_error(data.y_test, test_pred)))
-   250:     test_nmae = float(test_mae / (np.std(data.y_test) + EPS))
-   251: 
-   252:     n_features = int(getattr(model, "num_features_", data.X_num_train.shape[1]))
-   253:     print(
-   254:         "TRAIN_METRICS "
-   255:         f"n_train={len(data.y_train)} n_test={len(data.y_test)} "
-   256:         f"n_features={n_features} train_r2={train_r2:.6f} train_mae={train_mae:.6f}",
-   257:         flush=True,
-   258:     )
+   247: 
+   248:     n_test = len(data.X_num_test)
+   249:     test_pred = np.asarray(test_pred, dtype=float).reshape(-1)
+   250:     if test_pred.shape[0] != n_test:
+   251:         print(
+   252:             f"ERROR: predict() returned {test_pred.shape[0]} predictions "
+   253:             f"for {n_test} test rows.",
+   254:             flush=True,
+   255:         )
+   256:         raise SystemExit(1)
+   257: 
+   258:     n_features = int(getattr(model, "num_features_", data.X_num_train.shape[1]))
    259:     print(
-   260:         "TEST_METRICS "
-   261:         f"r2={test_r2:.6f} mae={test_mae:.6f} rmse={test_rmse:.6f} nmae={test_nmae:.6f}",
-   262:         flush=True,
-   263:     )
-   264: 
-   265:     output_path = Path(output_dir)
-   266:     output_path.mkdir(parents=True, exist_ok=True)
-   267:     with (output_path / f"{benchmark}_predictions.json").open("w") as f:
-   268:         json.dump(
-   269:             {
-   270:                 "benchmark": benchmark,
-   271:                 "target": data.target_name,
-   272:                 "y_true": data.y_test.tolist(),
-   273:                 "y_pred": np.asarray(test_pred).tolist(),
-   274:                 "metrics": {
-   275:                     "r2": test_r2,
-   276:                     "mae": float(test_mae),
-   277:                     "rmse": test_rmse,
-   278:                     "nmae": test_nmae,
-   279:                 },
-   280:             },
-   281:             f,
-   282:             indent=2,
-   283:         )
-   284: 
-   285: 
-   286: def main():
-   287:     parser = argparse.ArgumentParser()
-   288:     parser.add_argument("--benchmark", required=True)
-   289:     parser.add_argument("--seed", type=int, default=42)
-   290:     parser.add_argument("--output-dir", default="./output")
-   291:     args = parser.parse_args()
-   292:     run_benchmark(args.benchmark, args.seed, args.output_dir)
-   293: 
-   294: 
-   295: if __name__ == "__main__":
-   296:     main()
+   260:         "TRAIN_METRICS "
+   261:         f"n_train={len(data.y_train)} n_test={n_test} "
+   262:         f"n_features={n_features} train_r2={train_r2:.6f} train_mae={train_mae:.6f}",
+   263:         flush=True,
+   264:     )
+   265:     # The held-out test targets never enter this process (the baked test
+   266:     # JSONLs carry features only): report the predictions and let the
+   267:     # harness score them externally.
+   268:     print(
+   269:         "SLD_PRED "
+   270:         f"benchmark={benchmark} "
+   271:         f"y_pred={json.dumps([float(v) for v in test_pred])}",
+   272:         flush=True,
+   273:     )
+   274: 
+   275:     output_path = Path(output_dir)
+   276:     output_path.mkdir(parents=True, exist_ok=True)
+   277:     with (output_path / f"{benchmark}_predictions.json").open("w") as f:
+   278:         json.dump(
+   279:             {
+   280:                 "benchmark": benchmark,
+   281:                 "target": data.target_name,
+   282:                 "y_pred": [float(v) for v in test_pred],
+   283:             },
+   284:             f,
+   285:             indent=2,
+   286:         )
+   287: 
+   288: 
+   289: def main():
+   290:     parser = argparse.ArgumentParser()
+   291:     parser.add_argument("--benchmark", required=True)
+   292:     parser.add_argument("--seed", type=int, default=42)
+   293:     parser.add_argument("--output-dir", default="./output")
+   294:     args = parser.parse_args()
+   295:     run_benchmark(args.benchmark, args.seed, args.output_dir)
+   296: 
+   297: 
+   298: if __name__ == "__main__":
+   299:     main()
 ```
 
 ## Reference Baselines
