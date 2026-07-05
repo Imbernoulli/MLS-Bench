@@ -1,0 +1,46 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/integration.sh",
+      "label": "integration",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "deformable-registration"
+    }
+  ],
+  "baselines": {
+    "none": {
+      "edit_ops": "edits/none.edit.py"
+    },
+    "light": {
+      "edit_ops": "edits/light.edit.py"
+    },
+    "full": {
+      "edit_ops": "edits/full.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "deformable-registration/solution/integration.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 25,
+          "end": 27
+        }
+      ]
+    }
+  ]
+}

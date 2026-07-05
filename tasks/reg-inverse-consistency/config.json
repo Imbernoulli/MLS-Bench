@@ -1,0 +1,46 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/inverse.sh",
+      "label": "inverse",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "deformable-registration"
+    }
+  ],
+  "baselines": {
+    "off": {
+      "edit_ops": "edits/off.edit.py"
+    },
+    "on": {
+      "edit_ops": "edits/on.edit.py"
+    },
+    "over": {
+      "edit_ops": "edits/over.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "deformable-registration/solution/inverse.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 23,
+          "end": 25
+        }
+      ]
+    }
+  ]
+}

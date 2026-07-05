@@ -1,0 +1,43 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/similarity.sh",
+      "label": "similarity",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "deformable-registration"
+    }
+  ],
+  "baselines": {
+    "mse": {
+      "edit_ops": "edits/mse.edit.py"
+    },
+    "ncc": {
+      "edit_ops": "edits/ncc.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "deformable-registration/solution/similarity.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 20,
+          "end": 22
+        }
+      ]
+    }
+  ]
+}

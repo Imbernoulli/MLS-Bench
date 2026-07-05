@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,psnr_small,tre_small,folding_small,ncc_small,psnr_medium,tre_medium,folding_medium,ncc_medium,psnr_large,tre_large,folding_large,ncc_large,elapsed_similarity
+2026-07-05T14:00:00+00:00,baseline:mse,true,42,27.989470,3.359440,0.000000,0.993820,21.431942,7.209139,0.000305,0.972146,18.506865,12.157477,0.007985,0.946288,60
+2026-07-05T14:00:00+00:00,baseline:ncc,true,42,26.226468,3.346001,0.000000,0.990730,19.868088,7.145552,0.003816,0.960408,15.690875,11.659444,0.011604,0.902466,60
