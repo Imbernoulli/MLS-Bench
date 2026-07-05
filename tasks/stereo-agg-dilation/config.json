@@ -1,0 +1,61 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/easy.sh",
+      "label": "easy",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "stereo-matching"
+    },
+    {
+      "cmd": "scripts/medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "stereo-matching"
+    },
+    {
+      "cmd": "scripts/hard.sh",
+      "label": "hard",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "stereo-matching"
+    }
+  ],
+  "baselines": {
+    "d1": {
+      "edit_ops": "edits/d1.edit.py"
+    },
+    "d2": {
+      "edit_ops": "edits/d2.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "stereo-matching/solution/dilation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 22,
+          "end": 26
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "softmax temperature applied to the fixed aggregated cost volume before the fixed soft-argmin readout was aggregate-monotone weak(temp_high)>strong(temp_ref) on the OLD SYNTHETIC stereo data (see git history) but does NOT survive re-anchoring on REAL Middlebury Stereo Datasets 2005/2006 rectified photographs with a stable per-setting ordering: GPU re-anchor (k1 H20, seed 42, 1200 steps) is clean on all 3 settings, but seed 123 at 1200 steps fails the 'medium' setting (temp_high 9.634 < temp_ref 11.535 EPE). A 3000-step training-budget diagnostic (same methodology used to resolve the aggregation/refine undertraining artifacts) does NOT resolve this -- seed 123's failure just relocates to a DIFFERENT setting ('hard': temp_high 3.160 < temp_ref 4.098 EPE at 3000 steps, while medium is now clean). Seed 42 is clean at both step counts; seed 123 fails exactly one (different) setting at each step count. This rules out an undertraining artifact and instead indicates the temperature effect's real margin on real Middlebury scenes is too small/noisy relative to run-to-run seed variance to guarantee a stable per-setting ordering at any fixed step count. Dropped honestly rather than re-anchored; see DROPPED.md for full numbers.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

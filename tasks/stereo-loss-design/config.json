@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "squared-L2 vs smooth-L1 disparity regression loss was aggregate-monotone weak(l2)>strong(smooth_l1) on the OLD SYNTHETIC stereo data (see git history) but INVERTS on the 'medium' setting when re-anchored on REAL Middlebury Stereo Datasets 2005/2006 rectified photographs: GPU re-anchor (k1 H20, seed 42, 1200 steps) shows l2 10.688 < smooth_l1 12.070 EPE on medium (weak<strong, FAIL) while easy/hard hold as expected. A diagnostic re-run at 3000 steps (same methodology used to resolve the aggregation/refine undertraining artifacts) shows the medium inversion PERSISTS AND WORSENS (gap widens from -1.38 to -2.59), ruling out an undertraining artifact and indicating a genuine content/geometry confound between the original synthetic-data RQ design and real Middlebury scenes. Dropped honestly rather than re-anchored; see DROPPED.md for full numbers.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "channel-wise L2 feature normalization before cost-volume construction was aggregate-monotone weak(none)>strong(l2) on the OLD SYNTHETIC stereo data (see git history) but does NOT survive re-anchoring on REAL Middlebury Stereo Datasets 2005/2006 rectified photographs: GPU re-anchor (k1 H20, seed 42, 1200 steps) is clean, but seed 123 at 1200 steps is FULLY inverted on all 3 settings (weak<strong everywhere). A 3000-step training-budget diagnostic (same methodology used to resolve the aggregation/refine undertraining artifacts) does NOT resolve this -- seed 123 recovers only the 'easy' setting while 'medium'/'hard' remain inverted, and seed 42 -- clean at 1200 steps -- develops a NEW failure on 'hard'. Net failure count is unchanged (3/6 settings-x-seeds at both step counts), with WHICH cells fail simply shifting. This rules out an undertraining artifact and indicates a genuine, zero-added-parameter confound whose real-data effect size is too small/unstable to reliably beat run-to-run noise. Dropped honestly rather than re-anchored; see DROPPED.md for full numbers.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

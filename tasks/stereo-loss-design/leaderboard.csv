@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,epe_easy,d1_easy,acc1_easy,epe_medium,d1_medium,acc1_medium,epe_hard,d1_hard,acc1_hard,elapsed_easy,elapsed_medium,elapsed_hard
+2026-07-04T05:27:00+00:00,baseline:l2,true,42,0.340777,0.000526,0.947780,0.827021,0.037337,0.744170,3.048157,0.375458,0.263821,110.5,127.8,123.2
+2026-07-04T05:27:00+00:00,baseline:smooth_l1,true,42,0.338086,0.000439,0.947719,0.794047,0.036052,0.761906,2.740922,0.326210,0.307442,113.1,138.7,140.6

@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,epe_easy,d1_easy,acc1_easy,epe_medium,d1_medium,acc1_medium,epe_hard,d1_hard,acc1_hard,elapsed_easy,elapsed_medium,elapsed_hard
+2026-07-04T05:27:00+00:00,baseline:featnorm_none,true,42,0.341025,0.000586,0.946599,0.794591,0.036656,0.761435,2.745790,0.327600,0.306332,66.1,73.9,77.5
+2026-07-04T05:27:00+00:00,baseline:featnorm_l2,true,42,0.337911,0.000493,0.946942,0.775542,0.034874,0.769797,2.740679,0.322546,0.311797,61.5,73.2,77.8

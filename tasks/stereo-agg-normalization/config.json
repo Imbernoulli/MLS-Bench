@@ -1,0 +1,61 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/easy.sh",
+      "label": "easy",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "stereo-matching"
+    },
+    {
+      "cmd": "scripts/medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "stereo-matching"
+    },
+    {
+      "cmd": "scripts/hard.sh",
+      "label": "hard",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "stereo-matching"
+    }
+  ],
+  "baselines": {
+    "none": {
+      "edit_ops": "edits/none.edit.py"
+    },
+    "batch": {
+      "edit_ops": "edits/batch.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "stereo-matching/solution/normalization.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 23,
+          "end": 27
+        }
+      ]
+    }
+  ]
+}
