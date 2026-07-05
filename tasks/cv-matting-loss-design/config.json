@@ -1,0 +1,51 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/matting_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:30:00",
+      "mem": 16,
+      "package": "image-matting"
+    },
+    {
+      "cmd": "scripts/matting_wide.sh",
+      "label": "wide",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:30:00",
+      "mem": 16,
+      "package": "image-matting",
+      "hidden": true
+    },
+    {
+      "cmd": "scripts/matting_xwide.sh",
+      "label": "xwide",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:30:00",
+      "mem": 16,
+      "package": "image-matting",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "unk_comp": {
+      "edit_ops": "edits/unk_comp.edit.py"
+    },
+    "whole_l1": {
+      "edit_ops": "edits/whole_l1.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-matting/solution/loss.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 47, "end": 57}]
+    }
+  ]
+}

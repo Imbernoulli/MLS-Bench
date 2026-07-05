@@ -1,0 +1,32 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir scipy 'numpy<2' pillow",
+    "apt-get update -qq && apt-get install -y -qq libgl1 libglib2.0-0 || true",
+    "cd /workspace/video-frame-interp && python -c \"import torch, scipy, numpy, PIL; print('video-frame-interp deps ok: torch', torch.__version__, 'scipy', scipy.__version__)\""
+  ],
+  "env": {
+    "VFI_DATA_ROOT": "/data/video-frame-interp",
+    "PYTHONPATH": "/workspace/video-frame-interp",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "video_frame_interp_real",
+      "host_path": "{data_root}/video-frame-interp",
+      "container_path": "/data/video-frame-interp",
+      "prepare": "vendor/data_scripts/video-frame-interp/prepare_data.py",
+      "description": "Fixed (frame0, frame2, true-middle-frame) 64x64 triplets for the vfi-* VIDEO FRAME INTERPOLATION tasks, at THREE distinct inter-frame MOTION MAGNITUDES (small / medium / large), sourced from REAL video -- the Vimeo-90K temporal-frame-interpolation test set (Xue et al., TOFlow, IJCV 2019; http://toflow.csail.mit.edu/, direct no-login zip download, ~2.99GB, cached under a host-side cache dir so re-runs are offline). frame0/frame2 are two real consecutively-decoded frames (im1/im3) and `gt` is the REAL frame the camera captured half-way between them (im2) -- nothing is synthetically warped or composited. Sequences are bucketed into small/medium/large by their MEASURED Farneback optical-flow magnitude between frame0/frame2 (computed once at prep time), then split train/val (2000/400 per setting) with disjoint source-video IDs. As motion grows a naive linear blend of the two frames ghosts and its PSNR collapses, while flow-warp and learned flow+refinement synthesis stay closer to GT -- so the blend < flow_warp < learned partial-order is expected to hold and widen across the three settings (verified by CPU smoke test; see anchors). Requires network on the HOST for the one-time download, numpy/pillow/opencv-python for the prep scan; the task container itself is fully offline and only reads the pre-built train.npz/val.npz. `prepare_data.py` builds all three settings together (they share one motion scan)."
+    }
+  ],
+  "host_data_prepare_requirements": [
+    "numpy",
+    "pillow",
+    "opencv-python-headless"
+  ],
+  "use_cuda": true,
+  "requires_gpu": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace"
+}

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "aspp does not beat single on real PPM-100 cross-seed data on any of 3 trimap widths (0/3 robust); medium+wide sign-flip across seeds, xwide robustly inverts. Task-level gmean is robustly wrong both seeds. Worst case of the matting drops. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

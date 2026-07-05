@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "height_perobject does not robustly beat height_constant on real KITTI cross-seed data: constant robustly wins moderate+hard both seeds (inverted), easy flips sign across seeds. Seed-unstable / degenerate, not a clean relabel or validation. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

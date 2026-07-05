@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "Charbonnier+edge loss robustly inverts vs plain L2 on the large setting both seeds on real GoPro data; only 2/3 settings cross-seed monotone. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

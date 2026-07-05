@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/easy.sh",
+      "label": "easy",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection"
+    },
+    {
+      "cmd": "scripts/moderate.sh",
+      "label": "moderate",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection"
+    },
+    {
+      "cmd": "scripts/hard.sh",
+      "label": "hard",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "backbone_shallow": {
+      "edit_ops": "edits/backbone_shallow.edit.py"
+    },
+    "backbone_deep": {
+      "edit_ops": "edits/backbone_deep.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "mono3d-detection/solution/backbone.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 28,
+          "end": 39
+        }
+      ]
+    }
+  ]
+}

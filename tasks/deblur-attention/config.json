@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "channel attention (attn_on) is not cross-seed monotone on real GoPro data: strong<weak on 2/3 settings seed42, sign flips seed123. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

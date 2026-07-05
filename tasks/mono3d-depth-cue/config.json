@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/easy.sh",
+      "label": "easy",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection"
+    },
+    {
+      "cmd": "scripts/moderate.sh",
+      "label": "moderate",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection"
+    },
+    {
+      "cmd": "scripts/hard.sh",
+      "label": "hard",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "cue_width": {
+      "edit_ops": "edits/cue_width.edit.py"
+    },
+    "cue_height": {
+      "edit_ops": "edits/cue_height.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "mono3d-detection/solution/depth_cue.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 31,
+          "end": 42
+        }
+      ]
+    }
+  ]
+}

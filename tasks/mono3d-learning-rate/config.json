@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "lr_tuned only robustly beats lr_tiny on 1/3 KITTI difficulty tiers (easy) cross-seed; moderate is an exact tie at seed42 and inverts at seed123, hard inverts sign between seeds. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

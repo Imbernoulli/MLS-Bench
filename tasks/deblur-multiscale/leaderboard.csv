@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,psnr_ms,psnr_gain_ms,blurry_psnr_ms,ssim_ms,mse_ms,psnr_mm,psnr_gain_mm,blurry_psnr_mm,ssim_mm,mse_mm,psnr_ml,psnr_gain_ml,blurry_psnr_ml,ssim_ml,mse_ml
+2026-07-03T00:00:00+00:00,baseline:multiscale,true,42,21.1201,2.0541,19.0660,0.6695,0.007868,19.4690,1.1052,18.3638,0.5383,0.011428,18.8557,1.0356,17.8201,0.4913,0.013173
+2026-07-03T00:00:00+00:00,baseline:single,true,42,20.4004,1.3345,19.0660,0.6072,0.009255,19.0120,0.6482,18.3638,0.4900,0.012683,18.4029,0.5828,17.8201,0.4448,0.014598

@@ -1,0 +1,32 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir 'numpy<2'",
+    "python -c \"import torch, numpy; print('mono3d-detection deps: torch', torch.__version__, 'numpy', numpy.__version__, 'cuda', torch.cuda.is_available())\""
+  ],
+  "env": {
+    "MONO3D_DATA": "/data/mono3d-detection",
+    "PYTHONPATH": "/workspace/mono3d-detection:${PYTHONPATH}",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "mono3d_kitti_real",
+      "description": "REAL KITTI 3D Object Detection data (Geiger et al. 2012): every Car/Pedestrian/Cyclist object in the labelled `training` split (real photo, real LiDAR-derived 3D box, real per-image calibration), fetched from the public unauthenticated S3 mirror of the official archives (bypassing the cvlibs.net registration wall) and split 70/15/15 by image (seed 42, no leakage). GT dims/loc/yaw are the real annotations; the amodal 2D box normalizes into the harness's geometry feature vector and crops the REAL image region for the appearance patch. The 3 scored settings are KITTI's OWN OFFICIAL easy/moderate/hard difficulty tiers (bbox-height/occlusion/truncation thresholds), applied exclusively/disjointly. A single fixed representative camera intrinsic (the dataset-mean K) is used at decode time -- see vendor/mono3d-detection/common.py for the measured-variance justification. Staged as one .npz.",
+      "host_path": "{data_root}/mono3d-detection",
+      "container_path": "/data/mono3d-detection",
+      "ready_files": [
+        "{data_root}/mono3d-detection/mono3d_kitti.npz"
+      ],
+      "prepare": "vendor/data_scripts/mono3d-detection/prepare_data.py"
+    }
+  ],
+  "host_data_prepare_requirements": [
+    "requests",
+    "pillow"
+  ],
+  "use_cuda": true,
+  "requires_gpu": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

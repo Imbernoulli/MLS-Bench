@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "unet does not robustly beat bilinear on real PPM-100 cross-seed data: medium+xwide robust in intended direction, but wide robustly INVERTS both seeds with a real margin (-0.037 to -0.071 SAD). Same per-setting-robust-inversion pattern as deblur-loss-kind drop; not overridable by favourable task-gmean. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

@@ -1,0 +1,49 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/deblur_rs.sh",
+      "label": "rs",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deblur"
+    },
+    {
+      "cmd": "scripts/deblur_rm.sh",
+      "label": "rm",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deblur"
+    },
+    {
+      "cmd": "scripts/deblur_rl.sh",
+      "label": "rl",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deblur"
+    }
+  ],
+  "baselines": {
+    "residual_on": {
+      "edit_ops": "edits/residual_on.edit.py"
+    },
+    "residual_off": {
+      "edit_ops": "edits/residual_off.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-deblur/solution/residual.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 31, "end": 33}]
+    }
+  ]
+}

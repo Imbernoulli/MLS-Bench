@@ -1,0 +1,49 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/deblur_small.sh",
+      "label": "small",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deblur"
+    },
+    {
+      "cmd": "scripts/deblur_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deblur"
+    },
+    {
+      "cmd": "scripts/deblur_large.sh",
+      "label": "large",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deblur"
+    }
+  ],
+  "baselines": {
+    "sharp": {
+      "edit_ops": "edits/sharp.edit.py"
+    },
+    "smoothed": {
+      "edit_ops": "edits/smoothed.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-deblur/solution/loss.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 35, "end": 37}]
+    }
+  ]
+}

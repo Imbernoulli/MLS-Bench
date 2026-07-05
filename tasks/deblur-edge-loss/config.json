@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "edge/gradient loss term (edge_on) robustly inverts on the large setting both seeds on real GoPro data; only 1/3 settings cross-seed monotone. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

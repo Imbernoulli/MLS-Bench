@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/easy.sh",
+      "label": "easy",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection"
+    },
+    {
+      "cmd": "scripts/moderate.sh",
+      "label": "moderate",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection"
+    },
+    {
+      "cmd": "scripts/hard.sh",
+      "label": "hard",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mono3d-detection",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "feature_appearance_only": {
+      "edit_ops": "edits/feature_appearance_only.edit.py"
+    },
+    "feature_fused": {
+      "edit_ops": "edits/feature_fused.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "mono3d-detection/solution/feature_fusion.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 27,
+          "end": 49
+        }
+      ]
+    }
+  ]
+}

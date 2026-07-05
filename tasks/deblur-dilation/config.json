@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "dilated receptive field (dil_wide) shows only noise-level (<0.03dB) margins on real GoPro data and inverts on small@seed123. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

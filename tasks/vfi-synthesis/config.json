@@ -1,0 +1,43 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/vfi_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "video-frame-interp"
+    },
+    {
+      "cmd": "scripts/vfi_large.sh",
+      "label": "large",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "video-frame-interp"
+    }
+  ],
+  "baselines": {
+    "learned": {
+      "edit_ops": "edits/learned.edit.py"
+    },
+    "flow_warp": {
+      "edit_ops": "edits/flow_warp.edit.py"
+    },
+    "blend": {
+      "edit_ops": "edits/blend.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "video-frame-interp/solution/synthesis.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 34, "end": 36}]
+    }
+  ]
+}

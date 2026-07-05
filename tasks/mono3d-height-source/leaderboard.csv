@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,ap25_easy,ap25_moderate,ap25_hard,ap50_easy,ap50_moderate,ap50_hard,miou_easy,miou_moderate,miou_hard,depth_err_easy,depth_err_moderate,depth_err_hard,elapsed_easy,elapsed_moderate,elapsed_hard
+2026-07-03T00:00:00+00:00,baseline:height_constant,true,42,0.680851,0.304124,0.160550,0.372340,0.123711,0.087156,0.393508,0.177620,0.107528,0.396441,0.931993,1.626701,7,7,7
+2026-07-03T00:00:00+00:00,baseline:height_perobject,true,42,0.861702,0.546392,0.394495,0.521277,0.268041,0.206422,0.493993,0.326688,0.240813,0.241764,0.471093,0.737651,7,7,7

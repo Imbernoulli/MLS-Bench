@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "wide channel width (width_wide) robustly inverts on the small setting with a large seed-dependent swing on real GoPro data; not cross-seed robust. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

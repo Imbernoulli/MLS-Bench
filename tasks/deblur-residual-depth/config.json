@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "deep residual stack (depth_deep) robustly inverts on ALL 3 settings on seed123 on real GoPro data (undertrained at 400 iters); seed-dependent. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

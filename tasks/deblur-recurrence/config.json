@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "SRN recurrence unrolls (recur_three) show only noise-level (<0.03dB) margins on real GoPro data and flip sign across seeds on 2/3 settings. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

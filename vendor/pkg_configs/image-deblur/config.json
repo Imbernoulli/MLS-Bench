@@ -1,0 +1,31 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir 'numpy<2' pillow",
+    "apt-get update -qq && apt-get install -y -qq libgl1 libglib2.0-0 || true",
+    "cd /workspace/image-deblur && python -c \"import torch, numpy, PIL; print('image-deblur deps ok: torch', torch.__version__)\""
+  ],
+  "env": {
+    "DEBLUR_DATA_ROOT": "/data/image-deblur",
+    "PYTHONPATH": "/workspace/image-deblur",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "image_deblur_gopro",
+      "host_path": "{data_root}/image-deblur",
+      "container_path": "/data/image-deblur",
+      "prepare": "vendor/data_scripts/image-deblur/prepare_data.py",
+      "description": "Tiny fixed sets of blurry->sharp 64x64 image pairs for the deblur-* image-deblurring tasks, drawn from REAL photographs: the GoPro Large-Scale Blur Dataset (Nah, Kim & Lee, CVPR 2017), where the blurry frame is a genuine motion-averaged capture and the sharp frame a genuine high-speed capture of the SAME instant (both real photographs, pixel-aligned; author-hosted HF mirror snah/GOPRO_Large, streamed via remotezip -- no full-archive download). Full-resolution frames are tiled into 64x64 patches and bucketed by MEASURED blur/sharp tile PSNR into THREE real severity terciles (small/medium/large, mild->heavy real motion blur; each deblur task aggregates its score over these 3 settings). Every legacy severity-band code (rs/rm/rl, ms/mm/ml, hs/hm/hl, em/el) used by individual task scripts is an alias onto this one real ladder (see prepare_data.py _ALIAS). Train/val use GoPro's own disjoint-SCENE split (4 train + 4 test sequences staged), so held-out PSNR measures genuine cross-scene generalisation. Pre-staged raw frames may be pointed to via GOPRO_RAW_DIR for network-restricted hosts."
+    }
+  ],
+  "host_data_prepare_requirements": [
+    "pillow",
+    "remotezip"
+  ],
+  "use_cuda": true,
+  "requires_gpu": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace"
+}

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "3-way order (direct_regression/geometry_height/geometry_residual) is scrambled on real KITTI cross-seed data: geometry_height loses to direct_regression on easy, but beats geometry_residual on hard. No stable weak<medium<strong chain across all 3 tiers. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "3-scale coarse-to-fine pyramid shows only noise-level (<0.03dB) margins on real GoPro data and flips sign across seeds on every setting. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

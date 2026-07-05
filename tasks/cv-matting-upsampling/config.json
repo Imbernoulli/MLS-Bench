@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "learned robustly beats nearest on 2/3 trimap widths (medium, wide) cross-seed, but xwide is a degenerate near-tie that sign-flips at seed123 (small margin). Seed-unstable, not overridable by favourable task-gmean, per same bar as decoder-design drop. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

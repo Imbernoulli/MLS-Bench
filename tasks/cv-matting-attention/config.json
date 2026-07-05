@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "selfattn does not robustly beat gap on real PPM-100 cross-seed data: only 1/3 trimap widths (wide) robust in intended direction, medium sign-flips across seeds, xwide robustly inverts both seeds. Seed-unstable / degenerate, not a clean relabel or validation. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

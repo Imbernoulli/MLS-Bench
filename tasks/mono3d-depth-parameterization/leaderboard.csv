@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,ap25_easy,ap25_moderate,ap25_hard,ap50_easy,ap50_moderate,ap50_hard,miou_easy,miou_moderate,miou_hard,depth_err_easy,depth_err_moderate,depth_err_hard,elapsed_easy,elapsed_moderate,elapsed_hard
+2026-07-03T00:00:00+00:00,baseline:direct_regression,true,42,0.420213,0.407216,0.055046,0.191489,0.216495,0.036697,0.236657,0.242457,0.038656,0.730279,0.833719,3.818068,7,7,7
+2026-07-03T00:00:00+00:00,baseline:geometry_height,true,42,0.755319,0.438144,0.229358,0.398936,0.252577,0.123853,0.432119,0.263745,0.142542,0.333079,0.661373,1.320812,7,7,7
+2026-07-03T00:00:00+00:00,baseline:geometry_residual,true,42,0.861702,0.546392,0.394495,0.521277,0.268041,0.206422,0.493993,0.326688,0.240813,0.241764,0.471093,0.737651,7,7,7
