@@ -1,0 +1,214 @@
+# ==== /tmp/deshadow_anchor_v5.log ====
+ANCHOR surface=network_nomask setting=light config=weak psnr=23.6660 shadow_psnr=16.6543 gain=7.0117 t=114.8
+ANCHOR surface=network_nomask setting=medium config=weak psnr=24.9638 shadow_psnr=12.8961 gain=12.0678 t=214.5
+ANCHOR surface=network_nomask setting=heavy config=weak psnr=21.4257 shadow_psnr=11.5006 gain=9.9251 t=313.1
+ANCHOR surface=network_nomask setting=light config=strong psnr=25.0763 shadow_psnr=16.6543 gain=8.4219 t=406.0
+ANCHOR surface=network_nomask setting=medium config=strong psnr=25.2107 shadow_psnr=12.8961 gain=12.3146 t=447.3
+ANCHOR surface=network_nomask setting=heavy config=strong psnr=21.7523 shadow_psnr=11.5006 gain=10.2516 t=453.6
+MASK_APPLIED {'use_mask': False}
+ANCHOR surface=mask setting=light config=weak psnr=23.6660 shadow_psnr=16.6543 gain=7.0117 t=460.7
+MASK_APPLIED {'use_mask': False}
+ANCHOR surface=mask setting=medium config=weak psnr=24.9638 shadow_psnr=12.8961 gain=12.0678 t=473.2
+MASK_APPLIED {'use_mask': False}
+ANCHOR surface=mask setting=heavy config=weak psnr=21.4257 shadow_psnr=11.5006 gain=9.9251 t=515.3
+MASK_APPLIED {'use_mask': True}
+ANCHOR surface=mask setting=light config=strong psnr=25.0763 shadow_psnr=16.6543 gain=8.4219 t=529.9
+MASK_APPLIED {'use_mask': True}
+ANCHOR surface=mask setting=medium config=strong psnr=25.2107 shadow_psnr=12.8961 gain=12.3146 t=534.9
+MASK_APPLIED {'use_mask': True}
+ANCHOR surface=mask setting=heavy config=strong psnr=21.7523 shadow_psnr=11.5006 gain=10.2516 t=540.4
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=light config=weak psnr=25.0763 shadow_psnr=16.6543 gain=8.4219 t=545.9
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=medium config=weak psnr=25.2107 shadow_psnr=12.8961 gain=12.3146 t=585.3
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=heavy config=weak psnr=21.7523 shadow_psnr=11.5006 gain=10.2516 t=638.1
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=light config=strong psnr=25.0897 shadow_psnr=16.6543 gain=8.4353 t=665.1
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=medium config=strong psnr=25.2095 shadow_psnr=12.8961 gain=12.3134 t=687.2
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=heavy config=strong psnr=21.7910 shadow_psnr=11.5006 gain=10.2904 t=751.5
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=light config=weak psnr=25.0763 shadow_psnr=16.6543 gain=8.4219 t=812.9
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=medium config=weak psnr=25.2107 shadow_psnr=12.8961 gain=12.3146 t=878.1
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=heavy config=weak psnr=21.7523 shadow_psnr=11.5006 gain=10.2516 t=934.6
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=light config=strong psnr=25.2571 shadow_psnr=16.6543 gain=8.6028 t=953.5
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=medium config=strong psnr=24.5959 shadow_psnr=12.8961 gain=11.6998 t=974.1
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=heavy config=strong psnr=21.5144 shadow_psnr=11.5006 gain=10.0138 t=1013.6
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=light config=weak psnr=25.0763 shadow_psnr=16.6543 gain=8.4219 t=1072.3
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=medium config=weak psnr=25.2107 shadow_psnr=12.8961 gain=12.3146 t=1131.5
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=heavy config=weak psnr=21.7523 shadow_psnr=11.5006 gain=10.2516 t=1192.1
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=light config=strong psnr=23.9718 shadow_psnr=16.6543 gain=7.3175 t=1267.0
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=medium config=strong psnr=25.5874 shadow_psnr=12.8961 gain=12.6913 t=1342.4
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=heavy config=strong psnr=23.0055 shadow_psnr=11.5006 gain=11.5049 t=1412.8
+
+# ==== /tmp/deshadow_anchor_v6.log ====
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=light config=weak psnr=24.9366 shadow_psnr=16.5978 gain=8.3388 t=253.7
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=medium config=weak psnr=25.5543 shadow_psnr=13.0913 gain=12.4630 t=443.0
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=heavy config=weak psnr=22.6237 shadow_psnr=11.1346 gain=11.4891 t=552.0
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=light config=strong psnr=24.9428 shadow_psnr=16.5978 gain=8.3450 t=599.9
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=medium config=strong psnr=25.6370 shadow_psnr=13.0913 gain=12.5457 t=667.1
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=heavy config=strong psnr=22.6272 shadow_psnr=11.1346 gain=11.4925 t=705.4
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=light config=weak psnr=24.9366 shadow_psnr=16.5978 gain=8.3388 t=778.5
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=medium config=weak psnr=25.5543 shadow_psnr=13.0913 gain=12.4630 t=803.4
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=heavy config=weak psnr=22.6237 shadow_psnr=11.1346 gain=11.4891 t=856.5
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=light config=strong psnr=25.0775 shadow_psnr=16.5978 gain=8.4798 t=892.5
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=medium config=strong psnr=25.2451 shadow_psnr=13.0913 gain=12.1538 t=909.5
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=heavy config=strong psnr=22.0870 shadow_psnr=11.1346 gain=10.9524 t=923.5
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=light config=weak psnr=24.9366 shadow_psnr=16.5978 gain=8.3388 t=1123.2
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=medium config=weak psnr=25.5543 shadow_psnr=13.0913 gain=12.4630 t=1392.0
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=heavy config=weak psnr=22.6237 shadow_psnr=11.1346 gain=11.4891 t=1653.8
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=light config=strong psnr=24.5877 shadow_psnr=16.5978 gain=7.9899 t=1975.4
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=medium config=strong psnr=26.6713 shadow_psnr=13.0913 gain=13.5800 t=2318.5
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=heavy config=strong psnr=22.2359 shadow_psnr=11.1346 gain=11.1013 t=2530.7
+
+# ==== /tmp/deshadow_anchor_v7_seed123.log ====
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=light config=weak psnr=25.6825 shadow_psnr=16.5978 gain=9.0847 t=30.8
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=medium config=weak psnr=25.7644 shadow_psnr=13.0913 gain=12.6731 t=56.4
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=heavy config=weak psnr=22.4355 shadow_psnr=11.1346 gain=11.3009 t=78.1
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=light config=strong psnr=25.1707 shadow_psnr=16.5978 gain=8.5729 t=98.2
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=medium config=strong psnr=24.7798 shadow_psnr=13.0913 gain=11.6885 t=111.2
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=heavy config=strong psnr=21.6285 shadow_psnr=11.1346 gain=10.4939 t=124.4
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=light config=weak psnr=25.6825 shadow_psnr=16.5978 gain=9.0847 t=135.8
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=medium config=weak psnr=25.7644 shadow_psnr=13.0913 gain=12.6731 t=144.3
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=heavy config=weak psnr=22.4355 shadow_psnr=11.1346 gain=11.3009 t=152.6
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=light config=strong psnr=25.2881 shadow_psnr=16.5978 gain=8.6904 t=163.9
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=medium config=strong psnr=27.0103 shadow_psnr=13.0913 gain=13.9190 t=174.8
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=heavy config=strong psnr=22.9908 shadow_psnr=11.1346 gain=11.8562 t=186.6
+
+# ==== /tmp/deshadow_anchor_v8.log ====
+ANCHOR surface=network_copy setting=light config=weak psnr=16.6543 shadow_psnr=16.6543 gain=0.0000 t=2.5
+ANCHOR surface=network_copy setting=medium config=weak psnr=12.8961 shadow_psnr=12.8961 gain=0.0000 t=4.2
+ANCHOR surface=network_copy setting=heavy config=weak psnr=11.5006 shadow_psnr=11.5006 gain=0.0000 t=5.9
+ANCHOR surface=network_copy setting=light config=strong psnr=25.0763 shadow_psnr=16.6543 gain=8.4219 t=51.7
+ANCHOR surface=network_copy setting=medium config=strong psnr=25.2107 shadow_psnr=12.8961 gain=12.3146 t=89.6
+ANCHOR surface=network_copy setting=heavy config=strong psnr=21.7523 shadow_psnr=11.5006 gain=10.2516 t=156.3
+FUSION_APPLIED {'fusion': False}
+ANCHOR surface=fusion setting=light config=weak psnr=25.0763 shadow_psnr=16.6543 gain=8.4219 t=177.5
+FUSION_APPLIED {'fusion': False}
+ANCHOR surface=fusion setting=medium config=weak psnr=25.2107 shadow_psnr=12.8961 gain=12.3146 t=227.6
+FUSION_APPLIED {'fusion': False}
+ANCHOR surface=fusion setting=heavy config=weak psnr=21.7523 shadow_psnr=11.5006 gain=10.2516 t=288.7
+FUSION_APPLIED {'fusion': True}
+ANCHOR surface=fusion setting=light config=strong psnr=25.4490 shadow_psnr=16.6543 gain=8.7946 t=310.9
+FUSION_APPLIED {'fusion': True}
+ANCHOR surface=fusion setting=medium config=strong psnr=25.9036 shadow_psnr=12.8961 gain=13.0075 t=375.1
+FUSION_APPLIED {'fusion': True}
+ANCHOR surface=fusion setting=heavy config=strong psnr=23.2252 shadow_psnr=11.5006 gain=11.7245 t=420.0
+
+# ==== /tmp/deshadow_anchor_v4.log ====
+ANCHOR surface=network_copy setting=light config=weak psnr=15.3501 shadow_psnr=15.3501 gain=0.0000 t=11.0
+ANCHOR surface=network_copy setting=medium config=weak psnr=13.0579 shadow_psnr=13.0579 gain=0.0000 t=19.2
+ANCHOR surface=network_copy setting=heavy config=weak psnr=10.7349 shadow_psnr=10.7349 gain=0.0000 t=30.0
+ANCHOR surface=network_copy setting=light config=strong psnr=20.2611 shadow_psnr=15.3501 gain=4.9110 t=166.9
+ANCHOR surface=network_copy setting=medium config=strong psnr=16.6967 shadow_psnr=13.0579 gain=3.6387 t=278.5
+ANCHOR surface=network_copy setting=heavy config=strong psnr=12.8340 shadow_psnr=10.7349 gain=2.0991 t=431.9
+ANCHOR surface=network_nomask setting=light config=weak psnr=20.0544 shadow_psnr=15.3501 gain=4.7043 t=629.1
+ANCHOR surface=network_nomask setting=medium config=weak psnr=17.9955 shadow_psnr=13.0579 gain=4.9375 t=869.0
+ANCHOR surface=network_nomask setting=heavy config=weak psnr=14.9784 shadow_psnr=10.7349 gain=4.2435 t=1046.8
+ANCHOR surface=network_nomask setting=light config=strong psnr=20.2611 shadow_psnr=15.3501 gain=4.9110 t=1196.1
+ANCHOR surface=network_nomask setting=medium config=strong psnr=16.6967 shadow_psnr=13.0579 gain=3.6387 t=1439.1
+ANCHOR surface=network_nomask setting=heavy config=strong psnr=12.8340 shadow_psnr=10.7349 gain=2.0991 t=1516.4
+MASK_APPLIED {'use_mask': False}
+ANCHOR surface=mask setting=light config=weak psnr=20.0544 shadow_psnr=15.3501 gain=4.7043 t=1598.8
+MASK_APPLIED {'use_mask': False}
+ANCHOR surface=mask setting=medium config=weak psnr=17.9955 shadow_psnr=13.0579 gain=4.9375 t=1728.6
+MASK_APPLIED {'use_mask': False}
+ANCHOR surface=mask setting=heavy config=weak psnr=14.9784 shadow_psnr=10.7349 gain=4.2435 t=1782.3
+MASK_APPLIED {'use_mask': True}
+ANCHOR surface=mask setting=light config=strong psnr=20.2611 shadow_psnr=15.3501 gain=4.9110 t=1826.0
+MASK_APPLIED {'use_mask': True}
+ANCHOR surface=mask setting=medium config=strong psnr=16.6967 shadow_psnr=13.0579 gain=3.6387 t=1870.8
+MASK_APPLIED {'use_mask': True}
+ANCHOR surface=mask setting=heavy config=strong psnr=12.8340 shadow_psnr=10.7349 gain=2.0991 t=1931.3
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=light config=weak psnr=20.2611 shadow_psnr=15.3501 gain=4.9110 t=1965.3
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=medium config=weak psnr=16.6967 shadow_psnr=13.0579 gain=3.6387 t=2017.2
+DILATION_APPLIED {'dilations': [1, 1]}
+ANCHOR surface=dilation setting=heavy config=weak psnr=12.8340 shadow_psnr=10.7349 gain=2.0991 t=2070.1
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=light config=strong psnr=20.2591 shadow_psnr=15.3501 gain=4.9090 t=2122.4
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=medium config=strong psnr=16.7288 shadow_psnr=13.0579 gain=3.6709 t=2150.6
+DILATION_APPLIED {'dilations': [2, 4]}
+ANCHOR surface=dilation setting=heavy config=strong psnr=12.8452 shadow_psnr=10.7349 gain=2.1103 t=2187.9
+FUSION_APPLIED {'fusion': False}
+ANCHOR surface=fusion setting=light config=weak psnr=20.2611 shadow_psnr=15.3501 gain=4.9110 t=2218.2
+FUSION_APPLIED {'fusion': False}
+ANCHOR surface=fusion setting=medium config=weak psnr=16.6967 shadow_psnr=13.0579 gain=3.6387 t=2237.9
+FUSION_APPLIED {'fusion': False}
+ANCHOR surface=fusion setting=heavy config=weak psnr=12.8340 shadow_psnr=10.7349 gain=2.0991 t=2255.0
+FUSION_APPLIED {'fusion': True}
+ANCHOR surface=fusion setting=light config=strong psnr=20.7250 shadow_psnr=15.3501 gain=5.3749 t=2259.5
+FUSION_APPLIED {'fusion': True}
+ANCHOR surface=fusion setting=medium config=strong psnr=19.1267 shadow_psnr=13.0579 gain=6.0688 t=2264.2
+FUSION_APPLIED {'fusion': True}
+ANCHOR surface=fusion setting=heavy config=strong psnr=14.3268 shadow_psnr=10.7349 gain=3.5919 t=2269.7
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=light config=weak psnr=20.2611 shadow_psnr=15.3501 gain=4.9110 t=2273.8
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=medium config=weak psnr=16.6967 shadow_psnr=13.0579 gain=3.6387 t=2278.3
+PHYSICS_APPLIED {'mode': 'residual'}
+ANCHOR surface=physics setting=heavy config=weak psnr=12.8340 shadow_psnr=10.7349 gain=2.0991 t=2282.6
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=light config=strong psnr=17.0245 shadow_psnr=15.3501 gain=1.6743 t=2286.4
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=medium config=strong psnr=13.4911 shadow_psnr=13.0579 gain=0.4332 t=2290.1
+PHYSICS_APPLIED {'mode': 'physics'}
+ANCHOR surface=physics setting=heavy config=strong psnr=10.9221 shadow_psnr=10.7349 gain=0.1872 t=2293.8
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=light config=weak psnr=20.2611 shadow_psnr=15.3501 gain=4.9110 t=2296.3
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=medium config=weak psnr=16.6967 shadow_psnr=13.0579 gain=3.6387 t=2298.6
+UPSAMPLING_APPLIED {'up': 'transpose'}
+ANCHOR surface=upsampling setting=heavy config=weak psnr=12.8340 shadow_psnr=10.7349 gain=2.0991 t=2300.7
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=light config=strong psnr=18.5192 shadow_psnr=15.3501 gain=3.1691 t=2302.9
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=medium config=strong psnr=19.5598 shadow_psnr=13.0579 gain=6.5019 t=2305.2
+UPSAMPLING_APPLIED {'up': 'bilinear'}
+ANCHOR surface=upsampling setting=heavy config=strong psnr=16.1298 shadow_psnr=10.7349 gain=5.3949 t=2307.8
+

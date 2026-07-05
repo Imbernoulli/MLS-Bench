@@ -1,0 +1,49 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/deshadow_light.sh",
+      "label": "light",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deshadow"
+    },
+    {
+      "cmd": "scripts/deshadow_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deshadow"
+    },
+    {
+      "cmd": "scripts/deshadow_heavy.sh",
+      "label": "heavy",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-deshadow"
+    }
+  ],
+  "baselines": {
+    "network_unet_mask": {
+      "edit_ops": "edits/network_unet_mask.edit.py"
+    },
+    "network_unet_nomask": {
+      "edit_ops": "edits/network_unet_nomask.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-deshadow/solution/network.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 37, "end": 39}]
+    }
+  ]
+}

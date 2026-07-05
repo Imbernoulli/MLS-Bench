@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "instance normalization inside the blocks HURTS the mask-guided deshadower on this synthetic shadow; strong<weak on all three settings (badly on medium).",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

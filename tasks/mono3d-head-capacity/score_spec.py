@@ -12,18 +12,21 @@ KITTI official difficulty tier):
   backbone_shallow (WEAK)  easy=0.2606  moderate=0.1315  hard=0.1385
   backbone_deep (STRONG)   easy=0.2763  moderate=0.1417  hard=0.1424
 The weak->strong order holds across all three settings and both seeds (deep beats shallow
-robustly, though margins on real KITTI are modest, 0.004-0.016 AP3D). Per-setting logistic
-midpoint = the strong (backbone_deep) reference -> score 0.5, scale = (strong-weak)/ln(9) so
-the weak (backbone_shallow) baseline lands ~0.1.
+robustly, though margins on real KITTI are modest, 0.004-0.016 AP3D).
+
+SOTA=0.5 anchor convention (matches stereo-disparity-range): "0.5 is the strongest baseline"
+-- ref = the STRONG (backbone_deep) baseline's SEED-42-SPECIFIC value (NOT seed-averaged)
+so backbone_deep scores exactly 0.5 at seed 42; scale = (strong_seed42-weak_seed42)/ln(9) so
+the weak (backbone_shallow) baseline lands ~0.1 at seed 42.
 """
 from mlsbench.scoring.dsl import *
 
 term("ap25_easy",
-    col("ap25_easy").higher().id().sigmoid(ref=const(0.276278), scale=0.007142419651534148))
+    col("ap25_easy").higher().id().sigmoid(ref=const(0.290511), scale=0.0049831046))
 term("ap25_moderate",
-    col("ap25_moderate").higher().id().sigmoid(ref=const(0.141681), scale=0.004652005127483106))
+    col("ap25_moderate").higher().id().sigmoid(ref=const(0.149347), scale=0.0056858093))
 term("ap25_hard",
-    col("ap25_hard").higher().id().sigmoid(ref=const(0.142377), scale=0.0017451561572502997))
+    col("ap25_hard").higher().id().sigmoid(ref=const(0.146692), scale=0.0026178480))
 
 setting("easy", weighted_mean(("ap25_easy", 1.0)))
 setting("moderate", weighted_mean(("ap25_moderate", 1.0)))

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "coarse-to-fine pyramid is NOT robustly monotone across seeds on 64px near-affine cast shadow: seed-42 aggregate +0.93 dB but seed-1 aggregate -0.51 dB (strong<weak on all three settings). Not cross-seed robust.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "squeeze-excite channel attention does not help the mask-guided deshadower on this synthetic shadow; strong<weak on all three settings.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

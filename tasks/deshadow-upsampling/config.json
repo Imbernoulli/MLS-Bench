@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "decoder upsampling operator (transpose conv vs bilinear+1x1 conv) was previously shipped with anchors matching a historical real-ISTD log (with light documented as near-tied). A from-scratch, purpose-built GPU re-anchor sweep on REAL ISTD data (k1 H20, cross-seed 42/123, 400 iters) shows 4/6 settings-x-seeds inverted. A 1200-iter training-budget diagnostic WORSENS this to 5/6 -- every failing cell persists or gets worse, none resolve. This is a genuine, consistently-signed confound (bilinear does not reliably beat transpose conv), not undertraining. Dropped honestly rather than re-anchored; see DROPPED.md for full numbers.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "residual-vs-direct is NOT robustly monotone on the mask-guided deshadower: seed-42 direct(weak) BEATS residual(strong) on all settings, seed-1 residual beats direct. The mask-guided net + composite loss makes direct regression competitive at low iters, so the ordering is seed-dependent.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

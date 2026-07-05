@@ -11,18 +11,22 @@ REAL KITTI 3D Object Detection, CROSS-SEED 42/123, seed-averaged, 1200 steps, AP
 KITTI official difficulty tier):
   weight_degenerate (WEAK)      easy=0.2613  moderate=0.1408  hard=0.1405
   weight_homoscedastic (STRONG) easy=0.3336  moderate=0.1735  hard=0.1663
-Per-setting logistic midpoint = the strong (weight_homoscedastic) reference -> score 0.5, scale
-= (strong-weak)/ln(9) so the weak (weight_degenerate) baseline lands ~0.1; the weak->strong
-order holds across all three settings and both seeds on real KITTI.
+The weak->strong order holds across all three settings and both seeds on real KITTI.
+
+SOTA=0.5 anchor convention (matches stereo-disparity-range): "0.5 is the strongest baseline"
+-- ref = the STRONG (weight_homoscedastic) baseline's SEED-42-SPECIFIC value (NOT
+seed-averaged) so weight_homoscedastic scores exactly 0.5 at seed 42; scale =
+(strong_seed42-weak_seed42)/ln(9) so the weak (weight_degenerate) baseline lands ~0.1 at
+seed 42.
 """
 from mlsbench.scoring.dsl import *
 
 term("ap25_easy",
-    col("ap25_easy").higher().id().sigmoid(ref=const(0.333576), scale=0.03288808105706092))
+    col("ap25_easy").higher().id().sigmoid(ref=const(0.335036), scale=0.0298981728))
 term("ap25_moderate",
-    col("ap25_moderate").higher().id().sigmoid(ref=const(0.173481), scale=0.014860565613909752))
+    col("ap25_moderate").higher().id().sigmoid(ref=const(0.176036), scale=0.0144728037))
 term("ap25_hard",
-    col("ap25_hard").higher().id().sigmoid(ref=const(0.166347), scale=0.011781453870037815))
+    col("ap25_hard").higher().id().sigmoid(ref=const(0.173538), scale=0.0109087620))
 
 setting("easy", weighted_mean(("ap25_easy", 1.0)))
 setting("moderate", weighted_mean(("ap25_moderate", 1.0)))

@@ -17,15 +17,21 @@ weak<strong holds ROBUSTLY on ALL THREE settings, BOTH seeds (seed42: medium
 0.4288>0.2803, wide 0.7888>0.5708, xwide 1.4591>1.0005). Cross-seed data
 resolves the earlier single-seed "medium inversion within noise" concern in
 favour of the intended concat>drop ordering: clean re-anchor.
+
+SOTA=0.5 anchor convention (matches stereo-disparity-range / mono3d-depth-cue):
+"0.5 is the strongest baseline" -- ref = the STRONG (concat) baseline's
+SEED-42 value (NOT geomean(weak,strong), NOT seed-averaged) so concat scores
+exactly 0.5 at seed 42; scale = (weak_seed42 - strong_seed42) / ln(9) so the
+weak (drop) baseline lands ~0.1 at seed 42.
 """
 from mlsbench.scoring.dsl import *
 
-# per-setting logistic (midpoint = geomean(weak, strong) SAD; lower is better;
-# scale = (weak_avg - strong_avg) / ln(9))
+# per-setting logistic: ref = strong (concat) SAD at seed 42 -> score 0.5;
+# scale = (weak_seed42 - strong_seed42) / ln(9) so weak (drop) at seed 42 -> ~0.1
 _CAL = {
-    "medium": (0.347614, 0.076483),
-    "wide": (0.707536, 0.071431),
-    "xwide": (1.284045, 0.177997)
+    "medium": (0.2669, 0.085380),
+    "wide": (0.6960, 0.043646),
+    "xwide": (1.2061, 0.147277)
 }
 
 for _s, (_mid, _scale) in _CAL.items():

@@ -12,18 +12,21 @@ KITTI official difficulty tier):
   proj_onaxis (WEAK)       easy=0.0000  moderate=0.0000  hard=0.0000
   proj_pinhole (STRONG)    easy=0.3420  moderate=0.1650  hard=0.1783
 The degenerate on-axis (no-perspective) back-projection scores EXACTLY 0 AP3D on every tier,
-both seeds -- an unambiguous, maximally robust floor. Per-setting logistic midpoint = the
-strong (proj_pinhole) reference -> score 0.5, scale = (strong-weak)/ln(9) so the weak
-(proj_onaxis) baseline lands ~0.1.
+both seeds -- an unambiguous, maximally robust floor.
+
+SOTA=0.5 anchor convention (matches stereo-disparity-range): "0.5 is the strongest baseline"
+-- ref = the STRONG (proj_pinhole) baseline's SEED-42-SPECIFIC value (NOT seed-averaged) so
+proj_pinhole scores exactly 0.5 at seed 42; scale = (strong_seed42-weak_seed42)/ln(9) so the
+weak (proj_onaxis, exactly 0) baseline lands ~0.1 at seed 42.
 """
 from mlsbench.scoring.dsl import *
 
 term("ap25_easy",
-    col("ap25_easy").higher().id().sigmoid(ref=const(0.341971), scale=0.1556377092844031))
+    col("ap25_easy").higher().id().sigmoid(ref=const(0.334307), scale=0.1521496726))
 term("ap25_moderate",
-    col("ap25_moderate").higher().id().sigmoid(ref=const(0.164963), scale=0.07507789677102149))
+    col("ap25_moderate").higher().id().sigmoid(ref=const(0.172061), scale=0.0783083358))
 term("ap25_hard",
-    col("ap25_hard").higher().id().sigmoid(ref=const(0.178332), scale=0.08116216332160192))
+    col("ap25_hard").higher().id().sigmoid(ref=const(0.185043), scale=0.0842166986))
 
 setting("easy", weighted_mean(("ap25_easy", 1.0)))
 setting("moderate", weighted_mean(("ap25_moderate", 1.0)))

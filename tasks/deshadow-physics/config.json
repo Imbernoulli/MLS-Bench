@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "physics (SP+M-Net affine J=w*I+b) vs free-residual output parameterisation was aggregate-monotone on the OLD SYNTHETIC near-affine cast-shadow data (both seeds) but INVERTS on REAL ISTD (Wang et al. CVPR 2018) photo triplets: CPU smoke-test re-check (BASE=14 shrink, 2 seeds) shows physics beats residual only on 'light', and loses on 'medium'/'heavy' on both seeds, so the task-level gmean is weak>strong (inverted) on real shadows. Dropped honestly rather than re-anchored; see DROPPED.md for numbers.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

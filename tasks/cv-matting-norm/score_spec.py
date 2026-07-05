@@ -17,15 +17,21 @@ margins of any matting surface (seed42: medium 0.4169>0.2561, wide 0.9523>0.6578
 xwide 1.7665>1.1214; seed123: medium 0.4150>0.2862, wide 0.9360>0.5904, xwide
 1.6847>0.9864). Clean cross-seed re-anchor, ordering unchanged from the earlier
 synthetic-data pass.
+
+SOTA=0.5 anchor convention (matches stereo-disparity-range / mono3d-depth-cue):
+"0.5 is the strongest baseline" -- ref = the STRONG (batch) baseline's SEED-42
+value (NOT geomean(weak,strong), NOT seed-averaged) so batch scores exactly 0.5
+at seed 42; scale = (weak_seed42 - strong_seed42) / ln(9) so the weak
+(identity) baseline lands ~0.1 at seed 42.
 """
 from mlsbench.scoring.dsl import *
 
-# per-setting logistic (midpoint = geomean(weak, strong) SAD; lower is better;
-# scale = (weak_avg - strong_avg) / ln(9))
+# per-setting logistic: ref = strong (batch) SAD at seed 42 -> score 0.5;
+# scale = (weak_seed42 - strong_seed42) / ln(9) so weak (identity) at seed 42 -> ~0.1
 _CAL = {
-    "medium": (0.335835, 0.065901),
-    "wide": (0.767622, 0.145661),
-    "xwide": (1.348558, 0.305704)
+    "medium": (0.2561, 0.073183),
+    "wide": (0.6578, 0.134033),
+    "xwide": (1.1214, 0.293598)
 }
 
 for _s, (_mid, _scale) in _CAL.items():

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "deeper 2-level encoder-decoder does not help on 64px near-affine cast shadow; strong<weak on medium/heavy (aggregate strong<weak).",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

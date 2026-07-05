@@ -1,0 +1,31 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir scipy 'numpy<2' pillow",
+    "apt-get update -qq && apt-get install -y -qq libgl1 libglib2.0-0 || true",
+    "cd /workspace/image-deshadow && python -c \"import torch, scipy, numpy, PIL; print('image-deshadow deps ok: torch', torch.__version__, 'scipy', scipy.__version__)\""
+  ],
+  "env": {
+    "DESHADOW_DATA_ROOT": "/data/image-deshadow",
+    "PYTHONPATH": "/workspace/image-deshadow",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "image_deshadow_istd",
+      "host_path": "{data_root}/image-deshadow",
+      "container_path": "/data/image-deshadow",
+      "prepare": "vendor/data_scripts/image-deshadow/prepare_data.py",
+      "description": "REAL shadow / shadow-free / mask 64x64 image triplets for the deshadow-* image shadow-removal tasks, in THREE cast-shadow severity settings (light/medium/heavy). Triplets come from ISTD (Wang, Li & Yang, 'Stacked Conditional Generative Adversarial Networks for Jointly Learning Shadow Detection and Shadow Removal', CVPR 2018; pulled via the Donghyun99/ISTD HF-mirror parquet re-host), which captures the SAME static outdoor scene TWICE (with and without a real cast shadow), so the target (shadow-free) image is an authentic photograph of the true unshadowed scene, not a synthetic composite. Each 640x480 triplet is center-cropped to 480x480 then resized to 64x64. Severities are terciles of each triplet's MEASURED shadow attenuation ratio (mean brightness of the shadow image over the shadow-free target, restricted to the masked shadow pixels), pooled across ISTD's official train+test split; train/val within each severity reuse ISTD's own disjoint-scene split (1330/540 triplets) so held-out PSNR still measures real cross-scene generalisation. All deterministic given the seed."
+    }
+  ],
+  "host_data_prepare_requirements": [
+    "scipy",
+    "pillow"
+  ],
+  "use_cuda": true,
+  "requires_gpu": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace"
+}

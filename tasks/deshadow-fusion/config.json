@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "skip-feature fusion strategy (last-layer-only vs dense multi-scale) was previously shipped with anchors matching a historical real-ISTD log. A from-scratch, purpose-built GPU re-anchor sweep on REAL ISTD data (k1 H20, cross-seed 42/123, 400 iters) shows 3/6 settings-x-seeds inverted. A 1200-iter training-budget diagnostic only marginally improves this (3/6 -> 2/6) but no setting is cross-seed-clean at BOTH budgets simultaneously -- light clean only at 1200, medium never clean on seed 123, heavy clean only on seed 42. Cells relocate rather than shrink to zero -- a genuine, small-effect-size confound, not undertraining. Dropped honestly rather than re-anchored; see DROPPED.md for full numbers.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

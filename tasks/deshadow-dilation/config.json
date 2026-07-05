@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "spatial dilation rate of the mask-guided residual deshadower's middle conv (d1 vs dilated) was previously shipped with anchors of ambiguous provenance. A from-scratch, purpose-built GPU re-anchor sweep on REAL ISTD data (k1 H20, cross-seed 42/123, 400 iters) shows 2/6 settings-x-seeds inverted (both heavy). A 1200-iter training-budget diagnostic does NOT resolve this -- heavy resolves but light (both seeds) and medium (seed 42) newly fail, worsening total failures from 2/6 to 3/6. Cells relocate rather than shrink -- a genuine confound, not undertraining. Dropped honestly rather than re-anchored; see DROPPED.md for full numbers.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

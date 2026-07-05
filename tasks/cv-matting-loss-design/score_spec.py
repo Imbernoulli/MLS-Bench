@@ -16,15 +16,21 @@ weak<strong holds ROBUSTLY on ALL THREE settings, BOTH seeds (seed42: medium
 0.3434>0.2528, wide 0.7973>0.6584, xwide 1.3005>1.1032; seed123: medium
 0.3408>0.2839, wide 0.7311>0.6126, xwide 1.2590>1.0457). Clean cross-seed
 re-anchor, ordering unchanged from the earlier synthetic-data pass.
+
+SOTA=0.5 anchor convention (matches stereo-disparity-range / mono3d-depth-cue):
+"0.5 is the strongest baseline" -- ref = the STRONG (unk_comp) baseline's
+SEED-42 value (NOT geomean(weak,strong), NOT seed-averaged) so unk_comp scores
+exactly 0.5 at seed 42; scale = (weak_seed42 - strong_seed42) / ln(9) so the
+weak (whole_l1) baseline lands ~0.1 at seed 42.
 """
 from mlsbench.scoring.dsl import *
 
-# per-setting logistic (midpoint = geomean(weak, strong) SAD; lower is better;
-# scale = (weak_avg - strong_avg) / ln(9))
+# per-setting logistic: ref = strong (unk_comp) SAD at seed 42 -> score 0.5;
+# scale = (weak_seed42 - strong_seed42) / ln(9) so weak (whole_l1) at seed 42 -> ~0.1
 _CAL = {
-    "medium": (0.302989, 0.033565),
-    "wide": (0.696885, 0.058574),
-    "xwide": (1.172616, 0.093436)
+    "medium": (0.2528, 0.041234),
+    "wide": (0.6584, 0.063216),
+    "xwide": (1.1032, 0.089795)
 }
 
 for _s, (_mid, _scale) in _CAL.items():

@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "composite (L1+SSIM+color+composition) loss does not beat plain shadow-weighted L1 on this synthetic shadow; strong<weak on all three settings.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

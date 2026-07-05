@@ -1,62 +1,7 @@
 {
-  "allow_create": false,
-  "rigorous_codebase": true,
-  "seeds": [
-    42
-  ],
-  "test_cmds": [
-    {
-      "cmd": "scripts/easy.sh",
-      "label": "easy",
-      "group": 1,
-      "compute": 1.0,
-      "time": "0:20:00",
-      "mem": 16,
-      "package": "mono3d-detection"
-    },
-    {
-      "cmd": "scripts/moderate.sh",
-      "label": "moderate",
-      "group": 1,
-      "compute": 1.0,
-      "time": "0:20:00",
-      "mem": 16,
-      "package": "mono3d-detection"
-    },
-    {
-      "cmd": "scripts/hard.sh",
-      "label": "hard",
-      "group": 1,
-      "compute": 1.0,
-      "time": "0:20:00",
-      "mem": 16,
-      "package": "mono3d-detection",
-      "hidden": true
-    }
-  ],
-  "baselines": {
-    "norm_additive": {
-      "edit_ops": "edits/norm_additive.edit.py"
-    },
-    "norm_log_mult": {
-      "edit_ops": "edits/norm_log_mult.edit.py"
-    }
-  },
-  "files": [
-    {
-      "filename": "mono3d-detection/solution/depth_norm.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
-      ],
-      "edit": [
-        {
-          "start": 26,
-          "end": 32
-        }
-      ]
-    }
-  ]
+  "_dropped": true,
+  "_reason": "additive (relabeled strong) only robustly beats log_mult on 2/3 tiers at seed 42; the hard tier inverts at seed 42 (additive=0.177373 < log_mult=0.185043, a near-tie noise-level delta), so no anchor makes additive score >=0.5 on all three seed-42 per-setting terms simultaneously. Seed-unstable near-tie, not a robust relabel. See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
 }

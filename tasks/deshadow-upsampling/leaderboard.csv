@@ -1,0 +1,2 @@
+timestamp,model,is_final,seed,psnr_light,psnr_gain_light,shadow_psnr_light,ssim_light,mse_light,full_psnr_light,psnr_medium,psnr_gain_medium,shadow_psnr_medium,ssim_medium,mse_medium,full_psnr_medium,psnr_heavy,psnr_gain_heavy,shadow_psnr_heavy,ssim_heavy,mse_heavy,full_psnr_heavy,elapsed_light,elapsed_medium,elapsed_heavy
+2026-07-03T00:00:00+00:00,baseline:zero,true,42,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
