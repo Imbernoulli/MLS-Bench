@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,sari_asset,sari_turk,sari_wiki
+2026-07-05T00:00:00+00:00,baseline:hot,true,42,24.094777,23.086276,15.432138
+2026-07-05T00:00:00+00:00,baseline:mid,true,42,32.096840,32.081887,27.013059
+2026-07-05T00:00:00+00:00,baseline:cold,true,42,37.976371,36.670040,35.790406

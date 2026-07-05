@@ -1,0 +1,43 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/simplify.sh",
+      "label": "simplify",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:25:00",
+      "mem": 24,
+      "package": "text-simplification"
+    }
+  ],
+  "baselines": {
+    "short": {
+      "edit_ops": "edits/short.edit.py"
+    },
+    "mid": {
+      "edit_ops": "edits/mid.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "text-simplification/solution/truncation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 42,
+          "end": 42
+        }
+      ]
+    }
+  ]
+}

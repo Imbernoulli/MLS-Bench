@@ -1,0 +1,46 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/simplify.sh",
+      "label": "simplify",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:25:00",
+      "mem": 24,
+      "package": "text-simplification"
+    }
+  ],
+  "baselines": {
+    "floor60": {
+      "edit_ops": "edits/floor60.edit.py"
+    },
+    "floor20": {
+      "edit_ops": "edits/floor20.edit.py"
+    },
+    "floor0": {
+      "edit_ops": "edits/floor0.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "text-simplification/solution/minlen.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 40,
+          "end": 40
+        }
+      ]
+    }
+  ]
+}

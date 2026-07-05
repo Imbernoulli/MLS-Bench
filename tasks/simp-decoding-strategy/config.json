@@ -1,0 +1,46 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/simplify.sh",
+      "label": "simplify",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:25:00",
+      "mem": 24,
+      "package": "text-simplification"
+    }
+  ],
+  "baselines": {
+    "sample": {
+      "edit_ops": "edits/sample.edit.py"
+    },
+    "topp": {
+      "edit_ops": "edits/topp.edit.py"
+    },
+    "beam": {
+      "edit_ops": "edits/beam.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "text-simplification/solution/strategy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 41,
+          "end": 41
+        }
+      ]
+    }
+  ]
+}

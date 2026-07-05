@@ -1,0 +1,29 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir 'transformers>=4.41,<4.50' 'tokenizers>=0.20,<0.22' 'huggingface_hub<1.0' sentencepiece 'numpy<2'",
+    "python -c \"import torch, transformers; from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; print('transformers', transformers.__version__, 'torch', torch.__version__)\""
+  ],
+  "env": {
+    "SIMP_MODEL": "/data/text-simplification/models/t5-base-finetuned-turk-text-simplification",
+    "HF_HOME": "/data/text-simplification/hf_home",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false"
+  },
+  "data_deps": [
+    {
+      "name": "text_simplification_model",
+      "description": "mrm8488/t5-base-finetuned-turk-text-simplification (a T5-base fine-tuned for sentence simplification; expects a 'simplify: ' prefix, ~220M params) staged offline. Model weights only -- NOT a leak concern (the model is the frozen inference target the agent decodes with, not an answer key). The three FIXED simplification test sets (source sentences + held-out human reference simplifications, re-serialised from GEM/wiki_auto_asset_turk) are deliberately NOT a data_dep / NOT baked into this base image: sources live agent-visible under vendor/text-simplification/_simp_data/ (checked into git, no references field), and references (the literal SARI answer key) are staged verifier-only under each tasks/simp-*/data/ dir, mounted at $TASK_DIR/data only at scoring time (see vendor/text-simplification/common.py::_refs_data_path and the tpp-neural-hawkes/ebm-langevin-cd precedent for this split). ~850MB (model only).",
+      "host_path": "{data_root}/text-simplification/models",
+      "container_path": "/data/text-simplification/models",
+      "ready_files": [
+        "{data_root}/text-simplification/models/t5-base-finetuned-turk-text-simplification/config.json"
+      ],
+      "prepare": "vendor/data_scripts/text-simplification/prepare_data.py"
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

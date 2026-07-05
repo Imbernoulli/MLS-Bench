@@ -1,0 +1,46 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/simplify.sh",
+      "label": "simplify",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:25:00",
+      "mem": 24,
+      "package": "text-simplification"
+    }
+  ],
+  "baselines": {
+    "narrow": {
+      "edit_ops": "edits/narrow.edit.py"
+    },
+    "mid": {
+      "edit_ops": "edits/mid.edit.py"
+    },
+    "wide": {
+      "edit_ops": "edits/wide.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "text-simplification/solution/beamwidth.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 36,
+          "end": 36
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,52 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/simplify.sh",
+      "label": "simplify",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:25:00",
+      "mem": 24,
+      "package": "text-simplification"
+    }
+  ],
+  "baselines": {
+    "empty": {
+      "edit_ops": "edits/empty.edit.py"
+    },
+    "first_token": {
+      "edit_ops": "edits/first_token.edit.py"
+    },
+    "truncate": {
+      "edit_ops": "edits/truncate.edit.py"
+    },
+    "greedy": {
+      "edit_ops": "edits/greedy.edit.py"
+    },
+    "beam": {
+      "edit_ops": "edits/beam.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "text-simplification/solution/policy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 39,
+          "end": 39
+        }
+      ]
+    }
+  ]
+}

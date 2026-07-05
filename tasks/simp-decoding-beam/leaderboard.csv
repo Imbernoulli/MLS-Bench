@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,sari_asset,sari_turk,sari_wiki
+2026-07-05T00:00:00+00:00,baseline:greedy,true,42,35.363890,33.375293,34.190725
+2026-07-05T00:00:00+00:00,baseline:beam4,true,42,44.262605,43.260673,43.860733
+2026-07-05T00:00:00+00:00,baseline:beam_norep,true,42,45.136026,43.676860,43.321471

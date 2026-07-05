@@ -1,0 +1,46 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/simplify.sh",
+      "label": "simplify",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:25:00",
+      "mem": 24,
+      "package": "text-simplification"
+    }
+  ],
+  "baselines": {
+    "greedy": {
+      "edit_ops": "edits/greedy.edit.py"
+    },
+    "beam4": {
+      "edit_ops": "edits/beam4.edit.py"
+    },
+    "beam_norep": {
+      "edit_ops": "edits/beam_norep.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "text-simplification/solution/beam.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 39,
+          "end": 39
+        }
+      ]
+    }
+  ]
+}
