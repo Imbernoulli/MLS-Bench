@@ -32,9 +32,20 @@ _HOLDOUT_DIR = _PROJECT_ROOT / "holdout" / "optimization-nas"
 # exporter scripts/build_site_data.py) would otherwise collide on
 # sys.modules["dgp"]. Native setup and the Harbor inputgen exec one task per
 # process, so this is belt-and-suspenders there.
-_dgp_spec = _ilu.spec_from_file_location("optimization_nas_dgp", str(_HOLDOUT_DIR / "dgp.py"))
-dgp = _ilu.module_from_spec(_dgp_spec)
-_dgp_spec.loader.exec_module(dgp)
+#
+# The dgp lives OUTSIDE the agent's reach and is present ONLY when this module
+# is imported to actually MATERIALIZE the workspace tables (host-side setup /
+# Harbor inputgen). Other IN-CONTAINER importers — notably
+# ``tasks/optimization-nas/budget_check.py``, which reads only the editable
+# ``custom_nas_search.py`` template op — run where holdout/ is deliberately NOT
+# mounted (there ``_PROJECT_ROOT`` even resolves to ``/``); the load is guarded
+# so those importers succeed and the per-dataset table ops are simply skipped.
+dgp = None
+_dgp_file = _HOLDOUT_DIR / "dgp.py"
+if _dgp_file.is_file():
+    _dgp_spec = _ilu.spec_from_file_location("optimization_nas_dgp", str(_dgp_file))
+    dgp = _ilu.module_from_spec(_dgp_spec)
+    _dgp_spec.loader.exec_module(dgp)
 
 _TEMPLATE_PATH = _HERE.parent / "custom_template.py"
 _CUSTOM_PY = _TEMPLATE_PATH.read_text()
@@ -45,14 +56,6 @@ try:
     _SEEDS = sorted(set((_cfg.get("seeds") or []) + [42]))
 except Exception:
     _SEEDS = [0, 1, 2, 3, 4, 42]
-
-_ENV = os.environ.get("ENV")
-_SEED = os.environ.get("SEED")
-if _ENV in dgp.DATASET_MAP and _SEED is not None:
-    # Harbor eval-time materialization: just the active run's table.
-    _COMBOS = [(_ENV, int(_SEED))]
-else:
-    _COMBOS = [(_env, _seed) for _env in dgp.DATASET_MAP for _seed in _SEEDS]
 
 _PLACEHOLDER = (
     "NAS-Bench-201 accuracy tables are not available in the agent workspace.\n"
@@ -78,9 +81,21 @@ OPS = [
     },
 ]
 
-for _env, _seed in _COMBOS:
-    OPS.append({
-        "op": "create",
-        "file": f"naslib/naslib/data/nb201_tables_{_env}_s{_seed}.json",
-        "content": json.dumps({"val": dgp.val_table(_env)}),
-    })
+# Materialize per-(dataset, seed) VALIDATION tables — only when the dgp is
+# reachable (host-side setup / Harbor inputgen). In the in-container budget
+# check the dgp is absent and OPS above already carries the template op that
+# budget_check.py reads.
+if dgp is not None:
+    _ENV = os.environ.get("ENV")
+    _SEED = os.environ.get("SEED")
+    if _ENV in dgp.DATASET_MAP and _SEED is not None:
+        # Harbor eval-time materialization: just the active run's table.
+        _COMBOS = [(_ENV, int(_SEED))]
+    else:
+        _COMBOS = [(_env, _seed) for _env in dgp.DATASET_MAP for _seed in _SEEDS]
+    for _env, _seed in _COMBOS:
+        OPS.append({
+            "op": "create",
+            "file": f"naslib/naslib/data/nb201_tables_{_env}_s{_seed}.json",
+            "content": json.dumps({"val": dgp.val_table(_env)}),
+        })
