@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,mae_medium,rmse_medium,nae_medium,mae_dense,rmse_dense,nae_dense,mae_superdense,rmse_superdense,nae_superdense,elapsed_medium,elapsed_dense,elapsed_superdense
+2026-07-05T21:20:00+00:00,baseline:none,true,42,59.497300,64.527500,0.597400,68.937700,75.485300,0.404400,55.436900,67.526900,0.231200,12.0,12.3,14.0
+2026-07-05T21:20:00+00:00,baseline:learned,true,42,37.064300,43.070400,0.372100,75.217100,82.437800,0.441300,66.530800,80.294100,0.277400,12.9,13.4,13.8

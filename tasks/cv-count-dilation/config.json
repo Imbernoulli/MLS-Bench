@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "dilated back-end (dilated) vs pooled back-end (pooled) is not cross-seed monotone on real ShanghaiTech crowd data: 4/6 cells fail at 450 iters, 3/6 still fail at 1500 iters (relocated, not resolved). See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

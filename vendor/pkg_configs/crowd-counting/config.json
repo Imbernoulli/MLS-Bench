@@ -1,0 +1,27 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir 'numpy<2' scipy pillow",
+    "python -c \"import torch, numpy, scipy, PIL; print('crowd-counting deps: torch', torch.__version__, 'numpy', numpy.__version__, 'scipy', scipy.__version__)\""
+  ],
+  "env": {
+    "COUNT_DATA_ROOT": "/data/crowd-counting",
+    "COUNT_ITERS": "450",
+    "PYTHONPATH": "/workspace/crowd-counting:${PYTHONPATH}",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "crowd_counting_blobs",
+      "host_path": "{data_root}/crowd-counting",
+      "container_path": "/data/crowd-counting",
+      "prepare": "vendor/data_scripts/crowd-counting/prepare_data.py",
+      "description": "REAL crowd photos (ShanghaiTech Crowd Counting Dataset, Zhang et al. CVPR 2016, the MCNN benchmark) bucketed into FOUR crowd-density scenes (medium/middense/dense/superdense; 120 train / 40 val 128x128x3 images each) by REAL annotated head count, with EXACT ground-truth counts + point annotations (count == number of annotated head points). Train images are drawn from a LOW count bucket and val images from a disjoint HIGHER count bucket (a disclosed count-extrapolation evaluation-protocol choice, not fabrication). Object count = integral of the (Gaussian-kernel) density map is exact. Used by the density-map crowd/object-counting cv-count-* tasks. Prepared by vendor/data_scripts/crowd-counting/prepare_data.py, which downloads the official ShanghaiTech zip (or reads it from a pre-staged --raw-dir) -- requires network access (or a cached raw-dir) the first time; deterministic thereafter."
+    }
+  ],
+  "use_cuda": true,
+  "requires_gpu": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace"
+}

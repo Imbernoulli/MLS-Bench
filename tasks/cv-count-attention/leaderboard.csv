@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,mae_medium,rmse_medium,nae_medium,mae_middense,rmse_middense,nae_middense,mae_dense,rmse_dense,nae_dense,elapsed_medium,elapsed_middense,elapsed_dense
+2026-07-05T21:20:00+00:00,baseline:none,true,42,49.198600,55.151600,0.494000,74.507900,79.958100,0.566100,66.230600,73.148900,0.388600,12.1,11.9,22.0
+2026-07-05T21:20:00+00:00,baseline:spatial,true,42,53.850700,59.329000,0.540700,75.384200,80.793300,0.572700,58.770400,66.375900,0.344800,12.5,12.8,12.5

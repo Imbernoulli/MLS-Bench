@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/count_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:30:00",
+      "mem": 16,
+      "package": "crowd-counting"
+    },
+    {
+      "cmd": "scripts/count_middense.sh",
+      "label": "middense",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:30:00",
+      "mem": 16,
+      "package": "crowd-counting"
+    },
+    {
+      "cmd": "scripts/count_dense.sh",
+      "label": "dense",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:30:00",
+      "mem": 16,
+      "package": "crowd-counting",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "density": {
+      "edit_ops": "edits/density.edit.py"
+    },
+    "scalar": {
+      "edit_ops": "edits/scalar.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "crowd-counting/solution/head.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 46,
+          "end": 59
+        }
+      ]
+    }
+  ]
+}

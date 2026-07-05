@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "BatchNorm (bn) vs no normalization (none) is not cross-seed monotone on real ShanghaiTech crowd data: 1/6 cells fail at 450 iters, 4/6 fail at 1500 iters (worsened, not resolved). See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

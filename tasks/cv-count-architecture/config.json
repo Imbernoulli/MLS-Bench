@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "backbone architecture (csrnet vs plain) is not cross-seed monotone on real ShanghaiTech crowd data: 5/6 cells fail at 450 iters, 4/6 still fail at 1500 iters (relocated, not resolved). See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

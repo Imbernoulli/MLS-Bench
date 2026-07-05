@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,mae_medium,rmse_medium,nae_medium,mae_middense,rmse_middense,nae_middense,mae_dense,rmse_dense,nae_dense,elapsed_medium,elapsed_middense,elapsed_dense
+2026-07-05T21:20:00+00:00,baseline:scalar,true,42,58.2806,62.8308,0.5851,68.1507,72.2346,0.5178,93.2756,97.3804,0.5472,29.4,33.9,33.1
+2026-07-05T21:20:00+00:00,baseline:density,true,42,35.5993,41.9032,0.3574,47.4239,52.9331,0.3603,68.2459,75.8328,0.4004,30.1,31.4,31.2

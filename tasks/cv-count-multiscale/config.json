@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "multi-scale context aggregation (context) vs single-scale context (single) is not cross-seed monotone on real ShanghaiTech crowd data: 3/6 cells fail at 450 iters, 5/6 still fail at 1500 iters (worsened, not resolved). See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}
