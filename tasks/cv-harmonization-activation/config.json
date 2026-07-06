@@ -1,0 +1,64 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/harmonize_mild.sh",
+      "label": "mild",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_strong.sh",
+      "label": "strong",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    }
+  ],
+  "baselines": {
+    "activation_identity": {
+      "edit_ops": "edits/activation_identity.edit.py"
+    },
+    "activation_relu": {
+      "edit_ops": "edits/activation_relu.edit.py"
+    },
+    "activation_gelu": {
+      "edit_ops": "edits/activation_gelu.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-harmonization/solution/activation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 16,
+          "end": 18
+        }
+      ]
+    }
+  ]
+}

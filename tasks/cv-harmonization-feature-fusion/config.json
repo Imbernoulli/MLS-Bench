@@ -1,0 +1,7 @@
+{
+  "_dropped": true,
+  "_reason": "U-Net skip connections (skip) vs no skips (noskip) is not cross-seed monotone on real iHarmony4 data: 4/6 cells fail at the package-default 500-iter budget, and a 2000-iter training-budget diagnostic still leaves 4/6 cells failing (mild relocates seed42->seed123, medium/seed123 persists unchanged). See DROPPED.md.",
+  "test_cmds": [],
+  "baselines": {},
+  "files": []
+}

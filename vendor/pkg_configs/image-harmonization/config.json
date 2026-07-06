@@ -1,0 +1,30 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir scipy 'numpy<2' pillow",
+    "apt-get update -qq && apt-get install -y -qq libgl1 libglib2.0-0 || true",
+    "cd /workspace/image-harmonization && python -c \"import torch, scipy, numpy, PIL; print('image-harmonization deps ok: torch', torch.__version__, 'scipy', scipy.__version__)\""
+  ],
+  "env": {
+    "HARMONY_DATA_ROOT": "/data/image-harmonization",
+    "PYTHONPATH": "/workspace/image-harmonization",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "image_harmonization_iharmony4",
+      "host_path": "{data_root}/image-harmonization",
+      "container_path": "/data/image-harmonization",
+      "prepare": "vendor/data_scripts/image-harmonization/prepare_data.py",
+      "description": "REAL (composite, real GT, foreground mask) triples from the iHarmony4 benchmark (Cong et al., DoveNet, CVPR 2020), resized to 64x64, for the image-harmonization tasks. Three settings = three REAL iHarmony4 sub-datasets, used as mild/medium/strong by measured foreground composite-vs-GT PSNR floor: mild=HCOCO (COCO-object composites, 2000 train/400 val), medium=Hday2night (day/night-swap composites, 200 train/80 val -- capped by the sub-dataset's small size), strong=HFlickr (Flickr composites, 2000 train/400 val). Each sub-dataset's official train/test id split is used verbatim (no leakage). Composites' foregrounds were colour-transferred by the iHarmony4 authors from real reference photos (not a synthetic knob); the un-shifted real photo is the EXACT harmonized ground truth."
+    }
+  ],
+  "host_data_prepare_requirements": [
+    "pillow"
+  ],
+  "use_cuda": true,
+  "requires_gpu": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace"
+}

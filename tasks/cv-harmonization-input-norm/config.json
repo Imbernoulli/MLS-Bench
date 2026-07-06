@@ -1,0 +1,61 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/harmonize_mild.sh",
+      "label": "mild",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_strong.sh",
+      "label": "strong",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    }
+  ],
+  "baselines": {
+    "inputnorm_none": {
+      "edit_ops": "edits/inputnorm_none.edit.py"
+    },
+    "inputnorm_bg_whiten": {
+      "edit_ops": "edits/inputnorm_bg_whiten.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-harmonization/solution/inputnorm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 21,
+          "end": 23
+        }
+      ]
+    }
+  ]
+}

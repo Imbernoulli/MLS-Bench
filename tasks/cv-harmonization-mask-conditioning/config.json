@@ -1,0 +1,64 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/harmonize_mild.sh",
+      "label": "mild",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_strong.sh",
+      "label": "strong",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    }
+  ],
+  "baselines": {
+    "maskcond_none": {
+      "edit_ops": "edits/maskcond_none.edit.py"
+    },
+    "maskcond_concat": {
+      "edit_ops": "edits/maskcond_concat.edit.py"
+    },
+    "maskcond_gated": {
+      "edit_ops": "edits/maskcond_gated.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-harmonization/solution/maskcond.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 24,
+          "end": 26
+        }
+      ]
+    }
+  ]
+}

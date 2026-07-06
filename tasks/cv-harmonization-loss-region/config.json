@@ -1,0 +1,64 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/harmonize_mild.sh",
+      "label": "mild",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_medium.sh",
+      "label": "medium",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    },
+    {
+      "cmd": "scripts/harmonize_strong.sh",
+      "label": "strong",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:40:00",
+      "mem": 32,
+      "package": "image-harmonization"
+    }
+  ],
+  "baselines": {
+    "loss_bg": {
+      "edit_ops": "edits/loss_bg.edit.py"
+    },
+    "loss_global": {
+      "edit_ops": "edits/loss_global.edit.py"
+    },
+    "loss_fg": {
+      "edit_ops": "edits/loss_fg.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-harmonization/solution/loss.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 19,
+          "end": 21
+        }
+      ]
+    }
+  ]
+}

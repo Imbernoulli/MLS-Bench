@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,fg_psnr_mild,fg_psnr_gain_mild,comp_fg_psnr_mild,fg_mse_mild,fg_ssim_mild,fg_psnr_medium,fg_psnr_gain_medium,comp_fg_psnr_medium,fg_mse_medium,fg_ssim_medium,fg_psnr_strong,fg_psnr_gain_strong,comp_fg_psnr_strong,fg_mse_strong,fg_ssim_strong,elapsed_mild,elapsed_medium,elapsed_strong
+2026-07-03T00:00:00+00:00,baseline:zero,true,42,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0
+2026-07-06T00:00:00+00:00,baseline:fusion_noskip,true,42,19.579500,4.562900,15.016600,0.013682,0.893500,17.109900,4.193000,12.916800,0.023506,0.854800,12.896400,1.770900,11.125500,0.061040,0.777700,8.4,8.5,23.6
+2026-07-06T00:00:00+00:00,baseline:fusion_skip,true,42,18.370900,3.354300,15.016600,0.016886,0.889100,18.961900,6.045000,12.916800,0.015620,0.883800,17.661900,6.536400,11.125500,0.020833,0.843000,11.3,8.6,8.5
