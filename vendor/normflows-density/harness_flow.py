@@ -62,6 +62,26 @@ def _require_float(value, *, label: str, low: float, high: float) -> float:
     return result
 
 
+def _append_canonical_recipe_layer(
+    flows, fb, *, family: str, dim: int, index: int, spline_bins: int = 8,
+) -> None:
+    """Append one frozen recipe transform and its paired mixing layer."""
+    if family == "affine":
+        flows.append(fb.affine_coupling_layer(dim, hidden=64, n_hidden=2))
+        flows.append(fb.swap_permute(dim))
+    elif family == "maf":
+        flows.append(fb.maf_layer(dim, hidden=64, num_blocks=2))
+        flows.append(fb.lu_permute(dim))
+    elif family == "spline":
+        flows.append(fb.spline_coupling_layer(
+            dim, hidden=64, num_bins=spline_bins, tail_bound=3.0,
+            reverse_mask=bool(index % 2),
+        ))
+        flows.append(fb.lu_permute(dim))
+    else:
+        raise ValueError(f"unknown canonical recipe family {family!r}")
+
+
 def _build_from_surface(solution: str, surface: str, dim: int):
     """Load exactly one task surface and build all remaining axes here."""
     import normflows as nf
@@ -87,18 +107,9 @@ def _build_from_surface(solution: str, surface: str, dim: int):
         n_transforms = 8
         n_permutations = 8
         for index in range(8):
-            if choice == "affine":
-                flows.append(fb.affine_coupling_layer(dim, hidden=64, n_hidden=2))
-                flows.append(fb.swap_permute(dim))
-            elif choice == "maf":
-                flows.append(fb.maf_layer(dim, hidden=64, num_blocks=2))
-                flows.append(fb.lu_permute(dim))
-            else:
-                flows.append(fb.spline_coupling_layer(
-                    dim, hidden=64, num_bins=8, tail_bound=3.0,
-                    reverse_mask=bool(index % 2),
-                ))
-                flows.append(fb.lu_permute(dim))
+            _append_canonical_recipe_layer(
+                flows, fb, family=choice, dim=dim, index=index, spline_bins=8,
+            )
     elif surface == "conditioner":
         choice = _require_choice(
             call("select_conditioner"), label="conditioner",
@@ -170,16 +181,12 @@ def _build_from_surface(solution: str, surface: str, dim: int):
         n_permutations = 8
         depth = 8
         for index in range(depth):
-            if choice == "affine":
-                flows.append(fb.affine_coupling_layer(dim, hidden=64, n_hidden=2))
-                flows.append(fb.swap_permute(dim))
-            else:
-                bins = 4 if choice == "spline4" else 8
-                flows.append(fb.spline_coupling_layer(
-                    dim, hidden=64, num_bins=bins, tail_bound=3.0,
-                    reverse_mask=bool(index % 2),
-                ))
-                flows.append(fb.lu_permute(dim))
+            family = "affine" if choice == "affine" else "spline"
+            bins = 4 if choice == "spline4" else 8
+            _append_canonical_recipe_layer(
+                flows, fb, family=family, dim=dim, index=index,
+                spline_bins=bins,
+            )
     elif surface == "depth":
         depth = _require_int(call("select_depth"), label="flow depth", low=1, high=32)
         choice_id = str(depth)

@@ -15,7 +15,7 @@ from mlsbench.agent.parsers import OutputParser, ParseResult
 PROTOCOL_VERSION = "flow-2d-community-20k-literal-ast-v3"
 EXPECTED_STEPS = [*range(0, 20_000, 200), 19_999]
 TASK_PROTOCOLS = {
-    "flow-arch-family": ("architecture", {"pinwheel"}),
+    "flow-arch-family": ("architecture", {"checkerboard"}),
     "flow-autoregressive-coupling": ("conditioner", {"8gaussians"}),
     "flow-base-distribution": ("base_distribution", {"8gaussians"}),
     "flow-batch-size": ("batch_size", {"checkerboard"}),

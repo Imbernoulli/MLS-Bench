@@ -156,7 +156,8 @@ render_complete = (
 )
 summary = (
     "NORMFLOWS_STATIC_COMPLETE siblings=10 valid=10 destructive=20 "
-    "pending_zero=9 anchor_calibration=pass global_failclosed=pass render=10/10\n"
+    "scorable=10 shared_dataset_calibration=pass anchor_provenance=pass "
+    "global_failclosed=pass render=10/10\n"
 )
 finished = datetime.now(timezone.utc).isoformat()
 run.joinpath("summary").write_text(summary)

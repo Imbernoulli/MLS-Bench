@@ -52,6 +52,32 @@
     "normflows-density/_flow_data/moons_seed42.npz",
     "normflows-density/_flow_data/pinwheel_seed42.npz"
   ],
-  "calibration_status": "pending_community_20k_reanchor",
-  "calibration_protocol": "flow-2d-community-20k-literal-ast-v3"
+  "calibration_status": "shared_dataset_quality_anchors_20260711",
+  "calibration_protocol": "flow-2d-community-20k-literal-ast-v3",
+  "calibration_dataset": {
+    "name": "8gaussians",
+    "train_sha256": "54ec6fc49522ccea8526bd390037403034443fad7d484947ba3863538a51f332",
+    "test_sha256": "78f79e5b8e87cf865e38c46d303cf6ee99d4dddb7608d575e3abb57f514bf4ed"
+  },
+  "calibration_fixed_workload": {
+    "seed": 42,
+    "optimizer": "Adam",
+    "optimizer_steps": 20000,
+    "train_count": 30000,
+    "test_count": 30000,
+    "metric": "exact_nll"
+  },
+  "calibration_reuse_scope": "same_dataset_same_protocol_absolute_exact_nll",
+  "calibration_source": {
+    "task": "flow-coupling-transform",
+    "evidence_repository_path": "tasks/flow-coupling-transform/calibration_evidence.json",
+    "evidence_sha256": "73429c480ad6dc0e8f3fb147668e6195fb3d0fcc173079814f9868b8c18d41ef",
+    "source_commit": "cf0202decf342200005fa40dbc00726c23ed45db",
+    "task_checksum": "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546",
+    "runs": [
+      {"role": "strong_anchor", "task_db_id": 96207, "container_db_id": 4909807, "agent": "oracle"},
+      {"role": "weak_anchor", "task_db_id": 96208, "container_db_id": 4909808, "agent": "nop"}
+    ],
+    "disclaimer": "These measured rows define an 8gaussians exact-NLL quality scale; they are not task-specific base-distribution measurements."
+  }
 }

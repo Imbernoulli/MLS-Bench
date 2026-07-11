@@ -12,6 +12,8 @@ Fresh endpoints measured on the same immutable source and data checksums:
     8gaussians: affine=2.386391, spline=2.373422
 The spline endpoint maps to 0.5 and the native affine endpoint maps to 0.1
 for every setting. Failed or partial anchor rows are not calibration input.
+The source evidence file SHA-256 is
+``73429c480ad6dc0e8f3fb147668e6195fb3d0fcc173079814f9868b8c18d41ef``.
 """
 from mlsbench.scoring.dsl import *
 

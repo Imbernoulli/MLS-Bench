@@ -20,14 +20,14 @@ ROOT = Path(__file__).resolve().parents[1]
 TASKS = {
     "flow-arch-family": {
         "surface": "architecture",
-        "target": "pinwheel",
+        "target": "checkerboard",
         "choice": "maf",
         "batch_size": 512,
         "lr": 5e-4,
         "transforms": 8,
         "permutations": 8,
-        "metric": "nll_pinwheel",
-        "nll": -0.25,
+        "metric": "nll_checkerboard",
+        "nll": 3.125589,
     },
     "flow-autoregressive-coupling": {
         "surface": "conditioner",
@@ -38,7 +38,7 @@ TASKS = {
         "transforms": 8,
         "permutations": 8,
         "metric": "nll_8gaussians",
-        "nll": 2.4,
+        "nll": 2.386391,
     },
     "flow-base-distribution": {
         "surface": "base_distribution",
@@ -49,7 +49,7 @@ TASKS = {
         "transforms": 1,
         "permutations": 1,
         "metric": "nll_8gaussians",
-        "nll": 2.9,
+        "nll": 2.386391,
     },
     "flow-batch-size": {
         "surface": "batch_size",
@@ -60,7 +60,7 @@ TASKS = {
         "transforms": 8,
         "permutations": 8,
         "metric": "nll_checkerboard",
-        "nll": 3.1,
+        "nll": 3.125589,
     },
     "flow-conditioner-width": {
         "surface": "conditioner_width",
@@ -71,7 +71,7 @@ TASKS = {
         "transforms": 8,
         "permutations": 8,
         "metric": "nll_checkerboard",
-        "nll": 3.3,
+        "nll": 3.125589,
     },
     "flow-coupling-transform": {
         "surface": "coupling_transform",
@@ -93,7 +93,7 @@ TASKS = {
         "transforms": 2,
         "permutations": 2,
         "metric": "nll_moons",
-        "nll": 1.4,
+        "nll": 1.030755,
     },
     "flow-learning-rate": {
         "surface": "learning_rate",
@@ -104,7 +104,7 @@ TASKS = {
         "transforms": 8,
         "permutations": 8,
         "metric": "nll_moons",
-        "nll": 1.6,
+        "nll": 1.030755,
     },
     "flow-masking-pattern": {
         "surface": "masking_pattern",
@@ -115,7 +115,7 @@ TASKS = {
         "transforms": 8,
         "permutations": 0,
         "metric": "nll_moons",
-        "nll": 1.5,
+        "nll": 1.030755,
     },
     "flow-spline-bins": {
         "surface": "spline_bins",
@@ -126,7 +126,7 @@ TASKS = {
         "transforms": 8,
         "permutations": 8,
         "metric": "nll_checkerboard",
-        "nll": 3.2,
+        "nll": 3.125589,
     },
 }
 DATA_SHA256 = {
@@ -147,8 +147,26 @@ DATA_SHA256 = {
         "78f79e5b8e87cf865e38c46d303cf6ee99d4dddb7608d575e3abb57f514bf4ed",
     ),
 }
-PENDING = set(TASKS) - {"flow-coupling-transform"}
+SHARED_CALIBRATION = set(TASKS) - {"flow-coupling-transform"}
 PROTOCOL = "flow-2d-community-20k-literal-ast-v3"
+EVIDENCE_SHA256 = "73429c480ad6dc0e8f3fb147668e6195fb3d0fcc173079814f9868b8c18d41ef"
+QUALITY_ANCHORS = {
+    "checkerboard": {
+        "weak": 3.125589,
+        "strong": 2.954646,
+        "scale": 0.077799512058635861,
+    },
+    "moons": {
+        "weak": 1.030755,
+        "strong": 1.025927,
+        "scale": 0.00219731749307721,
+    },
+    "8gaussians": {
+        "weak": 2.386391,
+        "strong": 2.373422,
+        "scale": 0.0059024462650617299,
+    },
+}
 
 
 def _load_parser(task_name: str):
@@ -258,13 +276,16 @@ def test_additional_failure_count_and_identity_gates() -> None:
     assert all(parser.parse(target, output).metrics == {} for output in mutations)
 
 
-@pytest.mark.parametrize("task_name", sorted(PENDING))
-def test_uncalibrated_siblings_are_header_only_and_exact_zero(task_name: str) -> None:
+@pytest.mark.parametrize("task_name", sorted(SHARED_CALIBRATION))
+def test_shared_dataset_calibration_is_active_without_fabricated_rows(
+    task_name: str,
+) -> None:
     task_dir = ROOT / "tasks" / task_name
     assert len(task_dir.joinpath("leaderboard.csv").read_text().splitlines()) == 1
     score_source = task_dir.joinpath("score_spec.py").read_text()
-    assert "const(" not in score_source
-    assert "bl_best(" in score_source
+    assert "const(" in score_source
+    assert "bl_best(" not in score_source
+    assert EVIDENCE_SHA256 in score_source
 
     spec = load_expanded_spec(task_dir, BaselineAnchors(task_dir))
     assert spec is not None
@@ -274,10 +295,25 @@ def test_uncalibrated_siblings_are_header_only_and_exact_zero(task_name: str) ->
         {case["metric"]: case["nll"]},
         BaselineAnchors(task_dir),
     )
-    assert score == 0.0
-    assert not valid
-    assert settings and settings[0].invalid_reason is not None
-    assert "missing_floor" in settings[0].invalid_reason
+    assert valid and 0.0 < score < 1.0
+    assert settings and settings[0].invalid_reason is None
+
+    for invalid_record in ({}, {case["metric"]: math.nan}, {case["metric"]: math.inf}):
+        invalid_score, invalid_settings, invalid = score_record_details(
+            spec, invalid_record, BaselineAnchors(task_dir),
+        )
+        assert invalid_score == 0.0
+        assert not invalid
+        assert invalid_settings and invalid_settings[0].invalid_reason is not None
+
+    failed_metrics = _load_parser(task_name).parse(
+        case["target"], "[COMMAND FAILED exit=7]\n" + _proof(task_name),
+    ).metrics
+    assert failed_metrics == {}
+    failed_score, _failed_settings, failed_valid = score_record_details(
+        spec, failed_metrics, BaselineAnchors(task_dir),
+    )
+    assert failed_score == 0.0 and not failed_valid
 
 
 def test_representative_fresh_anchors_remain_calibrated() -> None:
@@ -302,6 +338,63 @@ def test_representative_fresh_anchors_remain_calibrated() -> None:
     assert strong_score == pytest.approx(0.5, abs=2e-12)
 
 
+@pytest.mark.parametrize("task_name", sorted(TASKS))
+def test_same_dataset_quality_endpoints_map_consistently(task_name: str) -> None:
+    task_dir = ROOT / "tasks" / task_name
+    anchors = BaselineAnchors(task_dir)
+    spec = load_expanded_spec(task_dir, anchors)
+    assert spec is not None
+    if task_name == "flow-coupling-transform":
+        weak = {f"nll_{target}": values["weak"] for target, values in QUALITY_ANCHORS.items()}
+        strong = {
+            f"nll_{target}": values["strong"]
+            for target, values in QUALITY_ANCHORS.items()
+        }
+    else:
+        case = TASKS[task_name]
+        values = QUALITY_ANCHORS[case["target"]]
+        weak = {case["metric"]: values["weak"]}
+        strong = {case["metric"]: values["strong"]}
+    weak_score, _weak_settings, weak_valid = score_record_details(spec, weak, anchors)
+    strong_score, _strong_settings, strong_valid = score_record_details(
+        spec, strong, anchors,
+    )
+    assert weak_valid and strong_valid
+    assert weak_score == pytest.approx(0.1, abs=2e-12)
+    assert strong_score == pytest.approx(0.5, abs=2e-12)
+
+
+@pytest.mark.parametrize("task_name", sorted(TASKS))
+def test_all_siblings_have_finite_success_and_exact_zero_invalid_scores(
+    task_name: str,
+) -> None:
+    task_dir = ROOT / "tasks" / task_name
+    anchors = BaselineAnchors(task_dir)
+    spec = load_expanded_spec(task_dir, anchors)
+    assert spec is not None
+    if task_name == "flow-coupling-transform":
+        valid_record = {
+            f"nll_{target}": values["weak"]
+            for target, values in QUALITY_ANCHORS.items()
+        }
+    else:
+        case = TASKS[task_name]
+        parsed = _load_parser(task_name).parse(case["target"], _proof(task_name))
+        valid_record = parsed.metrics
+    score, settings, valid = score_record_details(spec, valid_record, anchors)
+    assert valid and math.isfinite(score) and 0.0 < score < 1.0
+    assert settings and all(setting.invalid_reason is None for setting in settings)
+
+    for invalid_record in ({}, {next(iter(valid_record)): math.nan}):
+        invalid_score, invalid_settings, invalid = score_record_details(
+            spec, invalid_record, anchors,
+        )
+        assert invalid_score == 0.0 and not invalid
+        assert invalid_settings and any(
+            setting.invalid_reason is not None for setting in invalid_settings
+        )
+
+
 def test_static_protocol_and_question_quality() -> None:
     headings = []
     parser_source = (ROOT / "tasks" / "flow-coupling-transform" / "parser.py").read_bytes()
@@ -317,20 +410,70 @@ def test_static_protocol_and_question_quality() -> None:
     for task_name, case in TASKS.items():
         task_dir = ROOT / "tasks" / task_name
         config = json.loads(task_dir.joinpath("config.json").read_text())
+        assert EVIDENCE_SHA256 in task_dir.joinpath("score_spec.py").read_text()
         assert config["calibration_protocol"] == PROTOCOL
         assert config["seeds"] == [42]
         assert config["allow_create"] is False
         assert config["rigorous_codebase"] is True
         assert set(config["verifier_only_package_files"]) == verifier_package_files
         assert task_dir.joinpath("parser.py").read_bytes() == parser_source
-        if task_name in PENDING:
-            assert config["calibration_status"] == "pending_community_20k_reanchor"
-            assert not any(key.startswith("calibration_representative_") for key in config)
-        else:
+        if task_name == "flow-coupling-transform":
             assert config["calibration_status"] == "fresh_community_20k_anchors_20260711"
             assert config["calibration_representative_steps"] == 20_000
             assert config["calibration_representative_train_count"] == 30_000
             assert config["calibration_representative_test_count"] == 30_000
+        else:
+            assert config["calibration_status"] == (
+                "shared_dataset_quality_anchors_20260711"
+            )
+            train_sha, test_sha = DATA_SHA256[case["target"]]
+            assert config["calibration_dataset"] == {
+                "name": case["target"],
+                "train_sha256": train_sha,
+                "test_sha256": test_sha,
+            }
+            assert config["calibration_fixed_workload"] == {
+                "seed": 42,
+                "optimizer": "Adam",
+                "optimizer_steps": 20_000,
+                "train_count": 30_000,
+                "test_count": 30_000,
+                "metric": "exact_nll",
+            }
+            source = config["calibration_source"]
+            assert source["task"] == "flow-coupling-transform"
+            assert source["evidence_repository_path"] == (
+                "tasks/flow-coupling-transform/calibration_evidence.json"
+            )
+            assert source["evidence_sha256"] == EVIDENCE_SHA256
+            assert source["source_commit"] == (
+                "cf0202decf342200005fa40dbc00726c23ed45db"
+            )
+            assert source["task_checksum"] == (
+                "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546"
+            )
+            assert [
+                (run["role"], run["task_db_id"], run["container_db_id"], run["agent"])
+                for run in source["runs"]
+            ] == [
+                ("strong_anchor", 96_207, 4_909_807, "oracle"),
+                ("weak_anchor", 96_208, 4_909_808, "nop"),
+            ]
+            evidence_path = ROOT / source["evidence_repository_path"]
+            assert hashlib.sha256(evidence_path.read_bytes()).hexdigest() == EVIDENCE_SHA256
+            assert json.loads(evidence_path.read_text())["task_name"] == (
+                "flow-coupling-transform"
+            )
+            assert "task-specific" in source["disclaimer"]
+            assert "not" in source["disclaimer"]
+            if task_name == "flow-arch-family":
+                assert config["calibration_reuse_scope"] == (
+                    "same_dataset_same_protocol_identical_affine_spline_recipes"
+                )
+            else:
+                assert config["calibration_reuse_scope"] == (
+                    "same_dataset_same_protocol_absolute_exact_nll"
+                )
 
         labels = {entry["label"] for entry in config["test_cmds"]}
         expected_labels = {"checkerboard", "moons", "8gaussians"} if (
@@ -366,6 +509,20 @@ def test_static_protocol_and_question_quality() -> None:
     assert "eight between-coupling permutation" in coupling_description
     assert "16 total" in coupling_description
     assert "16 coupling" not in coupling_description
+
+
+def test_architecture_checkerboard_anchors_share_the_frozen_recipe_builder() -> None:
+    source = (ROOT / "vendor" / "normflows-density" / "harness_flow.py").read_text()
+    assert "def _append_canonical_recipe_layer(" in source
+    assert source.count("_append_canonical_recipe_layer(") == 3
+    assert 'family = "affine" if choice == "affine" else "spline"' in source
+    arch_config = json.loads(
+        (ROOT / "tasks" / "flow-arch-family" / "config.json").read_text()
+    )
+    assert [entry["label"] for entry in arch_config["test_cmds"]] == ["checkerboard"]
+    arch_script = ROOT / "tasks" / "flow-arch-family" / "scripts" / "checkerboard.sh"
+    assert "--target checkerboard" in arch_script.read_text()
+    assert not (ROOT / "tasks" / "flow-arch-family" / "scripts" / "pinwheel.sh").exists()
 
 
 def test_literal_custom_templates_and_edit_ranges() -> None:
@@ -638,4 +795,6 @@ def test_one_pinned_repository_image_and_host_only_dgp() -> None:
     assert '| tee "${RUN}/summary"' not in worker
     assert 'run.joinpath("FINISHED").write_text' in worker
     assert 'run.joinpath("SUCCESS").write_text' in worker
+    assert "scorable=10 shared_dataset_calibration=pass" in worker
+    assert "pending_zero" not in worker
     assert worker.rstrip().endswith("finish 0")
