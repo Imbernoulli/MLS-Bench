@@ -44,10 +44,29 @@ _FAILURE_MARKER_RE = re.compile(
     r")\b"
 )
 
+_STANDARD_FAILURE_MARKER_RES = (
+    re.compile(
+        r"(?i)\b((?:verification|evaluation|training)\s+(?:failed|failure))\b"
+    ),
+    re.compile(r"(?m)^\s*(Traceback\s+\(most recent call last\):)"),
+    re.compile(
+        r"(?m)^\s*("
+        r"(?:(?:[A-Za-z_][A-Za-z0-9_]*)\.)*"
+        r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)"
+        r")\s*:"
+    ),
+)
+
 
 def _failure_marker(raw_output: str) -> str | None:
     match = _FAILURE_MARKER_RE.search(raw_output)
-    return match.group(1) if match else None
+    if match:
+        return match.group(1)
+    for pattern in _STANDARD_FAILURE_MARKER_RES:
+        match = pattern.search(raw_output)
+        if match:
+            return match.group(1)
+    return None
 
 
 # --------------------------------------------------------------------------- #

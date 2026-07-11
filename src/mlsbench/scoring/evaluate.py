@@ -33,7 +33,6 @@ from mlsbench.scoring.spec import (
     validate_score_spec,
 )
 
-GMEAN_EPS = 0.01
 SHORT_ELAPSED_MEDIAN_RATIO = 0.5
 HIGH_NEAR_WORST_FRAC = 0.05
 LOW_BOUND_ATOL = 1e-9
@@ -557,14 +556,22 @@ def _score_setting(
     )
 
 
-def _gmean(values: list[float], eps: float = GMEAN_EPS) -> float:
-    """Geometric mean with epsilon floor to avoid zero-collapse."""
+def _gmean(values: list[float]) -> float:
+    """Return the true geometric mean, failing closed on invalid inputs."""
     if not values:
         return 0.0
-    if all(v <= 0.0 for v in values):
-        return 0.0
-    log_sum = sum(math.log(max(v, eps)) for v in values)
-    return math.exp(log_sum / len(values))
+    numeric: list[float] = []
+    for value in values:
+        if isinstance(value, bool):
+            return 0.0
+        try:
+            score = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return 0.0
+        if not math.isfinite(score) or score <= 0.0:
+            return 0.0
+        numeric.append(score)
+    return math.exp(math.fsum(math.log(score) for score in numeric) / len(numeric))
 
 
 # ---------------------------------------------------------------------------

@@ -184,6 +184,22 @@ def test_metric_aggregation_rejects_all_nan_values():
     assert mean == {}
 
 
+def test_geometric_mean_does_not_lift_a_zero_setting_with_epsilon():
+    from mlsbench.scoring.evaluate import _gmean
+
+    assert _gmean([0.99, 0.0, 0.99]) == 0.0
+
+
+@pytest.mark.parametrize(
+    "invalid_value",
+    [float("nan"), float("inf"), float("-inf"), -0.1, "not-a-number"],
+)
+def test_geometric_mean_rejects_invalid_values(invalid_value):
+    from mlsbench.scoring.evaluate import _gmean
+
+    assert _gmean([0.99, invalid_value]) == 0.0
+
+
 @pytest.mark.parametrize(
     "metrics",
     [
@@ -976,6 +992,48 @@ def test_validate_eval_summary_rejects_surface_error_marker(tmp_path: Path):
 
 
 @pytest.mark.parametrize(
+    "failure_marker",
+    [
+        "verification failed",
+        "training failed",
+        "evaluation failure",
+        "Traceback (most recent call last):",
+        "RuntimeError: boom",
+    ],
+)
+def test_validate_eval_summary_rejects_standard_failure_markers(
+    tmp_path: Path,
+    failure_marker: str,
+):
+    score_task = _load_score_task()
+    log = tmp_path / "eval.log"
+    log.write_text(f"{failure_marker}\nacc=0.99\n")
+    config = {
+        "test_cmds": [{"cmd": "scripts/eval.sh", "label": "eval"}],
+        "seeds": [42],
+    }
+    summary = [{
+        "label": "eval",
+        "logs": [{"seed": 42, "rc": 0, "log": str(log)}],
+    }]
+
+    error = score_task._validate_eval_summary(summary, config)
+
+    assert error is not None
+    assert "harness failure marker" in error
+
+
+@pytest.mark.parametrize(
+    "diagnostic",
+    ["failed_samples=0", "failure_rate=0", "RuntimeError handled and recovered"],
+)
+def test_failure_marker_does_not_match_diagnostic_identifiers(diagnostic: str):
+    score_task = _load_score_task()
+
+    assert score_task._failure_marker(f"{diagnostic}\nacc=0.99\n") is None
+
+
+@pytest.mark.parametrize(
     ("line", "marker"),
     [
         ("TRAIN_ERROR -> reporting untrained model", "TRAIN_ERROR"),
@@ -1073,6 +1131,66 @@ def _write_score_fixture(tmp_path: Path, a_log: str, b_log: str) -> tuple[Path, 
         })
     (out_dir / "eval_summary.json").write_text(json.dumps(logs))
     return task_meta, out_dir
+
+
+def test_score_rejects_pointcloud_metrics_after_standard_failure_trace(
+    tmp_path: Path,
+):
+    score_task = _load_score_task()
+    task_meta = tmp_path / "meta"
+    out_dir = tmp_path / "out"
+    task_meta.mkdir()
+    out_dir.mkdir()
+    (task_meta / "config.json").write_text(json.dumps({
+        "test_cmds": [{"cmd": "scripts/train_clean.sh", "label": "clean"}],
+        "seeds": [42],
+    }))
+    (task_meta / "parser.py").write_text(
+        "import re\n"
+        "from mlsbench.agent.parsers import OutputParser, ParseResult\n"
+        "class Parser(OutputParser):\n"
+        "    def parse(self, cmd_label, raw_output):\n"
+        "        metrics = {}\n"
+        "        match = re.search(r'PN2_METRICS .*test_acc=([0-9.]+)', raw_output)\n"
+        "        if match:\n"
+        "            metrics[f'test_acc_{cmd_label}'] = float(match.group(1))\n"
+        "        return ParseResult(feedback=raw_output, metrics=metrics)\n"
+    )
+    (task_meta / "score_spec.py").write_text(
+        "from mlsbench.scoring.dsl import *\n"
+        "term('acc', col('test_acc_clean').sigmoid(ref=const(0.5), scale=0.01))\n"
+        "setting('clean', weighted_mean(('acc', 1.0)))\n"
+        "task(gmean('clean'))\n"
+    )
+    (task_meta / "leaderboard.csv").write_text(
+        "timestamp,model,is_final,seed,test_acc_clean\n"
+    )
+    log = out_dir / "clean.log"
+    log.write_text(
+        "verification failed\n"
+        "Traceback (most recent call last):\n"
+        "RuntimeError: boom\n"
+        "PN2_METRICS mode=group regime=clean test_acc=0.99 "
+        "class_acc=0.98 n_train=9843 n_test=2468\n"
+    )
+    (out_dir / "eval_summary.json").write_text(json.dumps([{
+        "label": "clean",
+        "logs": [{"seed": 42, "rc": 0, "log": str(log)}],
+    }]))
+    reward = out_dir / "reward.txt"
+    reward.write_text("0.99\n")
+
+    rc = score_task.cmd_score(argparse.Namespace(
+        task_meta=str(task_meta),
+        out_dir=str(out_dir),
+        reward_out=str(reward),
+    ))
+
+    assert rc == 0
+    assert reward.read_text().strip() == "0"
+    assert "harness failure marker" in (out_dir / "score_error.txt").read_text()
+    assert not (out_dir / "metrics.json").exists()
+    assert not (out_dir / "verification_result.json").exists()
 
 
 def test_score_rejects_cross_setting_metric_fill(tmp_path: Path):
