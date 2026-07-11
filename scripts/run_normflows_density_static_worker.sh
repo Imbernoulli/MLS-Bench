@@ -18,14 +18,14 @@ exec > >(tee worker.log) 2>&1
 finish() {
     local rc="${1:-$?}"
     trap - EXIT HUP INT TERM
-    date -Iseconds > FINISHED
-    printf '%s\n' "${rc}" > rc
+    date -Iseconds > "${RUN}/FINISHED"
+    printf '%s\n' "${rc}" > "${RUN}/rc"
     if [[ ${rc} -eq 0 ]]; then
-        printf 'success\n' > status
-        date -Iseconds > SUCCESS
+        printf 'success\n' > "${RUN}/status"
+        date -Iseconds > "${RUN}/SUCCESS"
     else
-        printf 'failed\n' > status
-        rm -f SUCCESS
+        printf 'failed\n' > "${RUN}/status"
+        rm -f "${RUN}/SUCCESS"
     fi
     exit "${rc}"
 }
@@ -34,9 +34,25 @@ trap 'exit 129' HUP
 trap 'exit 130' INT
 trap 'exit 143' TERM
 
-date -Iseconds > STARTED
-printf 'running\n' > status
-rm -f SUCCESS
+run_logged() {
+    local log_path=$1
+    shift
+    set +e
+    "$@" 2>&1 | tee "${log_path}"
+    local -a stage_status=("${PIPESTATUS[@]}")
+    set -e
+    local rc=${stage_status[0]}
+    if [[ ${rc} -eq 0 && ${stage_status[1]} -ne 0 ]]; then
+        rc=${stage_status[1]}
+    fi
+    if [[ ${rc} -ne 0 ]]; then
+        finish "${rc}"
+    fi
+}
+
+date -Iseconds > "${RUN}/STARTED"
+printf 'running\n' > "${RUN}/status"
+rm -f "${RUN}/SUCCESS"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader > gpu-inventory.log
 allocated_gpu_count=$(wc -l < gpu-inventory.log)
@@ -49,16 +65,15 @@ printf 'allocated=%s visible=1\n' "${allocated_gpu_count}" > gpu-usage.log
 cd "${REPO}" || exit 111
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH="${REPO}/src"
-python -m pytest -q -p no:cacheprovider \
+# The canonical shared core consolidates the former split scoring tests here.
+run_logged "${RUN}/pytest.log" python -m pytest -q -p no:cacheprovider \
     tests/test_normflows_density_strict.py \
-    tests/test_scoring_fail_closed.py \
-    tests/test_scoring_no_implicit_fallback.py \
-    tests/test_workspace_tools_fail_closed.py \
-    2>&1 | tee "${RUN}/pytest.log"
+    tests/test_scoring_shared_contract.py \
+    tests/test_workspace_tools_fail_closed.py
 
 rendered=${RUN}/rendered
 export PYTHONPATH="${ADAPTER_REPO}/harbor_adapter/src:${ADAPTER_REPO}/src"
-python -m mls_bench.main \
+run_logged "${RUN}/render.log" python -m mls_bench.main \
     --mls-bench-root "${REPO}" \
     --output-dir "${rendered}" \
     --task-ids \
@@ -75,9 +90,9 @@ python -m mls_bench.main \
     --overwrite \
     --mangrove \
     --gpu-backend h20 \
-    --h20-serial \
-    2>&1 | tee "${RUN}/render.log"
+    --h20-serial
 
+set +e
 python - "${rendered}" "${RUN}" <<'PY' | tee "${RUN}/render-audit.log"
 from __future__ import annotations
 
@@ -152,5 +167,14 @@ run.joinpath("SUCCESS").write_text(f"{finished}\n")
 print(render_complete)
 print(summary, end="")
 PY
+audit_status=("${PIPESTATUS[@]}")
+set -e
+audit_rc=${audit_status[0]}
+if [[ ${audit_rc} -eq 0 && ${audit_status[1]} -ne 0 ]]; then
+    audit_rc=${audit_status[1]}
+fi
+if [[ ${audit_rc} -ne 0 ]]; then
+    finish "${audit_rc}"
+fi
 
 finish 0
