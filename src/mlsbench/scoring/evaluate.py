@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import csv
 import fnmatch
+import json
 import math
-import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -15,6 +15,7 @@ from mlsbench.scoring.anchors import BaselineAnchors
 from mlsbench.scoring.primitives import (
     apply_direction_and_transform,
     bounded_power,
+    logistic_score,
     penalty_lower,
     penalty_upper,
     sigmoid_score,
@@ -36,8 +37,6 @@ GMEAN_EPS = 0.01
 SHORT_ELAPSED_MEDIAN_RATIO = 0.5
 HIGH_NEAR_WORST_FRAC = 0.05
 LOW_BOUND_ATOL = 1e-9
-PATHOLOGICAL_BOUNDED_POWER_EDGE = 0.05
-_PATHOLOGICAL_BOUNDED_POWER_WARNED: set[tuple[str, str]] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +51,8 @@ class TermResult:
     transformed: float
     score: float
     params: dict = field(default_factory=dict)
+    valid: bool = True
+    invalid_reason: str | None = None
 
 
 @dataclass
@@ -128,7 +129,7 @@ def _expand_quick_spec(
         cfg = json.loads(cfg_path.read_text())
         for tc in cfg.get("test_cmds", []):
             lbl = tc.get("label", "")
-            if lbl and not tc.get("hidden", False):
+            if lbl:
                 labels.append(lbl)
 
     spec = TaskScoreSpec(task_agg=task_agg)
@@ -196,13 +197,6 @@ def _expand_quick_spec(
 # Single-term scoring
 # ---------------------------------------------------------------------------
 
-def _task_name_from_anchors(anchors: BaselineAnchors) -> str:
-    task_dir = getattr(anchors, "_task_dir", None)
-    if task_dir is None:
-        return "<unknown>"
-    return Path(task_dir).name
-
-
 def _bounded_power_ref_ratio(floor: float, bound: float, ref: float) -> float | None:
     """Return the standard bounded_power reference ratio, if applicable.
 
@@ -218,35 +212,6 @@ def _bounded_power_ref_ratio(floor: float, bound: float, ref: float) -> float | 
         return None
     return (ref - floor) / denom
 
-
-def _is_pathological_bounded_power_ref(r_ref: float | None) -> bool:
-    if r_ref is None:
-        return False
-    if r_ref <= 0.0 or r_ref >= 1.0:
-        return False
-    return (
-        r_ref < PATHOLOGICAL_BOUNDED_POWER_EDGE
-        or r_ref > 1.0 - PATHOLOGICAL_BOUNDED_POWER_EDGE
-    )
-
-
-def _warn_pathological_bounded_power(
-    anchors: BaselineAnchors,
-    term_name: str,
-    r_ref: float,
-) -> None:
-    task_name = _task_name_from_anchors(anchors)
-    key = (task_name, term_name)
-    if key in _PATHOLOGICAL_BOUNDED_POWER_WARNED:
-        return
-    _PATHOLOGICAL_BOUNDED_POWER_WARNED.add(key)
-    warnings.warn(
-        f"Task {task_name}, term {term_name}: r_ref={r_ref:.4f} is pathological "
-        "for bounded_power; falling back to sigmoid_score calibration so the "
-        "reference baseline maps to ref_score.",
-        stacklevel=2,
-    )
-
 def _score_term(
     tspec: TermSpec,
     raw_value: float | None,
@@ -254,86 +219,123 @@ def _score_term(
     anchors: BaselineAnchors,
 ) -> TermResult:
     """Score a single term given its raw metric value."""
-    if raw_value is None or (isinstance(raw_value, float) and math.isnan(raw_value)):
+    def invalid(raw: float, transformed: float, reason: str) -> TermResult:
         return TermResult(
-            name=tspec.name, metric=tspec.metric,
-            raw=float("nan"), transformed=float("nan"), score=0.0,
-            params={"reason": "missing_value"},
+            name=tspec.name,
+            metric=tspec.metric,
+            raw=raw,
+            transformed=transformed,
+            score=0.0,
+            params={"reason": reason},
+            valid=False,
+            invalid_reason=reason,
         )
 
+    def transform_value(value: float, field: str) -> tuple[float | None, str | None]:
+        try:
+            transformed = apply_direction_and_transform(
+                float(value), tspec.direction, tspec.transform
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            return None, f"invalid_{field}_transform:{exc}"
+        if not math.isfinite(transformed):
+            return None, f"nonfinite_{field}_transform"
+        return transformed, None
+
+    if _is_missing_value(raw_value):
+        return invalid(float("nan"), float("nan"), "missing_value")
+
     raw_f = float(raw_value)
-
-    # Apply direction + transform to raw value
-    y = apply_direction_and_transform(raw_f, tspec.direction, tspec.transform)
-
-    # Compute floor in transformed space
-    if floor_raw is not None:
-        y_floor = apply_direction_and_transform(float(floor_raw), tspec.direction, tspec.transform)
-    else:
-        y_floor = y  # no floor info; score will be 0
+    y, transform_error = transform_value(raw_f, "value")
+    if transform_error is not None or y is None:
+        return invalid(raw_f, float("nan"), transform_error or "invalid_value_transform")
 
     if tspec.role == "constraint":
-        # Constraint terms produce penalty, not score
         target = tspec.constraint_target
-        if target is None:
-            return TermResult(
-                name=tspec.name, metric=tspec.metric,
-                raw=raw_f, transformed=y, score=1.0,
-                params={"reason": "no_constraint_target"},
-            )
+        if target is None or not math.isfinite(float(target)):
+            return invalid(raw_f, y, "invalid_constraint_target")
+        if (
+            not math.isfinite(float(tspec.constraint_sharpness))
+            or float(tspec.constraint_sharpness) <= 0.0
+        ):
+            return invalid(raw_f, y, "invalid_constraint_sharpness")
         if tspec.norm_type == "penalty_upper":
             p = penalty_upper(raw_f, target, tspec.constraint_sharpness)
-        else:
+        elif tspec.norm_type == "penalty_lower":
             p = penalty_lower(raw_f, target, tspec.constraint_sharpness)
+        else:
+            return invalid(
+                raw_f,
+                y,
+                f"invalid_constraint_norm:{tspec.norm_type}",
+            )
         return TermResult(
             name=tspec.name, metric=tspec.metric,
             raw=raw_f, transformed=y, score=p,
             params={"target": target, "sharpness": tspec.constraint_sharpness},
         )
 
-    # Objective terms
-    if tspec.norm_type == "bounded_power":
-        # Transform bound to internal space
-        bound_raw = tspec.bound
-        if bound_raw is None:
-            return TermResult(
-                name=tspec.name, metric=tspec.metric,
-                raw=raw_f, transformed=y, score=0.0,
-                params={"reason": "no_bound"},
-            )
-        y_bound = apply_direction_and_transform(float(bound_raw), tspec.direction, tspec.transform)
+    explicit_midpoint = (
+        tspec.norm_type == "sigmoid"
+        and tspec.floor is None
+        and tspec.ref is not None
+        and tspec.scale is not None
+    )
+    if explicit_midpoint:
+        ref_resolved = _resolve_anchor(
+            tspec.ref, anchors, tspec.metric, tspec.direction
+        )
+        if ref_resolved is None or _is_missing_value(ref_resolved):
+            return invalid(raw_f, y, "unresolved_logistic_midpoint")
+        scale = float(tspec.scale)
+        if not math.isfinite(scale) or scale <= 0.0:
+            return invalid(raw_f, y, "invalid_logistic_scale")
+        y_mid, transform_error = transform_value(float(ref_resolved), "reference")
+        if transform_error is not None or y_mid is None:
+            return invalid(raw_f, y, transform_error or "invalid_reference_transform")
+        score = logistic_score(y, y_mid, scale)
+        return TermResult(
+            name=tspec.name,
+            metric=tspec.metric,
+            raw=raw_f,
+            transformed=y,
+            score=score,
+            params={"midpoint": y_mid, "scale": scale},
+        )
 
-        # Resolve ref
+    if floor_raw is None or _is_missing_value(floor_raw):
+        return invalid(raw_f, y, "missing_floor")
+    y_floor, transform_error = transform_value(float(floor_raw), "floor")
+    if transform_error is not None or y_floor is None:
+        return invalid(raw_f, y, transform_error or "invalid_floor_transform")
+
+    if tspec.norm_type == "bounded_power":
+        bound_raw = tspec.bound
+        if bound_raw is None or _is_missing_value(bound_raw):
+            return invalid(raw_f, y, "no_bound")
+        y_bound, transform_error = transform_value(float(bound_raw), "bound")
+        if transform_error is not None or y_bound is None:
+            return invalid(raw_f, y, transform_error or "invalid_bound_transform")
+        if y_bound == y_floor:
+            return invalid(raw_f, y, "degenerate_bound")
+
         ref_resolved = _resolve_anchor(tspec.ref, anchors, tspec.metric, tspec.direction)
         if ref_resolved is None:
             ref_resolved = _default_ref(anchors, tspec.metric, tspec.direction)
-        r_ref = None
-        if ref_resolved is not None:
-            y_ref = apply_direction_and_transform(float(ref_resolved), tspec.direction, tspec.transform)
-            r_ref = _bounded_power_ref_ratio(y_floor, y_bound, y_ref)
-            if _is_pathological_bounded_power_ref(r_ref):
-                # When the best baseline is nearly at a bounded theoretical
-                # limit, the gamma needed to keep score(ref)=0.5 can be far
-                # outside the clipped [0.1, 10] range. A sigmoid calibration
-                # preserves the ref_score anchor instead of inflating Human SOTA.
-                _warn_pathological_bounded_power(anchors, tspec.name, r_ref)
-                sc = solve_scale(y_floor, y_ref, tspec.ref_score)
-                score = sigmoid_score(y, y_floor, sc)
-                return TermResult(
-                    name=tspec.name, metric=tspec.metric,
-                    raw=raw_f, transformed=y, score=score,
-                    params={
-                        "floor": y_floor,
-                        "bound": y_bound,
-                        "scale": sc,
-                        "ref": ref_resolved,
-                        "r_ref": r_ref,
-                        "fallback": "sigmoid_pathological_bounded_power",
-                    },
-                )
+        if ref_resolved is None or _is_missing_value(ref_resolved):
+            return invalid(raw_f, y, "missing_bounded_power_ref")
+        y_ref, transform_error = transform_value(float(ref_resolved), "reference")
+        if transform_error is not None or y_ref is None:
+            return invalid(raw_f, y, transform_error or "invalid_reference_transform")
+        r_ref = _bounded_power_ref_ratio(y_floor, y_bound, y_ref)
+        try:
             gamma = solve_gamma(y_floor, y_bound, y_ref, tspec.ref_score)
-        else:
-            gamma = 1.0  # linear fallback
+        except ValueError as exc:
+            return invalid(
+                raw_f,
+                y,
+                f"invalid_bounded_power_calibration:{exc}",
+            )
 
         score = bounded_power(y, y_floor, y_bound, gamma)
         return TermResult(
@@ -348,21 +350,27 @@ def _score_term(
             },
         )
 
-    elif tspec.norm_type == "sigmoid":
+    if tspec.norm_type == "sigmoid":
         if tspec.scale is not None:
-            sc = tspec.scale
+            sc = float(tspec.scale)
+            if not math.isfinite(sc) or sc <= 0.0:
+                return invalid(raw_f, y, "invalid_sigmoid_scale")
         else:
             ref_resolved = _resolve_anchor(tspec.ref, anchors, tspec.metric, tspec.direction)
             if ref_resolved is None:
                 ref_resolved = _default_ref(anchors, tspec.metric, tspec.direction)
-            if ref_resolved is not None:
-                y_ref = apply_direction_and_transform(float(ref_resolved), tspec.direction, tspec.transform)
+            if ref_resolved is None or _is_missing_value(ref_resolved):
+                return invalid(raw_f, y, "missing_sigmoid_ref_or_scale")
+            y_ref, transform_error = transform_value(float(ref_resolved), "reference")
+            if transform_error is not None or y_ref is None:
+                return invalid(raw_f, y, transform_error or "invalid_reference_transform")
+            try:
                 sc = solve_scale(y_floor, y_ref, tspec.ref_score)
-            else:
-                sc = 1.0
-                warnings.warn(
-                    f"Term '{tspec.name}': no ref or scale for sigmoid; using scale=1.0",
-                    stacklevel=2,
+            except ValueError as exc:
+                return invalid(
+                    raw_f,
+                    y,
+                    f"invalid_sigmoid_calibration:{exc}",
                 )
 
         score = sigmoid_score(y, y_floor, sc)
@@ -372,11 +380,7 @@ def _score_term(
             params={"floor": y_floor, "scale": sc},
         )
 
-    return TermResult(
-        name=tspec.name, metric=tspec.metric,
-        raw=raw_f, transformed=y, score=0.0,
-        params={"reason": f"unknown_norm_type:{tspec.norm_type}"},
-    )
+    return invalid(raw_f, y, f"unknown_norm_type:{tspec.norm_type}")
 
 
 def _parse_csv_value(col: str, val: Any) -> Any:
@@ -403,7 +407,12 @@ def _load_leaderboard_records(lb_path: Path) -> list[dict[str, Any]]:
 
 
 def _is_missing_value(value: Any) -> bool:
-    return value is None or (isinstance(value, float) and math.isnan(value))
+    if value is None or value == "":
+        return True
+    try:
+        return not math.isfinite(float(value))
+    except (TypeError, ValueError):
+        return True
 
 
 def _near_high_worst_default(raw: float, bound: float) -> bool:
@@ -437,19 +446,16 @@ def _validate_setting(
     record: dict,
     anchors: BaselineAnchors,
 ) -> tuple[bool, str | None]:
-    # missing-objective: strictly required terms absent → invalid.
-    # partial-mean rows from older CSVs: NOT invalid.
-    # Real partial-coverage runs (e.g. 1/3 seeds succeeding on a given env)
-    # carry true measurements; zeroing them treats them like crash defaults.
-    # Crash defaults are still caught by the higher+lower bound + short-elapsed
-    # heuristic below.
+    # Every score input is required and must be finite. In particular, do not
+    # let objective or constraint keys from different seeds combine into an
+    # apparently complete mean record after a partial verifier failure.
     higher_default_hits: list[bool] = []
     lower_bound_hits: list[bool] = []
 
     for term_name, _weight in sspec.terms:
         tspec = all_terms.get(term_name)
         if tspec is None:
-            continue
+            return False, f"undefined_objective:{term_name}"
         raw = record.get(tspec.metric)
         if _is_missing_value(raw):
             return False, f"missing_objective:{tspec.metric}"
@@ -460,6 +466,13 @@ def _validate_setting(
             higher_default_hits.append(_near_high_worst_default(float(raw), float(tspec.bound)))
         elif tspec.direction == "lower":
             lower_bound_hits.append(_near_lower_bound(float(raw), float(tspec.bound)))
+
+    for term_name in sspec.constraints:
+        tspec = all_terms.get(term_name)
+        if tspec is None:
+            return False, f"undefined_constraint:{term_name}"
+        if _is_missing_value(record.get(tspec.metric)):
+            return False, f"missing_constraint:{tspec.metric}"
 
     if (
         higher_default_hits
@@ -494,7 +507,13 @@ def _score_setting(
         if tspec is None:
             continue
         raw_val = record.get(tspec.metric)
-        floor_raw = anchors.worst_for(tspec.metric, tspec.direction)
+        # Generic / baseline-free anchor: an explicit term.floor overrides the
+        # baseline-derived worst anchor so a task can be scored with no baseline
+        # rows in leaderboard.csv. Falls back to worst baseline when unset.
+        if tspec.floor is not None:
+            floor_raw = _resolve_anchor(tspec.floor, anchors, tspec.metric, tspec.direction)
+        else:
+            floor_raw = anchors.worst_for(tspec.metric, tspec.direction)
         tr = _score_term(tspec, raw_val, floor_raw, anchors)
         term_results.append(tr)
         obj_scores.append(tr.score)
@@ -519,6 +538,13 @@ def _score_setting(
         penalty *= tr.score
 
     valid, invalid_reason = _validate_setting(sspec, all_terms, record, anchors)
+    invalid_term = next((term for term in term_results if not term.valid), None)
+    if invalid_term is not None:
+        valid = False
+        invalid_reason = (
+            f"invalid_term:{invalid_term.name}:"
+            f"{invalid_term.invalid_reason or 'unknown'}"
+        )
     final = obj_score * penalty if valid else 0.0
     return SettingResult(
         name=sspec.name,
@@ -603,10 +629,25 @@ def score_record_details(
 ) -> tuple[float, list[SettingResult], bool]:
     """Score a record AND return per-setting results + record-level validity.
 
-    A record is valid if all its settings are valid (no missing objective,
-    no partial seed=mean, no crash-default pattern). When invalid, the
+    A record is valid if all its settings are valid (no missing/non-finite
+    objective or constraint, no partial seed=mean, no crash-default pattern). When invalid, the
     aggregated score is forced to 0 so that crash-defaulted vanilla rows
     don't outscore real agent runs."""
+    spec_errors = validate_score_spec(spec, [str(key) for key in record])
+    if spec_errors:
+        reason = f"invalid_score_spec:{spec_errors[0]}"
+        return 0.0, [
+            SettingResult(
+                name=sspec.name,
+                objective_score=0.0,
+                penalty=0.0,
+                score=0.0,
+                valid=False,
+                invalid_reason=reason,
+            )
+            for sspec in spec.settings.values()
+        ], False
+
     setting_scores: list[float] = []
     setting_results: list[SettingResult] = []
     for _sname, sspec in spec.settings.items():
@@ -666,69 +707,74 @@ def evaluate_task(
 
     results: list[TaskResult] = []
     for model_name, recs in model_records.items():
-        # Selection priority for an agent's "final" submission row:
-        #   1. seed=mean AND is_final=true (multi-seed tasks)
-        #   2. is_final=true at any seed (single-seed tasks; falls through here)
-        #   3. seed=mean at any is_final state (multi-seed tasks where agent never marked final)
-        #   4. latest row of any kind (fallback)
-        # Within each tier prefer the most metric-complete row, then latest by time.
-        # Without the completeness preference, an agent's later mid-iteration row
-        # (e.g. partial env coverage from a killed test) would supersede an
-        # earlier completed final.
-        final_mean = [r for r in recs if r.get("seed") == "mean" and str(r.get("is_final", "")).lower() == "true"]
+        # A final row is authoritative even when it is incomplete. Never skip a
+        # failed final verifier row and resurrect an older non-final score.
         final_any = [r for r in recs if str(r.get("is_final", "")).lower() == "true"]
-        nonfinal_mean = [r for r in recs if r.get("seed") == "mean"]
 
-        def _completeness(rec: dict) -> int:
-            count = 0
-            for k, v in rec.items():
-                if (
-                    k in {"timestamp", "model", "is_final", "seed"}
-                    or k.startswith("elapsed_")
-                    or k.endswith("_std")
-                ):
-                    continue
-                if v in ("", None):
-                    continue
-                if isinstance(v, float) and math.isnan(v):
-                    continue
-                # Defensive: CSV cells that escaped float() conversion as
-                # literal "nan" / "NaN" / "null" strings should not count as
-                # populated. Leaderboard.all_records currently coerces "nan"
-                # to float NaN, but harden against schema drift.
-                if isinstance(v, str) and v.strip().lower() in {"nan", "null", "none"}:
-                    continue
-                count += 1
-            return count
+        if warns:
+            results.append(TaskResult(
+                task=task_name,
+                model=model_name,
+                score=0.0,
+                warnings=[
+                    "Invalid score specification; score forced to 0: "
+                    + "; ".join(warns)
+                ],
+            ))
+            continue
 
-        def _pick(rows: list[dict]) -> dict:
-            best = max(rows, key=lambda r: (_completeness(r), str(r.get("timestamp", ""))))
-            return best
+        config_path = task_dir / "config.json"
+        config_error: str | None = None
+        try:
+            task_config = json.loads(config_path.read_text()) if config_path.exists() else {}
+        except (OSError, json.JSONDecodeError) as exc:
+            task_config = {}
+            config_error = f"invalid task config: {exc}"
+        configured_seeds = task_config.get("seeds", [42])
+        if isinstance(configured_seeds, int):
+            configured_seeds = [configured_seeds]
+        if (
+            not isinstance(configured_seeds, list)
+            or not configured_seeds
+            or any(not isinstance(seed, int) or isinstance(seed, bool) for seed in configured_seeds)
+            or len(set(configured_seeds)) != len(configured_seeds)
+        ):
+            config_error = "config declares an invalid seed matrix"
+        if config_error is not None:
+            results.append(TaskResult(
+                task=task_name,
+                model=model_name,
+                score=0.0,
+                warnings=[f"{config_error}; score forced to 0."],
+            ))
+            continue
+
+        if not final_any:
+            results.append(TaskResult(
+                task=task_name,
+                model=model_name,
+                score=0.0,
+                warnings=["No authoritative final submission row; score forced to 0."],
+            ))
+            continue
+
+        # A successful multi-seed submit writes the mean row last. If a newer
+        # retry leaves only empty per-seed finals, that latest failure must win
+        # over any older positive mean row.
+        record = max(final_any, key=lambda r: str(r.get("timestamp", "")))
+        if len(configured_seeds) > 1 and record.get("seed") != "mean":
+            results.append(TaskResult(
+                task=task_name,
+                model=model_name,
+                score=0.0,
+                warnings=[
+                    "Latest final multi-seed submission is missing its authoritative "
+                    "mean row; score forced to 0."
+                ],
+            ))
+            continue
 
         from mlsbench.agent.leaderboard import Leaderboard
-
-        def _record_valid(rec: dict) -> bool:
-            if not Leaderboard.has_real_metrics(rec):
-                return False
-            return score_record_details(spec, rec, anchors)[2]
-
-        # Two-pass selection: prefer valid rows in each tier; fall back to
-        # picker default only if no tier has a valid candidate.
-        record = None
-        fallback = None
-        for tier in (final_mean, final_any, nonfinal_mean, recs):
-            if not tier:
-                continue
-            valid_rows = [r for r in tier if _record_valid(r)]
-            if valid_rows:
-                record = _pick(valid_rows)
-                break
-            if fallback is None:
-                fallback = _pick(tier)
-        if record is None:
-            record = fallback
-        if record is None:
-            continue
 
         if not Leaderboard.has_real_metrics(record):
             # Invalid/failed agent run → score 0

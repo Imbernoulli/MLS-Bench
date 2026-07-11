@@ -4,7 +4,7 @@
 Runs three sub-commands inside the agent container:
 
     score_task.py guard       — edit-range diff guard
-    score_task.py run-evals   — execute all eval scripts (visible + hidden)
+    score_task.py run-evals   — execute all configured eval scripts
     score_task.py score       — aggregate metrics → combined_score → reward.txt
 
 Designed to be self-contained — only stdlib, plus mlsbench installed in the
@@ -27,6 +27,27 @@ import math
 from dataclasses import dataclass
 from difflib import SequenceMatcher
 from pathlib import Path
+
+
+_FAILURE_MARKER_RE = re.compile(
+    r"(?m)^\s*("
+    r"(?:[A-Z][A-Z0-9_]*(?:FALLBACK|NONFINITE)[A-Z0-9_]*)"
+    r"|SURFACE_ERROR"
+    r"|TRAIN_ERROR"
+    r"|EVAL_FAILED"
+    r"|PROMPT_CFG\s+build_prompt\s+failed"
+    r"|TOKENSTRAT_CFG\s+(?:model_cfg_)?set_failed"
+    r"|LAYER_CFG\s+surgery_failed"
+    r"|PROMPT_TEMPLATE_ERROR"
+    r"|TOKEN_SURFACE_ERROR"
+    r"|DETECTOR_ERROR"
+    r")\b"
+)
+
+
+def _failure_marker(raw_output: str) -> str | None:
+    match = _FAILURE_MARKER_RE.search(raw_output)
+    return match.group(1) if match else None
 
 
 # --------------------------------------------------------------------------- #
@@ -370,7 +391,7 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------- #
-# Run all eval scripts (visible + hidden)
+# Run all configured eval scripts
 # --------------------------------------------------------------------------- #
 
 _ENV_VAR_RE = re.compile(r"\$(\w+)|\$\{([^}:]+)(?::-[^}]*)?\}")
@@ -419,6 +440,19 @@ def _package_dir(workspace_root: Path, default_pkg: str, tc: dict) -> Path:
     return workspace_root / default_pkg
 
 
+def _install_verifier_package_files(task_meta: Path, workspace_root: Path) -> None:
+    src_root = task_meta / "verifier_package_files"
+    if not src_root.is_dir():
+        return
+    for src in sorted(src_root.rglob("*")):
+        if not src.is_file():
+            continue
+        rel = src.relative_to(src_root).as_posix()
+        dst = _safe_join(workspace_root, rel)
+        dst.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(src, dst)
+
+
 def _normalize_pkg_name(name: str) -> str:
     return str(name).lower().replace("-", "").replace("_", "")
 
@@ -426,6 +460,7 @@ def _normalize_pkg_name(name: str) -> str:
 def _eval_env(
     *,
     task_meta: Path,
+    eval_task_meta: Path,
     out_dir: Path,
     workspace_root: Path,
     pkg_dir: Path,
@@ -443,18 +478,34 @@ def _eval_env(
             env[key] = _expand_env_template(value, env)
 
     task_id = _read_meta_text(task_meta, "task_id", "unknown")
-    save_path = out_dir / "save"
+    artifact_root_raw = os.environ.get("MLSBENCH_EVAL_ARTIFACT_ROOT")
+    artifact_root = Path(artifact_root_raw) if artifact_root_raw else out_dir
+    save_path = artifact_root / "save"
     output_dir = save_path / task_id / "harbor" / f"seed_{seed}"
     output_dir.mkdir(parents=True, exist_ok=True)
+    eval_home = artifact_root / "eval-home" / f"seed_{seed}"
+    eval_home.mkdir(parents=True, exist_ok=True)
+    eval_uid = os.environ.get("MLSBENCH_EVAL_UID")
+    eval_gid = os.environ.get("MLSBENCH_EVAL_GID")
+    if eval_uid is not None and eval_gid is not None and os.geteuid() == 0:
+        uid, gid = int(eval_uid), int(eval_gid)
+        for writable in (save_path, output_dir, eval_home):
+            os.chown(writable, uid, gid)
 
     env["SAVE_PATH"] = str(save_path)
     env["OUTPUT_DIR"] = str(output_dir)
+    env["HOME"] = str(eval_home)
+    env["XDG_CACHE_HOME"] = str(eval_home / ".cache")
     env["SEED"] = str(seed)
     label = str(tc.get("label", ""))
     if label:
         env["ENV"] = label
-    env["MLSBENCH_TASK_DIR"] = str(task_meta)
+    env["MLSBENCH_TASK_DIR"] = str(eval_task_meta)
     env["MLSBENCH_PKG_DIR"] = str(pkg_dir)
+    # Task-specific verifier data is copied into the sanitized runtime tree by
+    # test.sh. Point scripts at that exact tree; never fall back to image-baked
+    # /data paths, which are deliberately pruned for these tasks.
+    env["MLSBENCH_VERIFIER_DATA_ROOT"] = str(eval_task_meta / "data")
     env.setdefault("DATA_ROOT", "/data")
     env["MLSBENCH_LOCAL_PATH_MAP_JSON"] = json.dumps({
         "/workspace": str(workspace_root),
@@ -462,6 +513,31 @@ def _eval_env(
         "/data": "/data",
     })
     return env
+
+
+def _eval_preexec_fn():
+    """Drop eval commands to an unprivileged uid with no privilege regain."""
+    raw_uid = os.environ.get("MLSBENCH_EVAL_UID")
+    raw_gid = os.environ.get("MLSBENCH_EVAL_GID")
+    if raw_uid is None or raw_gid is None or os.geteuid() != 0:
+        return None
+    uid, gid = int(raw_uid), int(raw_gid)
+
+    def drop() -> None:
+        try:
+            import ctypes
+
+            libc = ctypes.CDLL(None, use_errno=True)
+            if libc.prctl(38, 1, 0, 0, 0) != 0:  # PR_SET_NO_NEW_PRIVS
+                raise OSError(ctypes.get_errno(), "prctl(PR_SET_NO_NEW_PRIVS) failed")
+        except ImportError:
+            pass
+        os.setgroups([])
+        os.setgid(gid)
+        os.setuid(uid)
+        os.umask(0o077)
+
+    return drop
 
 
 def _parse_time_to_seconds(time_str: str) -> int:
@@ -656,7 +732,17 @@ def _partition_group_gpu_batches(
     tasks: list[dict],
     devices: list[str],
     gpu_cap: int = 1,
+    serial: bool = False,
 ) -> list[tuple[list[dict], list[str | None]]] | None:
+    if serial:
+        batches: list[tuple[list[dict], list[str | None]]] = []
+        for task in tasks:
+            assignments = _allocate_group_gpu_assignments([task], devices, gpu_cap)
+            if assignments is None:
+                return None
+            batches.append(([task], assignments))
+        return batches
+
     if not devices:
         return [(list(tasks), [None] * len(tasks))]
 
@@ -713,7 +799,11 @@ def _kill_process_group(pgid: int, timeout: float = 30.0) -> None:
         pass
 
 
-def _copy_task_meta_for_budget(task_meta: Path, scratch_dir: Path) -> None:
+def _copy_task_meta_for_budget(
+    task_meta: Path,
+    scratch_dir: Path,
+    effective_test_cmds: list[dict] | None = None,
+) -> None:
     scratch_dir.mkdir(parents=True, exist_ok=True)
     for name in ("config.json", "budget_check.py"):
         src = task_meta / name
@@ -723,6 +813,12 @@ def _copy_task_meta_for_budget(task_meta: Path, scratch_dir: Path) -> None:
         src = task_meta / name
         if src.exists():
             shutil.copytree(src, scratch_dir / name, dirs_exist_ok=True)
+    if effective_test_cmds is not None:
+        cfg_path = scratch_dir / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text())
+            cfg["test_cmds"] = effective_test_cmds
+            cfg_path.write_text(json.dumps(cfg, indent=2))
 
 
 def _install_budget_legacy_links(scratch_dir: Path, workspace_root: Path) -> list[Path]:
@@ -774,6 +870,7 @@ def _run_budget_check(
     label: str,
     seed: int,
     env: dict[str, str],
+    effective_test_cmds: list[dict] | None = None,
 ) -> dict | None:
     if not (task_meta / "budget_check.py").exists():
         return None
@@ -792,7 +889,13 @@ def _run_budget_check(
     legacy_links: list[Path] = []
     with log_path.open("w") as fh:
         try:
-            _copy_task_meta_for_budget(task_meta, scratch_dir)
+            _copy_task_meta_for_budget(task_meta, scratch_dir, effective_test_cmds)
+            if os.environ.get("MLSBENCH_EVAL_UID") is not None and os.geteuid() == 0:
+                os.chown(
+                    scratch_dir,
+                    int(os.environ["MLSBENCH_EVAL_UID"]),
+                    int(os.environ["MLSBENCH_EVAL_GID"]),
+                )
             legacy_links = _install_budget_legacy_links(scratch_dir, workspace_root)
             budget_env = env.copy()
             budget_env["TMPDIR"] = str(scratch_dir)
@@ -805,6 +908,7 @@ def _run_budget_check(
                 stderr=subprocess.STDOUT,
                 timeout=budget_timeout,
                 check=False,
+                preexec_fn=_eval_preexec_fn(),
             )
             rc = proc.returncode
         except subprocess.TimeoutExpired:
@@ -853,6 +957,8 @@ def _finish_process_record(state: dict, seed: int, rc: int | None = None) -> dic
         state["fh"].close()
     except OSError:
         pass
+    if os.environ.get("MLSBENCH_CLEAN_PROCESS_GROUPS") == "1":
+        _kill_process_group(state["proc"].pid, timeout=5.0)
     return {
         "seed": seed,
         "rc": rc,
@@ -866,6 +972,7 @@ def _run_eval_wave(
     tasks: list[dict],
     assignments: list[str | None],
     task_meta: Path,
+    eval_task_meta: Path,
     workspace_root: Path,
     default_pkg: str,
     out_dir: Path,
@@ -881,7 +988,7 @@ def _run_eval_wave(
     # budget_check.py may temporarily replace /workspace/_task with a scratch
     # copy and remove it afterwards. Restore the hidden verifier meta link
     # before launching eval scripts that resolve _task/scripts or _task/data.
-    _install_task_meta_legacy_links(task_meta, workspace_root)
+    _install_task_meta_legacy_links(eval_task_meta, workspace_root)
 
     for task, gpu_devices in zip(tasks, assignments):
         entry = task["entry"]
@@ -890,6 +997,7 @@ def _run_eval_wave(
         pkg_dir = _package_dir(workspace_root, default_pkg, entry["tc"])
         env = _eval_env(
             task_meta=task_meta,
+            eval_task_meta=eval_task_meta,
             out_dir=out_dir,
             workspace_root=workspace_root,
             pkg_dir=pkg_dir,
@@ -909,6 +1017,7 @@ def _run_eval_wave(
                 stdout=fh,
                 stderr=subprocess.STDOUT,
                 start_new_session=True,
+                preexec_fn=_eval_preexec_fn(),
             )
         except Exception as exc:
             fh.write(f"[ERROR] failed to start eval command: {exc}\n")
@@ -967,20 +1076,84 @@ def _run_eval_wave(
     return results
 
 
+def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict[str, str]]:
+    if not raw:
+        return []
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"invalid oracle cmd overrides JSON: {exc}") from exc
+    if not isinstance(data, list):
+        raise ValueError("oracle cmd overrides must be a JSON list")
+
+    out: list[dict[str, str]] = []
+    for item in data:
+        if not isinstance(item, dict):
+            raise ValueError("oracle cmd override entries must be objects")
+        cmd = str(item.get("cmd", "")).strip()
+        if not cmd:
+            raise ValueError("oracle cmd override missing non-empty cmd")
+        if "labels" in item:
+            labels = item.get("labels") or [""]
+            if not isinstance(labels, list):
+                labels = [labels]
+            out.extend({"label": str(label), "cmd": cmd} for label in labels)
+        else:
+            out.append({"label": str(item.get("label", "")), "cmd": cmd})
+    return out
+
+
+def _apply_oracle_cmd_overrides(
+    test_cmds: list[dict],
+    overrides: list[dict[str, str]],
+) -> list[dict]:
+    result = [dict(tc) for tc in test_cmds]
+    for override in overrides:
+        label = override["label"]
+        for entry in result:
+            if not label or str(entry.get("label", "")) == label:
+                entry["cmd"] = override["cmd"]
+    return result
+
+
 def cmd_run_evals(args: argparse.Namespace) -> int:
     task_meta = Path(args.task_meta)
+    eval_task_meta = Path(getattr(args, "eval_task_meta", None) or args.task_meta)
     workspace_root = Path(args.workspace)
     default_pkg = _read_meta_text(task_meta, "package", "")
     eval_root = Path(args.eval_root)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "eval_summary.json",
+        "metrics.json",
+        "verification_result.json",
+        "score_error.txt",
+        "parse_errors.txt",
+        "budget_violation.txt",
+    ):
+        (out_dir / name).unlink(missing_ok=True)
+    for stale_log in out_dir.glob("*.log"):
+        stale_log.unlink(missing_ok=True)
 
     config = _load_task_config(task_meta)
-    test_cmds = config.get("test_cmds", [])
+    try:
+        _install_verifier_package_files(task_meta, workspace_root)
+    except Exception as exc:
+        (out_dir / "score_error.txt").write_text(
+            f"failed to install verifier-only package files: {exc}\n"
+        )
+        return 125
+    test_cmds = list(config.get("test_cmds", []))
+    oracle_cmd_overrides = _parse_oracle_cmd_overrides(
+        getattr(args, "oracle_cmd_overrides", None)
+    )
+    if oracle_cmd_overrides:
+        test_cmds = _apply_oracle_cmd_overrides(test_cmds, oracle_cmd_overrides)
     seeds = _config_seeds(config)
 
     summary = [
-        {"label": tc.get("label", tc.get("cmd", "test")), "hidden": bool(tc.get("hidden")), "logs": []}
+        {"label": tc.get("label", tc.get("cmd", "test")), "logs": []}
         for tc in test_cmds
     ]
     records: dict[tuple[int, int], dict] = {}
@@ -1021,6 +1194,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
     devices = _visible_gpu_indices(task_meta, config)
     n_reserved = len(devices)
     gpu_cap = _gpu_compute_cap(task_meta)
+    serial_evals = config.get("_verifier_serial") is True
 
     for group_key in sorted(grouped.keys()):
         group_entries = [
@@ -1059,7 +1233,12 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
         if not schedulable:
             continue
 
-        batches = _partition_group_gpu_batches(schedulable, devices, gpu_cap)
+        batches = _partition_group_gpu_batches(
+            schedulable,
+            devices,
+            gpu_cap,
+            serial=serial_evals,
+        )
         if batches is None:
             for task in schedulable:
                 entry = task["entry"]
@@ -1085,6 +1264,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                 pkg_dir = _package_dir(workspace_root, default_pkg, entry["tc"])
                 env = _eval_env(
                     task_meta=task_meta,
+                    eval_task_meta=eval_task_meta,
                     out_dir=out_dir,
                     workspace_root=workspace_root,
                     pkg_dir=pkg_dir,
@@ -1099,6 +1279,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     label=entry["label"],
                     seed=seed,
                     env=env,
+                    effective_test_cmds=test_cmds,
                 )
                 if budget and budget["rc"] != 0:
                     records[(entry["idx"], seed)] = _write_error_record(
@@ -1124,6 +1305,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                 tasks=runnable_tasks,
                 assignments=runnable_assignments,
                 task_meta=task_meta,
+                eval_task_meta=eval_task_meta,
                 workspace_root=workspace_root,
                 default_pkg=default_pkg,
                 out_dir=out_dir,
@@ -1148,6 +1330,42 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                 summary[idx]["logs"].append(record)
 
     (out_dir / "eval_summary.json").write_text(json.dumps(summary, indent=2))
+
+    failed = []
+    for entry in summary:
+        label = entry["label"]
+        logs_by_seed = {int(log["seed"]): log for log in entry.get("logs", []) if "seed" in log}
+        for seed in seeds:
+            log = logs_by_seed.get(int(seed))
+            if log is None:
+                failed.append(f"{label} seed {seed}: missing eval result")
+                continue
+            try:
+                rc = int(log.get("rc", 125))
+            except (TypeError, ValueError):
+                rc = 125
+            if rc != 0:
+                failed.append(f"{label} seed {seed}: eval exited with rc={rc}")
+                continue
+            log_path = Path(str(log.get("log", "")))
+            if not log_path.is_file():
+                failed.append(f"{label} seed {seed}: eval log missing")
+                continue
+            raw_log = log_path.read_text(errors="replace")
+            if not raw_log.strip():
+                failed.append(f"{label} seed {seed}: eval log is empty")
+                continue
+            marker = _failure_marker(raw_log)
+            if marker:
+                failed.append(f"{label} seed {seed}: harness failure marker {marker}")
+
+    if failed:
+        (out_dir / "score_error.txt").write_text(
+            "one or more required evaluations failed; reward forced to 0:\n"
+            + "\n".join(failed)
+            + "\n"
+        )
+        return 1
     return 0
 
 
@@ -1156,13 +1374,9 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
 # --------------------------------------------------------------------------- #
 
 def _aggregate_metrics(metrics_list: list[dict]) -> dict:
-    try:
-        from mlsbench.agent.tools import WorkspaceTools  # type: ignore[import-not-found]
-        return WorkspaceTools._aggregate_metrics(metrics_list)
-    except Exception:
-        pass
-
     if not metrics_list:
+        return {}
+    if any(_parser_metrics_error(metrics) for metrics in metrics_list):
         return {}
     if len(metrics_list) == 1:
         return metrics_list[0]
@@ -1182,6 +1396,64 @@ def _aggregate_metrics(metrics_list: list[dict]) -> dict:
     return aggregated
 
 
+def _parser_metrics_error(metrics: object) -> str | None:
+    """Return why a parser metric mapping is unsafe, or ``None``."""
+    if not isinstance(metrics, dict):
+        return f"expected-dict-got-{type(metrics).__name__}"
+    for key, value in metrics.items():
+        if not isinstance(key, str) or not key:
+            return f"invalid-key-{key!r}"
+        if isinstance(value, bool):
+            return f"{key}=bool"
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError, OverflowError):
+            return f"{key}=nonnumeric"
+        if not math.isfinite(numeric):
+            return f"{key}=nonfinite"
+    return None
+
+
+def _duplicate_authoritative_metric_lines(
+    parser_type,
+    cmd_label: str,
+    raw_output: str,
+    score_metric_keys: set[str],
+) -> dict[str, list[int]]:
+    """Find scored metric keys independently emitted by multiple log lines.
+
+    Task parsers commonly scan the whole log and assign into a dict, which
+    silently makes the last matching line authoritative. Editable solution code
+    runs in the harness process and can print a forged matching record from an
+    ``atexit`` callback after the harness emits its real result. Re-parse each
+    line in isolation so a second record for the same scored key is ambiguous
+    and therefore fails closed.
+
+    A single line may legitimately emit several distinct scored metrics. Lines
+    that do not independently parse, or that only emit diagnostic metrics, do
+    not participate in this check.
+    """
+    occurrences: dict[str, list[int]] = {}
+    line_parser = parser_type()
+    for line_number, line in enumerate(raw_output.splitlines(), start=1):
+        if not line.strip():
+            continue
+        try:
+            parsed = line_parser.parse(cmd_label, line)
+        except Exception:
+            continue
+        metrics = getattr(parsed, "metrics", None)
+        if _parser_metrics_error(metrics) is not None:
+            continue
+        for key in set(metrics) & score_metric_keys:
+            occurrences.setdefault(key, []).append(line_number)
+    return {
+        key: line_numbers
+        for key, line_numbers in occurrences.items()
+        if len(line_numbers) > 1
+    }
+
+
 def _has_real_metrics(record: dict) -> bool:
     for key, value in record.items():
         if (
@@ -1199,11 +1471,129 @@ def _has_real_metrics(record: dict) -> bool:
 def _valid_seed_metric_records(per_seed_metrics: dict[int, dict]) -> list[dict]:
     return [metrics for _seed, metrics in sorted(per_seed_metrics.items()) if _has_real_metrics(metrics)]
 
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    try:
+        tmp.write_text(content)
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
+def _canonical_json_text(payload: object) -> str:
+    """Serialize JSON exactly as Mangrove's artifact transport normalizer does."""
+    return json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=True,
+        allow_nan=False,
+    )
+
+
+def _validate_eval_summary(summary: object, config: dict) -> str | None:
+    """Require every configured setting and seed to have one successful log."""
+    if not isinstance(summary, list):
+        return "eval_summary.json must contain a list"
+
+    test_cmds = list(config.get("test_cmds", []))
+    seeds = _config_seeds(config)
+    if not test_cmds:
+        return "config declares no test_cmds"
+
+    expected_labels = [
+        str(tc.get("label", tc.get("cmd", "test")))
+        for tc in test_cmds
+    ]
+    duplicate_labels = sorted({label for label in expected_labels if expected_labels.count(label) > 1})
+    if duplicate_labels:
+        return f"config declares duplicate test labels: {', '.join(duplicate_labels)}"
+    if len(set(seeds)) != len(seeds):
+        return "config declares duplicate seeds"
+
+    entries_by_label: dict[str, list[dict]] = {}
+    for entry in summary:
+        if not isinstance(entry, dict):
+            return "eval_summary.json contains a non-object entry"
+        label = str(entry.get("label", ""))
+        entries_by_label.setdefault(label, []).append(entry)
+
+    failures: list[str] = []
+    unexpected_labels = sorted(set(entries_by_label) - set(expected_labels))
+    if unexpected_labels:
+        failures.append(f"unexpected summary labels: {', '.join(unexpected_labels)}")
+    for tc in test_cmds:
+        label = str(tc.get("label", tc.get("cmd", "test")))
+        matching_entries = entries_by_label.get(label, [])
+        if len(matching_entries) != 1:
+            failures.append(
+                f"{label}: expected exactly one summary entry, found {len(matching_entries)}"
+            )
+            continue
+
+        logs_by_seed: dict[int, list[dict]] = {}
+        logs = matching_entries[0].get("logs", [])
+        if not isinstance(logs, list):
+            failures.append(f"{label}: logs must be a list")
+            continue
+        for log in logs:
+            if not isinstance(log, dict) or "seed" not in log:
+                failures.append(f"{label}: malformed log record")
+                continue
+            try:
+                seed = int(log["seed"])
+            except (TypeError, ValueError):
+                failures.append(f"{label}: invalid seed {log.get('seed')!r}")
+                continue
+            logs_by_seed.setdefault(seed, []).append(log)
+
+        unexpected_seeds = sorted(set(logs_by_seed) - {int(seed) for seed in seeds})
+        if unexpected_seeds:
+            failures.append(
+                f"{label}: unexpected seeds {', '.join(str(seed) for seed in unexpected_seeds)}"
+            )
+
+        for seed in seeds:
+            seed_logs = logs_by_seed.get(int(seed), [])
+            if len(seed_logs) != 1:
+                failures.append(
+                    f"{label} seed {seed}: expected exactly one log, found {len(seed_logs)}"
+                )
+                continue
+            log = seed_logs[0]
+            try:
+                rc = int(log.get("rc", 125))
+            except (TypeError, ValueError):
+                rc = 125
+            if rc != 0:
+                failures.append(f"{label} seed {seed}: eval exited with rc={rc}")
+            log_path = log.get("log")
+            if not log_path or not Path(str(log_path)).is_file():
+                failures.append(f"{label} seed {seed}: eval log missing")
+                continue
+            raw_log = Path(str(log_path)).read_text(errors="replace")
+            if not raw_log.strip():
+                failures.append(f"{label} seed {seed}: eval log is empty")
+                continue
+            marker = _failure_marker(raw_log)
+            if marker:
+                failures.append(f"{label} seed {seed}: harness failure marker {marker}")
+
+    return "; ".join(failures) if failures else None
+
 def cmd_score(args: argparse.Namespace) -> int:
     task_meta = Path(args.task_meta)
     out_dir = Path(args.out_dir)
     reward_out = Path(args.reward_out)
     reward_out.parent.mkdir(parents=True, exist_ok=True)
+    # Score can be invoked independently during debugging, not only after
+    # run-evals. Invalidate every previous success artifact before importing
+    # task code or parsing a new log matrix.
+    _atomic_write_text(reward_out, "0\n")
+    for stale_name in ("metrics.json", "verification_result.json"):
+        (out_dir / stale_name).unlink(missing_ok=True)
 
     # mlsbench src ships in the per-task tests/ dir (not in the base image —
     # the agent's shell would see it otherwise). Harbor mounts tests/ at
@@ -1219,8 +1609,13 @@ def cmd_score(args: argparse.Namespace) -> int:
         # makes it resolve to a real (and possibly different) mlsbench
         # package, the import cache here means parser still picks the
         # version we pinned. (Defense-in-depth against sys.path shadowing.)
-        from mlsbench.scoring.evaluate import score_record, load_expanded_spec  # type: ignore[import-not-found]
+        from mlsbench.scoring.evaluate import (  # type: ignore[import-not-found]
+            load_expanded_spec,
+            score_record,
+            score_record_details,
+        )
         from mlsbench.scoring.anchors import BaselineAnchors  # type: ignore[import-not-found]
+        from mlsbench.scoring.spec import validate_score_spec  # type: ignore[import-not-found]
         import mlsbench.agent.parsers  # ensures the task parser inherits this version
 
         import importlib.util
@@ -1234,17 +1629,88 @@ def cmd_score(args: argparse.Namespace) -> int:
         (out_dir / "score_error.txt").write_text(f"import failed: {exc}\n")
         return 0
 
-    config = json.loads((task_meta / "config.json").read_text())
+    try:
+        config = json.loads((task_meta / "config.json").read_text())
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        reward_out.write_text("0\n")
+        (out_dir / "score_error.txt").write_text(f"invalid config.json: {exc}\n")
+        return 0
     summary_path = out_dir / "eval_summary.json"
     if not summary_path.exists():
         reward_out.write_text("0\n")
         (out_dir / "score_error.txt").write_text("eval_summary.json missing\n")
         return 0
-    summary = json.loads(summary_path.read_text())
+    try:
+        summary = json.loads(summary_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        reward_out.write_text("0\n")
+        (out_dir / "score_error.txt").write_text(f"invalid eval_summary.json: {exc}\n")
+        return 0
 
-    # Parse every log, aggregate per-seed metrics, then mean across seeds.
+    summary_error = _validate_eval_summary(summary, config)
+    if summary_error:
+        reward_out.write_text("0\n")
+        (out_dir / "score_error.txt").write_text(
+            f"required evaluation did not complete successfully: {summary_error}\n"
+        )
+        return 0
+
+    try:
+        anchors = BaselineAnchors(task_meta)
+        spec = load_expanded_spec(task_meta, anchors)
+    except Exception as exc:
+        reward_out.write_text("0\n")
+        (out_dir / "score_error.txt").write_text(
+            f"score spec load failed: {type(exc).__name__}: {exc}\n"
+        )
+        return 0
+    if spec is None:
+        reward_out.write_text("0\n")
+        (out_dir / "score_error.txt").write_text("score_spec missing or invalid\n")
+        return 0
+    spec_errors = validate_score_spec(
+        spec,
+        [
+            term.metric
+            for term in spec.terms.values()
+            if term.role != "drop" and isinstance(term.metric, str)
+        ],
+    )
+    if spec_errors:
+        reward_out.write_text("0\n")
+        (out_dir / "score_error.txt").write_text(
+            "invalid score specification; reward forced to 0:\n"
+            + "\n".join(spec_errors)
+            + "\n"
+        )
+        return 0
+
+    setting_metric_keys: dict[str, set[str]] = {}
+    for setting_name, setting_spec in spec.settings.items():
+        keys: set[str] = set()
+        for term_name, _weight in setting_spec.terms:
+            term_spec = spec.terms.get(term_name)
+            if term_spec is not None:
+                keys.add(term_spec.metric)
+        for term_name in setting_spec.constraints:
+            term_spec = spec.terms.get(term_name)
+            if term_spec is not None:
+                keys.add(term_spec.metric)
+        if not keys:
+            reward_out.write_text("0\n")
+            (out_dir / "score_error.txt").write_text(
+                f"score setting {setting_name!r} declares no metrics\n"
+            )
+            return 0
+        setting_metric_keys[str(setting_name)] = keys
+    all_score_metrics = set().union(*setting_metric_keys.values())
+
+    # Parse every log. A command may contribute only its declared/inferred
+    # score setting, preventing metrics from one successful log from filling a
+    # missing sibling setting or seed.
     test_cmd_by_label = {tc.get("label", tc["cmd"]): tc for tc in config.get("test_cmds", [])}
     per_seed_metrics: dict[int, dict] = {}
+    seen_seed_settings: dict[int, set[str]] = {}
     for entry in summary:
         label = entry["label"]
         tc = test_cmd_by_label.get(label)
@@ -1266,15 +1732,144 @@ def cmd_score(args: argparse.Namespace) -> int:
             except Exception as exc:
                 with (out_dir / "parse_errors.txt").open("a") as fh:
                     fh.write(f"{label} seed {seed}: {exc}\n")
-                continue
-            metrics = getattr(parsed, "metrics", None) or {}
+                reward_out.write_text("0\n")
+                (out_dir / "score_error.txt").write_text(
+                    f"parser failed for {label} seed {seed}; reward forced to 0\n"
+                )
+                return 0
+            metrics = getattr(parsed, "metrics", None)
+            if metrics is None:
+                metrics = {}
+            parser_metric_error = _parser_metrics_error(metrics)
+            if parser_metric_error is not None:
+                reward_out.write_text("0\n")
+                (out_dir / "score_error.txt").write_text(
+                    f"invalid parser metric for {label} seed {seed}: "
+                    f"{parser_metric_error}; reward forced to 0\n"
+                )
+                return 0
+            duplicate_metric_lines = _duplicate_authoritative_metric_lines(
+                task_parser.Parser,
+                label,
+                log_text,
+                all_score_metrics,
+            )
+            if duplicate_metric_lines:
+                details = ", ".join(
+                    f"{key} on lines {','.join(str(line) for line in lines)}"
+                    for key, lines in sorted(duplicate_metric_lines.items())
+                )
+                reward_out.write_text("0\n")
+                (out_dir / "score_error.txt").write_text(
+                    f"duplicate authoritative metric for {label} seed {seed}: "
+                    f"{details}; reward forced to 0\n"
+                )
+                return 0
+            if not _has_real_metrics(metrics):
+                reward_out.write_text("0\n")
+                (out_dir / "score_error.txt").write_text(
+                    f"no metrics extracted for {label} seed {seed}; reward forced to 0\n"
+                )
+                return 0
+            declared_settings = tc.get("score_settings")
+            if declared_settings is None:
+                covered_settings = [
+                    setting_name
+                    for setting_name, required in setting_metric_keys.items()
+                    if required.issubset(metrics)
+                ]
+                single_command_covers_matrix = (
+                    len(test_cmd_by_label) == 1
+                    and set(covered_settings) == set(setting_metric_keys)
+                )
+                if len(covered_settings) != 1 and not single_command_covers_matrix:
+                    reward_out.write_text("0\n")
+                    (out_dir / "score_error.txt").write_text(
+                        f"{label} seed {seed} must cover exactly one score setting; "
+                        f"covered={covered_settings}\n"
+                    )
+                    return 0
+            else:
+                if not isinstance(declared_settings, list) or not declared_settings:
+                    reward_out.write_text("0\n")
+                    (out_dir / "score_error.txt").write_text(
+                        f"{label} has invalid score_settings declaration\n"
+                    )
+                    return 0
+                covered_settings = [str(name) for name in declared_settings]
+                unknown = sorted(set(covered_settings) - set(setting_metric_keys))
+                if unknown:
+                    reward_out.write_text("0\n")
+                    (out_dir / "score_error.txt").write_text(
+                        f"{label} declares unknown score settings: {unknown}\n"
+                    )
+                    return 0
+                missing = {
+                    name: sorted(setting_metric_keys[name] - set(metrics))
+                    for name in covered_settings
+                    if not setting_metric_keys[name].issubset(metrics)
+                }
+                if missing:
+                    reward_out.write_text("0\n")
+                    (out_dir / "score_error.txt").write_text(
+                        f"{label} seed {seed} is missing declared-setting metrics: "
+                        f"{missing}\n"
+                    )
+                    return 0
+
+            allowed_score_metrics = set().union(
+                *(setting_metric_keys[name] for name in covered_settings)
+            )
+            cross_setting_metrics = (
+                set(metrics) & all_score_metrics
+            ) - allowed_score_metrics
+            if cross_setting_metrics:
+                reward_out.write_text("0\n")
+                (out_dir / "score_error.txt").write_text(
+                    f"{label} seed {seed} emitted metrics for another setting: "
+                    f"{sorted(cross_setting_metrics)}\n"
+                )
+                return 0
+
+            seen = seen_seed_settings.setdefault(seed, set())
+            duplicate = seen.intersection(covered_settings)
+            if duplicate:
+                reward_out.write_text("0\n")
+                (out_dir / "score_error.txt").write_text(
+                    f"seed {seed} received duplicate score settings: {sorted(duplicate)}\n"
+                )
+                return 0
+            seen.update(covered_settings)
             seed_metrics = per_seed_metrics.setdefault(seed, {})
-            seed_metrics.update(metrics)
+            for metric_name in allowed_score_metrics:
+                seed_metrics[metric_name] = metrics[metric_name]
             if "elapsed" in log_info:
                 try:
                     seed_metrics[f"elapsed_{label}"] = float(log_info["elapsed"])
                 except (TypeError, ValueError):
                     pass
+
+    for seed in _config_seeds(config):
+        metrics = per_seed_metrics.get(int(seed), {})
+        missing_settings = set(setting_metric_keys) - seen_seed_settings.get(int(seed), set())
+        if missing_settings:
+            reward_out.write_text("0\n")
+            (out_dir / "score_error.txt").write_text(
+                f"seed {seed} is missing score settings: {sorted(missing_settings)}\n"
+            )
+            return 0
+        _seed_score, _seed_settings, seed_valid = score_record_details(
+            spec,
+            metrics,
+            anchors,
+        )
+        if not seed_valid:
+            reward_out.write_text("0\n")
+            (out_dir / "score_error.txt").write_text(
+                f"seed {seed} has incomplete, non-finite, or crash-defaulted metrics; "
+                "reward forced to 0\n"
+            )
+            return 0
 
     valid_metrics = _valid_seed_metric_records(per_seed_metrics)
     if not valid_metrics:
@@ -1285,26 +1880,47 @@ def cmd_score(args: argparse.Namespace) -> int:
     mean_metrics = _aggregate_metrics(valid_metrics)
 
     # Score via mlsbench DSL against task's score_spec.py + anchors.
-    anchors = BaselineAnchors(task_meta)
-    spec = load_expanded_spec(task_meta, anchors)
-    if spec is None:
+    try:
+        combined = float(score_record(spec, mean_metrics, anchors))
+    except Exception as exc:
         reward_out.write_text("0\n")
-        (out_dir / "score_error.txt").write_text("score_spec missing or invalid\n")
+        (out_dir / "score_error.txt").write_text(
+            f"score computation failed: {type(exc).__name__}: {exc}\n"
+        )
+        return 0
+    if not math.isfinite(combined):
+        reward_out.write_text("0\n")
+        (out_dir / "score_error.txt").write_text(
+            "score computation returned a non-finite value; reward forced to 0\n"
+        )
         return 0
 
-    combined = score_record(spec, mean_metrics, anchors)
     # combined_score is meant to be roughly in [0, 1]; clip defensively.
-    if combined is None or combined != combined:  # NaN check
-        combined = 0.0
-    reward = max(0.0, min(1.0, float(combined)))
+    reward = max(0.0, min(1.0, combined))
 
-    reward_out.write_text(f"{reward}\n")
-    (out_dir / "metrics.json").write_text(json.dumps({
+    metrics_text = _canonical_json_text({
         "combined_score": combined,
         "reward": reward,
         "mean_metrics": mean_metrics,
         "per_seed_metrics": per_seed_metrics,
-    }, indent=2))
+    })
+    proof_text = _canonical_json_text({
+        "schema_version": 1,
+        "status": "passed",
+        "strict_fail_closed": True,
+        "required_labels": [
+            str(tc.get("label", tc.get("cmd", "test")))
+            for tc in config.get("test_cmds", [])
+        ],
+        "required_seeds": _config_seeds(config),
+        "reward": reward,
+        "metrics_sha256": hashlib.sha256(metrics_text.encode()).hexdigest(),
+    })
+    _atomic_write_text(out_dir / "metrics.json", metrics_text)
+    _atomic_write_text(out_dir / "verification_result.json", proof_text)
+    # Publish reward last. If scoring is interrupted before this replace, the
+    # zero pre-written by test.sh remains authoritative.
+    _atomic_write_text(reward_out, f"{reward}\n")
     return 0
 
 
@@ -1325,9 +1941,16 @@ def main(argv: list[str] | None = None) -> int:
 
     r = sub.add_parser("run-evals")
     r.add_argument("--task-meta", required=True)
+    r.add_argument(
+        "--eval-task-meta",
+        default=None,
+        help="Sanitized runtime task metadata exposed to untrusted eval code.",
+    )
     r.add_argument("--workspace", required=True, help="Workdir-level workspace root, e.g. /workspace")
     r.add_argument("--eval-root", required=True, help="Dir containing scripts/ — e.g. /tests/eval")
     r.add_argument("--out-dir", required=True)
+    r.add_argument("--oracle-cmd-overrides", default=None,
+                   help="Oracle-only JSON list of {label, cmd} substitutions.")
     r.set_defaults(func=cmd_run_evals)
 
     s = sub.add_parser("score")
