@@ -441,7 +441,10 @@ def _config_with_private_package_paths(
         for entry in out.get("files", [])
         if entry.get("filename")
     }
-    for idx, raw in enumerate(out.get("agent_public_package_files") or []):
+    public_entries = out.get("agent_public_package_files") or []
+    if not isinstance(public_entries, list):
+        raise ValueError("agent_public_package_files must be a list")
+    for idx, raw in enumerate(public_entries):
         public.add(
             _safe_rel_str(str(raw), field=f"agent_public_package_files[{idx}]")
         )
@@ -1142,21 +1145,15 @@ def _mangrove_resource_overrides(pkg_config: dict, config: dict) -> dict[str, in
                 f"{owner} mangrove_resources has unsupported field(s): {sorted(unknown)}"
             )
         for field, value in raw.items():
-            if isinstance(value, bool):
+            if isinstance(value, bool) or not isinstance(value, int):
                 raise ValueError(
                     f"{owner} mangrove_resources.{field} must be a positive integer"
                 )
-            try:
-                parsed = int(value)
-            except (TypeError, ValueError) as exc:
-                raise ValueError(
-                    f"{owner} mangrove_resources.{field} must be a positive integer"
-                ) from exc
-            if parsed <= 0 or parsed != value:
+            if value <= 0:
                 raise ValueError(
                     f"{owner} mangrove_resources.{field} must be a positive integer"
                 )
-            overrides[field] = parsed
+            overrides[field] = value
     return overrides
 
 
@@ -1392,6 +1389,19 @@ def render_task(
         if private_paths
         else []
     )
+    workdir_path = PurePosixPath(str(pkg_workdir))
+    if not workdir_path.is_absolute() or any(
+        part in {"", ".", ".."} for part in workdir_path.parts[1:]
+    ):
+        raise ValueError(f"package workdir must be a normal absolute path: {pkg_workdir!r}")
+    clean_scaffold_paths: list[str] = []
+    for package in clean_scaffold_packages:
+        package_path = _safe_rel_path(package, field="package name")
+        if len(package_path.parts) != 1:
+            raise ValueError(f"package name must be one path component: {package!r}")
+        clean_scaffold_paths.append(
+            shlex.quote(str(workdir_path / package_path.as_posix()))
+        )
 
     baseline_sections, baseline_warnings = _baseline_sections(mb, ctx, config=effective_config)
     read_sections, read_warnings = _read_sections(mb, ctx, config=effective_config)
@@ -1417,6 +1427,7 @@ def render_task(
         "agent_image_prune_paths": _agent_image_prune_paths(effective_config),
         "agent_data_prune_paths": _agent_data_prune_paths(effective_config),
         "clean_scaffold_packages": clean_scaffold_packages,
+        "clean_scaffold_paths": clean_scaffold_paths,
         "agent_timeout_sec": agent_timeout,
         "verifier_timeout_sec": _verifier_timeout_sec(
             ctx.config,

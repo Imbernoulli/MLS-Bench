@@ -1142,6 +1142,66 @@ def _write_score_fixture(tmp_path: Path, a_log: str, b_log: str) -> tuple[Path, 
     return task_meta, out_dir
 
 
+@pytest.mark.parametrize(
+    "failure_case",
+    ["rc_nonzero", "rc_bool", "rc_string", "missing_setting", "missing_seed"],
+)
+def test_score_fails_closed_for_noncanonical_or_incomplete_eval_matrix(
+    tmp_path: Path,
+    failure_case: str,
+):
+    score_task = _load_score_task()
+    task_meta, out_dir = _write_score_fixture(
+        tmp_path,
+        "a=0.8\n",
+        "b=0.8\n",
+    )
+    # Keep real, non-empty calibration rows present so exact zero can only come
+    # from the failed verification gate, not from missing score anchors.
+    (task_meta / "leaderboard.csv").write_text(
+        "timestamp,model,is_final,seed,a,b\n"
+        "2026-07-11T00:00:00Z,weak,true,mean,0.1,0.1\n"
+        "2026-07-11T00:01:00Z,strong,true,mean,0.9,0.9\n"
+    )
+    summary = json.loads((out_dir / "eval_summary.json").read_text())
+    if failure_case == "rc_nonzero":
+        summary[0]["logs"][0]["rc"] = 1
+    elif failure_case == "rc_bool":
+        summary[0]["logs"][0]["rc"] = False
+    elif failure_case == "rc_string":
+        summary[0]["logs"][0]["rc"] = "0"
+    elif failure_case == "missing_setting":
+        summary.pop()
+    elif failure_case == "missing_seed":
+        config = json.loads((task_meta / "config.json").read_text())
+        config["seeds"] = [42, 43]
+        (task_meta / "config.json").write_text(json.dumps(config))
+    else:  # pragma: no cover - parametrization is exhaustive
+        raise AssertionError(failure_case)
+    (out_dir / "eval_summary.json").write_text(json.dumps(summary))
+
+    reward = out_dir / "reward.txt"
+    reward.write_text("0.91\n")
+    (out_dir / "metrics.json").write_text('{"reward": 0.91}\n')
+    (out_dir / "verification_result.json").write_text(
+        '{"status": "passed", "reward": 0.91}\n'
+    )
+
+    rc = score_task.cmd_score(argparse.Namespace(
+        task_meta=str(task_meta),
+        out_dir=str(out_dir),
+        reward_out=str(reward),
+    ))
+
+    assert rc == 0
+    assert reward.read_text() == "0\n"
+    assert "required evaluation did not complete successfully" in (
+        out_dir / "score_error.txt"
+    ).read_text()
+    assert not (out_dir / "metrics.json").exists()
+    assert not (out_dir / "verification_result.json").exists()
+
+
 def test_score_rejects_pointcloud_metrics_after_standard_failure_trace(
     tmp_path: Path,
 ):

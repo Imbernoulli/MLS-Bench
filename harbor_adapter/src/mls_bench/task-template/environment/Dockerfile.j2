@@ -32,8 +32,8 @@ RUN rm -rf{% for path in agent_image_prune_paths %} {{ path }}{% endfor %}
 RUN rm -rf{% for path in agent_data_prune_paths %} {{ path }}{% endfor %}
 {%- endif %}
 
-{% for pkg in clean_scaffold_packages -%}
-RUN rm -rf {{ workdir }}/{{ pkg }}
+{% for path in clean_scaffold_paths -%}
+RUN rm -rf {{ path }}
 {% endfor -%}
 {% if scaffold_files or clean_scaffold_packages -%}
 COPY _scaffold/ {{ workdir }}/

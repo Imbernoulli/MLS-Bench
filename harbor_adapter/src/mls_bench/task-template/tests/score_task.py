@@ -1591,12 +1591,11 @@ def _validate_eval_summary(summary: object, config: dict) -> str | None:
                 )
                 continue
             log = seed_logs[0]
-            try:
-                rc = int(log.get("rc", 125))
-            except (TypeError, ValueError):
-                rc = 125
-            if rc != 0:
-                failures.append(f"{label} seed {seed}: eval exited with rc={rc}")
+            rc = log.get("rc")
+            if type(rc) is not int or rc != 0:
+                failures.append(
+                    f"{label} seed {seed}: eval rc must be integer 0, got {rc!r}"
+                )
             log_path = log.get("log")
             if not log_path or not Path(str(log_path)).is_file():
                 failures.append(f"{label} seed {seed}: eval log missing")
