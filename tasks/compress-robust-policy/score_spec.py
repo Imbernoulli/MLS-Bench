@@ -1,0 +1,9 @@
+"""PENDING_FULL_OFFICIAL: replace only from terminal policy anchors."""
+from mlsbench.scoring.dsl import *
+
+for _setting in ('full', 'low', 'mid', 'high'):
+    _metric = f"rd18_{_setting}"
+    term(_metric, col(_metric).higher().id().sigmoid(ref=const(0.0), scale=1.0))
+    setting(_setting, weighted_mean((_metric, 1.0)))
+
+task(gmean("full", "low", "mid", "high"))

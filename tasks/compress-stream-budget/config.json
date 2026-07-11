@@ -1,0 +1,85 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "calibration_protocol": "compressai_zoo_kodak24_q1q8_policy_v1",
+  "verifier_only_package_files": [
+    "compressai/harness_zoo_entropy.py",
+    "compressai/harness_zoo_policy.py",
+    "compressai/policy_parser.py"
+  ],
+  "agent_pruned_package_files": [
+    "compressai/common.py",
+    "compressai/harness_arch.py",
+    "compressai/harness_entropy.py",
+    "compressai/harness_quant.py",
+    "compressai/harness_rd.py",
+    "compressai/nets.py",
+    "compressai/solution/activation.py",
+    "compressai/solution/attention.py",
+    "compressai/solution/context_model.py",
+    "compressai/solution/entropy_model.py",
+    "compressai/solution/latent_channels.py",
+    "compressai/solution/network_width.py",
+    "compressai/solution/normalization.py",
+    "compressai/solution/quantize.py",
+    "compressai/solution/rd_control.py",
+    "compressai/solution/residual_blocks.py",
+    "compressai/solution/upsampling.py",
+    "compressai/solution/content_policy.py",
+    "compressai/solution/quality_policy.py",
+    "compressai/solution/low_rate_policy.py",
+    "compressai/solution/parameter_budget_policy.py",
+    "compressai/solution/objective_policy.py",
+    "compressai/solution/robust_policy.py",
+    "compressai/solution/bitrate_policy.py",
+    "compressai/solution/high_rate_policy.py"
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/full.sh",
+      "label": "kodak24_q1q8",
+      "score_settings": [
+        "full",
+        "low",
+        "mid",
+        "high"
+      ],
+      "group": 1,
+      "compute": 1.0,
+      "time": "6:00:00",
+      "mem": 64,
+      "package": "compressai"
+    }
+  ],
+  "baselines": {
+    "uniform_factorized": {
+      "edit_ops": "edits/uniform_factorized.edit.py"
+    },
+    "uniform_hyperprior_scale": {
+      "edit_ops": "edits/uniform_hyperprior_scale.edit.py"
+    },
+    "uniform_meanscale": {
+      "edit_ops": "edits/uniform_meanscale.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "compressai/solution/stream_budget_policy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 6,
+          "end": 6
+        }
+      ]
+    }
+  ]
+}
