@@ -44,12 +44,26 @@
       ]
     }
   ],
-  "calibration_status": "pending_full_official_test_anchors",
+  "calibration_status": "representative_full_official_test_anchors_and_static_sibling_audit",
   "calibration_protocol": "summ-full-official-test-v1",
   "calibration_anchor_seed": 42,
   "calibration_anchor_counts": {
     "xsum": 11334,
     "cnndm": 11490,
     "samsum": 819
+  },
+  "calibration_static_sibling_count": 10,
+  "calibration_provenance": {
+    "representative_task": "summ-beam-width",
+    "date": "2026-07-11",
+    "zone": "k1h20",
+    "allocation_gpus_per_run": 1,
+    "execution": "two independent serialized single-GPU full-split runs",
+    "image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-abstractive-summarization@sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a",
+    "native_elapsed_seconds": 555.8,
+    "strong_elapsed_seconds": 1749.1,
+    "native_log_sha256": "988f70ae14531c366a5c82d300ba3464ac7e03d4eb5bd1883cf63c79caf68a0c",
+    "strong_log_sha256": "6aa2f028515368dabafb656e85ebe6b2c13d68cc20678e909e3dd3e36879ccfd",
+    "combined_evidence_sha256": "fa8440e419a94917a0ce2eb6b6f679c5a344ee6961f82ee8ba2a919110b9f525"
   }
 }
