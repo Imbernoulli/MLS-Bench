@@ -1,0 +1,57 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/8gaussians.sh",
+      "label": "8gaussians",
+      "group": 1,
+      "compute": 1,
+      "time": "0:30:00",
+      "mem": 16,
+      "package": "normflows-density"
+    }
+  ],
+  "baselines": {
+    "gaussian": {
+      "edit_ops": "edits/gaussian.edit.py"
+    },
+    "gaussian_trainable": {
+      "edit_ops": "edits/gaussian_trainable.edit.py"
+    },
+    "gmm": {
+      "edit_ops": "edits/gmm.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "normflows-density/solution/base_dist.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 11,
+          "end": 12
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "normflows-density/common.py",
+    "normflows-density/flow_blocks.py",
+    "normflows-density/harness_flow.py",
+    "normflows-density/_flow_data/8gaussians_seed42.npz",
+    "normflows-density/_flow_data/checkerboard_seed42.npz",
+    "normflows-density/_flow_data/moons_seed42.npz",
+    "normflows-density/_flow_data/pinwheel_seed42.npz"
+  ],
+  "calibration_status": "pending_community_20k_reanchor",
+  "calibration_protocol": "flow-2d-community-20k-literal-ast-v3"
+}
