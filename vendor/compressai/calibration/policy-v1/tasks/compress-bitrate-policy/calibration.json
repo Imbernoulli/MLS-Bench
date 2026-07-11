@@ -1,0 +1,46 @@
+{
+  "calibration": {
+    "full": {
+      "factorized": 31.451158754,
+      "hyperprior_scale": 33.273111356,
+      "meanscale": 33.511429558,
+      "midpoint": 33.273111356,
+      "scale": 1.3142609918200714
+    },
+    "high": {
+      "factorized": 26.194669457,
+      "hyperprior_scale": 27.681708278,
+      "meanscale": 27.912470901,
+      "midpoint": 27.681708278,
+      "scale": 1.0726717663330345
+    },
+    "low": {
+      "factorized": 32.715106817,
+      "hyperprior_scale": 32.621043836,
+      "meanscale": 32.297646774,
+      "midpoint": 32.621043836,
+      "scale": 0.23328166879272885
+    },
+    "mid": {
+      "factorized": 32.218718299,
+      "hyperprior_scale": 33.422160567,
+      "meanscale": 33.314374858,
+      "midpoint": 33.422160567,
+      "scale": 0.8681000960198808
+    }
+  },
+  "constraint": null,
+  "objective": "target_utility",
+  "predicted_scores": {
+    "baseline:uniform_factorized": 0.26315557844716336,
+    "baseline:uniform_hyperprior_scale": 0.5,
+    "baseline:uniform_meanscale": 0.41019048789482165
+  },
+  "proof_sha256": {
+    "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+    "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+    "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+  },
+  "replayed_family_cases": 576,
+  "task_id": "compress-bitrate-policy"
+}

@@ -1,0 +1,460 @@
+{
+  "accepted_proofs": {
+    "factorized": {
+      "case_completion_sha": "c3aa6b321af4c73c2257c7d2a14fa6687f53a6594c44a873c96a6fd4f92114ba",
+      "elapsed": 28.953,
+      "family": "factorized",
+      "model_completion_sha": "305db356be57c7aeea5ef69108cd814187c1b0b8101ab8358ee15666eb66682a",
+      "proof": "/home/lvbohan/compressai-full-v1/anchors/zoo-anchor-factorized-20260711b-k1/proof.log",
+      "proof_sha256": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+      "setting_completion_sha": "20193f9a213f6cbca36528fe1c5a160b43440e6baa689c28eefd2cdad6de1e6c"
+    },
+    "hyperprior_scale": {
+      "case_completion_sha": "2d8aa36d446755023b5e3c3f547edb5d09df958fd51b83e80cbc5507c7e3a8a6",
+      "elapsed": 23.204,
+      "family": "hyperprior_scale",
+      "model_completion_sha": "8bdfb9109af3da9de7efcc16b4d391a2e476b2c7896a20477d775655d8e6a511",
+      "proof": "/home/lvbohan/compressai-full-v1/anchors/zoo-anchor-hyperprior_scale-20260711b-k1/proof.log",
+      "proof_sha256": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+      "setting_completion_sha": "1c6c6bafa1264ec077d8a324e5673cfb01bc14008ee6a74ae80c1209a97daa52"
+    },
+    "meanscale": {
+      "case_completion_sha": "69565c214399f1e3677cdca7fe169568d66ef700478c553bb7b5054a1e3c22fe",
+      "elapsed": 23.742,
+      "family": "meanscale",
+      "model_completion_sha": "3fdef896506c2c15b7b770576d9bed3c28a18b9e75b92b99332bab60a09bf960",
+      "proof": "/home/lvbohan/compressai-full-v1/anchors/zoo-anchor-meanscale-20260711c-k1/proof.log",
+      "proof_sha256": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b",
+      "setting_completion_sha": "5afb961b37fc5a68d3b6c63ec20f5b667a830d8bb1157bd74441e3d709bed033"
+    }
+  },
+  "constraints": {
+    "mean_params": {
+      "sharpness": 1.477507393556676e-07,
+      "target": 7603523.0
+    },
+    "mean_streams": {
+      "sharpness": 0.6931471805599453,
+      "target": 1.0
+    }
+  },
+  "replayed_family_cases": 576,
+  "source_commit": "c7b404c48598c49d3add01d0a624dc7217ebb275",
+  "status": "success",
+  "tasks": {
+    "compress-bitrate-policy": {
+      "calibration": {
+        "full": {
+          "factorized": 31.451158754,
+          "hyperprior_scale": 33.273111356,
+          "meanscale": 33.511429558,
+          "midpoint": 33.273111356,
+          "scale": 1.3142609918200714
+        },
+        "high": {
+          "factorized": 26.194669457,
+          "hyperprior_scale": 27.681708278,
+          "meanscale": 27.912470901,
+          "midpoint": 27.681708278,
+          "scale": 1.0726717663330345
+        },
+        "low": {
+          "factorized": 32.715106817,
+          "hyperprior_scale": 32.621043836,
+          "meanscale": 32.297646774,
+          "midpoint": 32.621043836,
+          "scale": 0.23328166879272885
+        },
+        "mid": {
+          "factorized": 32.218718299,
+          "hyperprior_scale": 33.422160567,
+          "meanscale": 33.314374858,
+          "midpoint": 33.422160567,
+          "scale": 0.8681000960198808
+        }
+      },
+      "constraint": null,
+      "objective": "target_utility",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.26315557844716336,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.41019048789482165
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-bitrate-policy"
+    },
+    "compress-content-dispatch": {
+      "calibration": {
+        "full": {
+          "factorized": 23.913780824,
+          "hyperprior_scale": 25.37669412,
+          "meanscale": 25.782157098,
+          "midpoint": 25.37669412,
+          "scale": 1.055268878694864
+        },
+        "high": {
+          "factorized": 17.869669456,
+          "hyperprior_scale": 19.356708278,
+          "meanscale": 19.587470901,
+          "midpoint": 19.356708278,
+          "scale": 1.0726717670543822
+        },
+        "low": {
+          "factorized": 28.54132752,
+          "hyperprior_scale": 30.002501356,
+          "meanscale": 30.554348434,
+          "midpoint": 30.002501356,
+          "scale": 1.054014123536952
+        },
+        "mid": {
+          "factorized": 25.330345496,
+          "hyperprior_scale": 26.770872725,
+          "meanscale": 27.204651958,
+          "midpoint": 26.770872725,
+          "scale": 1.0391207447719106
+        }
+      },
+      "constraint": null,
+      "objective": "rd12",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.5942195237451419
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-content-dispatch"
+    },
+    "compress-high-rate-policy": {
+      "calibration": {
+        "full": {
+          "factorized": 19.403569749,
+          "hyperprior_scale": 22.053442793,
+          "meanscale": 22.615093522,
+          "midpoint": 22.053442793,
+          "scale": 1.9114793497820708
+        },
+        "high": {
+          "factorized": 10.24252181,
+          "hyperprior_scale": 13.228319448,
+          "meanscale": 13.345377284,
+          "midpoint": 13.228319448,
+          "scale": 2.153797722720291
+        },
+        "low": {
+          "factorized": 26.329692243,
+          "hyperprior_scale": 28.795191031,
+          "meanscale": 29.695531341,
+          "midpoint": 28.795191031,
+          "scale": 1.778481437382676
+        },
+        "mid": {
+          "factorized": 21.638495192,
+          "hyperprior_scale": 24.136817901,
+          "meanscale": 24.804371941,
+          "midpoint": 24.136817901,
+          "scale": 1.8021588914072904
+        }
+      },
+      "constraint": null,
+      "objective": "highq_rd12",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.5740659312767473
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-high-rate-policy"
+    },
+    "compress-low-rate-policy": {
+      "calibration": {
+        "full": {
+          "factorized": 25.851848517,
+          "hyperprior_scale": 26.609710063,
+          "meanscale": 26.879284033,
+          "midpoint": 26.609710063,
+          "scale": 0.5466815470473222
+        },
+        "high": {
+          "factorized": 21.975781672,
+          "hyperprior_scale": 22.705935187,
+          "meanscale": 22.90658764,
+          "midpoint": 22.705935187,
+          "scale": 0.5266944275890737
+        },
+        "low": {
+          "factorized": 28.880235848,
+          "hyperprior_scale": 29.650254003,
+          "meanscale": 30.002216071,
+          "midpoint": 29.650254003,
+          "scale": 0.5554506868064838
+        },
+        "mid": {
+          "factorized": 26.699528031,
+          "hyperprior_scale": 27.472940999,
+          "meanscale": 27.729048389,
+          "midpoint": 27.472940999,
+          "scale": 0.5578995267464064
+        }
+      },
+      "constraint": null,
+      "objective": "lowq_rd12",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.6198971372471861
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-low-rate-policy"
+    },
+    "compress-objective-policy": {
+      "calibration": {
+        "full": {
+          "factorized": 28.292905783,
+          "hyperprior_scale": 29.625689583,
+          "meanscale": 29.92153342,
+          "midpoint": 29.625689583,
+          "scale": 0.961400289418575
+        },
+        "high": {
+          "factorized": 23.937143822,
+          "hyperprior_scale": 25.615062465,
+          "meanscale": 25.879844558,
+          "midpoint": 25.615062465,
+          "scale": 1.2103624526356207
+        },
+        "low": {
+          "factorized": 31.666022344,
+          "hyperprior_scale": 32.738386976,
+          "meanscale": 33.071423019,
+          "midpoint": 32.738386976,
+          "scale": 0.7735475683055586
+        },
+        "mid": {
+          "factorized": 29.275551185,
+          "hyperprior_scale": 30.523619307,
+          "meanscale": 30.813332683,
+          "midpoint": 30.523619307,
+          "scale": 0.9002908451505005
+        }
+      },
+      "constraint": null,
+      "objective": "rd6",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.5788535039727583
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-objective-policy"
+    },
+    "compress-parameter-budget": {
+      "calibration": {
+        "full": {
+          "factorized": 23.913780824,
+          "hyperprior_scale": 25.37669412,
+          "meanscale": 25.782157098,
+          "midpoint": 25.37669412,
+          "scale": 1.055268878694864
+        },
+        "high": {
+          "factorized": 17.869669456,
+          "hyperprior_scale": 19.356708278,
+          "meanscale": 19.587470901,
+          "midpoint": 19.356708278,
+          "scale": 1.0726717670543822
+        },
+        "low": {
+          "factorized": 28.54132752,
+          "hyperprior_scale": 30.002501356,
+          "meanscale": 30.554348434,
+          "midpoint": 30.002501356,
+          "scale": 1.054014123536952
+        },
+        "mid": {
+          "factorized": 25.330345496,
+          "hyperprior_scale": 26.770872725,
+          "meanscale": 27.204651958,
+          "midpoint": 26.770872725,
+          "scale": 1.0391207447719106
+        }
+      },
+      "constraint": "mean_params",
+      "objective": "rd12",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.29710976187257093
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-parameter-budget"
+    },
+    "compress-quality-dispatch": {
+      "calibration": {
+        "full": {
+          "factorized": 23.913780824,
+          "hyperprior_scale": 25.37669412,
+          "meanscale": 25.782157098,
+          "midpoint": 25.37669412,
+          "scale": 1.055268878694864
+        },
+        "high": {
+          "factorized": 17.869669456,
+          "hyperprior_scale": 19.356708278,
+          "meanscale": 19.587470901,
+          "midpoint": 19.356708278,
+          "scale": 1.0726717670543822
+        },
+        "low": {
+          "factorized": 28.54132752,
+          "hyperprior_scale": 30.002501356,
+          "meanscale": 30.554348434,
+          "midpoint": 30.002501356,
+          "scale": 1.054014123536952
+        },
+        "mid": {
+          "factorized": 25.330345496,
+          "hyperprior_scale": 26.770872725,
+          "meanscale": 27.204651958,
+          "midpoint": 26.770872725,
+          "scale": 1.0391207447719106
+        }
+      },
+      "constraint": null,
+      "objective": "rd12",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.5942195237451419
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-quality-dispatch"
+    },
+    "compress-robust-policy": {
+      "calibration": {
+        "full": {
+          "factorized": 19.534655865,
+          "hyperprior_scale": 21.127698656,
+          "meanscale": 21.642780775,
+          "midpoint": 21.127698656,
+          "scale": 1.1491374672498056
+        },
+        "high": {
+          "factorized": 11.802195091,
+          "hyperprior_scale": 13.098354091,
+          "meanscale": 13.295097244,
+          "midpoint": 13.098354091,
+          "scale": 0.9349810807517985
+        },
+        "low": {
+          "factorized": 25.416632695,
+          "hyperprior_scale": 27.266615736,
+          "meanscale": 28.037273849,
+          "midpoint": 27.266615736,
+          "scale": 1.3344806794896906
+        },
+        "mid": {
+          "factorized": 21.385139808,
+          "hyperprior_scale": 23.018126143,
+          "meanscale": 23.595971232,
+          "midpoint": 23.018126143,
+          "scale": 1.1779506436719704
+        }
+      },
+      "constraint": null,
+      "objective": "rd18",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.5,
+        "baseline:uniform_meanscale": 0.604929833531978
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-robust-policy"
+    },
+    "compress-stream-budget": {
+      "calibration": {
+        "full": {
+          "factorized": 23.913780824,
+          "hyperprior_scale": 25.37669412,
+          "meanscale": 25.782157098,
+          "midpoint": 25.37669412,
+          "scale": 1.055268878694864
+        },
+        "high": {
+          "factorized": 17.869669456,
+          "hyperprior_scale": 19.356708278,
+          "meanscale": 19.587470901,
+          "midpoint": 19.356708278,
+          "scale": 1.0726717670543822
+        },
+        "low": {
+          "factorized": 28.54132752,
+          "hyperprior_scale": 30.002501356,
+          "meanscale": 30.554348434,
+          "midpoint": 30.002501356,
+          "scale": 1.054014123536952
+        },
+        "mid": {
+          "factorized": 25.330345496,
+          "hyperprior_scale": 26.770872725,
+          "meanscale": 27.204651958,
+          "midpoint": 26.770872725,
+          "scale": 1.0391207447719106
+        }
+      },
+      "constraint": "mean_streams",
+      "objective": "rd12",
+      "predicted_scores": {
+        "baseline:uniform_factorized": 0.2,
+        "baseline:uniform_hyperprior_scale": 0.25,
+        "baseline:uniform_meanscale": 0.29710976187257093
+      },
+      "proof_sha256": {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+      },
+      "replayed_family_cases": 576,
+      "task_id": "compress-stream-budget"
+    }
+  }
+}

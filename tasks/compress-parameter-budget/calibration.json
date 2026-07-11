@@ -1,0 +1,46 @@
+{
+  "calibration": {
+    "full": {
+      "factorized": 23.913780824,
+      "hyperprior_scale": 25.37669412,
+      "meanscale": 25.782157098,
+      "midpoint": 25.37669412,
+      "scale": 1.055268878694864
+    },
+    "high": {
+      "factorized": 17.869669456,
+      "hyperprior_scale": 19.356708278,
+      "meanscale": 19.587470901,
+      "midpoint": 19.356708278,
+      "scale": 1.0726717670543822
+    },
+    "low": {
+      "factorized": 28.54132752,
+      "hyperprior_scale": 30.002501356,
+      "meanscale": 30.554348434,
+      "midpoint": 30.002501356,
+      "scale": 1.054014123536952
+    },
+    "mid": {
+      "factorized": 25.330345496,
+      "hyperprior_scale": 26.770872725,
+      "meanscale": 27.204651958,
+      "midpoint": 26.770872725,
+      "scale": 1.0391207447719106
+    }
+  },
+  "constraint": "mean_params",
+  "objective": "rd12",
+  "predicted_scores": {
+    "baseline:uniform_factorized": 0.2,
+    "baseline:uniform_hyperprior_scale": 0.5,
+    "baseline:uniform_meanscale": 0.29710976187257093
+  },
+  "proof_sha256": {
+    "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+    "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+    "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b"
+  },
+  "replayed_family_cases": 576,
+  "task_id": "compress-parameter-budget"
+}

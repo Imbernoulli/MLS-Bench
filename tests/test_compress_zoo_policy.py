@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.util
 import json
@@ -267,6 +268,84 @@ def test_policy_task_inventory_is_real_scale_and_distinct():
         assert objective in (task / "score_spec.py").read_text()
         surfaces.add((mode, surface, objective))
     assert len(surfaces) == 9
+
+
+def test_entropy_task_explicitly_declares_all_score_settings():
+    config = json.loads(
+        (ROOT / "tasks" / "compress-entropy-model" / "config.json").read_text()
+    )
+    assert config["test_cmds"][0]["score_settings"] == [
+        "full",
+        "low",
+        "mid",
+        "high",
+    ]
+
+
+def test_policy_calibration_is_measured_reproducible_and_fail_closed():
+    from mlsbench.scoring.anchors import BaselineAnchors
+    from mlsbench.scoring.evaluate import score_record_details
+    from mlsbench.scoring.spec import load_score_spec
+
+    calibration_root = VENDOR / "calibration" / "policy-v1"
+    manifest = json.loads((calibration_root / "policy_calibration.json").read_text())
+    assert manifest["status"] == "success"
+    assert manifest["replayed_family_cases"] == 576
+    assert set(manifest["tasks"]) == set(POLICY_TASKS)
+    assert {
+        family: record["proof_sha256"]
+        for family, record in manifest["accepted_proofs"].items()
+    } == {
+        "factorized": "83de02d6f531f29a0eb936f3726c83a1ae7bdd4328504c4aeb4d34b21db1b01a",
+        "hyperprior_scale": "c4d117e664a9f8547e0495d1b0913985a8582d79f7971c2b45e2f28c5842bdaa",
+        "meanscale": "3c5a68541e2710b21b98ecaf1088ec8e06f6d32a939399e1569c07a9c5827a6b",
+    }
+
+    for task_id in POLICY_TASKS:
+        task = ROOT / "tasks" / task_id
+        generated = calibration_root / "tasks" / task_id
+        for name in ("leaderboard.csv", "score_spec.py", "calibration.json"):
+            assert (task / name).read_bytes() == (generated / name).read_bytes()
+        assert "PENDING_FULL_OFFICIAL" not in (task / "score_spec.py").read_text()
+        task_calibration = json.loads((task / "calibration.json").read_text())
+        assert task_calibration["replayed_family_cases"] == 576
+        assert task_calibration["proof_sha256"] == {
+            family: record["proof_sha256"]
+            for family, record in manifest["accepted_proofs"].items()
+        }
+
+        spec = load_score_spec(task)
+        assert spec is not None
+        assert list(spec.settings) == ["full", "low", "mid", "high"]
+        anchors = BaselineAnchors(task)
+        with (task / "leaderboard.csv").open(newline="") as handle:
+            rows = list(csv.DictReader(handle))
+        assert {row["model"] for row in rows} == {
+            "baseline:uniform_factorized",
+            "baseline:uniform_hyperprior_scale",
+            "baseline:uniform_meanscale",
+        }
+        objective_metric = next(iter(spec.settings["full"].terms))[0]
+        for row in rows:
+            record = {
+                term.metric: float(row[term.metric])
+                for term in spec.terms.values()
+            }
+            score, settings, valid = score_record_details(spec, record, anchors)
+            assert valid is True
+            assert len(settings) == 4
+            assert math.isfinite(score) and 0.0 <= score <= 1.0
+            expected = task_calibration["predicted_scores"][row["model"]]
+            assert math.isclose(score, expected, rel_tol=0, abs_tol=1e-12)
+
+        missing = {
+            term.metric: float(rows[-1][term.metric])
+            for term in spec.terms.values()
+        }
+        del missing[objective_metric]
+        score, _settings, valid = score_record_details(spec, missing, anchors)
+        assert valid is False
+        assert score == 0.0
 
 
 def test_policy_surface_loader_accepts_only_literal_dispatch(tmp_path: Path):
