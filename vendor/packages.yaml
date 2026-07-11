@@ -4,6 +4,30 @@
 
 packages:
 
+  extractive-qa:
+    url: local
+    commit: local
+
+  gpytorch-gp:
+    url: local
+    commit: local
+
+  mdn-density:
+    url: local
+    commit: local
+
+  ood-detection-lab:
+    url: local
+    commit: local
+
+  text-simplification:
+    url: local
+    commit: local
+
+  torchreid-reid:
+    url: local
+    commit: local
+
   constrained-decoding-lab:
     url: local
     commit: local
