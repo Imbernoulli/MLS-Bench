@@ -1,0 +1,50 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "calibration_protocol": "compressai_zoo_kodak24_q1q8_bitstream_v1",
+  "verifier_only_package_files": [
+    "compressai/harness_zoo_entropy.py"
+  ],
+  "agent_pruned_package_files": [
+    "compressai/common.py",
+    "compressai/harness_arch.py",
+    "compressai/harness_entropy.py",
+    "compressai/harness_quant.py",
+    "compressai/harness_rd.py",
+    "compressai/nets.py",
+    "compressai/solution/activation.py",
+    "compressai/solution/attention.py",
+    "compressai/solution/context_model.py",
+    "compressai/solution/latent_channels.py",
+    "compressai/solution/network_width.py",
+    "compressai/solution/normalization.py",
+    "compressai/solution/quantize.py",
+    "compressai/solution/rd_control.py",
+    "compressai/solution/residual_blocks.py",
+    "compressai/solution/upsampling.py"
+  ],
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/full.sh",
+      "label": "kodak24_q1q8",
+      "group": 1,
+      "compute": 1.0,
+      "time": "6:00:00",
+      "mem": 64,
+      "package": "compressai"
+    }
+  ],
+  "baselines": {
+    "factorized": {"edit_ops": "edits/factorized.edit.py"},
+    "hyperprior_scale": {"edit_ops": "edits/hyperprior_scale.edit.py"},
+    "meanscale": {"edit_ops": "edits/meanscale.edit.py"}
+  },
+  "files": [
+    {
+      "filename": "compressai/solution/entropy_model.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 11, "end": 11}]
+    }
+  ]
+}

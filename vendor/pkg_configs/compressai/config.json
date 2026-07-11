@@ -1,0 +1,32 @@
+{
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-compressai@sha256:3ae6d687b13d847e08cccdd98e3e0a543cd5964082a30a1453414f4a2508b7e6",
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir compressai==1.2.8",
+    "python -c \"import compressai, torch; from compressai.zoo import bmshj2018_hyperprior; print('compressai', compressai.__version__, 'torch', torch.__version__)\""
+  ],
+  "env": {
+    "COMPRESSAI_DATA": "/data/compressai/kodak"
+  },
+  "data_deps": [
+    {
+      "name": "compressai_kodak",
+      "host_path": "{data_root}/compressai",
+      "container_path": "/data/compressai",
+      "prepare": "vendor/data_scripts/compressai/prepare_data.py",
+      "ready_files": [
+        "{data_root}/compressai/kodak/manifest.json",
+        "{data_root}/compressai/kodak/source_manifest.json",
+        "{data_root}/compressai/kodak/kodim21.png",
+        "{data_root}/compressai/kodak/kodim01.png",
+        "{data_root}/compressai/kodak/low/manifest.json",
+        "{data_root}/compressai/kodak/mid/manifest.json",
+        "{data_root}/compressai/kodak/high/manifest.json"
+      ],
+      "description": "The 24 standard Kodak PNG images (768x512): the ORIGINAL FIXED train/eval split (kodim01..20 / kodim21..24, used by the 3 original compress-* tasks) PLUS a FIXED 3-way content-complexity split (low/mid/high texture terciles, 6 train + 2 eval images each) under kodak/{low,mid,high}/, used by the newer compress-* architecture-axis tasks so every new task aggregates over >=3 settings. Used by the compress-* learned-image-compression tasks. ~13MB. Deterministic."
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}
