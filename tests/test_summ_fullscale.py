@@ -417,6 +417,24 @@ def test_ten_siblings_share_parser_and_fullscale_config_contract():
         assert set(config["verifier_only_package_files"]) == VERIFIER_RUNTIME
 
 
+def test_package_uses_established_digest_pinned_mangrove_image_key():
+    package_config = json.loads(
+        (
+            ROOT
+            / "vendor"
+            / "pkg_configs"
+            / "abstractive-summarization"
+            / "config.json"
+        ).read_text()
+    )
+    assert "pinned_harbor_image" not in package_config
+    assert package_config["mangrove_base_image"] == (
+        "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/"
+        "mlsbench-harbor-abstractive-summarization@"
+        "sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a"
+    )
+
+
 def test_512_token_protocol_and_exact_checkpoint_counts_are_code_pinned():
     common_path = ROOT / "vendor" / "abstractive-summarization" / "common.py"
     source = common_path.read_text()

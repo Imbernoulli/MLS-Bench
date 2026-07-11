@@ -34,7 +34,7 @@
     "huggingface_hub",
     "pyarrow"
   ],
-  "pinned_harbor_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-abstractive-summarization@sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-abstractive-summarization@sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a",
   "use_cuda": true,
   "writable_tmpfs": true,
   "workdir": "/workspace"

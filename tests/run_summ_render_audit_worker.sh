@@ -15,6 +15,7 @@ PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$SRC/harbor_adapter/src" \
   --output-dir "$RUN/rendered" \
   --overwrite \
   --mangrove \
+  --gpu-backend h20 \
   --mls-bench-root "$SRC" \
   --task-ids \
     summ-beam-repetition \
