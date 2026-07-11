@@ -1,0 +1,58 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run_inpaint.sh masking solution/masking.py",
+      "label": "full",
+      "group": 1,
+      "compute": 1,
+      "time": "16:00:00",
+      "mem": 64,
+      "package": "image-inpainting"
+    }
+  ],
+  "baselines": {
+    "mixed": {
+      "edit_ops": "edits/mixed.edit.py"
+    },
+    "random_square": {
+      "edit_ops": "edits/random_square.edit.py"
+    },
+    "none": {
+      "edit_ops": "edits/none.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-inpainting/solution/masking.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 10,
+          "end": 17
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "image-inpainting/harness.py"
+  ],
+  "agent_data_prune": [
+    "/data/image-inpainting"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/image-inpainting/community_v1",
+      "dest": "data/image-inpainting/community_v1"
+    }
+  ]
+}
