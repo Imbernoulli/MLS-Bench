@@ -244,7 +244,7 @@
 
 ### 16 个 repo 的 terminal 证据（此前 14 个候选全 sibling 重审中）
 
-#### 1. `text-simplification` — `SHIPPED`
+#### 1. `text-simplification` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** dataset version `18707`；task [96013](https://mangrove.msh.team/tasks/96013)；container `4889662`；1×H20；seed `42`；`has_exception=false`；reward `0.09999999999999994`。
 - **Verification setting：** frozen pretrained `t5-base` simplifier；完整 ASSET `359`、TurkCorpus `359`、WikiAuto `720` test sources 和固定 multi-reference，共 `1,438` 个输入；一个 required command 内依次生成全部三个 corpus，所有 corpus 都计分，无抽样、head slicing 或训练。
@@ -252,7 +252,7 @@
 - **实测时间：** harness `96.5s`；verifier command wrapper `98.522s`；完整 verifier `99.814s`；environment setup `199.018s`；agent `0.178s`；total wall `301.369s`。setup 的主要部分是首次拉取/解压 pinned multi-GB image；per-task build 只有 `rm` 和 `COPY`，没有安装依赖。
 - **为什么合理：**这是 frozen-model inference task，scale 是完整 canonical test inventory 和完整生成，不是训练步数。H20 在约 100 秒内完成 1,438 条 T5 generation 是合理的；旧 `95310` 的 `simp-source-policy` verifier 仅 `3.744s`，已被本次 full-split run 明确取代。
 
-#### 2. `keyphrase-extraction` — `SHIPPED`
+#### 2. `keyphrase-extraction` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** dataset version `18708`；task [96014](https://mangrove.msh.team/tasks/96014)；container `4889663`；1×H20；seed `42`；reward `0.10000000000000002`。
 - **Verification setting：**完整官方 Inspec `500` documents、SemEval-2017 `100`、DUC-2001 `308`，三个 required setting 串行；固定 extraction/ranking pipeline 使用 pinned `all-MiniLM-L6-v2` 组件，只有 candidate-generation surface 可编辑，不进行模型训练。
@@ -260,7 +260,7 @@
 - **实测时间：** harness `13.3 / 6.6 / 25.4s`；wrapper `15.507 / 8.506 / 27.510s`；完整 verifier `53.132s`；setup `44.855s`；agent `0.189s`；total wall `100.399s`。
 - **为什么合理：**这是 908 个标准文档上的 deterministic extraction/frozen inference，而不是神经网络训练；完整 split、row count、数据 digest 和每个 setting 的 completion 都被 parser 绑定。约 53 秒 verifier 与 workload 相符，不能用“低于五分钟”否定它。
 
-#### 3. `extractive-qa` — `SHIPPED`
+#### 3. `extractive-qa` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** dataset version `18710`；task [96029](https://mangrove.msh.team/tasks/96029)；container `4891141`；1×H20；seed `42`；reward `0.8291298262225798`。旧失败 task `96022` 的 3/3 setting 均 `rc=2`，reward 精确为 `0`，证明当前 scorer 没有失败 fallback。
 - **Verification setting：** frozen `deepset/roberta-base-squad2`（`124,056,578` params）；完整 SQuAD v2 validation `11,873` examples，按原 row index 划为 `3,958 / 3,958 / 3,957` 三个 disjoint required parts，共 `12,165` tokenizer features；三组单卡串行且全部计分。
@@ -268,7 +268,7 @@
 - **实测时间：** harness `22.344 / 20.883 / 20.892s`；wrapper `23.512 / 21.511 / 21.507s`；完整 verifier `68.400s`；setup `26.940s`；agent `0.372s`；total wall `98.105s`。
 - **为什么合理：**这是 frozen QA model 对完整官方 validation split 的 batched inference，不包含重新 fine-tune RoBERTa。完整 inventory、feature count、model hash/parameter count和 official F1 均在 artifact 中绑定，因此一分钟级 verifier 是合理的 full-scale inference。
 
-#### 4. `machine-translation` — `SHIPPED`
+#### 4. `machine-translation` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** dataset version `18712`；task [96040](https://mangrove.msh.team/tasks/96040)；container `4891883`；1×H20；seed `42`；reward `0.09999999999999998`。
 - **Verification setting：** pinned frozen Helsinki-NLP OPUS-MT MarianMT checkpoints（每方向约 `75M` params）；完整 OPUS-100 `de->en / fr->en / ru->en` test splits，每方向恰好 `2,000` pairs，共 `6,000` translations；三个方向串行且全部计分。
@@ -276,7 +276,7 @@
 - **实测时间：** harness inference `49.9 / 48.4 / 45.5s`；wrapper `53.014 / 50.511 / 47.511s`；完整 verifier `152.448s`；setup `118.346s`；agent `0.263s`；total wall `273.475s`。
 - **为什么合理：**这是三个约 75M frozen translation model 对完整官方 2,000-pair split 的 batched decoding，不是 MT training。约 2.5 分钟 verifier 对 6,000 条单卡 Marian inference 合理；setup 冷拉镜像不能算进模型推理规模。
 
-#### 5. `constrained-decoding-lab` — `SHIPPED`
+#### 5. `constrained-decoding-lab` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** dataset version `18714`；task [96042](https://mangrove.msh.team/tasks/96042)；container `4891933`；1×H20；seed `42`；reward `0.11807675423063564`。
 - **Verification setting：** frozen `Qwen2.5-0.5B-Instruct`，artifact 实测 `494,032,768` params、FP16；完整 AG News test split `7,600` examples；每条都必须产生合法 choice，并通过 verifier-side canonical label mapping 后计 accuracy。
@@ -284,7 +284,7 @@
 - **实测时间：** model inference `433.2s`；wrapper `439.086s`；完整 verifier `440.451s`；setup `114.958s`；agent `0.159s`；total wall `558.080s`。
 - **为什么合理：**这是完整 7,600-example causal-LM constrained classification；约 7.3 分钟 verifier 与 0.5B 单卡 autoregressive inference 相符。旧 `95310` 的 `cd-numeric-answer` verifier 只有 `30.144s`，不能代表本次 full AG News setting，已被 `96042` 取代。
 
-#### 6. `inr-signal-fitting` — `SHIPPED`
+#### 6. `inr-signal-fitting` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** branch `mls-inr-strict-fullgrid-reanchor-20260710-1722` @ `af4ed8006e9f6cc2779f6fb054b7c255a20c4aa5`；dataset version `18681`；task [95697](https://mangrove.msh.team/tasks/95697)；container `4867945`；representative tree `7e286acb81832da268ff743a331b336d6f259ff4`；1×H20；reward `0.0998699325162879`。
 - **Verification setting：**三张固定真实 Kodak crops（`kodim10 / kodim07 / kodim13`），每张 `256x256 = 65,536` 个完整 RGB coordinates；每个 required setting 使用全部坐标执行 `2,000` full-batch Adam steps，seed `0`，LR `5e-4` + cosine schedule；128 Fourier frequencies、width 256、4 hidden layers。`low / medium / high` 三组严格串行且全部计分。
@@ -292,7 +292,7 @@
 - **实测时间：** harness `13.3 / 12.9 / 13.0s`；wrapper 各约 `15.007s`，合计 `45.022s`；完整 verifier `46.607s`；setup `82.895s`；total wall `130.259s`。线上 fresh PSNR 为 `31.233799 / 22.861345 / 20.484944`。
 - **为什么合理：**这是 custom INR signal-fitting benchmark，不声称复现某篇论文的完整研究预算；real-scale claim 限定为真实 Kodak、完整 256x256 full grid、无 minibatch/subsample/降分辨率/early stop，三组共约 `393M` coordinate-target presentations。小型 MLP 在 H20 上约 13 秒完成 2,000 次 full-batch step 与实测收敛质量相符。独立 destructive audit 覆盖缺 setting、非零 rc、缺 metric/final step、NaN/Inf、错误 grid 和 late exception 等 9 类失败，全部精确 `0.0`；10 active siblings 静态一致，`42 passed`。
 
-#### 7. `mdn-density` — `SHIPPED`
+#### 7. `mdn-density` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** branch `mls-mdn-community-scale-strict-20260711` @ `ad0f01006f97e651294794fa70961e587c8ef72b`；dataset version `18734`；task [96377](https://mangrove.msh.team/tasks/96377)；container `4927284`；1×H20；seed `42`；`has_exception=false`；reward `0.09999886454989437`。
 - **Verification setting：** `inverse_sine / two_branch / spiral` 三组 required conditional-density setting；每组固定 `20,000` train + `20,000` verifier-only test、`4,000` Adam updates、batch `512`、hidden width `64`，约 `2.048M` sample presentations；三组单卡串行且全部计分。
@@ -300,7 +300,7 @@
 - **实测时间：** wrapper `12.006 / 11.507 / 12.007s`；完整 verifier `36.854s`；environment setup `49.541s`；nop agent `0.166s`；Harbor trial total `87.068s`。三组均要求 `MDN_TRAIN step=3999 -> MDN_COMPLETE -> MDN_METRICS` 唯一顺序；reward、metrics 和 success proof 的 SHA 逐位一致。
 - **为什么合理：**公开 MDN tutorials 通常只有 `150-2,500` samples 和 `1,000-3,000` full-batch updates；当前数据量高约 `8-133x`，更新数不低于这些实现。它是一维、几千参数的小型网络，单组约十秒在 H20 上合理，不能为了制造长 runtime 无依据增加预算。10 siblings 静态审计通过；缺 completion、错误 budget/batch、重复或提前 metric 均精确归零。
 
-#### 8. `gpytorch-gp` — `SHIPPED`
+#### 8. `gpytorch-gp` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** branch `mls-gp-kernel-design-final-20260711-1329` @ `d0282065269dcd5e3a57d82cef39c789fd14c2d6`；dataset version `18736`；task [96379](https://mangrove.msh.team/tasks/96379)；container `4927422`；1×H20；seed `42`；`has_exception=false`；reward `0.09999999999999998`。
 - **Verification setting：**完整 OpenML Concrete `1,030`、Kin8nm `8,192`、Elevators `16,599`，固定 90/10 split 和 split SHA；每组 `200` Adam iterations。CG train/eval tolerance 固定 `0.01/0.001`，最多 `10,000` iterations；实测稳定的 preconditioner rank 为 Concrete/Elevators `100`、Kin8nm `500`，没有放松 tolerance。
@@ -308,7 +308,7 @@
 - **实测时间：**线上 harness `11.1 / 60.0 / 155.3s`；wrapper `13.007 / 62.016 / 157.536s`；完整 verifier `234.023s`；setup `73.348s`；nop agent `0.171s`；total `308.261s`。`metrics.json` SHA 与 `verification_result.json` 完全一致。
 - **为什么合理：**这是完整 UCI/OpenML 中小型 ExactGP protocol，而不是旧 toy subset。旧 strong 的 Kin8nm CG failure 已正确得到 exact `0`；独立 solver probes 证明仅增加 CG iterations 无法收敛，最终用固定、实测稳定的 preconditioner policy 修复数值协议，并保留原严格 tolerance。10 siblings 共享完整 split、单卡串行、literal AST surface 和 fail-closed scorer；代表 task 已完成 fresh calibration 与终态 Mangrove。
 
-#### 9. `normflows-density` — `SHIPPED`
+#### 9. `normflows-density` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** branch `mls-flow-coupling-final20k-20260711-1346` @ `809b5ca1c659f2ceb3ff2632ff67ecaeeb3f8514`；dataset version `18738`；task [96410](https://mangrove.msh.team/tasks/96410)；container `4930273`；1×H20；seed `42`；`has_exception=false`；artifact uploaded；reward `0.09999999999999998`。
 - **Verification setting：** `checkerboard / moons / 8gaussians` 三个 required targets；每组固定 `30,000` train + `30,000` verifier-only test、`20,000` Adam updates、16 个 coupling layers，三组在一张 H20 上串行并全部参与聚合。Parser 对每组要求唯一的 `FLOW_DATA n_train=30000 n_test=30000`、最终 `FLOW_TRAIN step=19999`、`FLOW_METRICS` 和 `FLOW_SETTING_COMPLETE`；任一 setting 缺失、`rc != 0`、非有限 metric 或 completion 顺序错误都精确归零。
@@ -316,7 +316,7 @@
 - **实测时间：**最终 native 三个 command elapsed `252.047 / 248.546 / 249.544s`；完整 verifier `751.515s`；environment setup `9.134s`；nop agent `0.241s`；total wall `763.261s`。Strong 20K calibration 的完整 verifier 约 `4,354s`（`72.6min`），3/3 同样 `rc=0` 并有完整 final-step proof。
 - **为什么合理：** upstream `real_nvp.ipynb` 使用 `20,000` iterations，`neural_spline_flow.ipynb` 与论文 NSF example 使用约 `10,000`；因此旧 6K protocol 已撤回，当前用社区示例上沿的 20K budget。Native affine flow 只有 `35,344` params，所以三组约 12.5 分钟；更昂贵的 spline strong 在同一预算下约 72.6 分钟。差异来自 baseline 架构成本，不是缩小数据或步数。最终 artifact 的三项 `rc=0`、reward、metrics SHA 和 success proof 一致，10 siblings 已完成共享协议与 fail-closed 静态审计。
 
-#### 10. `abstractive-summarization` — `SHIPPED`
+#### 10. `abstractive-summarization` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** source leak-fix head `60d317e1`；task-only dataset commit `d26862e17e20f6d87f96f01809b8b7c1f3ef18d1`；dataset version `18741`；task [96438](https://mangrove.msh.team/tasks/96438)；container `4932334`；pinned repo image `sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a`；1×H20；`has_exception=false`；reward `0.511565377995605`。
 - **Verification setting：**完整 XSum `11,334`、CNN/DailyMail 3.0.0 `11,490`、SAMSum `819`，合计 `23,643` documents；三个各自固定的 pretrained summarizer 对完整 inventory 生成，三个 corpus 都是 required setting 并全部参与聚合。Artifact 对每组绑定 data SHA、model revision、parameter count、weights SHA、row count、`MODEL/DATA/METRICS/SETTING_DONE`，并要求唯一 `EVAL_DONE` 与最终 `DONE`。
@@ -324,7 +324,7 @@
 - **实测时间：** harness `576.4s`；command `578.594s`；完整 verifier `579.873s`；environment setup `74.206s`；nop agent `0.350s`；trial total `655.157s`（platform `656.823s`）。Per-task build 只有 pinned `FROM`、cached `rm` 和 `COPY`，context `1.68KB`，没有安装或下载。
 - **为什么合理：**这是 frozen-model full-inventory generation，不是 summarizer training；约 9.6 分钟覆盖 23,643 篇真实文档和三个模型，与 H20 batched generation workload 相符。旧 `summ-source-policy` 在空输出路径下数秒完成的协议已撤回，代表题改为必须实际运行三套生成器的 `summ-beam-width`。第一次 final task `96428` 因 second-pass 审计发现 agent-visible directional harness/common 泄漏而被 cancel+hide；修复后 10/10 render 的 agent scaffold 只含本题 solution，directional scan、9 tests、10 siblings 静态审计和最终 artifact 均通过。
 
-#### 11. `ood-detection-lab` — `SHIPPED`
+#### 11. `ood-detection-lab` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** branch `mls-ood-logit-full-v1-final-20260711` @ `ba0f93f`；dataset version `18763`；native task [96612](https://mangrove.msh.team/tasks/96612) / container `4950395`；strong task [96611](https://mangrove.msh.team/tasks/96611) / container `4950394`；pinned repo image `sha256:c96492da2073103f2d59b3aad629b7c9560ed07d9ce6b5d315e0d46ec046fe8e`；均为 1×H20、`has_exception=false`、`rc=0`、artifact uploaded。Native/strong reward 分别精确为 `0.1 / 0.5`。
 - **Verification setting：** frozen OpenOOD-style CIFAR-10 `ResNet18_32x32`；checkpoint 由完整 CIFAR-10 train `50,000` 张按公开 recipe 训练 `100` epochs、`39,100` optimizer steps。最终 verifier 不重新训练，而是实际对完整 CIFAR-10 train `50,000`、CIFAR-10 test `10,000`、SVHN test `26,032`、CIFAR-100 test `10,000`、Tiny-ImageNet validation `10,000` 执行模型 forward，共 `106,032` images / `832` batches，batch `128`。SVHN、CIFAR-100、Tiny-ImageNet 三个 required setting 全部计入 gmean；不存在 public/hidden 排除项。
@@ -332,7 +332,7 @@
 - **实测时间：** 100-epoch checkpoint staging 在 1×H20 上 `609.23s`，environment setup `41.15s`；最终 native verifier `14.01s`、strong verifier `11.01s`，environment setup 约 `112s / 98s`。Final verifier 内各 split 的纯 forward 合计约 `4.6-4.8s`，其余时间用于完整数据 hash/load、parser 和 artifact；没有安装、下载、解压、编译或训练。
 - **为什么合理：** final task 研究的是 frozen classifier 上的 post-hoc logit score，而不是让每个候选重新训练分类器。32×32 ResNet-18 在 H20 上 batch-128 执行 832 个 forward batch 用数秒是实测吞吐，不是缩小 inventory；昂贵的 100-epoch 训练已单独绑定 checkpoint SHA 并有 terminal proof。Parser 要求三条唯一 setting record 和唯一 completion record，绑定 data/checkpoint SHA、`106,032/832` inventory、有限 metric 与正 runtime；任一缺失、重复、`rc != 0`、NaN/Inf、错误 digest/count 或 incomplete artifact 都精确 `0`。其他 OOD siblings 已完成静态设计审计；仍使用旧 5K/SmallCNN 锚或需要内存有界重写的 sibling 不冒充 full anchor，其问题保留为后续 task-specific 修复。
 
-#### 12. `torchreid-reid` — `SHIPPED`
+#### 12. `torchreid-reid` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** branch `mls-reid-spatial-fullscale-20260711-1550` @ `2b06af3b2bb14d4c76c204703560337c282e28bf`；dataset version `18766`；task [96623](https://mangrove.msh.team/tasks/96623) / container `4950705`；pinned image `sha256:fbaaa5d4dcd03ea4e2bf1084b1b8cc78c5ae09723033b5a05d4ec96bd2b8264f`；1×H20 on `virt-v6h20`；`has_exception=false`、`rc=0`、artifact uploaded；reward `0.1932609536455854`。
 - **Verification setting：**完整 Market-1501 train `12,936` images / `751` IDs、query `3,368`、gallery `19,732`（保留 junk distractors）；ImageNet-pretrained ResNet-50；60 epochs、batch 64、P×K sampler 且 K=4、Adam `3e-4`、milestones `[40,50]`。线上 completion proof 恰好包含 epoch `0..59`、`11,003` optimizer steps 和 `704,192` sampled images。Easy/medium/hard query groups 为 `1,122 / 1,123 / 1,123`，每组都对完整 `19,732` gallery 评测并参与 gmean。
@@ -341,7 +341,7 @@
 - **为什么合理：**这次 H20 verifier 的约 18 分钟计算时间和 H200 三条约 23.5 分钟 calibration 同量级，差别来自节点/数据加载与并发状态，不是缩小协议。Per-task build 仅拉取 pinned image、删除 agent 不可见的 query/gallery cache、清理 workspace 和 `COPY _scaffold`，没有安装、下载或编译；agent-visible tree 搜不到 harness、leaderboard、score spec 或 anchor 数值。Parser 要求完整 inventory SHA、60 条 epoch trace、training/evaluation completion、三组唯一有限 metrics 和 `rc=0`，否则精确 `0`。
 - **Sibling 静态审计：**九个非代表 sibling 的旧 `40 IDs / ResNet18 / 200-step` rows 已撤回，description 改为完整 Market-1501/ResNet-50/60-epoch protocol；未获得各自 full-scale anchors 的 score spec 保持 pending exact-zero，不能读取旧正分。`reid-reranking` 的 dense k-reciprocal baseline 已改为 memory-bounded chunked alpha query expansion。Focused ReID suite `16 passed`。
 
-#### 13. `pykeen-kge` — `SHIPPED`
+#### 13. `pykeen-kge` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** branch `mls-kge-training-epochs-verify-20260711-01` @ `50c60abe59330e16c340a8d1fd652e16dab512cb`；dataset version `18769`；task [96684](https://mangrove.msh.team/tasks/96684) / container `4953558`；pinned repo image `sha256:14356d7a3d3c2d40bb761fff2b64706e2b394ab6389ebb2a6c1b0ffd07906913`；1×H20 on `virt-m3h20`；`has_exception=false`、三命令均 `rc=0`、artifact uploaded；native reward 与独立重算均精确为 `0.5`。终态 artifact SHA-256 为 `e2fdbc2ea93e7f518b38d793165e847f421f60875353d309b4e383d0f7a587e5`。
 - **Verification setting：**完整 FB15k-237（`272,115 / 17,535 / 20,466` train/valid/test triples）、WN18RR（`86,835 / 3,034 / 3,134`）和 CoDEx-Medium（`185,584 / 10,310 / 10,311`）；三个 setting 都是 required 且串行参与 gmean。模型为 packed-real ComplEx（200 complex / 400 real dimensions）、Softplus、Bernoulli 64 negatives、Adam `1e-3`、batch `1024`、seed `42`；native 训练完整 `100` epochs，成功 optimizer step 分别为 `26,600 / 8,500 / 18,200`，随后对完整 test split 做 filtered both-side realistic ranking。Proof 绑定 split SHA、inventory、参数量、CUDA、epoch/step、full-test count、有限 loss/metric 和独立训练/评测耗时。
@@ -349,7 +349,7 @@
 - **实测时间：** final H20 command wrappers 为 `415.062s / 141.617s / 264.833s`，合计 `821.512s`；内部 train+full-test proofs 为 `408.868s / 135.480s / 258.657s`；完整 verifier `822.966s`，environment setup `38.851s`，nop agent `0.174s`，trial total `862.773s`（platform `864.600s`，约 14m25s）。Build log 仅 pinned `FROM`、`RUN rm -rf /workspace/pykeen-kge` 和 `COPY _scaffold`，没有 verification-time 安装、下载、解压或编译。
 - **为什么合理：**旧 `95310` 的 mini trio 在 PyStow `PermissionError` 后约 22 秒 fail closed，不能代表 KGE；新任务实际训练三个 community benchmark 的完整 split，共 `53,300` optimizer steps，并完整 filtered evaluation。Parser-empty、缺 setting/seed、duplicate/trailing proof、nonfinite、failure marker 或任一 `rc != 0` 都使整项精确为 `0`；focused protocol/scorer suite `55 passed`。九个 sibling 已完成问题设计静态审计：旧 mini-graph anchor 和正分全部作废，尚未获得 task-specific full-scale anchors 的 sibling 保持 pending exact-zero，不能冒充已校准 task。
 
-#### 14. `natural-language-inference` — `SHIPPED`
+#### 14. `natural-language-inference` — `TERMINAL_EVIDENCE / STATIC_REPAIR_REQUIRED`
 
 - **代表证据：** source branch `mls-nli-fullscale-20260711` @ `a10daf4ac7b791770ab8bccea54437ac852154b9`；task-only branch `mls-nli-finetune-fullscale-20260711-0816` @ `bb167e5fe073c15690f1cb279b5e16c9660dd3f2`；dataset version `18768`；task [96642](https://mangrove.msh.team/tasks/96642) / container `4950830`；pinned image `sha256:3413891ea22deecf213026a9c34403d65133702286042175057dcb88f329e7e6`；1×H20 on `virt-v6h20`；nop 保留 native solution；`has_exception=false`、command `rc=0`、artifact uploaded；reward `0.36685953030730406`。
 - **Verification setting：**完整 SNLI train `549,367` rows，DistilBERT-base cross-encoder，3 epochs、batch `32`、max length `128`、AdamW、seed `42`，恰好 `17,168` steps/epoch、总 `51,504` optimizer steps。训练完成后串行评测完整 SNLI test `9,824`、MultiNLI matched dev `9,815`、MultiNLI mismatched dev `9,832`，总 `29,471` rows；三组都是 required setting 并全部参与 gmean。Artifact 对四个 split 的 row count/SHA、模型 revision、`66,362,880` 参数、weights SHA、每个 epoch 的累计 step/loss、三组 prediction count、唯一 training/eval/final completion 和 command rc 全部绑定。
