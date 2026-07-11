@@ -173,9 +173,9 @@
 
 ## 2026-07-11 Real-Scale Runtime Ledger
 
-> **口径覆盖说明（截至 2026-07-11 20:30 CST）：**本节覆盖上文历史表中的 `Mangrove Done`、`Verification time`、“已计入 strict Done: 10”，以及与本节 named repo 冲突的旧 task-count/remaining-work 结论。旧任务跑通、旧 verifier 产生正分、旧文档写了 `Done`，都不能单独作为 real-scale ship 证据。此前候选交付队列写作 **15/20 repos**，其中原 task `95310` 固定二十项写作 **12/20**；2026-07-11 新增“fix 必须传播到 repo 全部 sibling”硬门槛后，除 Mamba 外的 14 个此前 accepted repo 正在独立零信任重审。重审完成前，`15/20` 和 `12/20` 都是**此前候选计数，不是当前最终 accepted 分子**。
+> **口径覆盖说明（截至 2026-07-11 21:25 CST）：**本节覆盖上文历史表中的 `Mangrove Done`、`Verification time`、“已计入 strict Done: 10”，以及与本节 named repo 冲突的旧 task-count/remaining-work 结论。旧任务跑通、旧 verifier 产生正分、旧文档写了 `Done`，都不能单独作为 real-scale ship 证据。此前候选交付队列写作 **15/20 repos**，其中原 task `95310` 固定二十项写作 **12/20**；2026-07-11 新增“fix 必须传播到 repo 全部 sibling”硬门槛后，除 Mamba 外的 14 个此前 accepted repo 已完成独立零信任重审，`14/14` 都发现当前静态交付缺口并进入并行修复。`15/20` 和 `12/20` 是**此前候选计数，不是当前最终 accepted 分子**。
 
-> **Sibling propagation re-audit：**下方 15 行 terminal runtime 仍是有效的代表任务实测记录，不因静态重审而作废；但其中前 14 个 repo 的 `SHIPPED` 标签暂时只表示此前结论，不能作为当前 repo-level acceptance。每个 reviewer 必须枚举该 repo 全部 tasks 并报告 `total / fixed / audited`。发现任一 sibling 留有旧 scale、旧 data/image pin、旧 parser/proof、旧 score/leaderboard、遗漏 setting/seed、正分 fallback、资源超过 4 GPU 或 instruction 泄漏时，整 repo 撤回，修完全部 siblings 后再恢复。
+> **Sibling propagation re-audit：**下方 16 行 terminal runtime 仍是有效的代表任务实测记录，不因静态重审而作废；但前 14 个旧候选 repo 的详细 `SHIPPED` 标签只表示此前结论，不能作为当前 repo-level acceptance。每个 reviewer 已枚举全部 tasks 并报告 `total / fixed / audited`。发现任一 sibling 留有旧 scale、旧 data/image pin、旧 parser/proof、旧 score/leaderboard、遗漏 setting/seed、正分 fallback、资源超过 4 GPU 或 instruction 泄漏时，整 repo 保持 `STATIC_REPAIR_REQUIRED`，修完全部 siblings 后再恢复。Mamba 与新增 Caption 已通过当前 propagation gate。
 
 ### 验收规则
 
@@ -186,6 +186,27 @@
 5. **Real scale 不能由墙钟时间反推。** 训练任务必须对齐 upstream/community 的数据量、steps/epochs/tokens、分辨率和序列长度；完整 canonical-split inference 可以在数分钟内结束。短成功不自动失败，长任务也不自动通过。
 6. **运行环境。** 最终 verification 使用一个按 digest 固定、依赖/模型/数据预装的 repo image；per-task build 只允许存在性检查、`rm` 和 `COPY _scaffold` 一类文件操作，不在 verification 中执行 `pip`、`apt`、`conda`、模型下载或编译。最终 Mangrove 每个 task 当前使用 1×H20 串行执行，且任何 task 最多 4 GPU。
 7. **Representative 只共享 runtime 证据，不豁免 sibling 修复。** 一个完整 representative 可以证明该 repo 在真实 scale 下的实测耗时，不要求把昂贵评测机械重复十次；其余 siblings 可以只做静态修复和验证，且 task-specific scaffold/template/edit surface、parser/spec 或 setting 可以不同。但 repo-level protocol/scale correction、data/model/image pins、completion contract、fail-closed、所有 setting/seed、资源上限和 instruction 清理必须传播，并逐 task 证明自身闭合。若后续修复只改 parser/scorer/proof/instruction，未改变 representative 的模型、数据、steps、分辨率或实际 workload path，已有 terminal runtime 可以继续使用；只有这些 material workload 项改变时才重跑 representative。任何一个 sibling 仍使用旧实现，整个 repo 都不能标 `SHIPPED`。
+
+### 14 个旧候选的全 sibling 重审结果
+
+这张表的 `representative` 均已在 Mangrove 真实跑过；`runtime` 均可继续使用。`current blocker` 是当前源码/交付需要静态修复的内容，不表示要把所有 sibling 分别重跑。七组 repair owner 已并行接管；除非修复改变模型、数据或 scale，均不重新执行昂贵 representative workload。
+
+| repo | sibling audit | representative | runtime 可复用 | current blocker |
+|---|---:|---|---|---|
+| `text-simplification` | `10/10` | `96013` | 是 | 10 个 parser 未严格绑定唯一 terminal `SIMP_DONE`/有限正 elapsed；checkpoint readiness、source visibility 和 anchor-evidence binding 未闭合 |
+| `keyphrase-extraction` | `10/10` | `96014` | 是 | parser 非 full-line、缺唯一 completion/elapsed/trailing 检查；当前不可变发布只覆盖 `1/10`，题目与旧 anchor 文案需统一 |
+| `extractive-qa` | `10/10` | `96029` | 是 | representative SQuAD 有效；其余 9 个 MRQA task 的 generator/proof、模型数据 binding 和诚实 pending provenance 尚未形成 tracked 静态闭环 |
+| `machine-translation` | `12/12` | `96040` | 是 | OPUS data/count 已传播，但 checkpoint/tokenizer revision、weights SHA、参数量和每方向模型身份未严格绑定；trailing failure 未拒绝 |
+| `constrained-decoding-lab` | `10/10` | `96042` | 是 | 8 个 full-scale task 仍读取旧 `n=200` 正分 anchors；terminal `CD_FAILED` 未拒绝；一个重复 RQ 与反向 baseline role 待修 |
+| `inr-signal-fitting` | `10 active + 2 dropped` | `95697` | 是 | frequency 之外 9 个 positive calibration 无可追溯 strict artifact；image pin、verifier-only data wiring、terminal failure 与 eikonal 语义未全族闭合 |
+| `mdn-density` | `10/10` | `96377` | 是 | parser 接受伪 2,000-step completion 并可正分；agent Python 执行面、task-specific budget、image pin、strong provenance和重复 RQ 待修 |
+| `gpytorch-gp` | `10/10` | `96379` | 是 | 仅代表题有 final-protocol calibration；9 个 sibling 仍有 stale positive rows，含 150-vs-200 iteration mismatch；source 未形成 tracked 10-task delivery |
+| `normflows-density` | `10/10` | `96410` | 是 | workload 已是 20K，但 9 个 sibling 仍用旧 6K 正分 calibration；completion 顺序/terminal failure 未锁；文档把 8 coupling + 8 permutation 写错为 16 coupling |
+| `abstractive-summarization` | `10/10` | `96438` | 是 | full inventory 已传播；completion 顺序/terminal failure、唯一 source proof、精确 checkpoint 参数量和 512-token 协议说明未闭合 |
+| `ood-detection-lab` | `11/11` | `96612` | 是 | 10 个 sibling 仍是 SmallCNN + 5K legacy path、弱 parser/旧正分 anchors，且缺 checkpoint 时会 verification 内训练 fallback |
+| `torchreid-reid` | `10/10` | `96623` | 是 | full Market workload 已传播；parser 错把 9,000/9,600 steps 当完整 11,003，并接受 completion 后 failure；重复 task surface/anchor provenance 待清 |
+| `pykeen-kge` | `10/10` | `96684` | 是 | 9 个 sibling 仍是 Kinships/UMLS/Nations mini-graph path；下载 artifact 的 metrics proof 受 `0.0 -> 0` transport normalization 破坏 |
+| `natural-language-inference` | `10/10` | `96642` | 是 | full SNLI/MNLI protocol 已传播；clean source 缺 pinned `mangrove_base_image` 与可复现 10-task publish；class-weighting RQ 信号过弱 |
 
 ### Runtime 的读法
 
