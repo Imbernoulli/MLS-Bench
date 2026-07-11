@@ -209,6 +209,46 @@ def test_h20_is_default_serial_is_one_card_and_task_cap_is_four(tmp_path: Path):
         _mangrove_resources(package, {"test_cmds": entries, "seeds": [42]})
 
 
+def test_evidence_based_resource_overrides_merge_package_then_task():
+    package = {
+        "use_cuda": True,
+        "mangrove_resources": {
+            "cpus": 6,
+            "memory_mb": 32768,
+            "storage_mb": 61440,
+        },
+    }
+    task = {
+        "mangrove_resources": {"cpus": 4},
+        "test_cmds": [
+            {
+                "cmd": "scripts/run.sh",
+                "label": "setting",
+                "group": 1,
+                "compute": 1,
+                "time": "0:10:00",
+                "package": "pkg",
+            }
+        ],
+    }
+    resources = _mangrove_resources(package, task)
+    assert resources["gpus"] == 1
+    assert resources["cpus"] == 4
+    assert resources["memory_mb"] == 32768
+    assert resources["storage_mb"] == 61440
+
+    with pytest.raises(ValueError, match="unsupported field"):
+        _mangrove_resources(
+            {"use_cuda": True},
+            {**task, "mangrove_resources": {"gpu_types": ["H20"]}},
+        )
+    with pytest.raises(ValueError, match="positive integer"):
+        _mangrove_resources(
+            {"use_cuda": True},
+            {**task, "mangrove_resources": {"cpus": True}},
+        )
+
+
 @pytest.mark.parametrize(
     ("function", "config", "message"),
     [

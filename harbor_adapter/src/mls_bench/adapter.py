@@ -1129,6 +1129,47 @@ def _mangrove_memory_mb(gpus: int, requested_mem_mb: int) -> int:
     )
 
 
+def _mangrove_resource_overrides(pkg_config: dict, config: dict) -> dict[str, int]:
+    allowed = {"cpus", "memory_mb", "storage_mb"}
+    overrides: dict[str, int] = {}
+    for owner, source in (("package", pkg_config), ("task", config)):
+        raw = source.get("mangrove_resources") or {}
+        if not isinstance(raw, dict):
+            raise ValueError(f"{owner} mangrove_resources must be an object")
+        unknown = set(raw) - allowed
+        if unknown:
+            raise ValueError(
+                f"{owner} mangrove_resources has unsupported field(s): {sorted(unknown)}"
+            )
+        for field, value in raw.items():
+            if isinstance(value, bool):
+                raise ValueError(
+                    f"{owner} mangrove_resources.{field} must be a positive integer"
+                )
+            try:
+                parsed = int(value)
+            except (TypeError, ValueError) as exc:
+                raise ValueError(
+                    f"{owner} mangrove_resources.{field} must be a positive integer"
+                ) from exc
+            if parsed <= 0 or parsed != value:
+                raise ValueError(
+                    f"{owner} mangrove_resources.{field} must be a positive integer"
+                )
+            overrides[field] = parsed
+    return overrides
+
+
+def _apply_mangrove_resource_overrides(
+    resources: dict,
+    pkg_config: dict,
+    config: dict,
+) -> dict:
+    out = dict(resources)
+    out.update(_mangrove_resource_overrides(pkg_config, config))
+    return out
+
+
 def _mangrove_resources(
     pkg_config: dict,
     config: dict,
@@ -1154,11 +1195,15 @@ def _mangrove_resources(
 
     # Explicit use_cuda=False → no GPU regardless of compute values.
     if config.get("use_cuda") is False or pkg_config.get("use_cuda") is False:
-        return dict(
-            cpus=_mangrove_cpus(0),
-            memory_mb=_mangrove_memory_mb(0, requested_mem_mb),
-            storage_mb=MANGROVE_CPU_STORAGE_MB,
-            gpus=0, gpu_types=[], batch_size_multiplier=1,
+        return _apply_mangrove_resource_overrides(
+            dict(
+                cpus=_mangrove_cpus(0),
+                memory_mb=_mangrove_memory_mb(0, requested_mem_mb),
+                storage_mb=MANGROVE_CPU_STORAGE_MB,
+                gpus=0, gpu_types=[], batch_size_multiplier=1,
+            ),
+            pkg_config,
+            config,
         )
 
     # Check if all compute values are explicitly 0 (CPU-only tasks).
@@ -1169,11 +1214,15 @@ def _mangrove_resources(
     use_cuda = bool(config.get("use_cuda")) or bool(pkg_config.get("use_cuda"))
 
     if all_zero and not use_cuda:
-        return dict(
-            cpus=_mangrove_cpus(0),
-            memory_mb=_mangrove_memory_mb(0, requested_mem_mb),
-            storage_mb=MANGROVE_CPU_STORAGE_MB,
-            gpus=0, gpu_types=[], batch_size_multiplier=1,
+        return _apply_mangrove_resource_overrides(
+            dict(
+                cpus=_mangrove_cpus(0),
+                memory_mb=_mangrove_memory_mb(0, requested_mem_mb),
+                storage_mb=MANGROVE_CPU_STORAGE_MB,
+                gpus=0, gpu_types=[], batch_size_multiplier=1,
+            ),
+            pkg_config,
+            config,
         )
 
     # ---- H20 backend ----
@@ -1205,11 +1254,15 @@ def _mangrove_resources(
                 f"{MANGROVE_MAX_GPUS_PER_TASK}-GPU task cap; set "
                 "_verifier_serial=true when settings can run in waves"
             )
-        return dict(
-            cpus=_mangrove_cpus(gpus),
-            memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
-            storage_mb=MANGROVE_GPU_STORAGE_MB,
-            gpus=gpus, gpu_types=["H20"], batch_size_multiplier=1,
+        return _apply_mangrove_resource_overrides(
+            dict(
+                cpus=_mangrove_cpus(gpus),
+                memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
+                storage_mb=MANGROVE_GPU_STORAGE_MB,
+                gpus=gpus, gpu_types=["H20"], batch_size_multiplier=1,
+            ),
+            pkg_config,
+            config,
         )
 
     # ---- B200 backend (default) ----
@@ -1226,12 +1279,16 @@ def _mangrove_resources(
                 group_h100_equiv += max(1, math.ceil(compute))
             peak_h100_equiv = max(peak_h100_equiv, n_seeds * group_h100_equiv)
         gpus = max(1, math.ceil(peak_h100_equiv / gpu_cap))
-        return dict(
-            cpus=_mangrove_cpus(gpus),
-            memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
-            storage_mb=MANGROVE_GPU_STORAGE_MB,
-            gpus=gpus, gpu_types=["B200"], batch_size_multiplier=2,
-            gpu_compute_cap=gpu_cap,
+        return _apply_mangrove_resource_overrides(
+            dict(
+                cpus=_mangrove_cpus(gpus),
+                memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
+                storage_mb=MANGROVE_GPU_STORAGE_MB,
+                gpus=gpus, gpu_types=["B200"], batch_size_multiplier=2,
+                gpu_compute_cap=gpu_cap,
+            ),
+            pkg_config,
+            config,
         )
 
     # All cmds have compute ≤ 1.0 → use MIG slices.
@@ -1245,11 +1302,15 @@ def _mangrove_resources(
 
     gpus = max(1, peak_experiments) if (peak_experiments or use_cuda) else 0
 
-    return dict(
-        cpus=_mangrove_cpus(gpus),
-        memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
-        storage_mb=MANGROVE_GPU_STORAGE_MB,
-        gpus=gpus, gpu_types=["B200-MIG-1g.23gb"], batch_size_multiplier=1,
+    return _apply_mangrove_resource_overrides(
+        dict(
+            cpus=_mangrove_cpus(gpus),
+            memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
+            storage_mb=MANGROVE_GPU_STORAGE_MB,
+            gpus=gpus, gpu_types=["B200-MIG-1g.23gb"], batch_size_multiplier=1,
+        ),
+        pkg_config,
+        config,
     )
 
 
