@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib.util
 import math
 import time
 from pathlib import Path
@@ -12,22 +13,29 @@ from pathlib import Path
 import numpy as np
 import torch
 
-from harness_zoo_entropy import (
-    EXPECTED_CASES,
-    EXPECTED_IMAGES,
-    FAMILIES,
-    PROTOCOL_ID as ASSET_PROTOCOL_ID,
-    QUALITIES,
-    SETTINGS,
-    _block_url_loading,
-    _canonical_sha,
-    _encode_decode,
-    _load_image,
-    _load_model,
-    _validate_inputs,
-    _validate_protocol,
-    _validate_runtime,
+_HELPER_PATH = Path(__file__).resolve().with_name("harness_zoo_entropy.py")
+_HELPER_SPEC = importlib.util.spec_from_file_location(
+    "compressai_zoo_entropy_helper", _HELPER_PATH
 )
+if _HELPER_SPEC is None or _HELPER_SPEC.loader is None:
+    raise ImportError("pinned CompressAI zoo helper is unavailable")
+_HELPER = importlib.util.module_from_spec(_HELPER_SPEC)
+_HELPER_SPEC.loader.exec_module(_HELPER)
+
+EXPECTED_CASES = _HELPER.EXPECTED_CASES
+EXPECTED_IMAGES = _HELPER.EXPECTED_IMAGES
+FAMILIES = _HELPER.FAMILIES
+ASSET_PROTOCOL_ID = _HELPER.PROTOCOL_ID
+QUALITIES = _HELPER.QUALITIES
+SETTINGS = _HELPER.SETTINGS
+_block_url_loading = _HELPER._block_url_loading
+_canonical_sha = _HELPER._canonical_sha
+_encode_decode = _HELPER._encode_decode
+_load_image = _HELPER._load_image
+_load_model = _HELPER._load_model
+_validate_inputs = _HELPER._validate_inputs
+_validate_protocol = _HELPER._validate_protocol
+_validate_runtime = _HELPER._validate_runtime
 
 
 PROTOCOL_ID = "compressai_zoo_kodak24_q1q8_policy_v1"
