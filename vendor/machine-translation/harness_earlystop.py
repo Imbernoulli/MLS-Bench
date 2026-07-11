@@ -28,6 +28,8 @@ import time
 import common
 
 _VALID = (True, False, "never")
+TASK_NAME = "mt-early-stopping"
+SURFACE_NAME = "build_early_stopping"
 
 
 def main() -> None:
@@ -38,25 +40,23 @@ def main() -> None:
 
     dev = common.setup(args.seed)
     t0 = time.time()
+    common.emit_protocol(TASK_NAME, SURFACE_NAME, args.seed)
 
-    srcs, refs = common.load_dataset()
-    print(f"MT_DATA corpus=opus100_{common.direction()} n_pairs={len(srcs)}", flush=True)
+    srcs, refs, data_proof = common.load_dataset()
 
     raw = common.load_surface_value(args.solution, "build_early_stopping")
     if raw not in _VALID or not isinstance(raw, (bool, str)):
         raise SystemExit(f"early_stopping must be True/False/'never' (got {raw!r})")
     es = raw
-    print(f"MT_EARLYSTOP early_stopping={es!r}", flush=True)
-
     gen_kwargs = {"num_beams": 5, "length_penalty": 0.6,
                   "early_stopping": es, "max_new_tokens": 128}
-    model, tok = common.load_model_and_tokenizer(dev)
+    model, tok, model_proof = common.load_model_and_tokenizer(dev)
+    common.emit_provenance(model_proof, data_proof)
     preds = common.translate(model, tok, srcs, gen_kwargs, dev)
     scores = common.score_bleu_chrf(preds, refs)
     plen = common.mean_pred_len_words(preds)
     dt = time.time() - t0
-    print(f"MT_METRICS bleu={scores['bleu']:.6f} chrf={scores['chrf']:.6f} "
-          f"n_pairs={len(srcs)} plen={plen:.1f} elapsed={dt:.1f}", flush=True)
+    common.emit_result(TASK_NAME, SURFACE_NAME, scores, plen, dt, len(srcs))
 
 
 if __name__ == "__main__":

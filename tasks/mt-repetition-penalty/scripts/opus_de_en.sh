@@ -10,6 +10,4 @@ cd /workspace/machine-translation
 
 python harness_reppen.py \
     --solution solution/reppen.py \
-    --seed ${SEED:-42}
-
-echo "MT_SETTING_COMPLETE direction=${MT_DIR}"
+    --seed "${SEED:-42}"

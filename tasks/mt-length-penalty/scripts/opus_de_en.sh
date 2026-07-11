@@ -10,6 +10,4 @@ cd /workspace/machine-translation
 
 python harness_length.py \
     --solution solution/length.py \
-    --seed ${SEED:-42}
-
-echo "MT_SETTING_COMPLETE direction=${MT_DIR}"
+    --seed "${SEED:-42}"

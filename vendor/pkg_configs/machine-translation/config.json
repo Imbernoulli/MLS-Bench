@@ -1,6 +1,5 @@
 {
   "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
-  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:8dfc00ac296d6c5404e482af44ad862fb8a24c60b54029bd340c13a49076efba",
   "install_cmds": [
     "pip install --no-cache-dir 'transformers>=4.41,<4.50' 'tokenizers>=0.20,<0.22' 'huggingface_hub<1.0' sentencepiece sacremoses 'sacrebleu>=2.3,<3' 'numpy<2'",
     "python -c \"import torch, transformers, sacrebleu; from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; print('transformers', transformers.__version__, 'sacrebleu', sacrebleu.__version__, 'torch', torch.__version__)\""
@@ -8,7 +7,7 @@
   "env": {
     "MT_MODEL": "/data/machine-translation/models/opus-mt-de-en",
     "MT_DATA": "/data/machine-translation/data",
-    "HF_HOME": "/data/machine-translation/data/hf_home",
+    "HF_HOME": "/tmp/huggingface",
     "HF_HUB_OFFLINE": "1",
     "TRANSFORMERS_OFFLINE": "1",
     "TOKENIZERS_PARALLELISM": "false"
@@ -16,16 +15,34 @@
   "data_deps": [
     {
       "name": "machine_translation",
-      "description": "Three pinned FROZEN Helsinki-NLP OPUS-MT MarianMT models (Tiedemann & Thottingal 2020, ~75M parameters each) staged offline, plus the complete official 2000-pair OPUS-100 test split for each of three source-to-English directions. Every official row is preserved in source order and re-serialised to JSONL without filtering, sampling, shuffling, or head slicing. The mt-* decoding tasks therefore score sacreBLEU/chrF over all 6000 official pairs. ~1.2GB.",
+      "description": "Three revision-pinned Helsinki-NLP OPUS-MT MarianMT models (74,410,496 / 75,133,952 / 76,672,000 parameters) staged offline with exact checkpoint and tokenizer manifests, plus every row of the pinned 2,000-pair OPUS-100 test split for each source-to-English direction. Verification scores all 6,000 pairs and rejects any artifact or manifest mismatch.",
       "host_path": "{data_root}/machine-translation",
       "container_path": "/data/machine-translation",
       "ready_files": [
         "{data_root}/machine-translation/models/opus-mt-de-en/config.json",
+        "{data_root}/machine-translation/models/opus-mt-de-en/generation_config.json",
         "{data_root}/machine-translation/models/opus-mt-de-en/pytorch_model.bin",
+        "{data_root}/machine-translation/models/opus-mt-de-en/source.spm",
+        "{data_root}/machine-translation/models/opus-mt-de-en/target.spm",
+        "{data_root}/machine-translation/models/opus-mt-de-en/tokenizer_config.json",
+        "{data_root}/machine-translation/models/opus-mt-de-en/vocab.json",
+        "{data_root}/machine-translation/models/opus-mt-de-en/model_manifest.json",
         "{data_root}/machine-translation/models/opus-mt-fr-en/config.json",
-        "{data_root}/machine-translation/models/opus-mt-fr-en/pytorch_model.bin",
+        "{data_root}/machine-translation/models/opus-mt-fr-en/generation_config.json",
+        "{data_root}/machine-translation/models/opus-mt-fr-en/model.safetensors",
+        "{data_root}/machine-translation/models/opus-mt-fr-en/source.spm",
+        "{data_root}/machine-translation/models/opus-mt-fr-en/target.spm",
+        "{data_root}/machine-translation/models/opus-mt-fr-en/tokenizer_config.json",
+        "{data_root}/machine-translation/models/opus-mt-fr-en/vocab.json",
+        "{data_root}/machine-translation/models/opus-mt-fr-en/model_manifest.json",
         "{data_root}/machine-translation/models/opus-mt-ru-en/config.json",
+        "{data_root}/machine-translation/models/opus-mt-ru-en/generation_config.json",
         "{data_root}/machine-translation/models/opus-mt-ru-en/pytorch_model.bin",
+        "{data_root}/machine-translation/models/opus-mt-ru-en/source.spm",
+        "{data_root}/machine-translation/models/opus-mt-ru-en/target.spm",
+        "{data_root}/machine-translation/models/opus-mt-ru-en/tokenizer_config.json",
+        "{data_root}/machine-translation/models/opus-mt-ru-en/vocab.json",
+        "{data_root}/machine-translation/models/opus-mt-ru-en/model_manifest.json",
         "{data_root}/machine-translation/data/de_en_test.jsonl",
         "{data_root}/machine-translation/data/fr_en_test.jsonl",
         "{data_root}/machine-translation/data/ru_en_test.jsonl",

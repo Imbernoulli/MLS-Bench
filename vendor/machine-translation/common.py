@@ -1,11 +1,9 @@
-"""Shared pipeline for the machine-translation (mt-*) MLS-Bench tasks.
+"""Trusted pipeline for the machine-translation (mt-*) MLS-Bench tasks.
 
-A self-contained ``transformers`` + ``sacrebleu`` harness for INFERENCE-ONLY
-neural machine translation. Every task loads a FROZEN small pretrained MT model
-(a Helsinki-NLP OPUS-MT MarianMT Transformer, ~75M params) staged offline,
-translates the complete official parallel test split into English, and scores corpus
-**sacreBLEU** (and **chrF**) against the FIXED English references. Nothing is
-trained. Each direction evaluates all 2000 official OPUS-100 pairs on one GPU.
+Every task performs inference with one pinned Helsinki-NLP MarianMT checkpoint,
+translates all 2,000 rows of the matching pinned OPUS-100 test split, and scores
+corpus sacreBLEU and chrF.  Data, tokenizer, checkpoint, and model provenance are
+validated here before any metric record can be emitted.
 
 Three DIRECTIONS / settings (all -> English so the sacreBLEU reference tokenizer
 and metric are consistent across settings):
@@ -13,19 +11,6 @@ and metric are consistent across settings):
   * de_en  : German  -> English   (Helsinki-NLP/opus-mt-de-en)
   * fr_en  : French  -> English   (Helsinki-NLP/opus-mt-fr-en)
   * ru_en  : Russian -> English   (Helsinki-NLP/opus-mt-ru-en)
-
-Each mt-* task aggregates its metric (geometric mean) over these THREE settings.
-The weak->strong->SOTA decoding order (greedy < beam < beam+length-penalty tuned)
-holds in ALL three directions, so the ordering is verified across settings — the
-MLS-Bench "reproduce >=2 baselines + SOTA, preserve the partial-order over >=3
-settings" acceptance bar.
-
-Why THIS is a genuinely new direction: the registry has monolingual NLP
-(NER / relation-extraction / dependency-parsing / abstractive-summarization /
-embeddings) but NO cross-lingual translation. MT is a distinct task with a
-distinct, standard, non-gameable metric (sacreBLEU) and a well-studied set of
-INFERENCE-TIME decoding levers (Koehn & Knowles 2017; Wu et al. 2016 GNMT;
-Stahlberg & Byrne 2019; Vijayakumar et al. 2016; Freitag & Al-Onaizan 2017).
 
 The agent-editable surface never touches the model, the corpus, the references,
 or the sacreBLEU evaluator. It controls ONLY the one DECODING component the task
@@ -40,8 +25,8 @@ a brevity penalty, so an empty output scores 0 and a copy-the-source (wrong
 language) output scores ~0 — a real translation cannot be beaten by degenerate
 tricks.
 
-Everything runs offline (HF_HUB_OFFLINE=1) and deterministically for the scored
-beam/greedy paths (sampling paths seed-fix RNG for reproducibility).
+Everything runs offline.  Unknown or mismatched artifacts are fatal; there is no
+runtime download, model substitution, CPU fallback, or score fallback.
 """
 from __future__ import annotations
 
@@ -56,7 +41,10 @@ from typing import List, Tuple
 # ---------------------------------------------------------------------------
 # Fixed evaluation constants (shared by ALL mt-* tasks / directions)
 # ---------------------------------------------------------------------------
-OFFICIAL_TEST_PAIRS = 2000 # complete OPUS-100 test split for every direction
+PROTOCOL_VERSION = "mt-opus100-provenance-v2"
+DATASET_ID = "Helsinki-NLP/opus-100"
+DATASET_REVISION = "805090dc28bf78897da9641cdf08b61287580df9"
+OFFICIAL_TEST_PAIRS = 2000  # complete OPUS-100 test split for every direction
 MAX_INPUT_TOKENS = 128     # source truncation (OPUS-100 sentences are ~15-25 words)
 MAX_NEW_TOKENS_CAP = 160   # hard cap on generated length
 GEN_BATCH_SIZE = 16        # default generation batch size (a task may override)
@@ -69,10 +57,103 @@ DIRECTIONS = {
     "fr_en": ("opus-mt-fr-en", "fr_en_test.jsonl"),
     "ru_en": ("opus-mt-ru-en", "ru_en_test.jsonl"),
 }
-EXPECTED_TEST_SHA256 = {
-    "de_en": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc",
-    "fr_en": "09477f8a19e67d3f7c09c320d076f5a32168ab4cde55d8f1d88ffb66c02f68a1",
-    "ru_en": "c072e931f99d1ed04829ec4f63b18c34ebc9ead4b1b19b25fceec60720650eb0",
+
+DATA_SPECS = {
+    "de_en": {
+        "source_language": "de",
+        "source_path": "de-en/test-00000-of-00001.parquet",
+        "source_sha256": "05913515e9dc8c11bc03570bd00ae5b551c32b03e07901369f91372ad63a3f11",
+        "output_sha256": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc",
+    },
+    "fr_en": {
+        "source_language": "fr",
+        "source_path": "en-fr/test-00000-of-00001.parquet",
+        "source_sha256": "6e5862c14744efb89cf4c807cf0fd1a5969249935f21a1d03f3fbdbc0fb81971",
+        "output_sha256": "09477f8a19e67d3f7c09c320d076f5a32168ab4cde55d8f1d88ffb66c02f68a1",
+    },
+    "ru_en": {
+        "source_language": "ru",
+        "source_path": "en-ru/test-00000-of-00001.parquet",
+        "source_sha256": "96bf7751ebd69615e1377a06cf49bb7d2d153124c77764620de435d0afc71935",
+        "output_sha256": "c072e931f99d1ed04829ec4f63b18c34ebc9ead4b1b19b25fceec60720650eb0",
+    },
+}
+
+# File digests and count-probe details are recorded in artifact_provenance.json.
+# Counts are checkpoint-derived candidates from the safetensors header (fr-en)
+# or legacy torch pickle metadata prefix (de-en/ru-en).  A fresh worker must
+# confirm sum(p.numel()); a mismatch is intentionally fatal and requires a
+# source update before rendering.
+MODEL_SPECS = {
+    "de_en": {
+        "repository": "Helsinki-NLP/opus-mt-de-en",
+        "revision": "1a922f3b32a8e809e17a47d4b32142d8105924e5",
+        "checkpoint_file": "pytorch_model.bin",
+        "checkpoint_format": "pytorch",
+        "checkpoint_tensor_elements": 74_468_597,
+        "parameter_count": 74_410_496,
+        "vocab_size": 58_101,
+        "files": {
+            "config.json": (1381, "89368ef76ea89581025cdf605caac75b8a22af2c1a90ec57c8a5001f10537eeb"),
+            "generation_config.json": (293, "e5cccf365761fb31175fc978a75f5e857a822f173d0e447aa3a25d7cbcda15a4"),
+            "pytorch_model.bin": (297_928_209, "e743c3070f61f477cb62fe95ef2c9be2e77f3e488cb6b8030ff8a19e8295c87d"),
+            "source.spm": (796_845, "bbd1f495eea99c8e21ae086d9146e0fa7b096c3dfdd9ba07ab8b631889df5c9b"),
+            "target.spm": (768_489, "678f2a1177d8389f67b66299762dcc4fc567e89b07e212ba91b0c56daecf47ce"),
+            "tokenizer_config.json": (42, "51c3c3260d27cb7c4d11d0c53752b8fe87f2367129d7636fa917ce588b97306c"),
+            "vocab.json": (1_273_232, "0d70d89fee4a8b4ef99a56d712163baadcabd5600a597f71515547ee70306329"),
+        },
+    },
+    "fr_en": {
+        "repository": "Helsinki-NLP/opus-mt-fr-en",
+        "revision": "c4aed37b318c763fd177aa449b44e3b783cc6c02",
+        "checkpoint_file": "model.safetensors",
+        "checkpoint_format": "safetensors",
+        "checkpoint_tensor_elements": 75_193_466,
+        "parameter_count": 75_133_952,
+        "vocab_size": 59_514,
+        "files": {
+            "config.json": (1416, "b3be13d046d9899d7aab8cf4ed624d9a79f5776038ba793f6b4d2ce3e02192f7"),
+            "generation_config.json": (293, "4956fb9a7caaad7579cf8bb789c1e578b8a1cf48a0a8b779fda2f95dd10bbaa5"),
+            "model.safetensors": (300_803_608, "6e3837f34b903802c3d0d670362b997cee6e87584a1108eb3fa89e4625e4424a"),
+            "source.spm": (802_397, "78d0e717c77053f1c4b856d8661d9cb87c64f083a35418c087b9146300e4f585"),
+            "target.spm": (778_395, "173e9f493a668fe396d599e28d414a201193094e6ffd7a4678e5aab0f6d3d838"),
+            "tokenizer_config.json": (42, "47de9ce87378593016432f8dc657202c03913ab3ce0c15d7f78d51edfc3ff9a3"),
+            "vocab.json": (1_339_166, "945c604346ce15ce4aff9001001e7f925e336d942c4087017f191871162cbdc4"),
+        },
+    },
+    "ru_en": {
+        "repository": "Helsinki-NLP/opus-mt-ru-en",
+        "revision": "fbd6dc73284f95536648512cc21d57f19191961a",
+        "checkpoint_file": "pytorch_model.bin",
+        "checkpoint_format": "pytorch",
+        "checkpoint_tensor_elements": 76_734_518,
+        "parameter_count": 76_672_000,
+        "vocab_size": 62_518,
+        "files": {
+            "config.json": (1381, "5ea76c78596bce8fe005ef89e00de0924bf83e5f532ce08784ff1fcefb699f5f"),
+            "generation_config.json": (293, "31cff5e74efc263ff53efac09e3e350cd462d5c8198b1136b455d63a02d8cad5"),
+            "pytorch_model.bin": (306_991_893, "535450eb5613f3cc912f9ca3e54cfef6c14d201b319c24a88faf776a65538b5d"),
+            "source.spm": (1_080_169, "745998e51ba5b058e38b7ac7765c25c43ed5c1c39cc92b27163b9b2e323c9d7c"),
+            "target.spm": (802_781, "16bebef1389a0b8ab452772c4e35b9e605e5713f8ac7baa71ca701394eaa086d"),
+            "tokenizer_config.json": (42, "8d826099b8c67179c83ab4ff94aff7ca7bf24ca14319cb0287b9a0b4c40b2a96"),
+            "vocab.json": (2_601_758, "33e95da3be3fa3b50169c4c46693ba2f29fbf4cb29d99044bd07d72d181fa1e9"),
+        },
+    },
+}
+
+TASK_SURFACES = {
+    "mt-batch-maxlen": "build_max_new_tokens",
+    "mt-decoding-beam": "build_beam_config",
+    "mt-decoding-strategy": "build_strategy",
+    "mt-decoding-temperature": "build_temperature",
+    "mt-diverse-beam": "build_divbeam_config",
+    "mt-early-stopping": "build_early_stopping",
+    "mt-length-penalty": "build_length_config",
+    "mt-no-repeat-ngram": "build_norep_config",
+    "mt-postprocess-detok": "build_postproc",
+    "mt-repetition-penalty": "build_reppen_config",
+    "mt-sampling-vs-beam": "build_mode",
+    "mt-tokenization-truncation": "build_source_max_tokens",
 }
 
 TGT_LANG = "en"
@@ -119,23 +200,153 @@ def data_root() -> Path:
     return _data_root()
 
 
+def _canonical_json_bytes(value: object) -> bytes:
+    return (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def expected_source_manifest() -> dict:
+    splits = []
+    for dk, (_model_dir, output_file) in DIRECTIONS.items():
+        spec = DATA_SPECS[dk]
+        splits.append({
+            "direction": dk,
+            "rows": OFFICIAL_TEST_PAIRS,
+            "source_language": spec["source_language"],
+            "target_language": TGT_LANG,
+            "source_path": spec["source_path"],
+            "source_sha256": spec["source_sha256"],
+            "output_file": output_file,
+            "output_sha256": spec["output_sha256"],
+        })
+    return {
+        "schema_version": 1,
+        "dataset": DATASET_ID,
+        "revision": DATASET_REVISION,
+        "expected_rows_per_direction": OFFICIAL_TEST_PAIRS,
+        "splits": splits,
+    }
+
+
+def _file_record(name: str, spec: dict) -> dict:
+    size, digest = spec["files"][name]
+    return {"path": name, "size": size, "sha256": digest}
+
+
+def expected_tokenizer_manifest(dir_key: str) -> dict:
+    spec = MODEL_SPECS[dir_key]
+    names = ("source.spm", "target.spm", "tokenizer_config.json", "vocab.json")
+    return {
+        "schema_version": 1,
+        "repository": spec["repository"],
+        "revision": spec["revision"],
+        "vocab_size": spec["vocab_size"],
+        "files": [_file_record(name, spec) for name in names],
+    }
+
+
+def expected_model_manifest(dir_key: str) -> dict:
+    spec = MODEL_SPECS[dir_key]
+    tokenizer = expected_tokenizer_manifest(dir_key)
+    tokenizer_digest = hashlib.sha256(_canonical_json_bytes(tokenizer)).hexdigest()
+    return {
+        "schema_version": 1,
+        "repository": spec["repository"],
+        "revision": spec["revision"],
+        "parameter_count": spec["parameter_count"],
+        "checkpoint_tensor_elements": spec["checkpoint_tensor_elements"],
+        "checkpoint": {
+            **_file_record(spec["checkpoint_file"], spec),
+            "format": spec["checkpoint_format"],
+        },
+        "model_files": [
+            _file_record("config.json", spec),
+            _file_record("generation_config.json", spec),
+        ],
+        "tokenizer": tokenizer,
+        "tokenizer_manifest_sha256": tokenizer_digest,
+    }
+
+
+def source_manifest_sha256() -> str:
+    return hashlib.sha256(_canonical_json_bytes(expected_source_manifest())).hexdigest()
+
+
+def model_manifest_sha256(dir_key: str) -> str:
+    return hashlib.sha256(
+        _canonical_json_bytes(expected_model_manifest(dir_key))
+    ).hexdigest()
+
+
 def setup(seed: int = SEED):
-    """Pin device + seed and force offline HF caches."""
+    """Pin the scored seed and require the scheduler-provided CUDA device."""
     import random
 
     import numpy as np
     import torch
 
-    os.environ.setdefault("HF_HUB_OFFLINE", "1")
-    os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
-    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+    if seed != SEED:
+        raise ValueError(f"machine-translation protocol requires seed {SEED}, got {seed}")
+    os.environ["HF_HUB_OFFLINE"] = "1"
+    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+    os.environ["TOKENIZERS_PARALLELISM"] = "false"
+    os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-    return dev
+    if not torch.cuda.is_available() or torch.cuda.device_count() < 1:
+        raise RuntimeError("machine-translation verification requires one visible CUDA GPU")
+    torch.cuda.manual_seed_all(seed)
+    return torch.device("cuda:0")
+
+
+def emit_protocol(task_name: str, surface_name: str, seed: int) -> None:
+    expected_surface = TASK_SURFACES.get(task_name)
+    if expected_surface != surface_name:
+        raise ValueError(
+            f"invalid machine-translation task/surface binding: "
+            f"{task_name!r}/{surface_name!r}"
+        )
+    if seed != SEED:
+        raise ValueError(f"protocol seed mismatch: expected {SEED}, got {seed}")
+    print(
+        f"MT_PROTOCOL version={PROTOCOL_VERSION} task={task_name} "
+        f"surface={surface_name} direction={direction()} seed={seed}",
+        flush=True,
+    )
+
+
+def _verify_source_manifest() -> dict:
+    root = _data_root()
+    expected = expected_source_manifest()
+    expected_bytes = _canonical_json_bytes(expected)
+    manifest_path = root / "source_manifest.json"
+    try:
+        actual_bytes = manifest_path.read_bytes()
+    except OSError as exc:
+        raise FileNotFoundError(f"cannot read OPUS source manifest: {exc}") from exc
+    if actual_bytes != expected_bytes:
+        raise ValueError("staged OPUS source manifest does not match the pinned protocol")
+    expected_names = {record["output_file"] for record in expected["splits"]}
+    expected_names.add("source_manifest.json")
+    actual_names = {path.name for path in root.iterdir()}
+    if actual_names != expected_names:
+        raise ValueError(
+            f"unexpected staged OPUS data inventory: expected {sorted(expected_names)}, "
+            f"got {sorted(actual_names)}"
+        )
+    return {
+        "dataset": DATASET_ID,
+        "revision": DATASET_REVISION,
+        "manifest_sha256": hashlib.sha256(actual_bytes).hexdigest(),
+    }
 
 
 def load_dataset(dir_key: str | None = None):
@@ -143,16 +354,17 @@ def load_dataset(dir_key: str | None = None):
     dk = dir_key or direction()
     if dk not in DIRECTIONS:
         raise ValueError(f"unknown direction {dk!r}")
+    proof = _verify_source_manifest()
     _, fname = DIRECTIONS[dk]
     fp = _data_root() / fname
     try:
-        actual_sha256 = hashlib.sha256(fp.read_bytes()).hexdigest()
+        actual_sha256 = _sha256_file(fp)
     except OSError as exc:
         raise FileNotFoundError(f"cannot read staged OPUS-100 split {fp}: {exc}") from exc
-    if actual_sha256 != EXPECTED_TEST_SHA256[dk]:
+    if actual_sha256 != DATA_SPECS[dk]["output_sha256"]:
         raise ValueError(
             f"official OPUS-100 split digest mismatch for {fp}: expected "
-            f"{EXPECTED_TEST_SHA256[dk]}, got {actual_sha256}"
+            f"{DATA_SPECS[dk]['output_sha256']}, got {actual_sha256}"
         )
     srcs: List[str] = []
     refs: List[str] = []
@@ -180,25 +392,168 @@ def load_dataset(dir_key: str | None = None):
             f"incomplete official split {fp}: expected {OFFICIAL_TEST_PAIRS} rows, "
             f"got {len(srcs)}"
         )
-    return srcs, refs
+    proof.update({
+        "direction": dk,
+        "split_sha256": actual_sha256,
+        "rows": len(srcs),
+    })
+    return srcs, refs, proof
+
+
+def _verify_model_artifacts(dir_key: str) -> dict:
+    spec = MODEL_SPECS[dir_key]
+    model_dir = Path(model_path(dir_key))
+    if not model_dir.is_dir() or model_dir.is_symlink():
+        raise FileNotFoundError(f"missing staged OPUS-MT model directory: {model_dir}")
+    expected_manifest = expected_model_manifest(dir_key)
+    expected_manifest_bytes = _canonical_json_bytes(expected_manifest)
+    manifest_path = model_dir / "model_manifest.json"
+    try:
+        actual_manifest_bytes = manifest_path.read_bytes()
+    except OSError as exc:
+        raise FileNotFoundError(f"cannot read staged model manifest: {exc}") from exc
+    if actual_manifest_bytes != expected_manifest_bytes:
+        raise ValueError(f"model manifest mismatch for {dir_key}")
+
+    expected_names = set(spec["files"]) | {"model_manifest.json"}
+    actual_names = {path.name for path in model_dir.iterdir()}
+    if actual_names != expected_names:
+        raise ValueError(
+            f"unexpected model inventory for {dir_key}: expected "
+            f"{sorted(expected_names)}, got {sorted(actual_names)}"
+        )
+    for name, (expected_size, expected_digest) in spec["files"].items():
+        path = model_dir / name
+        if not path.is_file() or path.is_symlink():
+            raise FileNotFoundError(f"missing regular model artifact: {path}")
+        actual_size = path.stat().st_size
+        if actual_size != expected_size:
+            raise ValueError(
+                f"model artifact size mismatch for {path}: expected "
+                f"{expected_size}, got {actual_size}"
+            )
+        actual_digest = _sha256_file(path)
+        if actual_digest != expected_digest:
+            raise ValueError(
+                f"model artifact digest mismatch for {path}: expected "
+                f"{expected_digest}, got {actual_digest}"
+            )
+    tokenizer_digest = hashlib.sha256(
+        _canonical_json_bytes(expected_tokenizer_manifest(dir_key))
+    ).hexdigest()
+    return {
+        "direction": dir_key,
+        "repository": spec["repository"],
+        "revision": spec["revision"],
+        "manifest_sha256": hashlib.sha256(actual_manifest_bytes).hexdigest(),
+        "tokenizer_manifest_sha256": tokenizer_digest,
+        "checkpoint_sha256": spec["files"][spec["checkpoint_file"]][1],
+        "parameter_count": spec["parameter_count"],
+    }
 
 
 def load_model_and_tokenizer(device, dir_key: str | None = None):
     """FROZEN OPUS-MT MarianMT for the active direction, eval mode, offline."""
     import torch
     from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+    from transformers.utils import logging as transformers_logging
 
-    mp = model_path(dir_key)
-    model_dir = Path(mp)
-    if not model_dir.is_dir() or not (model_dir / "config.json").is_file():
-        raise FileNotFoundError(f"missing staged OPUS-MT model: {model_dir}")
+    dk = dir_key or direction()
+    if dk not in MODEL_SPECS:
+        raise ValueError(f"unknown model direction {dk!r}")
+    proof = _verify_model_artifacts(dk)
+    spec = MODEL_SPECS[dk]
+    mp = model_path(dk)
+    transformers_logging.set_verbosity_error()
+    transformers_logging.disable_progress_bar()
     tok = AutoTokenizer.from_pretrained(mp, local_files_only=True)
-    model = AutoModelForSeq2SeqLM.from_pretrained(
-        mp, local_files_only=True, torch_dtype=torch.float32
+    model, loading_info = AutoModelForSeq2SeqLM.from_pretrained(
+        mp,
+        local_files_only=True,
+        torch_dtype=torch.float32,
+        use_safetensors=spec["checkpoint_format"] == "safetensors",
+        output_loading_info=True,
     )
+    for key in ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs"):
+        if loading_info.get(key):
+            raise RuntimeError(f"checkpoint loading reported {key}: {loading_info[key]}")
+    if model.__class__.__name__ != "MarianMTModel":
+        raise TypeError(f"expected MarianMTModel, got {model.__class__.__name__}")
+    if tok.__class__.__name__ != "MarianTokenizer":
+        raise TypeError(f"expected MarianTokenizer, got {tok.__class__.__name__}")
+    if int(model.config.vocab_size) != spec["vocab_size"] or len(tok) != spec["vocab_size"]:
+        raise ValueError("loaded model/tokenizer vocabulary does not match pinned metadata")
+    parameter_count = sum(parameter.numel() for parameter in model.parameters())
+    if parameter_count != spec["parameter_count"]:
+        raise ValueError(
+            f"loaded parameter count mismatch for {dk}: expected "
+            f"{spec['parameter_count']}, got {parameter_count}"
+        )
+    final_bias = getattr(model, "final_logits_bias", None)
+    tensor_elements = parameter_count + (final_bias.numel() if final_bias is not None else 0)
+    if tensor_elements != spec["checkpoint_tensor_elements"]:
+        raise ValueError(
+            f"loaded checkpoint tensor count mismatch for {dk}: expected "
+            f"{spec['checkpoint_tensor_elements']}, got {tensor_elements}"
+        )
     model.to(device)
     model.eval()
-    return model, tok
+    return model, tok, proof
+
+
+def emit_provenance(model_proof: dict, data_proof: dict) -> None:
+    dk = direction()
+    if model_proof.get("direction") != dk or data_proof.get("direction") != dk:
+        raise ValueError("provenance direction does not match the active setting")
+    print(
+        f"MT_MODEL direction={dk} repository={model_proof['repository']} "
+        f"revision={model_proof['revision']} "
+        f"manifest_sha256={model_proof['manifest_sha256']} "
+        f"tokenizer_manifest_sha256={model_proof['tokenizer_manifest_sha256']} "
+        f"checkpoint_sha256={model_proof['checkpoint_sha256']} "
+        f"parameters={model_proof['parameter_count']}",
+        flush=True,
+    )
+    print(
+        f"MT_DATA direction={dk} dataset={data_proof['dataset']} "
+        f"revision={data_proof['revision']} "
+        f"manifest_sha256={data_proof['manifest_sha256']} "
+        f"split_sha256={data_proof['split_sha256']} rows={data_proof['rows']}",
+        flush=True,
+    )
+
+
+def emit_result(task_name: str, surface_name: str, scores: dict,
+                pred_len_words: float, elapsed: float, rows: int) -> None:
+    expected_surface = TASK_SURFACES.get(task_name)
+    if expected_surface != surface_name:
+        raise ValueError("result task/surface binding is invalid")
+    bleu = float(scores["bleu"])
+    chrf = float(scores["chrf"])
+    if (
+        rows != OFFICIAL_TEST_PAIRS
+        or not math.isfinite(bleu)
+        or not math.isfinite(chrf)
+        or not math.isfinite(pred_len_words)
+        or not math.isfinite(elapsed)
+        or not 0.0 <= bleu <= 100.0
+        or not 0.0 <= chrf <= 100.0
+        or pred_len_words < 0.0
+        or elapsed <= 0.0
+    ):
+        raise ValueError("refusing to emit an invalid machine-translation result")
+    dk = direction()
+    print(
+        f"MT_METRICS task={task_name} surface={surface_name} direction={dk} "
+        f"bleu={bleu:.6f} chrf={chrf:.6f} n_pairs={rows} "
+        f"plen={pred_len_words:.6f} elapsed={elapsed:.6f}",
+        flush=True,
+    )
+    print(
+        f"MT_COMPLETE task={task_name} surface={surface_name} "
+        f"direction={dk} status=ok",
+        flush=True,
+    )
 
 
 _SURFACE_SOURCE_BYTES = 64 * 1024

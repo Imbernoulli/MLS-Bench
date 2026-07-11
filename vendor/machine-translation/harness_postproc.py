@@ -31,6 +31,8 @@ import time
 import common
 
 _VALID = {"identity", "normalize", "lowercase", "strip_punct"}
+TASK_NAME = "mt-postprocess-detok"
+SURFACE_NAME = "build_postproc"
 _WS = re.compile(r"\s+")
 _PUNCT = re.compile(r"[^\w\s]", flags=re.UNICODE)
 
@@ -54,27 +56,25 @@ def main() -> None:
 
     dev = common.setup(args.seed)
     t0 = time.time()
+    common.emit_protocol(TASK_NAME, SURFACE_NAME, args.seed)
 
-    srcs, refs = common.load_dataset()
-    print(f"MT_DATA corpus=opus100_{common.direction()} n_pairs={len(srcs)}", flush=True)
+    srcs, refs, data_proof = common.load_dataset()
 
     rule = common.load_surface_value(args.solution, "build_postproc")
     if not isinstance(rule, str):
         raise TypeError("build_postproc must return a string")
     if rule not in _VALID:
         raise SystemExit(f"postproc must be one of {sorted(_VALID)} (got {rule!r})")
-    print(f"MT_POSTPROC rule={rule}", flush=True)
-
     gen_kwargs = {"num_beams": 5, "length_penalty": 1.0,
                   "early_stopping": True, "max_new_tokens": 128}
-    model, tok = common.load_model_and_tokenizer(dev)
+    model, tok, model_proof = common.load_model_and_tokenizer(dev)
+    common.emit_provenance(model_proof, data_proof)
     preds = common.translate(model, tok, srcs, gen_kwargs, dev)
     preds = _apply(preds, rule)
     scores = common.score_bleu_chrf(preds, refs)
     plen = common.mean_pred_len_words(preds)
     dt = time.time() - t0
-    print(f"MT_METRICS bleu={scores['bleu']:.6f} chrf={scores['chrf']:.6f} "
-          f"n_pairs={len(srcs)} plen={plen:.1f} elapsed={dt:.1f}", flush=True)
+    common.emit_result(TASK_NAME, SURFACE_NAME, scores, plen, dt, len(srcs))
 
 
 if __name__ == "__main__":

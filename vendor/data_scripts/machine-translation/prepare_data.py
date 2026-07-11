@@ -1,199 +1,223 @@
 #!/usr/bin/env python3
-"""Prepare data + models for the machine-translation (mt-*) MLS-Bench tasks.
+"""Build the immutable data/model layer for machine-translation tasks.
 
-Produces, under {data_root}/machine-translation/:
-  models/opus-mt-de-en/    FROZEN small pretrained MarianMT (German  -> English)
-  models/opus-mt-fr-en/    FROZEN small pretrained MarianMT (French  -> English)
-  models/opus-mt-ru-en/    FROZEN small pretrained MarianMT (Russian -> English)
-  data/de_en_test.jsonl    complete official 2000-pair de->en test split
-  data/fr_en_test.jsonl    complete official 2000-pair fr->en test split
-  data/ru_en_test.jsonl    complete official 2000-pair ru->en test split
-
-The MT models are the Helsinki-NLP OPUS-MT MarianMT models (Tiedemann &
-Thottingal 2020), ~75M params each, pulled from the HF hub. The test sets are
-the complete official OPUS-100 <src>-en test splits (Zhang et al. 2020,
-"Improving Massively Multilingual NMT"; the ungated, script-free HF parquet
-dataset ``Helsinki-NLP/opus-100``, split ``test``, 2000 pairs each). We preserve
-every official row in its original order and serialise the aligned pairs to JSONL
-
-    {"src": "<source sentence>", "ref": "<English reference>"}
-
-so the task container resolves the corpus fully offline (no network at task time).
-Requires network on the HOST; the task container is offline.
-
-All three directions translate INTO English so the sacreBLEU reference side is a
-single language; the mt-* tasks aggregate their metric (geometric mean) over the
-three directions (de_en / fr_en / ru_en) as their >=3 validation settings.
-
-(OPUS-100 is used rather than FLORES because it is ungated, script-free parquet,
-and from the same OPUS family as the frozen models.)
+This script is for worker/image preparation, where network access is allowed.
+Verification itself is offline and never invokes this script.  The builder pins
+the OPUS-100 dataset and all three MarianMT repositories by commit, verifies the
+source parquet and final JSONL digests, downloads only the exact runtime model
+files, and writes the canonical manifests consumed by trusted ``common.py``.
 """
+from __future__ import annotations
+
 import argparse
-import hashlib
+import importlib.util
 import json
 import os
+import shutil
 from pathlib import Path
 
-DATASET_REVISION = "805090dc28bf78897da9641cdf08b61287580df9"
-EXPECTED_PAIRS = 2000
-MODEL_REVISIONS = {
-    "Helsinki-NLP/opus-mt-de-en": "1a922f3b32a8e809e17a47d4b32142d8105924e5",
-    "Helsinki-NLP/opus-mt-fr-en": "c4aed37b318c763fd177aa449b44e3b783cc6c02",
-    "Helsinki-NLP/opus-mt-ru-en": "fbd6dc73284f95536648512cc21d57f19191961a",
-}
-EXPECTED_SHA256 = {
-    "de_en_test.jsonl": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc",
-    "fr_en_test.jsonl": "09477f8a19e67d3f7c09c320d076f5a32168ab4cde55d8f1d88ffb66c02f68a1",
-    "ru_en_test.jsonl": "c072e931f99d1ed04829ec4f63b18c34ebc9ead4b1b19b25fceec60720650eb0",
-}
 
-# (direction key, model repo, opus-100 config, source lang code, model dir, out file)
-DIRECTIONS = [
-    ("de_en", "Helsinki-NLP/opus-mt-de-en", "de-en", "de", "opus-mt-de-en", "de_en_test.jsonl"),
-    ("fr_en", "Helsinki-NLP/opus-mt-fr-en", "en-fr", "fr", "opus-mt-fr-en", "fr_en_test.jsonl"),
-    ("ru_en", "Helsinki-NLP/opus-mt-ru-en", "en-ru", "ru", "opus-mt-ru-en", "ru_en_test.jsonl"),
-]
+def _load_common():
+    path = Path(__file__).resolve().parents[2] / "machine-translation" / "common.py"
+    spec = importlib.util.spec_from_file_location("mlsbench_mt_common", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load trusted machine-translation metadata: {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
-def download_model(models_dir: Path, repo: str, model_dir: str) -> None:
+common = _load_common()
+
+
+def _verify_model_directory(direction: str, path: Path) -> None:
+    spec = common.MODEL_SPECS[direction]
+    expected_names = set(spec["files"]) | {"model_manifest.json"}
+    actual_names = {item.name for item in path.iterdir()}
+    if actual_names != expected_names:
+        raise ValueError(
+            f"unexpected model inventory for {direction}: expected "
+            f"{sorted(expected_names)}, got {sorted(actual_names)}"
+        )
+    expected_manifest = common._canonical_json_bytes(
+        common.expected_model_manifest(direction)
+    )
+    if (path / "model_manifest.json").read_bytes() != expected_manifest:
+        raise ValueError(f"model manifest mismatch for {direction}")
+    for name, (expected_size, expected_digest) in spec["files"].items():
+        artifact = path / name
+        if not artifact.is_file() or artifact.is_symlink():
+            raise FileNotFoundError(f"missing regular model artifact: {artifact}")
+        if artifact.stat().st_size != expected_size:
+            raise ValueError(f"model artifact size mismatch: {artifact}")
+        if common._sha256_file(artifact) != expected_digest:
+            raise ValueError(f"model artifact digest mismatch: {artifact}")
+
+
+def prepare_model(direction: str, models_root: Path) -> None:
     from huggingface_hub import snapshot_download
 
-    dst = models_dir / model_dir
-    if dst.exists() and (dst / "config.json").exists():
-        print(f"model {repo} already present", flush=True)
+    model_dir, _output_file = common.DIRECTIONS[direction]
+    destination = models_root / model_dir
+    if destination.exists():
+        _verify_model_directory(direction, destination)
+        print(f"MODEL_VERIFIED direction={direction} path={destination}", flush=True)
         return
-    dst.mkdir(parents=True, exist_ok=True)
-    snapshot_download(
-        repo_id=repo,
-        revision=MODEL_REVISIONS[repo],
-        local_dir=str(dst),
-        ignore_patterns=["*.onnx", "*.ot", "*.h5", "*.msgpack", "tf_model.h5",
-                         "rust_model.ot", "onnx/*", "openvino/*", "*.tflite",
-                         "flax_model.msgpack"],
-    )
-    print(f"  downloaded {repo} -> {dst}", flush=True)
 
-
-def _load_src_en(cfg: str, src_lang: str):
-    """Return (src_sents, en_sents) aligned lists from OPUS-100 <cfg> test."""
-    from datasets import load_dataset
-
-    ds = load_dataset(
-        "Helsinki-NLP/opus-100",
-        cfg,
-        split="test",
-        revision=DATASET_REVISION,
-    )
-    src_sents, en_sents = [], []
-    for r in ds:
-        t = r["translation"]
-        src_sents.append(t[src_lang])
-        en_sents.append(t["en"])
-    print(f"  loaded OPUS-100 {cfg} test ({len(src_sents)} raw pairs)", flush=True)
-    return src_sents, en_sents
-
-
-def _has_expected_file(path: Path, expected_sha256: str | None = None) -> bool:
-    if not path.is_file():
-        return False
-    if expected_sha256 is not None:
-        if hashlib.sha256(path.read_bytes()).hexdigest() != expected_sha256:
-            return False
+    spec = common.MODEL_SPECS[direction]
+    temporary = models_root / f".{model_dir}.tmp"
+    if temporary.exists():
+        shutil.rmtree(temporary)
+    temporary.mkdir(parents=True)
     try:
-        with path.open(encoding="utf-8") as handle:
-            rows = [json.loads(line) for line in handle if line.strip()]
-    except (OSError, UnicodeError, json.JSONDecodeError):
-        return False
-    return len(rows) == EXPECTED_PAIRS and all(
-        isinstance(row, dict)
-        and set(row) == {"src", "ref"}
-        and isinstance(row["src"], str)
-        and bool(row["src"].strip())
-        and isinstance(row["ref"], str)
-        and bool(row["ref"].strip())
-        for row in rows
+        snapshot_download(
+            repo_id=spec["repository"],
+            revision=spec["revision"],
+            local_dir=str(temporary),
+            allow_patterns=sorted(spec["files"]),
+        )
+        cache_dir = temporary / ".cache"
+        if cache_dir.exists():
+            shutil.rmtree(cache_dir)
+        actual_names = {item.name for item in temporary.iterdir()}
+        if actual_names != set(spec["files"]):
+            raise ValueError(
+                f"downloaded model inventory mismatch for {direction}: "
+                f"{sorted(actual_names)}"
+            )
+        for name, (expected_size, expected_digest) in spec["files"].items():
+            artifact = temporary / name
+            if not artifact.is_file() or artifact.is_symlink():
+                raise FileNotFoundError(f"missing downloaded artifact: {artifact}")
+            if artifact.stat().st_size != expected_size:
+                raise ValueError(f"downloaded artifact size mismatch: {artifact}")
+            if common._sha256_file(artifact) != expected_digest:
+                raise ValueError(f"downloaded artifact digest mismatch: {artifact}")
+        (temporary / "model_manifest.json").write_bytes(
+            common._canonical_json_bytes(common.expected_model_manifest(direction))
+        )
+        temporary.replace(destination)
+    except BaseException:
+        shutil.rmtree(temporary, ignore_errors=True)
+        raise
+    _verify_model_directory(direction, destination)
+    print(f"MODEL_BUILT direction={direction} path={destination}", flush=True)
+
+
+def _resolve_source(spec: dict, source_root: Path | None) -> Path:
+    if source_root is not None:
+        path = source_root / spec["source_path"]
+        if not path.is_file():
+            raise FileNotFoundError(f"missing pinned source parquet: {path}")
+        return path
+
+    from huggingface_hub import hf_hub_download
+
+    return Path(
+        hf_hub_download(
+            repo_id=common.DATASET_ID,
+            filename=spec["source_path"],
+            repo_type="dataset",
+            revision=common.DATASET_REVISION,
+            local_files_only=False,
+        )
     )
 
 
-def build_testset(
-    data_dir: Path,
-    cfg: str,
-    src_lang: str,
-    out_name: str,
-    expected_sha256: str | None = None,
-) -> None:
-    out = data_dir / out_name
-    if _has_expected_file(out, expected_sha256):
-        print(f"complete official {out_name} already present", flush=True)
-        return
-    out.parent.mkdir(parents=True, exist_ok=True)
+def prepare_split(direction: str, data_root: Path,
+                  source_root: Path | None) -> None:
+    import pyarrow.parquet as parquet
 
-    src_sents, en_sents = _load_src_en(cfg, src_lang)
-    if len(src_sents) != EXPECTED_PAIRS or len(en_sents) != EXPECTED_PAIRS:
+    spec = common.DATA_SPECS[direction]
+    source_path = _resolve_source(spec, source_root)
+    source_digest = common._sha256_file(source_path)
+    if source_digest != spec["source_sha256"]:
         raise ValueError(
-            f"pinned OPUS-100 {cfg} test split must contain {EXPECTED_PAIRS} pairs, "
-            f"got {len(src_sents)} sources and {len(en_sents)} references"
+            f"{direction} source digest mismatch: expected "
+            f"{spec['source_sha256']}, got {source_digest}"
         )
-    pairs = []
-    for index, (source, reference) in enumerate(zip(src_sents, en_sents), 1):
-        if not isinstance(source, str) or not source.strip():
-            raise ValueError(f"invalid source in {cfg} test row {index}")
-        if not isinstance(reference, str) or not reference.strip():
-            raise ValueError(f"invalid reference in {cfg} test row {index}")
-        pairs.append({"src": source.strip(), "ref": reference.strip()})
+    rows = parquet.read_table(source_path).to_pylist()
+    if len(rows) != common.OFFICIAL_TEST_PAIRS:
+        raise ValueError(
+            f"{direction} row-count mismatch: expected "
+            f"{common.OFFICIAL_TEST_PAIRS}, got {len(rows)}"
+        )
 
-    tmp = out.with_suffix(out.suffix + ".tmp")
-    with tmp.open("w", encoding="utf-8") as handle:
-        for pair in pairs:
-            handle.write(json.dumps(pair, ensure_ascii=False) + "\n")
-    tmp.replace(out)
-    if expected_sha256 is not None:
-        digest = hashlib.sha256(out.read_bytes()).hexdigest()
-        if digest != expected_sha256:
-            raise ValueError(
-                f"prepared {out_name} digest mismatch: expected {expected_sha256}, got {digest}"
+    _model_dir, output_name = common.DIRECTIONS[direction]
+    output_path = data_root / output_name
+    temporary = output_path.with_suffix(".jsonl.tmp")
+    with temporary.open("w", encoding="utf-8", newline="\n") as handle:
+        for index, row in enumerate(rows):
+            if not isinstance(row, dict) or set(row) != {"translation"}:
+                raise ValueError(f"{direction} row {index} has an invalid schema")
+            translation = row["translation"]
+            if not isinstance(translation, dict):
+                raise ValueError(f"{direction} row {index} has no translation mapping")
+            source = translation.get(spec["source_language"])
+            reference = translation.get(common.TGT_LANG)
+            if not isinstance(source, str) or not source.strip():
+                raise ValueError(f"{direction} row {index} has an empty source")
+            if not isinstance(reference, str) or not reference.strip():
+                raise ValueError(f"{direction} row {index} has an empty reference")
+            handle.write(
+                json.dumps({"src": source, "ref": reference}, ensure_ascii=False)
+                + "\n"
             )
-
-    avg_src = sum(len(r["src"].split()) for r in pairs) / len(pairs)
-    avg_ref = sum(len(r["ref"].split()) for r in pairs) / len(pairs)
-    print(f"TESTSET_BUILT {out_name} pairs={len(pairs)} avg_src_words={avg_src:.1f} "
-          f"avg_ref_words={avg_ref:.1f}", flush=True)
+        handle.flush()
+        os.fsync(handle.fileno())
+    output_digest = common._sha256_file(temporary)
+    if output_digest != spec["output_sha256"]:
+        temporary.unlink(missing_ok=True)
+        raise ValueError(
+            f"{direction} JSONL digest mismatch: expected "
+            f"{spec['output_sha256']}, got {output_digest}"
+        )
+    temporary.replace(output_path)
+    print(
+        f"SPLIT_BUILT direction={direction} rows={len(rows)} "
+        f"sha256={output_digest}",
+        flush=True,
+    )
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--data-root", required=True)
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument(
+        "--source-root",
+        type=Path,
+        help="Root containing pinned parquet paths; otherwise use HF Hub",
+    )
+    args = parser.parse_args()
 
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
-    root = Path(args.data_root) / "machine-translation"
-    (root / "models").mkdir(parents=True, exist_ok=True)
-    (root / "data").mkdir(parents=True, exist_ok=True)
+    root = args.data_root / "machine-translation"
+    models_root = root / "models"
+    data_root = root / "data"
+    models_root.mkdir(parents=True, exist_ok=True)
+    data_root.mkdir(parents=True, exist_ok=True)
 
-    for _key, repo, cfg, src_lang, model_dir, out_name in DIRECTIONS:
-        download_model(root / "models", repo, model_dir)
-        build_testset(
-            root / "data",
-            cfg,
-            src_lang,
-            out_name,
-            EXPECTED_SHA256[out_name],
-        )
+    for direction in common.DIRECTIONS:
+        prepare_model(direction, models_root)
+        prepare_split(direction, data_root, args.source_root)
 
-    manifest = {
-        "format": "mls-bench-opus100-official-test-v1",
-        "dataset": "Helsinki-NLP/opus-100",
-        "dataset_revision": DATASET_REVISION,
-        "pairs_per_direction": EXPECTED_PAIRS,
-        "directions": [key for key, *_rest in DIRECTIONS],
-        "model_revisions": MODEL_REVISIONS,
-        "sha256": EXPECTED_SHA256,
-    }
-    (root / "data" / "source_manifest.json").write_text(
-        json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+    (data_root / "source_manifest.json").write_bytes(
+        common._canonical_json_bytes(common.expected_source_manifest())
     )
-
-    print("ALL_DONE", flush=True)
+    expected_names = {
+        output_file for _model_dir, output_file in common.DIRECTIONS.values()
+    } | {"source_manifest.json"}
+    actual_names = {item.name for item in data_root.iterdir()}
+    if actual_names != expected_names:
+        raise ValueError(
+            f"unexpected final OPUS data inventory: expected "
+            f"{sorted(expected_names)}, got {sorted(actual_names)}"
+        )
+    print(
+        f"MT_ASSETS_COMPLETE source_manifest_sha256="
+        f"{common.source_manifest_sha256()}",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

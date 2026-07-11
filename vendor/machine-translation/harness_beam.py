@@ -18,6 +18,9 @@ import time
 
 import common
 
+TASK_NAME = "mt-decoding-beam"
+SURFACE_NAME = "build_beam_config"
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
@@ -27,9 +30,9 @@ def main() -> None:
 
     dev = common.setup(args.seed)
     t0 = time.time()
+    common.emit_protocol(TASK_NAME, SURFACE_NAME, args.seed)
 
-    srcs, refs = common.load_dataset()
-    print(f"MT_DATA corpus=opus100_{common.direction()} n_pairs={len(srcs)}", flush=True)
+    srcs, refs, data_proof = common.load_dataset()
 
     cfg = common.require_config(
         common.load_surface_value(args.solution, "build_beam_config"),
@@ -46,16 +49,13 @@ def main() -> None:
     }
     if gen_kwargs["num_beams"] > 1:
         gen_kwargs["early_stopping"] = True
-    print(f"MT_BEAM num_beams={gen_kwargs['num_beams']} "
-          f"no_repeat_ngram_size={gen_kwargs['no_repeat_ngram_size']}", flush=True)
-
-    model, tok = common.load_model_and_tokenizer(dev)
+    model, tok, model_proof = common.load_model_and_tokenizer(dev)
+    common.emit_provenance(model_proof, data_proof)
     preds = common.translate(model, tok, srcs, gen_kwargs, dev)
     scores = common.score_bleu_chrf(preds, refs)
     plen = common.mean_pred_len_words(preds)
     dt = time.time() - t0
-    print(f"MT_METRICS bleu={scores['bleu']:.6f} chrf={scores['chrf']:.6f} "
-          f"n_pairs={len(srcs)} plen={plen:.1f} elapsed={dt:.1f}", flush=True)
+    common.emit_result(TASK_NAME, SURFACE_NAME, scores, plen, dt, len(srcs))
 
 
 if __name__ == "__main__":

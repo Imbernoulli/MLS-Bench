@@ -1,0 +1,236 @@
+{
+  "captured_at": "2026-07-11",
+  "count_definition": "parameter_count is a checkpoint-derived candidate: unique stored tensor elements excluding the final_logits_bias buffer and de-duplicating tied encoder/decoder/shared embeddings; checkpoint_tensor_elements includes that buffer",
+  "count_status": "unconfirmed until a fresh worker reports sum(p.numel()) from the selected checkpoint under the pinned image; any mismatch must fail verification and be corrected in source before render",
+  "formula_crosscheck": {
+    "candidate_explanation": "The independent formula is exactly 2048 higher in every direction. That delta equals four 512-element tensors: encoder/decoder embedding LayerNorm weight+bias. Generic BART-style formulas include those tensors, but the pinned Marian checkpoint metadata has no layernorm_embedding keys. This explains the formula delta, but only the worker runtime probe is authoritative.",
+    "checkpoint_derived": {
+      "de_en": 74410496,
+      "fr_en": 75133952,
+      "ru_en": 76672000
+    },
+    "independent_formula": {
+      "de_en": 74412544,
+      "fr_en": 75136000,
+      "ru_en": 76674048
+    }
+  },
+  "models": {
+    "de_en": {
+      "checkpoint_metadata_probe": {
+        "alias_groups": [
+          [
+            "model.shared.weight",
+            "model.encoder.embed_tokens.weight",
+            "model.decoder.embed_tokens.weight"
+          ]
+        ],
+        "checkpoint_tensor_elements": 74468597,
+        "final_logits_bias_elements": 58101,
+        "parameter_count": 74410496,
+        "probe": "legacy torch pickle metadata only",
+        "range_bytes": "0-8388607",
+        "state_pickle_end_byte": 46386,
+        "tensor_keys": 258,
+        "unique_storages": 256
+      },
+      "files": [
+        {
+          "hf_blob_id": "7417e176589d903bb57420c5546287d810941afb",
+          "path": "config.json",
+          "sha256": "89368ef76ea89581025cdf605caac75b8a22af2c1a90ec57c8a5001f10537eeb",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 1381
+        },
+        {
+          "hf_blob_id": "3d05a5bad924f2121cf5a006b36dfda02970289b",
+          "path": "generation_config.json",
+          "sha256": "e5cccf365761fb31175fc978a75f5e857a822f173d0e447aa3a25d7cbcda15a4",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 293
+        },
+        {
+          "hf_blob_id": "2337c76518473450baf92f2f778ac4179170fdbf",
+          "path": "pytorch_model.bin",
+          "sha256": "e743c3070f61f477cb62fe95ef2c9be2e77f3e488cb6b8030ff8a19e8295c87d",
+          "sha256_source": "Hugging Face revision API LFS sha256 metadata",
+          "size": 297928209
+        },
+        {
+          "hf_blob_id": "9dd0d88081be8d75fbc029762329cc11bfad07b9",
+          "path": "source.spm",
+          "sha256": "bbd1f495eea99c8e21ae086d9146e0fa7b096c3dfdd9ba07ab8b631889df5c9b",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 796845
+        },
+        {
+          "hf_blob_id": "e73d58f99c702eb1746e3dc55bc76255d7aa4a94",
+          "path": "target.spm",
+          "sha256": "678f2a1177d8389f67b66299762dcc4fc567e89b07e212ba91b0c56daecf47ce",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 768489
+        },
+        {
+          "hf_blob_id": "6dafd08e4b7bed18a02878f5384793168a8d079c",
+          "path": "tokenizer_config.json",
+          "sha256": "51c3c3260d27cb7c4d11d0c53752b8fe87f2367129d7636fa917ce588b97306c",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 42
+        },
+        {
+          "hf_blob_id": "0da41bcf74fa9a6af4855c7350e27819796d9ca9",
+          "path": "vocab.json",
+          "sha256": "0d70d89fee4a8b4ef99a56d712163baadcabd5600a597f71515547ee70306329",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 1273232
+        }
+      ],
+      "metadata_url": "https://huggingface.co/api/models/Helsinki-NLP/opus-mt-de-en/revision/1a922f3b32a8e809e17a47d4b32142d8105924e5?blobs=true",
+      "repository": "Helsinki-NLP/opus-mt-de-en",
+      "revision": "1a922f3b32a8e809e17a47d4b32142d8105924e5"
+    },
+    "fr_en": {
+      "checkpoint_metadata_probe": {
+        "alias_metadata": {
+          "model.encoder.embed_tokens.weight": "model.decoder.embed_tokens.weight",
+          "model.shared.weight": "model.decoder.embed_tokens.weight"
+        },
+        "checkpoint_tensor_elements": 75193466,
+        "final_logits_bias_elements": 59514,
+        "header_bytes": 29736,
+        "parameter_count": 75133952,
+        "probe": "safetensors JSON header only",
+        "range_bytes": "0-1048575",
+        "tensor_keys": 256
+      },
+      "files": [
+        {
+          "hf_blob_id": "e0e6fcaff8387b6648835ff3e326d5bc31b6e7bc",
+          "path": "config.json",
+          "sha256": "b3be13d046d9899d7aab8cf4ed624d9a79f5776038ba793f6b4d2ce3e02192f7",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 1416
+        },
+        {
+          "hf_blob_id": "a76623f9e228ce241586c6dc0ede54b9674940a6",
+          "path": "generation_config.json",
+          "sha256": "4956fb9a7caaad7579cf8bb789c1e578b8a1cf48a0a8b779fda2f95dd10bbaa5",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 293
+        },
+        {
+          "hf_blob_id": "8650c3da1444f36426b5f2cf747841f5d3843658",
+          "path": "model.safetensors",
+          "sha256": "6e3837f34b903802c3d0d670362b997cee6e87584a1108eb3fa89e4625e4424a",
+          "sha256_source": "Hugging Face revision API LFS sha256 metadata",
+          "size": 300803608
+        },
+        {
+          "hf_blob_id": "e95b99a0e1a115d0f27eb051c7afc5a2859f1630",
+          "path": "source.spm",
+          "sha256": "78d0e717c77053f1c4b856d8661d9cb87c64f083a35418c087b9146300e4f585",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 802397
+        },
+        {
+          "hf_blob_id": "5b989d2ad3cc6596bef819b2ad755f3e06377476",
+          "path": "target.spm",
+          "sha256": "173e9f493a668fe396d599e28d414a201193094e6ffd7a4678e5aab0f6d3d838",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 778395
+        },
+        {
+          "hf_blob_id": "f760e5a21202d4bd42837aa777bcd2e9ee7eaffa",
+          "path": "tokenizer_config.json",
+          "sha256": "47de9ce87378593016432f8dc657202c03913ab3ce0c15d7f78d51edfc3ff9a3",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 42
+        },
+        {
+          "hf_blob_id": "f12d2f5f9cddfc4b05dee175269d98cab8274c12",
+          "path": "vocab.json",
+          "sha256": "945c604346ce15ce4aff9001001e7f925e336d942c4087017f191871162cbdc4",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 1339166
+        }
+      ],
+      "metadata_url": "https://huggingface.co/api/models/Helsinki-NLP/opus-mt-fr-en/revision/c4aed37b318c763fd177aa449b44e3b783cc6c02?blobs=true",
+      "repository": "Helsinki-NLP/opus-mt-fr-en",
+      "revision": "c4aed37b318c763fd177aa449b44e3b783cc6c02"
+    },
+    "ru_en": {
+      "checkpoint_metadata_probe": {
+        "alias_groups": [
+          [
+            "model.shared.weight",
+            "model.encoder.embed_tokens.weight",
+            "model.decoder.embed_tokens.weight"
+          ]
+        ],
+        "checkpoint_tensor_elements": 76734518,
+        "final_logits_bias_elements": 62518,
+        "parameter_count": 76672000,
+        "probe": "legacy torch pickle metadata only",
+        "range_bytes": "0-8388607",
+        "state_pickle_end_byte": 46386,
+        "tensor_keys": 258,
+        "unique_storages": 256
+      },
+      "files": [
+        {
+          "hf_blob_id": "d898c2531e824fa65c1b4c29fa77f1bc05a5d2e0",
+          "path": "config.json",
+          "sha256": "5ea76c78596bce8fe005ef89e00de0924bf83e5f532ce08784ff1fcefb699f5f",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 1381
+        },
+        {
+          "hf_blob_id": "73c009f373594622ab49464e9c3b4e950bc3ac2d",
+          "path": "generation_config.json",
+          "sha256": "31cff5e74efc263ff53efac09e3e350cd462d5c8198b1136b455d63a02d8cad5",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 293
+        },
+        {
+          "hf_blob_id": "c73448fdb9813dc61d7591fe4822602eb7e9aa60",
+          "path": "pytorch_model.bin",
+          "sha256": "535450eb5613f3cc912f9ca3e54cfef6c14d201b319c24a88faf776a65538b5d",
+          "sha256_source": "Hugging Face revision API LFS sha256 metadata",
+          "size": 306991893
+        },
+        {
+          "hf_blob_id": "5781b8215934ee03646a5935000a19f1233210f0",
+          "path": "source.spm",
+          "sha256": "745998e51ba5b058e38b7ac7765c25c43ed5c1c39cc92b27163b9b2e323c9d7c",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 1080169
+        },
+        {
+          "hf_blob_id": "ee65931d442b9dbb755f640edb9f31b78c7c27ef",
+          "path": "target.spm",
+          "sha256": "16bebef1389a0b8ab452772c4e35b9e605e5713f8ac7baa71ca701394eaa086d",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 802781
+        },
+        {
+          "hf_blob_id": "fba9222db75e67725c66f0aad3b3c08e3e0fa091",
+          "path": "tokenizer_config.json",
+          "sha256": "8d826099b8c67179c83ab4ff94aff7ca7bf24ca14319cb0287b9a0b4c40b2a96",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 42
+        },
+        {
+          "hf_blob_id": "39833c62b978f23b3429c9109dc4ee88e339c2d5",
+          "path": "vocab.json",
+          "sha256": "33e95da3be3fa3b50169c4c46693ba2f29fbf4cb29d99044bd07d72d181fa1e9",
+          "sha256_source": "full small-file content stream from pinned resolve URL",
+          "size": 2601758
+        }
+      ],
+      "metadata_url": "https://huggingface.co/api/models/Helsinki-NLP/opus-mt-ru-en/revision/fbd6dc73284f95536648512cc21d57f19191961a?blobs=true",
+      "repository": "Helsinki-NLP/opus-mt-ru-en",
+      "revision": "fbd6dc73284f95536648512cc21d57f19191961a"
+    }
+  },
+  "schema_version": 1
+}

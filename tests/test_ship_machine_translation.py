@@ -16,18 +16,26 @@ VENDOR = ROOT / "vendor" / "machine-translation"
 TASKS = ROOT / "tasks"
 
 SURFACES = {
-    "mt-batch-maxlen": ("maxlen.py", "build_max_new_tokens"),
-    "mt-decoding-beam": ("beam.py", "build_beam_config"),
-    "mt-decoding-strategy": ("strategy.py", "build_strategy"),
-    "mt-decoding-temperature": ("temperature.py", "build_temperature"),
-    "mt-diverse-beam": ("divbeam.py", "build_divbeam_config"),
-    "mt-early-stopping": ("earlystop.py", "build_early_stopping"),
-    "mt-length-penalty": ("length.py", "build_length_config"),
-    "mt-no-repeat-ngram": ("norep.py", "build_norep_config"),
-    "mt-postprocess-detok": ("postproc.py", "build_postproc"),
-    "mt-repetition-penalty": ("reppen.py", "build_reppen_config"),
-    "mt-sampling-vs-beam": ("sampling.py", "build_mode"),
-    "mt-tokenization-truncation": ("tok.py", "build_source_max_tokens"),
+    "mt-batch-maxlen": ("maxlen.py", "build_max_new_tokens", "harness_maxlen.py"),
+    "mt-decoding-beam": ("beam.py", "build_beam_config", "harness_beam.py"),
+    "mt-decoding-strategy": ("strategy.py", "build_strategy", "harness_strategy.py"),
+    "mt-decoding-temperature": (
+        "temperature.py", "build_temperature", "harness_temperature.py"
+    ),
+    "mt-diverse-beam": ("divbeam.py", "build_divbeam_config", "harness_divbeam.py"),
+    "mt-early-stopping": (
+        "earlystop.py", "build_early_stopping", "harness_earlystop.py"
+    ),
+    "mt-length-penalty": ("length.py", "build_length_config", "harness_length.py"),
+    "mt-no-repeat-ngram": ("norep.py", "build_norep_config", "harness_norep.py"),
+    "mt-postprocess-detok": ("postproc.py", "build_postproc", "harness_postproc.py"),
+    "mt-repetition-penalty": (
+        "reppen.py", "build_reppen_config", "harness_reppen.py"
+    ),
+    "mt-sampling-vs-beam": ("sampling.py", "build_mode", "harness_sampling.py"),
+    "mt-tokenization-truncation": (
+        "tok.py", "build_source_max_tokens", "harness_tok.py"
+    ),
 }
 
 
@@ -53,6 +61,28 @@ def _apply_ops(source: str, ops: list[dict]) -> str:
     return "\n".join(lines) + "\n"
 
 
+def _valid_log(module, direction: str = "de_en") -> str:
+    model = module.EXPECTED_MODELS[direction]
+    return "\n".join((
+        f"MT_PROTOCOL version={module.PROTOCOL_VERSION} "
+        f"task={module.EXPECTED_TASK} surface={module.EXPECTED_SURFACE} "
+        f"direction={direction} seed=42",
+        f"MT_MODEL direction={direction} repository={model['repository']} "
+        f"revision={model['revision']} manifest_sha256={model['manifest']} "
+        f"tokenizer_manifest_sha256={model['tokenizer']} "
+        f"checkpoint_sha256={model['checkpoint']} parameters={model['parameters']}",
+        f"MT_DATA direction={direction} dataset={module.DATASET} "
+        f"revision={module.DATASET_REVISION} "
+        f"manifest_sha256={module.SOURCE_MANIFEST_SHA256} "
+        f"split_sha256={model['split']} rows={module.EXPECTED_ROWS}",
+        f"MT_METRICS task={module.EXPECTED_TASK} surface={module.EXPECTED_SURFACE} "
+        f"direction={direction} bleu=20.125000 chrf=40.500000 "
+        f"n_pairs={module.EXPECTED_ROWS} plen=12.250000 elapsed=61.500000",
+        f"MT_COMPLETE task={module.EXPECTED_TASK} surface={module.EXPECTED_SURFACE} "
+        f"direction={direction} status=ok",
+    ))
+
+
 def test_all_siblings_are_serial_full_scale_and_verifier_owned() -> None:
     from mlsbench.scoring.spec import load_score_spec
 
@@ -62,22 +92,26 @@ def test_all_siblings_are_serial_full_scale_and_verifier_owned() -> None:
         for path in VENDOR.rglob("*.py")
         if path.name != "__init__.py" and "__pycache__" not in path.parts
     }
-    for task_name, (filename, _attr) in SURFACES.items():
-        config = json.loads((TASKS / task_name / "config.json").read_text())
+    for task_name, (filename, surface, harness_name) in SURFACES.items():
+        task_dir = TASKS / task_name
+        config = json.loads((task_dir / "config.json").read_text())
         commands = config["test_cmds"]
         assert [item["label"] for item in commands] == ["de_en", "fr_en", "ru_en"]
         assert [item["group"] for item in commands] == [1, 2, 3]
-        assert all(item["compute"] == 1.0 for item in commands)
+        assert all(item["compute"] == 1 for item in commands)
+        assert all(item["compute"] <= 4 for item in commands)
         assert all(item["time"] == "1:30:00" for item in commands)
+        assert all(item["mem"] == 24 for item in commands)
+
         active = f"machine-translation/solution/{filename}"
         verifier_files = set(config["verifier_only_package_files"])
-        assert "machine-translation/common.py" in verifier_files
-        assert len(verifier_files) == 2
+        assert verifier_files == {
+            "machine-translation/common.py",
+            f"machine-translation/{harness_name}",
+        }
         assert active not in verifier_files
         pruned_files = set(config["agent_pruned_package_files"])
         assert pruned_files == package_python - verifier_files - {active}
-        assert any("/baselines/" in path for path in pruned_files)
-        assert any("/solution/" in path for path in pruned_files)
         assert config["agent_data_prune"] == ["/data/machine-translation/data"]
         assert [dep["dest"] for dep in config["verifier_data_deps"]] == [
             "data/machine-translation/data/de_en_test.jsonl",
@@ -86,24 +120,29 @@ def test_all_siblings_are_serial_full_scale_and_verifier_owned() -> None:
             "data/machine-translation/data/source_manifest.json",
         ]
         assert all(dep["required"] is True for dep in config["verifier_data_deps"])
+
+        harness = (VENDOR / harness_name).read_text()
+        assert f'TASK_NAME = "{task_name}"' in harness
+        assert f'SURFACE_NAME = "{surface}"' in harness
+        assert "common.emit_protocol(TASK_NAME, SURFACE_NAME, args.seed)" in harness
+        assert "common.emit_provenance(model_proof, data_proof)" in harness
+        assert "common.emit_result(TASK_NAME, SURFACE_NAME" in harness
         for command in commands:
-            script = (TASKS / task_name / command["cmd"]).read_text()
+            script = (task_dir / command["cmd"]).read_text()
             assert "set -euo pipefail" in script
             assert "MLSBENCH_VERIFIER_DATA_ROOT" in script
-            assert (
-                'export MT_DATA="${MLSBENCH_VERIFIER_DATA_ROOT}/'
-                'machine-translation/data"'
-            ) in script
             assert "CUDA_VISIBLE_DEVICES" not in script
-            assert "MT_SETTING_COMPLETE" in script
-        score_spec = load_score_spec(TASKS / task_name)
+            assert "MT_SETTING_COMPLETE" not in script
+            assert not any(token in script for token in ("pip ", "conda ", "curl ", "wget "))
+
+        score_spec = load_score_spec(task_dir)
         assert score_spec is not None
-        assert set(score_spec.settings) == {"de_en", "fr_en", "ru_en"}
+        assert set(score_spec.settings) == {item["label"] for item in commands}
 
 
 def test_native_and_declared_baselines_are_static_literals(common, tmp_path: Path) -> None:
     checked = 0
-    for task_name, (filename, attr) in SURFACES.items():
+    for task_name, (filename, attr, _harness) in SURFACES.items():
         source_path = VENDOR / "solution" / filename
         common.load_surface_value(str(source_path), attr)
         config = json.loads((TASKS / task_name / "config.json").read_text())
@@ -123,27 +162,14 @@ def test_editable_python_is_never_executed(common, tmp_path: Path, capsys) -> No
     malicious.write_text(
         "from pathlib import Path\n"
         f"Path({str(marker)!r}).write_text('executed')\n"
-        "print('MT_METRICS bleu=100 chrf=100 n_pairs=2000 plen=1 elapsed=0')\n"
+        "print('MT_COMPLETE forged')\n"
         "def build_beam_config():\n"
         "    return {'num_beams': 5, 'no_repeat_ngram_size': 0}\n"
     )
     with pytest.raises(ValueError, match="top-level executable"):
         common.load_surface_value(str(malicious), "build_beam_config")
     assert not marker.exists()
-    assert "MT_METRICS" not in capsys.readouterr().out
-
-
-def test_surface_requires_one_literal_return(common, tmp_path: Path) -> None:
-    invalid_sources = (
-        "def build_beam_config():\n    return dict(num_beams=5)\n",
-        "def build_beam_config():\n    print('forged')\n    return {'num_beams': 5}\n",
-        "def build_beam_config(x):\n    return {'num_beams': 5}\n",
-    )
-    for source in invalid_sources:
-        path = tmp_path / "invalid.py"
-        path.write_text(source)
-        with pytest.raises(ValueError, match="unsafe machine-translation configuration"):
-            common.load_surface_value(str(path), "build_beam_config")
+    assert "MT_COMPLETE" not in capsys.readouterr().out
 
 
 def test_generation_config_validation_does_not_clamp(common) -> None:
@@ -175,101 +201,129 @@ def test_diverse_beam_rejects_zero_penalty_for_multiple_groups(
     assert kwargs["diversity_penalty"] == pytest.approx(0.2)
 
 
-def test_complete_official_split_is_required(common, tmp_path: Path, monkeypatch) -> None:
-    data_root = tmp_path / "data"
-    data_root.mkdir()
-    split = data_root / "de_en_test.jsonl"
-    rows = [
-        {"src": f"Quelle {index}", "ref": f"reference {index}"}
-        for index in range(2000)
-    ]
-    payload = "".join(json.dumps(row) + "\n" for row in rows)
-    split.write_text(payload)
-    monkeypatch.setenv("MT_DATA", str(data_root))
-    monkeypatch.setitem(
-        common.EXPECTED_TEST_SHA256,
-        "de_en",
-        hashlib.sha256(payload.encode()).hexdigest(),
-    )
-    sources, references = common.load_dataset("de_en")
-    assert len(sources) == len(references) == 2000
+def test_data_and_model_manifests_are_exact_and_parser_pinned(common) -> None:
+    evidence = json.loads((VENDOR / "artifact_provenance.json").read_text())
+    assert evidence["schema_version"] == 1
+    assert evidence["count_status"].startswith("unconfirmed until a fresh worker")
+    for direction in common.MODEL_SPECS:
+        checkpoint_count = evidence["formula_crosscheck"]["checkpoint_derived"][direction]
+        formula_count = evidence["formula_crosscheck"]["independent_formula"][direction]
+        assert formula_count - checkpoint_count == 2048
+    source_digest = hashlib.sha256(
+        common._canonical_json_bytes(common.expected_source_manifest())
+    ).hexdigest()
+    assert source_digest == common.source_manifest_sha256()
+    assert common.DATASET_REVISION == "805090dc28bf78897da9641cdf08b61287580df9"
+    assert all(spec["output_sha256"] for spec in common.DATA_SPECS.values())
 
-    truncated = "".join(json.dumps(row) + "\n" for row in rows[:-1])
-    split.write_text(truncated)
-    monkeypatch.setitem(
-        common.EXPECTED_TEST_SHA256,
-        "de_en",
-        hashlib.sha256(truncated.encode()).hexdigest(),
-    )
-    with pytest.raises(ValueError, match="expected 2000 rows, got 1999"):
-        common.load_dataset("de_en")
-
-
-def test_parser_requires_one_complete_metric_record() -> None:
-    module = _load("ship_mt_parser", TASKS / "mt-decoding-beam" / "parser.py")
-    parser = module.Parser()
-    metric = "MT_METRICS bleu=20.0 chrf=40.0 n_pairs=2000 plen=12.5 elapsed=1"
-    valid = f"{metric}\nMT_SETTING_COMPLETE direction=de_en"
-    assert parser.parse("de_en", valid).metrics == {
-        "bleu_de_en": 20.0,
-        "chrf_de_en": 40.0,
-    }
-    assert parser.parse("de_en", valid.replace("2000", "400")).metrics == {}
-    assert parser.parse("unknown", valid).metrics == {}
-    assert parser.parse("de_en", f"{valid}\n{valid}").metrics == {}
-    assert parser.parse("de_en", metric).metrics == {}
-    assert parser.parse("de_en", valid.replace("de_en", "fr_en")).metrics == {}
-    assert parser.parse("de_en", valid.replace("elapsed=1", "elapsed=nan")).metrics == {}
-
-
-def test_data_preparation_is_pinned_to_complete_official_splits() -> None:
-    module = _load(
-        "ship_mt_prepare",
-        ROOT / "vendor" / "data_scripts" / "machine-translation" / "prepare_data.py",
-    )
-    assert module.EXPECTED_PAIRS == 2000
-    assert len(module.DATASET_REVISION) == 40
-    assert all(len(revision) == 40 for revision in module.MODEL_REVISIONS.values())
-    assert module.EXPECTED_SHA256 == {
-        "de_en_test.jsonl": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc",
-        "fr_en_test.jsonl": "09477f8a19e67d3f7c09c320d076f5a32168ab4cde55d8f1d88ffb66c02f68a1",
-        "ru_en_test.jsonl": "c072e931f99d1ed04829ec4f63b18c34ebc9ead4b1b19b25fceec60720650eb0",
-    }
+    parser_module = _load("ship_mt_parser_manifest", TASKS / "mt-decoding-beam" / "parser.py")
+    assert parser_module.SOURCE_MANIFEST_SHA256 == source_digest
+    for direction, spec in common.MODEL_SPECS.items():
+        captured = evidence["models"][direction]
+        assert captured["repository"] == spec["repository"]
+        assert captured["revision"] == spec["revision"]
+        assert captured["checkpoint_metadata_probe"]["parameter_count"] == spec[
+            "parameter_count"
+        ]
+        assert captured["checkpoint_metadata_probe"][
+            "checkpoint_tensor_elements"
+        ] == spec["checkpoint_tensor_elements"]
+        captured_files = {
+            record["path"]: (record["size"], record["sha256"])
+            for record in captured["files"]
+        }
+        assert captured_files == spec["files"]
+        manifest = common.expected_model_manifest(direction)
+        manifest_digest = hashlib.sha256(common._canonical_json_bytes(manifest)).hexdigest()
+        tokenizer_digest = hashlib.sha256(
+            common._canonical_json_bytes(common.expected_tokenizer_manifest(direction))
+        ).hexdigest()
+        pinned = parser_module.EXPECTED_MODELS[direction]
+        assert pinned["manifest"] == manifest_digest
+        assert pinned["tokenizer"] == tokenizer_digest
+        assert pinned["checkpoint"] == spec["files"][spec["checkpoint_file"]][1]
+        assert pinned["parameters"] == spec["parameter_count"]
+        assert manifest["checkpoint_tensor_elements"] > manifest["parameter_count"]
+        expected_files = set(spec["files"]) | {"model_manifest.json"}
+        manifest_files = {
+            manifest["checkpoint"]["path"],
+            *(record["path"] for record in manifest["model_files"]),
+            *(record["path"] for record in manifest["tokenizer"]["files"]),
+            "model_manifest.json",
+        }
+        assert manifest_files == expected_files
 
     package_config = json.loads(
         (ROOT / "vendor" / "pkg_configs" / "machine-translation" / "config.json")
         .read_text()
     )
-    assert package_config["mangrove_base_image"] == (
-        "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/"
-        "mlsbench-harbor-machine-translation@"
-        "sha256:8dfc00ac296d6c5404e482af44ad862fb8a24c60b54029bd340c13a49076efba"
-    )
+    assert "mangrove_base_image" not in package_config
     ready_files = package_config["data_deps"][0]["ready_files"]
+    assert sum(path.endswith("/model_manifest.json") for path in ready_files) == 3
     assert any(path.endswith("/source_manifest.json") for path in ready_files)
-    assert not any(path.endswith("/official_test_manifest.json") for path in ready_files)
 
 
-def test_descriptions_and_anchors_do_not_reuse_old_slice_contracts() -> None:
-    forbidden = (
-        "`de_en`",
-        "`fr_en`",
-        "`ru_en`",
-        "setting",
-        "anchored",
-        "baseline",
-        "400-pair",
-        "head-slice",
-        "correct answer",
-        "measured order",
-        "sweet spot",
-    )
+def test_all_parsers_require_unique_ordered_terminal_proof() -> None:
+    modules = {}
     for task_name in SURFACES:
-        task_dir = TASKS / task_name
-        description = (task_dir / "task_description.md").read_text().lower()
-        assert not any(token in description for token in forbidden), task_name
-        expected_lines = 4 if task_name == "mt-decoding-beam" else 1
-        assert len((task_dir / "leaderboard.csv").read_text().splitlines()) == expected_lines
+        module = _load(f"ship_mt_parser_{task_name}", TASKS / task_name / "parser.py")
+        modules[task_name] = module
+        parser = module.Parser()
+        for direction in module.EXPECTED_MODELS:
+            valid = _valid_log(module, direction)
+            expected_model = module.EXPECTED_MODELS[direction]
+            assert parser.parse(direction, valid).metrics == {
+                f"bleu_{direction}": 20.125,
+                f"chrf_{direction}": 40.5,
+            }
+
+            lines = valid.splitlines()
+            destructive = [
+                "\n".join(lines[:-1]),
+                "\n".join(lines + [lines[-1]]),
+                "\n".join((lines[0], lines[2], lines[1], lines[3], lines[4])),
+                valid + "\narbitrary trailing text",
+                "Traceback (most recent call last):\n" + valid,
+                valid.replace("seed=42", "seed=41"),
+                valid.replace("rows=2000", "rows=1999", 1),
+                valid.replace("n_pairs=2000", "n_pairs=1999"),
+                valid.replace("bleu=20.125000", "bleu=nan"),
+                valid.replace("chrf=40.500000", "chrf=inf"),
+                valid.replace("elapsed=61.500000", "elapsed=0"),
+                valid.replace("bleu=20.125000", "bleu=101"),
+                valid.replace(module.EXPECTED_TASK, "mt-replayed-task"),
+                valid.replace(module.EXPECTED_SURFACE, "replayed_surface"),
+                valid.replace(
+                    expected_model["repository"], expected_model["repository"] + "-wrong"
+                ),
+                valid.replace(expected_model["revision"], "1" * 40),
+                valid.replace(expected_model["manifest"], "2" * 64),
+                valid.replace(expected_model["tokenizer"], "3" * 64),
+                valid.replace(module.DATASET_REVISION, "4" * 40),
+                valid.replace(module.SOURCE_MANIFEST_SHA256, "0" * 64),
+                valid.replace(expected_model["split"], "5" * 64),
+                valid.replace(expected_model["checkpoint"], "0" * 64),
+                valid.replace(
+                    f"parameters={expected_model['parameters']}",
+                    "parameters=1",
+                ),
+            ]
+            for malformed in destructive:
+                assert parser.parse(direction, malformed).metrics == {}
+            assert parser.parse("unknown", valid).metrics == {}
+
+    beam_log = _valid_log(modules["mt-decoding-beam"], "de_en")
+    for task_name, module in modules.items():
+        if task_name != "mt-decoding-beam":
+            assert module.Parser().parse("de_en", beam_log).metrics == {}
+
+
+def test_parser_copies_match_canonical_generator() -> None:
+    generator = _load("ship_mt_parser_generator", ROOT / "scripts" / "generate_mt_parsers.py")
+    assert generator.SURFACES == {
+        task_name: surface for task_name, (_filename, surface, _harness) in SURFACES.items()
+    }
+    assert generator.mismatches() == []
 
 
 def test_representative_fullscale_anchors_calibrate_without_fallback() -> None:
@@ -277,10 +331,10 @@ def test_representative_fullscale_anchors_calibrate_without_fallback() -> None:
     from mlsbench.scoring.anchors import BaselineAnchors
     from mlsbench.scoring.evaluate import load_expanded_spec, score_record
 
-    task_dir = TASKS / "mt-decoding-beam"
-    rows = Leaderboard(task_dir / "leaderboard.csv").all_records()
-    anchors = BaselineAnchors(task_dir)
-    spec = load_expanded_spec(task_dir, anchors)
+    beam_dir = TASKS / "mt-decoding-beam"
+    rows = Leaderboard(beam_dir / "leaderboard.csv").all_records()
+    anchors = BaselineAnchors(beam_dir)
+    spec = load_expanded_spec(beam_dir, anchors)
     scores = {
         row["model"].removeprefix("baseline:"): score_record(spec, row, anchors)
         for row in rows
@@ -289,16 +343,16 @@ def test_representative_fullscale_anchors_calibrate_without_fallback() -> None:
     assert scores["beam5_norep3"] == pytest.approx(0.5, abs=1e-9)
     assert scores["greedy"] < scores["beam5"] < scores["beam5_norep3"]
     assert all(math.isfinite(score) for score in scores.values())
-
     incomplete = dict(rows[0])
     incomplete.pop("bleu_ru_en")
     assert score_record(spec, incomplete, anchors) == 0.0
 
 
-def test_every_sibling_uses_the_complete_repo_scale_and_fails_closed() -> None:
+def test_strict_proof_integration_preserves_shared_calibration_and_fails_closed() -> None:
     from mlsbench.scoring.anchors import BaselineAnchors
     from mlsbench.scoring.evaluate import load_expanded_spec, score_record
 
+    canonical_spec = (TASKS / "mt-decoding-beam" / "score_spec.py").read_text()
     complete = {
         "model": "synthetic-complete",
         "bleu_de_en": 20.0,
@@ -307,6 +361,7 @@ def test_every_sibling_uses_the_complete_repo_scale_and_fails_closed() -> None:
     }
     for task_name in SURFACES:
         task_dir = TASKS / task_name
+        assert (task_dir / "score_spec.py").read_text() == canonical_spec
         anchors = BaselineAnchors(task_dir)
         spec = load_expanded_spec(task_dir, anchors)
         score = score_record(spec, complete, anchors)
@@ -318,3 +373,13 @@ def test_every_sibling_uses_the_complete_repo_scale_and_fails_closed() -> None:
 
         nonfinite = dict(complete, bleu_ru_en=float("nan"))
         assert score_record(spec, nonfinite, anchors) == 0.0
+
+
+def test_instructions_have_no_hidden_or_public_scoring_semantics() -> None:
+    for task_name in SURFACES:
+        description = (TASKS / task_name / "task_description.md").read_text().lower()
+        assert "hidden" not in description
+        assert "public setting" not in description
+        assert "private setting" not in description
+        assert "every direction executes serially on one gpu" in description
+        assert "contributes to the task score" in description
