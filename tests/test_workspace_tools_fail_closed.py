@@ -5,14 +5,23 @@ from types import SimpleNamespace
 
 import pytest
 
+from mlsbench.agent.base import BaseAgent
+from mlsbench.agent.discover_agent import DiscoverAgent
+from mlsbench.agent.openevolve_agent import OpenEvolveAgent
 from mlsbench.agent.parsers import OutputParser, ParseResult
 from mlsbench.agent.tools import WorkspaceTools, _failure_marker
+from mlsbench.cli import _run_agent_fail_closed
 from mlsbench.scoring.evaluate import _validate_setting
 from mlsbench.scoring.spec import SettingSpec, TermSpec
 
 
 def _bare_tools() -> WorkspaceTools:
     return object.__new__(WorkspaceTools)
+
+
+class _PromptAgent(BaseAgent):
+    def get_action(self, messages: list) -> dict | None:
+        return None
 
 
 class _FakeLeaderboard:
@@ -25,6 +34,133 @@ class _FakeLeaderboard:
 
     def add(self, record: dict) -> None:
         self.added.append(dict(record))
+
+
+def test_hidden_commands_remain_in_agent_instruction(tmp_path: Path) -> None:
+    agent = object.__new__(_PromptAgent)
+    agent.project_root = tmp_path
+    agent.task_name = "hidden-semantics"
+    agent.config_task = {
+        "test_cmds": [
+            {"cmd": "scripts/public.sh", "label": "public", "time": "00:01:00"},
+            {
+                "cmd": "scripts/formerly-hidden.sh",
+                "label": "formerly-hidden",
+                "hidden": True,
+                "time": "00:02:00",
+            },
+        ]
+    }
+    agent.config_edit = []
+    agent._extra_context_text = ""
+    agent._extra_context_request = None
+    agent.tools = SimpleNamespace(hide_hidden=True, max_tests=1)
+    agent.leaderboard = _FakeLeaderboard()
+    agent.max_steps = 3
+
+    prompt = BaseAgent.build_initial_prompt(agent)
+
+    assert "scripts/public.sh" in prompt
+    assert "scripts/formerly-hidden.sh" in prompt
+    assert "`formerly-hidden`" in prompt
+
+
+def _full_score_spec() -> SimpleNamespace:
+    return SimpleNamespace(
+        settings={
+            "public": SimpleNamespace(name="public"),
+            "formerly-hidden": SimpleNamespace(name="formerly-hidden"),
+        }
+    )
+
+
+def test_openevolve_reward_keeps_hidden_score_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_dir = tmp_path / "tasks" / "hidden-semantics"
+    task_dir.mkdir(parents=True)
+    (task_dir / "score_spec.py").write_text("# test fixture\n")
+    score_spec = _full_score_spec()
+    anchors = object()
+    monkeypatch.setattr(
+        "mlsbench.scoring.anchors.BaselineAnchors",
+        lambda _task_dir: anchors,
+    )
+    monkeypatch.setattr(
+        "mlsbench.scoring.evaluate.load_expanded_spec",
+        lambda _task_dir, _anchors: score_spec,
+    )
+    agent = object.__new__(OpenEvolveAgent)
+    agent.project_root = tmp_path
+    agent.task_name = "hidden-semantics"
+    agent.config_task = {
+        "test_cmds": [
+            {"label": "public"},
+            {"label": "formerly-hidden", "hidden": True},
+        ]
+    }
+    agent._score_spec = None
+    agent._score_anchors = None
+    agent._score_spec_error = None
+
+    OpenEvolveAgent._load_score_spec_safely(agent)
+
+    assert agent._score_spec is score_spec
+    assert set(agent._score_spec.settings) == {"public", "formerly-hidden"}
+    assert agent._score_anchors is anchors
+
+
+def test_discover_reward_keeps_hidden_score_settings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    task_dir = tmp_path / "tasks" / "hidden-semantics"
+    task_dir.mkdir(parents=True)
+    (task_dir / "score_spec.py").write_text("# test fixture\n")
+    score_spec = _full_score_spec()
+    anchors = object()
+    monkeypatch.setattr(
+        "mlsbench.scoring.anchors.BaselineAnchors",
+        lambda _task_dir: anchors,
+    )
+    monkeypatch.setattr(
+        "mlsbench.scoring.evaluate.load_expanded_spec",
+        lambda _task_dir, _anchors: score_spec,
+    )
+    agent = object.__new__(DiscoverAgent)
+    agent.project_root = tmp_path
+    agent.task_name = "hidden-semantics"
+    agent._task_score_specs = {}
+    agent._task_score_anchors = {}
+    agent._task_score_spec_errors = {}
+    agent._score_spec = None
+    agent._score_anchors = None
+    agent._score_spec_error = None
+
+    DiscoverAgent._load_score_spec_safely(agent)
+
+    assert agent._task_score_specs[agent.task_name] is score_spec
+    assert set(agent._task_score_specs[agent.task_name].settings) == {
+        "public",
+        "formerly-hidden",
+    }
+    assert agent._task_score_anchors[agent.task_name] is anchors
+
+
+def test_agent_exception_records_current_run_empty_finals() -> None:
+    calls: list[str] = []
+    agent = SimpleNamespace(
+        run=lambda **_kwargs: (_ for _ in ()).throw(RuntimeError("agent failed")),
+        tools=SimpleNamespace(
+            record_zero_if_no_finals=lambda: calls.append("recorded")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="agent failed"):
+        _run_agent_fail_closed(agent, resume=False)
+
+    assert calls == ["recorded"]
 
 
 def test_seed_metrics_require_every_requested_seed() -> None:

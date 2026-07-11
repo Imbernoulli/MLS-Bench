@@ -47,10 +47,6 @@ from typing import Any, Callable
 from mlsbench.agent.base import BaseAgent
 
 
-class _AllHiddenScoreSpecError(ValueError):
-    """Raised when hidden filtering leaves no reward settings."""
-
-
 def _hidden_labels_from_test_cmds(config_task: dict) -> set[str]:
     return {
         str(tc["label"]).replace("-", "_")
@@ -461,8 +457,10 @@ class DiscoverAgent(BaseAgent):
             task_name: primary_assets.hidden_labels
         }
         self._hidden_labels: set[str] = primary_assets.hidden_labels
-        print("[discover-agent] hidden metrics excluded from candidate response: "
-              f"{sorted(self._hidden_labels)}")
+        print(
+            "[discover-agent] feedback-only metric withholding: "
+            f"{sorted(self._hidden_labels)}; reward uses every score setting"
+        )
 
     # ------------------------------------------------------------------
     def get_action(self, messages: list) -> dict | None:  # pragma: no cover
@@ -791,12 +789,10 @@ class DiscoverAgent(BaseAgent):
     def _load_score_spec_safely(self, task_name: str | None = None) -> None:
         """Load the task's score_spec.py + baseline anchors.
 
-        Strips settings backed by hidden test_cmds so the RL reward isn't
-        peeking at held-out evaluations. Final leaderboard scoring (done by
-        external tooling) still uses the full spec including hidden settings.
+        Every configured setting remains in the RL reward. The optional hidden
+        flag is feedback-only and never changes scoring.
         """
         task_name = task_name or self.task_name
-        assets = self._get_task_assets(task_name)
         task_dir = self.project_root / "tasks" / task_name
         spec_path = task_dir / "score_spec.py"
         if not spec_path.exists():
@@ -806,7 +802,6 @@ class DiscoverAgent(BaseAgent):
             return
 
         try:
-            import copy as _copy
             from mlsbench.scoring.anchors import BaselineAnchors
             from mlsbench.scoring.evaluate import load_expanded_spec
 
@@ -823,29 +818,8 @@ class DiscoverAgent(BaseAgent):
                       "candidates will receive fail-closed reward")
                 return
 
-            hidden_labels = {
-                tc["label"] for tc in assets.config_task.get("test_cmds", [])
-                if tc.get("hidden") and "label" in tc
-            }
-            if hidden_labels:
-                visible = _copy.deepcopy(spec)
-                visible.settings = {
-                    name: s for name, s in visible.settings.items()
-                    if name not in hidden_labels
-                }
-                if not visible.settings:
-                    raise _AllHiddenScoreSpecError(
-                        "score_spec.py has no visible settings after excluding "
-                        f"hidden labels {sorted(hidden_labels)}. Widen score_spec "
-                        "to include a visible setting, or remove the hidden flag "
-                        "from at least one scored test_cmd."
-                    )
-                score_spec = visible
-                print(f"[discover-agent] using score_spec.py (excluding hidden labels: "
-                      f"{sorted(hidden_labels)}) for {task_name}")
-            else:
-                score_spec = spec
-                print(f"[discover-agent] using score_spec.py from {task_dir}")
+            score_spec = spec
+            print(f"[discover-agent] using full score_spec.py from {task_dir}")
             self._task_score_specs[task_name] = score_spec
             self._task_score_anchors[task_name] = anchors
             self._task_score_spec_errors[task_name] = None
@@ -853,8 +827,6 @@ class DiscoverAgent(BaseAgent):
                 self._score_spec = score_spec
                 self._score_anchors = anchors
                 self._score_spec_error = None
-        except _AllHiddenScoreSpecError:
-            raise
         except Exception as exc:
             score_spec_error = f"score_spec load failed: {exc!r}"
             self._task_score_spec_errors[task_name] = score_spec_error

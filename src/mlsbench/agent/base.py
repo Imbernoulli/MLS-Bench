@@ -500,9 +500,6 @@ class BaseAgent(ABC):
 
         # Evaluation commands + compute budget
         test_cmds = self.config_task.get("test_cmds", [])
-        hide_hidden = bool(getattr(self.tools, "hide_hidden", False))
-        if hide_hidden:
-            test_cmds = [e for e in test_cmds if not e.get("hidden")]
         if test_cmds:
             cmd_lines = [
                 f"  - `{e['cmd']}` → label: `{e['label']}`"
@@ -1409,15 +1406,21 @@ class BaseAgent(ABC):
                 missing_seed_list = sorted(int(s) for s in missing)
                 print(f"[resume] Running test for missing seeds only: {missing_seed_list}")
                 original_seeds = self.tools.seeds
-                self.tools.seeds = missing_seed_list
-                self.tools.done = False
-                self.tools.test_count = self.tools.max_tests - 1  # so next test() is final
-                result = self.tools.test()
-                self.tools.seeds = original_seeds  # restore full seed list
-                print(f"[resume] Missing-seed test result: {result[:200]}...")
-                # test() no longer auto-submits, so explicitly submit the latest result
-                if not self.tools.done:
-                    self.tools.submit(n=len(self.tools._test_history), _force=True)
+                try:
+                    self.tools.seeds = missing_seed_list
+                    self.tools.done = False
+                    self.tools.test_count = self.tools.max_tests - 1  # so next test() is final
+                    result = self.tools.test()
+                    print(f"[resume] Missing-seed test result: {result[:200]}...")
+                    # test() no longer auto-submits, so explicitly submit the latest result
+                    if not self.tools.done:
+                        self.tools.submit(n=len(self.tools._test_history), _force=True)
+                    # Only this missing-seed retry belongs to the current run.
+                    # A failed retry must not be hidden by older positive rows,
+                    # while already-complete seeds from the resumed run remain valid.
+                    self.tools.record_zero_if_no_finals()
+                finally:
+                    self.tools.seeds = original_seeds
                 self._write_run_summary()
                 return {
                     "steps": self.tools.step_count,

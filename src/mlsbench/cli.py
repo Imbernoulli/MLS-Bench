@@ -2493,8 +2493,23 @@ def cmd_agent(args):
         **agent_kwargs,
     )
 
-    summary = agent.run(resume=getattr(args, "resume", False))
+    summary = _run_agent_fail_closed(
+        agent,
+        resume=getattr(args, "resume", False),
+    )
     print(f"\n[done] Summary: {summary}")
+
+
+def _run_agent_fail_closed(agent, *, resume: bool) -> dict:
+    """Run an agent without allowing an exception to expose stale finals."""
+    try:
+        return agent.run(resume=resume)
+    except BaseException:
+        try:
+            agent.tools.record_zero_if_no_finals()
+        except Exception:
+            logger.exception("failed to record empty finals after agent termination")
+        raise
 
 
 # ---------------------------------------------------------------------------

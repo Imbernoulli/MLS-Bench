@@ -45,10 +45,6 @@ EVOLVE_START = "# EVOLVE-BLOCK-START"
 EVOLVE_END = "# EVOLVE-BLOCK-END"
 
 
-class _AllHiddenScoreSpecError(ValueError):
-    """Raised when hidden filtering leaves no reward settings."""
-
-
 def _hidden_labels_from_test_cmds(config_task: dict) -> set[str]:
     return {
         str(tc["label"]).replace("-", "_")
@@ -116,8 +112,10 @@ class OpenEvolveAgent(BaseAgent):
         self._score_anchors = None
         self._score_spec_error: str | None = None
         self._hidden_labels: set[str] = _hidden_labels_from_test_cmds(self.config_task)
-        print("[openevolve-agent] hidden metrics excluded from candidate response: "
-              f"{sorted(self._hidden_labels)}")
+        print(
+            "[openevolve-agent] feedback-only metric withholding: "
+            f"{sorted(self._hidden_labels)}; reward uses every score setting"
+        )
         self._token_totals = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -198,11 +196,8 @@ class OpenEvolveAgent(BaseAgent):
     def _load_score_spec_safely(self) -> None:
         """Load the task's score_spec.py + baseline anchors.
 
-        Builds a *visible-only* spec that strips settings backed by hidden
-        test_cmds. The agent uses this as its evolutionary reward so the
-        search isn't peeking at held-out evaluations; final leaderboard
-        scoring (which is done by external tooling, not the agent) still
-        uses the full spec including hidden settings.
+        Every configured setting remains in the evolutionary reward. The
+        optional hidden flag is feedback-only and never changes scoring.
         """
         if hasattr(self, "_score_spec") and self._score_spec is not None:
             return
@@ -214,7 +209,6 @@ class OpenEvolveAgent(BaseAgent):
             return
 
         try:
-            import copy as _copy
             from mlsbench.scoring.anchors import BaselineAnchors
             from mlsbench.scoring.evaluate import load_expanded_spec
 
@@ -228,33 +222,9 @@ class OpenEvolveAgent(BaseAgent):
                       "candidates will receive fail-closed reward")
                 return
 
-            hidden_labels = {
-                tc["label"] for tc in self.config_task.get("test_cmds", [])
-                if tc.get("hidden") and "label" in tc
-            }
-            if hidden_labels:
-                visible = _copy.deepcopy(spec)
-                # Setting names mirror test_cmd labels by convention.
-                visible.settings = {
-                    name: s for name, s in visible.settings.items()
-                    if name not in hidden_labels
-                }
-                if not visible.settings:
-                    raise _AllHiddenScoreSpecError(
-                        "score_spec.py has no visible settings after excluding "
-                        f"hidden labels {sorted(hidden_labels)}. Widen score_spec "
-                        "to include a visible setting, or remove the hidden flag "
-                        "from at least one scored test_cmd."
-                    )
-                self._score_spec = visible
-                print(f"[openevolve-agent] using score_spec.py (excluding hidden labels: "
-                      f"{sorted(hidden_labels)})")
-            else:
-                self._score_spec = spec
-                print(f"[openevolve-agent] using score_spec.py from {task_dir}")
+            self._score_spec = spec
+            print(f"[openevolve-agent] using full score_spec.py from {task_dir}")
             self._score_anchors = anchors
-        except _AllHiddenScoreSpecError:
-            raise
         except Exception as exc:
             self._score_spec_error = f"score_spec load failed: {exc!r}"
             print(f"[openevolve-agent] ERROR: {self._score_spec_error}; "
