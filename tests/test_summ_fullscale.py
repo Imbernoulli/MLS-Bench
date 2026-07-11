@@ -7,6 +7,7 @@ import importlib.util
 import json
 import math
 from pathlib import Path
+import shutil
 import sys
 
 
@@ -606,6 +607,222 @@ def test_render_audit_binds_shared_runner_bytes(tmp_path):
         pass
     else:
         raise AssertionError("mutated rendered test.sh was accepted")
+
+
+def test_render_audit_binds_complete_mlsbench_source_tree(tmp_path):
+    audit_path = ROOT / "tests" / "audit_summ_rendered.py"
+    spec = importlib.util.spec_from_file_location("summ_render_audit_core", audit_path)
+    audit = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(audit)
+
+    canonical = tmp_path / "canonical" / "mlsbench"
+    rendered = tmp_path / "rendered" / "mlsbench"
+    (canonical / "scoring").mkdir(parents=True)
+    (canonical / "__pycache__").mkdir()
+    (canonical / "__init__.py").write_bytes(b"canonical package\n")
+    (canonical / "scoring" / "evaluate.py").write_bytes(b"canonical scorer\n")
+    (canonical / "__pycache__" / "ignored.pyc").write_bytes(b"ignored\n")
+    shutil.copytree(
+        canonical,
+        rendered,
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+    expected = ["__init__.py", "scoring/evaluate.py"]
+    assert audit._require_canonical_tree(
+        "summ-beam-width", rendered, canonical, "mlsbench_src"
+    ) == expected
+
+    mutations = ("missing", "empty", "mutated", "extra")
+    for mutation in mutations:
+        shutil.rmtree(rendered)
+        shutil.copytree(
+            canonical,
+            rendered,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        evaluate = rendered / "scoring" / "evaluate.py"
+        if mutation == "missing":
+            evaluate.unlink()
+        elif mutation == "empty":
+            evaluate.write_bytes(b"")
+        elif mutation == "mutated":
+            evaluate.write_bytes(b"different scorer\n")
+        else:
+            (rendered / "extra.py").write_bytes(b"candidate-only\n")
+        try:
+            audit._require_canonical_tree(
+                "summ-beam-width", rendered, canonical, "mlsbench_src"
+            )
+        except AssertionError:
+            continue
+        raise AssertionError(f"{mutation} MLS-Bench source mutation was accepted")
+
+
+def test_render_audit_binds_operational_meta_and_pristine(tmp_path):
+    audit_path = ROOT / "tests" / "audit_summ_rendered.py"
+    spec = importlib.util.spec_from_file_location("summ_render_audit_meta", audit_path)
+    audit = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(audit)
+
+    task_name = "summ-beam-width"
+    meta = tmp_path / "tests" / "meta"
+    editable = "abstractive-summarization/solution/beamwidth.py"
+    scaffold_files = {
+        "abstractive-summarization/__init__.py": b"\n",
+        editable: b"canonical editable scaffold\n",
+    }
+    manifest = {
+        relative: hashlib.sha256(content).hexdigest()
+        for relative, content in scaffold_files.items()
+    }
+    meta.mkdir(parents=True)
+    (meta / "workdir").write_bytes(b"/workspace\n")
+    (meta / "pristine" / editable).parent.mkdir(parents=True)
+    (meta / "pristine" / editable).write_bytes(scaffold_files[editable])
+    (meta / "pristine_manifest.json").write_bytes(
+        (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    )
+    audit._require_exact_bytes(
+        task_name, meta / "workdir", b"/workspace\n", "meta/workdir"
+    )
+    audit._require_pristine_contract(
+        task_name, meta, scaffold_files, {editable}
+    )
+
+    (meta / "workdir").write_bytes(b"/tmp/wrong-workdir\n")
+    try:
+        audit._require_exact_bytes(
+            task_name, meta / "workdir", b"/workspace\n", "meta/workdir"
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("wrong verifier workdir was accepted")
+
+    bad_manifest = dict(manifest)
+    bad_manifest[editable] = "0" * 64
+    (meta / "pristine_manifest.json").write_bytes(
+        (json.dumps(bad_manifest, indent=2, sort_keys=True) + "\n").encode()
+    )
+    try:
+        audit._require_pristine_contract(
+            task_name, meta, scaffold_files, {editable}
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("wrong pristine manifest digest was accepted")
+
+    (meta / "pristine_manifest.json").write_bytes(
+        (json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode()
+    )
+    (meta / "pristine" / editable).write_bytes(b"mutated pristine\n")
+    try:
+        audit._require_pristine_contract(
+            task_name, meta, scaffold_files, {editable}
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("mutated pristine bytes were accepted")
+
+    inventory_root = tmp_path / "inventory"
+    inventory_root.mkdir()
+    (inventory_root / "expected.txt").write_bytes(b"expected\n")
+    audit._require_exact_inventory(
+        task_name, inventory_root, {"expected.txt"}, "tests"
+    )
+    (inventory_root / "candidate-only.txt").write_bytes(b"extra\n")
+    try:
+        audit._require_exact_inventory(
+            task_name, inventory_root, {"expected.txt"}, "tests"
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("extra rendered test file was accepted")
+
+    mode_file = tmp_path / "generated.txt"
+    mode_file.write_bytes(b"generated\n")
+    for safe_mode in (0o644, 0o664):
+        mode_file.chmod(safe_mode)
+        audit._require_mode(
+            task_name, mode_file, {0o644, 0o664}, "generated file"
+        )
+    mode_file.chmod(0o600)
+    try:
+        audit._require_mode(
+            task_name, mode_file, {0o644, 0o664}, "generated file"
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("owner-only generated file mode was accepted")
+
+
+def test_render_audit_binds_dataset_manifest_and_rejects_symlinks(tmp_path):
+    audit_path = ROOT / "tests" / "audit_summ_rendered.py"
+    spec = importlib.util.spec_from_file_location("summ_render_audit_dataset", audit_path)
+    audit = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(audit)
+
+    render_root = tmp_path / "rendered"
+    render_root.mkdir()
+    (render_root / ".rendering").mkdir()
+    entries = []
+    for task_name in audit.TASKS:
+        task = render_root / task_name
+        task.mkdir()
+        (task / "task.toml").write_text(
+            f'version = "1.0"\n\n[task]\nname = "{task_name}"\n'
+        )
+        (task / "task.toml").chmod(0o664)
+        entries.append(
+            (task_name, f"sha256:{audit._manual_task_digest(task)}")
+        )
+    manifest_lines = [
+        "[dataset]",
+        'name = "mls-bench/mls-bench"',
+        'description = "MLS-Bench Harbor adapter dataset containing 10 selected tasks."',
+        'authors = [{ name = "MLS-Bench authors", email = "bohan22@stanford.edu" }]',
+        'keywords = ["ml-research", "algorithm-design", "multi-seed"]',
+    ]
+    for task_name, task_digest in entries:
+        manifest_lines.extend(
+            [
+                "",
+                "[[tasks]]",
+                f'name = "{task_name}"',
+                f'digest = "{task_digest}"',
+            ]
+        )
+    dataset = render_root / "dataset.toml"
+    dataset.write_text("\n".join(manifest_lines) + "\n")
+    dataset.chmod(0o664)
+    audit._require_regular_tree("render", render_root, "render root")
+    audit._require_dataset_manifest(render_root)
+
+    original_manifest = dataset.read_text()
+    dataset.write_text(original_manifest.replace(entries[0][1], "sha256:" + "0" * 64))
+    try:
+        audit._require_dataset_manifest(render_root)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("stale task digest in dataset.toml was accepted")
+
+    dataset.write_text(original_manifest)
+    link = render_root / "summ-beam-width" / "escaped-test.sh"
+    link.symlink_to("../summ-beam-repetition/task.toml")
+    try:
+        audit._require_regular_tree("render", render_root, "render root")
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("rendered symlink was accepted")
 
 
 def test_512_token_protocol_and_exact_checkpoint_counts_are_code_pinned():
