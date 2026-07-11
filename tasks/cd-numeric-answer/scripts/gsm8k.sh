@@ -13,5 +13,7 @@ cd /workspace/constrained-decoding-lab
 
 python harness_numeric.py \
     --solution solution/decoder_numeric.py \
+    --task-id cd-numeric-answer \
+    --surface decoder_numeric \
     --seed ${SEED:-42} \
     --n 1319

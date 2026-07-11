@@ -12,5 +12,7 @@ cd /workspace/constrained-decoding-lab
 
 python harness_choice.py \
     --solution solution/decoder_choice_verbalizer.py \
+    --task-id cd-choice-verbalizer \
+    --surface decoder_choice_verbalizer \
     --seed ${SEED:-42} \
     --n 7600

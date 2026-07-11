@@ -1,5 +1,12 @@
-"""No positive score until full official task-specific anchors are recorded.
+"""Baseline-free official AG News accuracy on its natural [0, 1] range."""
+from mlsbench.scoring.dsl import *
 
-This intentionally empty score specification fails closed. Historical n=200
-anchors are not valid for the current n=7,600 verification protocol.
-"""
+term(
+    "accuracy_agnews",
+    col("accuracy_agnews").higher().id().bounded_power(
+        bound=1.0,
+        floor=const(0.0),
+    ),
+)
+setting("agnews", weighted_mean(("accuracy_agnews", 1.0)))
+task(gmean("agnews"))

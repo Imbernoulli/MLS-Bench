@@ -20,6 +20,13 @@ sys.path.insert(0, str(PROJECT_ROOT / "src"))
 from mlsbench.agent.parsers import OutputParser, ParseResult
 
 
+_PROTOCOL = "constrained-decoding-full-v3"
+_EXPECTED_TASK = "cd-numeric-format"
+_EXPECTED_SURFACE = "decoder_format"
+_EXPECTED_LABEL = "gsm8k"
+_EXPECTED_N = 1319
+
+
 _FAILURE_MARKER = re.compile(
     r"^(?:CD_(?:FAILED|FAILURE)\b|Traceback \(most recent call last\):|"
     r"(?:[A-Za-z_][A-Za-z0-9_]*Error|ERROR|Exception)(?::|\b))",
@@ -29,12 +36,18 @@ _FAILURE_MARKER = re.compile(
 
 class Parser(OutputParser):
     def parse(self, cmd_label: str, raw_output: str) -> ParseResult:
-        expected_label = "gsm8k"
-        expected_n = 1319
+        expected_label = _EXPECTED_LABEL
+        expected_n = _EXPECTED_N
         if cmd_label != expected_label:
             return ParseResult(feedback="Rejected unexpected evaluation label", metrics={})
+        identity = (
+            rf"protocol={re.escape(_PROTOCOL)} "
+            rf"task={re.escape(_EXPECTED_TASK)} "
+            rf"surface={re.escape(_EXPECTED_SURFACE)} "
+        )
         pattern = re.compile(
-            r"CD_METRICS\s+valid_rate=([\d.eE+-]+)\s+"
+            rf"CD_METRICS {identity}dataset={re.escape(expected_label)} "
+            r"valid_rate=([\d.eE+-]+)\s+"
             r"accuracy=([\d.eE+-]+)\s+n=(\d+)\s+elapsed=([\d.eE+-]+)"
         )
         lines = [line.strip() for line in raw_output.splitlines() if line.strip()]
@@ -61,11 +74,18 @@ class Parser(OutputParser):
         n = int(match.group(3))
         elapsed = float(match.group(4))
         expected_model = re.compile(
-            r"CD_MODEL params=494032768 device=cuda:\d+ dtype=torch\.float16"
+            rf"CD_MODEL {identity}params=494032768 "
+            r"device=cuda:\d+ dtype=torch\.float16"
         )
-        expected_data = f"CD_DATA dataset={expected_label} n={expected_n} seed=42"
+        expected_data = (
+            f"CD_DATA protocol={_PROTOCOL} task={_EXPECTED_TASK} "
+            f"surface={_EXPECTED_SURFACE} dataset={expected_label} "
+            f"n={expected_n} seed=42"
+        )
         expected_complete = (
-            f"CD_COMPLETE dataset={expected_label} n={expected_n} seed=42"
+            f"CD_COMPLETE protocol={_PROTOCOL} task={_EXPECTED_TASK} "
+            f"surface={_EXPECTED_SURFACE} dataset={expected_label} "
+            f"n={expected_n} seed=42 status=ok"
         )
         proof_lines = (
             len(model_prefix_lines) == 1

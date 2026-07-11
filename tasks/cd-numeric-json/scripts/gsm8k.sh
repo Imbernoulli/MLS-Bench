@@ -12,5 +12,7 @@ cd /workspace/constrained-decoding-lab
 
 python harness_numeric.py \
     --solution solution/decoder_json.py \
+    --task-id cd-numeric-json \
+    --surface decoder_json \
     --seed ${SEED:-42} \
     --n 1319

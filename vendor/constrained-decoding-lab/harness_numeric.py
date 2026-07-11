@@ -18,36 +18,71 @@ A sample counts as CORRECT only if the answer region is structurally VALID
 valid-but-wrong answer gains nothing over one that emits garbage.
 
 Emits one metric line:
-    CD_METRICS valid_rate=<V> accuracy=<A> n=<N> elapsed=<T>
+    CD_METRICS protocol=<P> task=<T> surface=<S> dataset=gsm8k
+               valid_rate=<V> accuracy=<A> n=<N> elapsed=<T>
 where accuracy = (# valid AND correct) / n.
 """
 from __future__ import annotations
 
 import argparse
+import re
 import time
 
 import common
 
 
+PROTOCOL = "constrained-decoding-full-v3"
+TASK_SURFACES = {
+    "cd-numeric-answer": "decoder_numeric",
+    "cd-numeric-budget": "decoder_budget",
+    "cd-numeric-format": "decoder_format",
+    "cd-numeric-json": "decoder_json",
+    "cd-numeric-prefix": "decoder_prefix",
+    "cd-numeric-repair": "decoder_repair",
+    "cd-numeric-trigger": "decoder_trigger",
+}
+
+
+def _validate_identity(task_id: str, surface: str) -> None:
+    if re.fullmatch(r"cd-[a-z0-9-]+", task_id) is None:
+        raise ValueError("invalid constrained-decoding task identity")
+    if re.fullmatch(r"decoder_[a-z0-9_]+", surface) is None:
+        raise ValueError("invalid constrained-decoding surface identity")
+    if TASK_SURFACES.get(task_id) != surface:
+        raise ValueError(
+            f"task/surface mismatch: task={task_id!r} surface={surface!r}"
+        )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--solution", required=True)
+    ap.add_argument("--task-id", required=True)
+    ap.add_argument("--surface", required=True)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--n", type=int, default=1319)
     args = ap.parse_args()
+
+    _validate_identity(args.task_id, args.surface)
 
     common.set_seeds(args.seed)
     t0 = time.time()
 
     tok, model = common.load_model()
     print(
-        f"CD_MODEL params={sum(parameter.numel() for parameter in model.parameters())} "
+        f"CD_MODEL protocol={PROTOCOL} task={args.task_id} "
+        f"surface={args.surface} "
+        f"params={sum(parameter.numel() for parameter in model.parameters())} "
         f"device={next(model.parameters()).device} dtype={next(model.parameters()).dtype}",
         flush=True,
     )
     build_decoder = common.load_surface(args.solution, "build_decoder")
     items = common.load_gsm8k(args.n)
-    print(f"CD_DATA dataset=gsm8k n={len(items)} seed={args.seed}", flush=True)
+    print(
+        f"CD_DATA protocol={PROTOCOL} task={args.task_id} "
+        f"surface={args.surface} dataset=gsm8k n={len(items)} seed={args.seed}",
+        flush=True,
+    )
 
     n = len(items)
     n_valid = 0
@@ -77,11 +112,17 @@ def main() -> None:
     accuracy = n_correct / n if n else 0.0
     dt = time.time() - t0
     print(
-        f"CD_METRICS valid_rate={valid_rate:.6f} accuracy={accuracy:.6f} "
+        f"CD_METRICS protocol={PROTOCOL} task={args.task_id} "
+        f"surface={args.surface} dataset=gsm8k "
+        f"valid_rate={valid_rate:.6f} accuracy={accuracy:.6f} "
         f"n={n} elapsed={dt:.1f}",
         flush=True,
     )
-    print(f"CD_COMPLETE dataset=gsm8k n={n} seed={args.seed}", flush=True)
+    print(
+        f"CD_COMPLETE protocol={PROTOCOL} task={args.task_id} "
+        f"surface={args.surface} dataset=gsm8k n={n} seed={args.seed} status=ok",
+        flush=True,
+    )
 
 
 if __name__ == "__main__":

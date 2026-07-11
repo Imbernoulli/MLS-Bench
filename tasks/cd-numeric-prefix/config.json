@@ -58,6 +58,6 @@
     "constrained-decoding-lab/harness_choice.py",
     "constrained-decoding-lab/harness_numeric.py"
   ],
-  "calibration_protocol": "full-official-literal-ast-v2",
-  "calibration_status": "pending_exact_zero_full_official_anchors"
+  "calibration_protocol": "full-official-literal-ast-v3",
+  "calibration_status": "baseline_free_official_accuracy_natural_bounds"
 }

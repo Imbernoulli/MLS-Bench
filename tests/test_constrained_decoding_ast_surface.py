@@ -12,15 +12,17 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 COMMON_PATH = ROOT / "vendor/constrained-decoding-lab/common.py"
 SOLUTION_ROOT = ROOT / "vendor/constrained-decoding-lab/solution"
-PENDING_ZERO_TASKS = {
-    "cd-forced-choice",
-    "cd-numeric-answer",
-    "cd-numeric-budget",
-    "cd-numeric-format",
-    "cd-numeric-json",
-    "cd-numeric-prefix",
-    "cd-numeric-repair",
-    "cd-numeric-trigger",
+TASK_IDENTITIES = {
+    "cd-choice-reasoning": ("decoder_choice_reasoning", "agnews", 7600),
+    "cd-choice-verbalizer": ("decoder_choice_verbalizer", "agnews", 7600),
+    "cd-forced-choice": ("decoder_choice", "agnews", 7600),
+    "cd-numeric-answer": ("decoder_numeric", "gsm8k", 1319),
+    "cd-numeric-budget": ("decoder_budget", "gsm8k", 1319),
+    "cd-numeric-format": ("decoder_format", "gsm8k", 1319),
+    "cd-numeric-json": ("decoder_json", "gsm8k", 1319),
+    "cd-numeric-prefix": ("decoder_prefix", "gsm8k", 1319),
+    "cd-numeric-repair": ("decoder_repair", "gsm8k", 1319),
+    "cd-numeric-trigger": ("decoder_trigger", "gsm8k", 1319),
 }
 
 
@@ -30,6 +32,37 @@ def _load_common():
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
+
+
+def _load_parser(task_name: str):
+    parser_path = ROOT / "tasks" / task_name / "parser.py"
+    spec = importlib.util.spec_from_file_location(
+        f"test_{task_name.replace('-', '_')}_parser", parser_path
+    )
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _proof(parser_module, *, accuracy: str = "0.500000") -> str:
+    identity = (
+        f"protocol={parser_module._PROTOCOL} "
+        f"task={parser_module._EXPECTED_TASK} "
+        f"surface={parser_module._EXPECTED_SURFACE}"
+    )
+    label = parser_module._EXPECTED_LABEL
+    n = parser_module._EXPECTED_N
+    return "\n".join(
+        (
+            f"CD_MODEL {identity} params=494032768 "
+            "device=cuda:0 dtype=torch.float16",
+            f"CD_DATA {identity} dataset={label} n={n} seed=42",
+            f"CD_METRICS {identity} dataset={label} valid_rate=1.000000 "
+            f"accuracy={accuracy} n={n} elapsed=1.0",
+            f"CD_COMPLETE {identity} dataset={label} n={n} seed=42 status=ok",
+        )
+    )
 
 
 def test_all_native_decoder_surfaces_use_the_restricted_ast_loader() -> None:
@@ -228,34 +261,21 @@ def test_general_regex_candidates_keep_normal_tokens_and_never_smuggle_eos() -> 
     assert 99 not in allowed
 
 
-@pytest.mark.parametrize(
-    ("task_name", "label", "expected_n"),
-    [
-        ("cd-numeric-answer", "gsm8k", 1319),
-        ("cd-forced-choice", "agnews", 7600),
-    ],
-)
+@pytest.mark.parametrize("task_name", sorted(TASK_IDENTITIES))
 def test_metric_parser_requires_one_complete_full_inventory_line(
-    task_name: str, label: str, expected_n: int
+    task_name: str,
 ) -> None:
-    parser_path = ROOT / "tasks" / task_name / "parser.py"
-    spec = importlib.util.spec_from_file_location(f"test_{task_name}_parser", parser_path)
-    assert spec is not None and spec.loader is not None
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = _load_parser(task_name)
     parser = module.Parser()
-    metric = (
-        f"CD_METRICS valid_rate=1.000000 accuracy=0.500000 "
-        f"n={expected_n} elapsed=1.0"
-    )
-    proof = "\n".join(
-        [
-            "CD_MODEL params=494032768 device=cuda:0 dtype=torch.float16",
-            f"CD_DATA dataset={label} n={expected_n} seed=42",
-            metric,
-            f"CD_COMPLETE dataset={label} n={expected_n} seed=42",
-        ]
-    )
+    surface, label, expected_n = TASK_IDENTITIES[task_name]
+    assert module._PROTOCOL == "constrained-decoding-full-v3"
+    assert module._EXPECTED_TASK == task_name
+    assert module._EXPECTED_SURFACE == surface
+    assert module._EXPECTED_LABEL == label
+    assert module._EXPECTED_N == expected_n
+    proof = _proof(module)
+    metric = proof.splitlines()[2]
+    completion = proof.splitlines()[-1]
 
     result = parser.parse(label, proof)
     assert result.metrics == {
@@ -267,27 +287,30 @@ def test_metric_parser_requires_one_complete_full_inventory_line(
     assert parser.parse(label, f"{proof}\n{metric}").metrics == {}
     assert parser.parse(label, proof.replace("accuracy=0.500000", "accuracy=nan")).metrics == {}
     assert parser.parse(label, proof.replace("seed=42", "seed=7")).metrics == {}
+    assert parser.parse(label, proof.replace(f"task={task_name}", "task=cd-wrong")).metrics == {}
+    assert parser.parse(label, proof.replace(f"surface={surface}", "surface=decoder_wrong")).metrics == {}
+    assert parser.parse(label, proof.replace(module._PROTOCOL, "wrong-protocol")).metrics == {}
     assert parser.parse("unexpected", proof).metrics == {}
     assert parser.parse(label, f"{proof}\nlate output").metrics == {}
     assert parser.parse(
         label,
         proof.replace(
-            f"CD_COMPLETE dataset={label}",
-            f"CD_FAILED late\nCD_COMPLETE dataset={label}",
+            completion,
+            f"CD_FAILED late\n{completion}",
         ),
     ).metrics == {}
     assert parser.parse(
         label,
         proof.replace(
-            f"CD_COMPLETE dataset={label}",
-            f"CD_FAILURE: late\nCD_COMPLETE dataset={label}",
+            completion,
+            f"CD_FAILURE: late\n{completion}",
         ),
     ).metrics == {}
     assert parser.parse(
         label,
         proof.replace(
-            f"CD_COMPLETE dataset={label}",
-            f"RuntimeError: verifier crashed\nCD_COMPLETE dataset={label}",
+            completion,
+            f"RuntimeError: verifier crashed\n{completion}",
         ),
     ).metrics == {}
     assert parser.parse(
@@ -297,28 +320,78 @@ def test_metric_parser_requires_one_complete_full_inventory_line(
 
 
 def test_parser_repairs_are_propagated_to_every_sibling() -> None:
-    numeric = {
-        (ROOT / "tasks" / name / "parser.py").read_bytes()
-        for name in PENDING_ZERO_TASKS
-        if name.startswith("cd-numeric-")
-    }
-    choices = {
-        (ROOT / "tasks" / name / "parser.py").read_bytes()
-        for name in ("cd-choice-reasoning", "cd-choice-verbalizer", "cd-forced-choice")
-    }
-    assert len(numeric) == 1
-    assert len(choices) == 1
+    modules = {name: _load_parser(name) for name in TASK_IDENTITIES}
+    for task_name, (surface, label, expected_n) in TASK_IDENTITIES.items():
+        module = modules[task_name]
+        assert module._EXPECTED_TASK == task_name
+        assert module._EXPECTED_SURFACE == surface
+        assert module._EXPECTED_LABEL == label
+        assert module._EXPECTED_N == expected_n
+
+    foreign_pairs = 0
+    rejected = 0
+    for target_name, target_module in modules.items():
+        target_parser = target_module.Parser()
+        target_label = target_module._EXPECTED_LABEL
+        for source_name, source_module in modules.items():
+            if source_name == target_name or source_module._EXPECTED_LABEL != target_label:
+                continue
+            foreign_pairs += 1
+            if target_parser.parse(target_label, _proof(source_module)).metrics == {}:
+                rejected += 1
+    assert foreign_pairs == 48
+    assert rejected == foreign_pairs
 
 
-def test_uncalibrated_tasks_have_no_positive_score_mapping_or_anchor_rows() -> None:
-    for task_name in PENDING_ZERO_TASKS:
+def test_rendered_path_preserves_literal_identity_and_rejects_foreign_siblings(
+    tmp_path: Path,
+) -> None:
+    modules = {}
+    for task_name in TASK_IDENTITIES:
+        rendered = tmp_path / task_name / "tests/meta/parser.py"
+        rendered.parent.mkdir(parents=True)
+        rendered.write_text((ROOT / "tasks" / task_name / "parser.py").read_text())
+        spec = importlib.util.spec_from_file_location(
+            f"rendered_{task_name.replace('-', '_')}", rendered
+        )
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        modules[task_name] = module
+        assert module._EXPECTED_TASK == task_name
+        assert module.Parser().parse(module._EXPECTED_LABEL, _proof(module)).metrics
+
+    rejected = 0
+    for target_name, target_module in modules.items():
+        for source_name, source_module in modules.items():
+            if (
+                target_name == source_name
+                or target_module._EXPECTED_LABEL != source_module._EXPECTED_LABEL
+            ):
+                continue
+            result = target_module.Parser().parse(
+                target_module._EXPECTED_LABEL, _proof(source_module)
+            )
+            assert result.metrics == {}
+            rejected += 1
+    assert rejected == 48
+
+
+def test_all_tasks_use_baseline_free_official_accuracy() -> None:
+    for task_name, (_surface, label, _expected_n) in TASK_IDENTITIES.items():
         task_dir = ROOT / "tasks" / task_name
         config = json.loads((task_dir / "config.json").read_text())
-        assert config["calibration_status"] == "pending_exact_zero_full_official_anchors"
-
-        tree = ast.parse((task_dir / "score_spec.py").read_text())
-        assert not any(isinstance(node, ast.Call) for node in ast.walk(tree))
-        assert len((task_dir / "leaderboard.csv").read_text().splitlines()) == 1
+        assert config["calibration_protocol"] == "full-official-literal-ast-v3"
+        assert config["calibration_status"] in {
+            "baseline_free_official_accuracy_natural_bounds",
+            "baseline_free_official_accuracy_terminal_native",
+        }
+        source = (task_dir / "score_spec.py").read_text()
+        assert f'col("accuracy_{label}").higher().id().bounded_power(' in source
+        assert "bound=1.0" in source
+        assert "floor=const(0.0)" in source
+        assert ".sigmoid(" not in source
+        assert "pending" not in source.lower()
 
 
 def test_choice_tasks_use_baseline_free_official_accuracy() -> None:
@@ -355,13 +428,26 @@ def test_missing_verifier_metrics_score_exactly_zero() -> None:
 
     if "floor" not in inspect.signature(ColExpr.bounded_power).parameters:
         pytest.skip("explicit semantic-floor scorer correction integrates separately")
-    task_dir = ROOT / "tasks/cd-choice-verbalizer"
-    anchors = BaselineAnchors(task_dir)
-    spec = load_expanded_spec(task_dir, anchors)
-    assert spec is not None
-    score, _settings, valid = score_record_details(spec, {"seed": 42}, anchors)
-    assert score == 0.0
-    assert valid is False
+    for task_name, (_surface, label, _expected_n) in TASK_IDENTITIES.items():
+        task_dir = ROOT / "tasks" / task_name
+        anchors = BaselineAnchors(task_dir)
+        spec = load_expanded_spec(task_dir, anchors)
+        assert spec is not None
+
+        score, _settings, valid = score_record_details(
+            spec, {f"accuracy_{label}": 0.5}, anchors
+        )
+        assert score == pytest.approx(0.5)
+        assert valid is True
+
+        for metrics in (
+            {},
+            {f"accuracy_{label}": float("nan")},
+            {f"accuracy_{label}": float("inf")},
+        ):
+            score, _settings, valid = score_record_details(spec, metrics, anchors)
+            assert score == 0.0
+            assert valid is False
 
 
 def test_answer_token_budget_replaces_the_duplicate_repair_surface() -> None:
@@ -422,12 +508,36 @@ def test_all_task_scripts_use_pinned_private_fullscale_data() -> None:
         assert "model.safetensors" in script
         assert "sha256sum -c -" in script
         assert "CUDA_VISIBLE_DEVICES" not in script
+        expected_surface, _label, _expected_n = TASK_IDENTITIES[task_dir.name]
+        assert f"--task-id {task_dir.name}" in script
+        assert f"--surface {expected_surface}" in script
         if task_dir.name.startswith("cd-numeric-"):
             assert "--n 1319" in script
             assert "gsm8k.json" in script
         else:
             assert "--n 7600" in script
             assert "classification.json" in script
+
+
+def test_harnesses_reject_mismatched_task_surface_identity() -> None:
+    choice_spec = importlib.util.spec_from_file_location(
+        "cd_harness_choice_identity", ROOT / "vendor/constrained-decoding-lab/harness_choice.py"
+    )
+    numeric_spec = importlib.util.spec_from_file_location(
+        "cd_harness_numeric_identity", ROOT / "vendor/constrained-decoding-lab/harness_numeric.py"
+    )
+    assert choice_spec is not None and choice_spec.loader is not None
+    assert numeric_spec is not None and numeric_spec.loader is not None
+    choice = importlib.util.module_from_spec(choice_spec)
+    numeric = importlib.util.module_from_spec(numeric_spec)
+    choice_spec.loader.exec_module(choice)
+    numeric_spec.loader.exec_module(numeric)
+
+    for task_name, (surface, label, _expected_n) in TASK_IDENTITIES.items():
+        harness = numeric if label == "gsm8k" else choice
+        harness._validate_identity(task_name, surface)
+        with pytest.raises(ValueError, match="task/surface mismatch"):
+            harness._validate_identity(task_name, "decoder_wrong")
 
 
 def test_model_contract_is_pinned_and_offline() -> None:

@@ -12,5 +12,7 @@ cd /workspace/constrained-decoding-lab
 
 python harness_choice.py \
     --solution solution/decoder_choice_reasoning.py \
+    --task-id cd-choice-reasoning \
+    --surface decoder_choice_reasoning \
     --seed ${SEED:-42} \
     --n 7600

@@ -12,5 +12,7 @@ cd /workspace/constrained-decoding-lab
 
 python harness_numeric.py \
     --solution solution/decoder_repair.py \
+    --task-id cd-numeric-repair \
+    --surface decoder_repair \
     --seed ${SEED:-42} \
     --n 1319

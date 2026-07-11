@@ -12,5 +12,7 @@ cd /workspace/constrained-decoding-lab
 
 python harness_numeric.py \
     --solution solution/decoder_budget.py \
+    --task-id cd-numeric-budget \
+    --surface decoder_budget \
     --seed ${SEED:-42} \
     --n 1319
