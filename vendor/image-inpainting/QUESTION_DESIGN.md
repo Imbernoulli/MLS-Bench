@@ -18,3 +18,9 @@ The full-resolution protocol exposes ten distinct research surfaces. Candidate q
 The former `cv-inpaint-refine` sibling was removed. Its callable was a stateless post-processing function, not a trainable second-stage refinement network, and it overlapped the complete-architecture question. Keeping the old name would have overstated what the code evaluated.
 
 Each task trains one checkpoint for exactly 100,000 optimizer steps and then evaluates that same checkpoint sequentially on `small`, `large`, and `strokes`. Training three independent checkpoints would triple cost, add optimization variance to a mask-only comparison, and would not isolate the question being asked. The parser accepts all three evaluation proofs atomically, so no subset can receive a score.
+
+## P1 Context-Hook Review
+
+`attention` and `dilation` are separate callables and execute in a fixed order, but they are consecutive transformations of the same 32x32 bottleneck and both change context aggregation. That makes them code-level distinct but conceptually coupled. No full-protocol anchor currently demonstrates that they support two independent research conclusions.
+
+Treat `cv-inpaint-dilation` as provisional before runtime launch. The preferred resolution is to consolidate both into one context-aggregation question or replace dilation with a genuinely orthogonal inpainting decision. If no orthogonal replacement is justified, drop dilation and ship nine tasks rather than count two bottleneck-context variants as independent questions.

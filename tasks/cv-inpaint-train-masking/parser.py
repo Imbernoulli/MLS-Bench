@@ -20,22 +20,12 @@ TRAIN_STEPS = 100_000
 BATCH_SIZE = 8
 PROGRESS_EVERY = 10_000
 SETTINGS = ("small", "large", "strokes")
+EXPECTED_TASK = "cv-inpaint-train-masking"
+EXPECTED_SURFACE = "masking"
 MASK_RANGES = {
     "small": (0.06, 0.12),
     "large": (0.22, 0.38),
     "strokes": (0.14, 0.28),
-}
-TASK_SURFACES = {
-    "cv-inpaint-activation": "activation",
-    "cv-inpaint-architecture": "arch",
-    "cv-inpaint-attention": "attention",
-    "cv-inpaint-dilation": "dilation",
-    "cv-inpaint-fusion": "fusion",
-    "cv-inpaint-gate": "gate",
-    "cv-inpaint-loss-design": "loss",
-    "cv-inpaint-norm": "norm",
-    "cv-inpaint-train-masking": "masking",
-    "cv-inpaint-upsample": "upsample",
 }
 
 HEX = r"[0-9a-f]{64}"
@@ -73,7 +63,7 @@ def _close(actual: float, expected: float) -> bool:
 
 def _zero(reason: str) -> ParseResult:
     return ParseResult(
-        feedback=f"Inpainting verification rejected: {reason}",
+        feedback=f"{EXPECTED_TASK} verification rejected: {reason}",
         metrics={},
     )
 
@@ -83,8 +73,6 @@ class Parser(OutputParser):
 
     def parse(self, cmd_label: str, raw_output: str) -> ParseResult:
         try:
-            task_name = Path(__file__).resolve().parent.name
-            expected_surface = TASK_SURFACES[task_name]
             if cmd_label != "full":
                 return _zero(f"unexpected command label {cmd_label!r}")
             if FAILURE_RE.search(raw_output):
@@ -131,7 +119,7 @@ class Parser(OutputParser):
                 and int(train_steps) == TRAIN_STEPS
                 and int(batch_size) == BATCH_SIZE
                 and int(seed) == 42
-                and surface == expected_surface
+                and surface == EXPECTED_SURFACE
                 and settings == ",".join(SETTINGS)
                 and 0 < int(parameters) <= 120_000_000
             )
@@ -220,7 +208,7 @@ class Parser(OutputParser):
                     return _zero(f"missing {expected_setting} terminal metrics")
                 metric_surface, metric_setting, count, *metric_values = metrics_match.groups()
                 if (
-                    metric_surface != expected_surface
+                    metric_surface != EXPECTED_SURFACE
                     or metric_setting != expected_setting
                     or int(count) != VAL_COUNT
                 ):
@@ -277,7 +265,7 @@ class Parser(OutputParser):
                 return _zero("missing terminal zero-exit completion proof")
             return ParseResult(
                 feedback=(
-                    "Full-resolution inpainting from one checkpoint; "
+                    f"{EXPECTED_TASK} full-resolution checkpoint; "
                     + "; ".join(feedback_parts)
                 ),
                 metrics=output_metrics,
