@@ -7,7 +7,8 @@ import csv
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+
+from mlsbench.scoring._numeric import is_finite_real
 
 DEFAULT_REF_SCORE = 0.5
 META_COLS = {"timestamp", "model", "is_final", "seed"}
@@ -33,6 +34,25 @@ class AnchorRef:
     kind: str          # "bl_worst", "bl_best", "const"
     metric: str = ""   # leaderboard column name (for bl_* kinds)
     value: float = 0.0 # concrete value (for "const" kind)
+
+
+def _is_valid_anchor(value: object) -> bool:
+    """Return whether *value* has a well-formed anchor representation."""
+    if value is None:
+        return True
+    if not isinstance(value, AnchorRef):
+        return is_finite_real(value)
+    if not isinstance(value.kind, str) or not isinstance(value.metric, str):
+        return False
+    if value.kind == "const":
+        return value.metric == "" and is_finite_real(value.value)
+    if value.kind in ("bl_worst", "bl_best"):
+        return (
+            bool(value.metric)
+            and is_finite_real(value.value)
+            and float(value.value) == 0.0
+        )
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -116,48 +136,48 @@ def validate_score_spec(
 ) -> list[str]:
     """Return fail-closed validation errors for a score specification."""
     errors: list[str] = []
-    avail = set(available_metrics)
-
-    def finite_number(value: Any) -> bool:
-        if isinstance(value, bool):
-            return False
-        try:
-            return math.isfinite(float(value))
-        except (TypeError, ValueError, OverflowError):
-            return False
-
-    def valid_anchor(value: float | AnchorRef | None) -> bool:
-        if value is None:
-            return True
-        if isinstance(value, AnchorRef):
-            if value.kind == "const":
-                return finite_number(value.value)
-            return value.kind in {"bl_worst", "bl_best"} and bool(value.metric)
-        return finite_number(value)
+    avail = {
+        metric for metric in available_metrics
+        if isinstance(metric, str)
+    }
 
     for tname, tspec in spec.terms.items():
-        if tspec.role not in {"objective", "constraint", "drop"}:
+        if not isinstance(tname, str) or not tname:
+            errors.append(f"Term name must be a nonempty string, got {tname!r}")
+        if not isinstance(tspec, TermSpec):
+            errors.append(f"Term '{tname}': declaration must be a TermSpec")
+            continue
+        if not isinstance(tspec.role, str) or tspec.role not in (
+            "objective", "constraint", "drop",
+        ):
             errors.append(f"Term '{tname}': invalid role '{tspec.role}'")
-        if not isinstance(tspec.metric, str) or not tspec.metric:
+        metric_valid = isinstance(tspec.metric, str) and bool(tspec.metric)
+        if not metric_valid:
             errors.append(f"Term '{tname}': metric must be a nonempty string")
         if tspec.role == "drop":
             continue
-        if tspec.metric not in avail:
+        if metric_valid and tspec.metric not in avail:
             errors.append(f"Term '{tname}': metric '{tspec.metric}' not found in leaderboard")
-        if tspec.direction not in {"higher", "lower"}:
+        if not isinstance(tspec.direction, str) or tspec.direction not in (
+            "higher", "lower",
+        ):
             errors.append(f"Term '{tname}': invalid direction '{tspec.direction}'")
-        if tspec.transform not in {"id", "log", "log1p"}:
+        if not isinstance(tspec.transform, str) or tspec.transform not in (
+            "id", "log", "log1p",
+        ):
             errors.append(f"Term '{tname}': invalid transform '{tspec.transform}'")
 
         if tspec.role == "constraint":
-            if tspec.norm_type not in {"penalty_upper", "penalty_lower"}:
+            if not isinstance(tspec.norm_type, str) or tspec.norm_type not in (
+                "penalty_upper", "penalty_lower",
+            ):
                 errors.append(
                     f"Term '{tname}': constraint has invalid norm '{tspec.norm_type}'"
                 )
-            if not finite_number(tspec.constraint_target):
+            if not is_finite_real(tspec.constraint_target):
                 errors.append(f"Term '{tname}': constraint target must be finite")
             if (
-                not finite_number(tspec.constraint_sharpness)
+                not is_finite_real(tspec.constraint_sharpness)
                 or float(tspec.constraint_sharpness) <= 0.0
             ):
                 errors.append(
@@ -167,44 +187,64 @@ def validate_score_spec(
 
         if tspec.role != "objective":
             continue
-        if tspec.norm_type not in {"bounded_power", "sigmoid"}:
+        if not isinstance(tspec.norm_type, str) or tspec.norm_type not in (
+            "bounded_power", "sigmoid",
+        ):
             errors.append(f"Term '{tname}': invalid objective norm '{tspec.norm_type}'")
         if tspec.norm_type == "bounded_power":
             if tspec.bound is None:
                 errors.append(f"Term '{tname}': bounded_power requires 'bound'")
-            elif not finite_number(tspec.bound):
+            elif not is_finite_real(tspec.bound):
                 errors.append(f"Term '{tname}': bounded_power bound must be finite")
-        if not valid_anchor(tspec.floor):
+        if not _is_valid_anchor(tspec.floor):
             errors.append(f"Term '{tname}': floor anchor is invalid or non-finite")
-        if not valid_anchor(tspec.ref):
+        if not _is_valid_anchor(tspec.ref):
             errors.append(f"Term '{tname}': reference anchor is invalid or non-finite")
-        if not finite_number(tspec.ref_score) or not 0.0 < float(tspec.ref_score) < 1.0:
+        if (
+            not is_finite_real(tspec.ref_score)
+            or not 0.0 < float(tspec.ref_score) < 1.0
+        ):
             errors.append(f"Term '{tname}': ref_score must be finite and in (0, 1)")
         if tspec.scale is not None and (
-            not finite_number(tspec.scale) or float(tspec.scale) <= 0.0
+            not is_finite_real(tspec.scale) or float(tspec.scale) <= 0.0
         ):
             errors.append(f"Term '{tname}': scale must be finite and > 0")
 
     # Check all term references in settings exist
-    defined_terms = set(spec.terms.keys())
+    defined_terms = {
+        name for name, term_spec in spec.terms.items()
+        if isinstance(name, str) and isinstance(term_spec, TermSpec)
+    }
     if not spec.settings:
         errors.append("Score spec declares no settings")
     for sname, sspec in spec.settings.items():
-        if not sspec.terms:
+        if not isinstance(sname, str) or not sname:
+            errors.append(f"Setting name must be a nonempty string, got {sname!r}")
+        if not isinstance(sspec, SettingSpec):
+            errors.append(f"Setting '{sname}': declaration must be a SettingSpec")
+            continue
+        if not isinstance(sspec.terms, (list, tuple)) or not sspec.terms:
             errors.append(f"Setting '{sname}': must declare at least one objective")
+            weighted_items: list | tuple = []
+        else:
+            weighted_items = sspec.terms
         total_weight = 0.0
-        for item in sspec.terms:
+        for item in weighted_items:
             if not isinstance(item, (tuple, list)) or len(item) != 2:
                 errors.append(f"Setting '{sname}': invalid weighted objective entry {item!r}")
                 continue
             term_name, weight = item
-            if term_name not in defined_terms:
+            if not isinstance(term_name, str) or not term_name:
+                errors.append(
+                    f"Setting '{sname}': objective name must be a nonempty string"
+                )
+            elif term_name not in defined_terms:
                 errors.append(f"Setting '{sname}': references undefined term '{term_name}'")
             elif spec.terms[term_name].role != "objective":
                 errors.append(
                     f"Setting '{sname}': weighted term '{term_name}' is not an objective"
                 )
-            if not finite_number(weight) or float(weight) <= 0.0:
+            if not is_finite_real(weight) or float(weight) <= 0.0:
                 errors.append(
                     f"Setting '{sname}': weight for '{term_name}' must be finite and > 0"
                 )
@@ -212,8 +252,17 @@ def validate_score_spec(
                 total_weight += float(weight)
         if not math.isfinite(total_weight) or total_weight <= 0.0:
             errors.append(f"Setting '{sname}': objective weights must have a finite positive total")
-        for cname in sspec.constraints:
-            if cname not in defined_terms:
+        if not isinstance(sspec.constraints, (list, tuple)):
+            errors.append(f"Setting '{sname}': constraints must be a list or tuple")
+            constraint_names: list | tuple = []
+        else:
+            constraint_names = sspec.constraints
+        for cname in constraint_names:
+            if not isinstance(cname, str) or not cname:
+                errors.append(
+                    f"Setting '{sname}': constraint name must be a nonempty string"
+                )
+            elif cname not in defined_terms:
                 errors.append(f"Setting '{sname}': references undefined constraint '{cname}'")
             elif spec.terms[cname].role != "constraint":
                 errors.append(

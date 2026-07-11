@@ -20,6 +20,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from mlsbench.scoring._numeric import is_finite_real
 from mlsbench.scoring.spec import (
     AnchorRef,
     DEFAULT_REF_SCORE,
@@ -132,9 +133,20 @@ class ColExpr:
         ``floor`` is the generic / baseline-free anchor: the raw value that maps
         to score 0 (e.g. ``const(0.1)`` for a 10-class random-guess accuracy, or
         ``const(2.302)`` for the ln(10) trivial cross-entropy). When omitted the
-        worst baseline from leaderboard.csv is used (legacy behaviour).
+        worst baseline from leaderboard.csv is used (legacy behaviour). With an
+        explicit floor and no ``ref``, the score is linear (``gamma=1``).
         """
-        bound_val = bound.value if isinstance(bound, AnchorRef) and bound.kind == "const" else bound
+        if (
+            isinstance(bound, AnchorRef)
+            and bound.kind == "const"
+            and bound.metric == ""
+            and is_finite_real(bound.value)
+        ):
+            bound_val: Any = float(bound.value)
+        else:
+            # Preserve malformed values so validation can reject them instead
+            # of silently converting them into a different valid spec.
+            bound_val = bound
         return TermSpec(
             name="",  # filled by term()
             metric=self._metric,
@@ -142,7 +154,7 @@ class ColExpr:
             direction=self._direction,
             transform=self._transform,
             norm_type="bounded_power",
-            bound=float(bound_val) if isinstance(bound_val, (int, float)) else None,
+            bound=bound_val,
             floor=floor,
             ref=ref,
             ref_score=ref_score,

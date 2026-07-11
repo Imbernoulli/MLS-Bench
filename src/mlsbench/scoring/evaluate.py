@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from mlsbench import PROJECT_ROOT
+from mlsbench.scoring._numeric import is_finite_real
 from mlsbench.scoring.anchors import BaselineAnchors
 from mlsbench.scoring.primitives import (
     apply_direction_and_transform,
@@ -28,6 +29,7 @@ from mlsbench.scoring.spec import (
     SettingSpec,
     TaskScoreSpec,
     TermSpec,
+    _is_valid_anchor,
     load_score_spec,
     leaderboard_declared_metrics,
     validate_score_spec,
@@ -86,15 +88,17 @@ def _resolve_anchor(
 ) -> float | None:
     if ref is None:
         return None
-    if isinstance(ref, (int, float)):
+    if not _is_valid_anchor(ref):
+        return None
+    if is_finite_real(ref):
         return float(ref)
     if isinstance(ref, AnchorRef):
         if ref.kind == "const":
-            return ref.value
+            return float(ref.value)
         if ref.kind == "bl_worst":
-            return anchors.worst_for(ref.metric or metric, direction)
+            return anchors.worst_for(ref.metric, direction)
         if ref.kind == "bl_best":
-            return anchors.best_for(ref.metric or metric, direction)
+            return anchors.best_for(ref.metric, direction)
     return None
 
 
@@ -231,6 +235,8 @@ def _score_term(
         )
 
     def transform_value(value: float, field: str) -> tuple[float | None, str | None]:
+        if not is_finite_real(value):
+            return None, f"invalid_{field}_type"
         try:
             transformed = apply_direction_and_transform(
                 float(value), tspec.direction, tspec.transform
@@ -251,10 +257,10 @@ def _score_term(
 
     if tspec.role == "constraint":
         target = tspec.constraint_target
-        if target is None or not math.isfinite(float(target)):
+        if not is_finite_real(target):
             return invalid(raw_f, y, "invalid_constraint_target")
         if (
-            not math.isfinite(float(tspec.constraint_sharpness))
+            not is_finite_real(tspec.constraint_sharpness)
             or float(tspec.constraint_sharpness) <= 0.0
         ):
             return invalid(raw_f, y, "invalid_constraint_sharpness")
@@ -286,9 +292,9 @@ def _score_term(
         )
         if ref_resolved is None or _is_missing_value(ref_resolved):
             return invalid(raw_f, y, "unresolved_logistic_midpoint")
-        scale = float(tspec.scale)
-        if not math.isfinite(scale) or scale <= 0.0:
+        if not is_finite_real(tspec.scale) or float(tspec.scale) <= 0.0:
             return invalid(raw_f, y, "invalid_logistic_scale")
+        scale = float(tspec.scale)
         y_mid, transform_error = transform_value(float(ref_resolved), "reference")
         if transform_error is not None or y_mid is None:
             return invalid(raw_f, y, transform_error or "invalid_reference_transform")
@@ -318,23 +324,45 @@ def _score_term(
         if y_bound == y_floor:
             return invalid(raw_f, y, "degenerate_bound")
 
-        ref_resolved = _resolve_anchor(tspec.ref, anchors, tspec.metric, tspec.direction)
-        if ref_resolved is None:
-            ref_resolved = _default_ref(anchors, tspec.metric, tspec.direction)
-        if ref_resolved is None or _is_missing_value(ref_resolved):
-            return invalid(raw_f, y, "missing_bounded_power_ref")
-        y_ref, transform_error = transform_value(float(ref_resolved), "reference")
-        if transform_error is not None or y_ref is None:
-            return invalid(raw_f, y, transform_error or "invalid_reference_transform")
-        r_ref = _bounded_power_ref_ratio(y_floor, y_bound, y_ref)
-        try:
-            gamma = solve_gamma(y_floor, y_bound, y_ref, tspec.ref_score)
-        except ValueError as exc:
-            return invalid(
-                raw_f,
-                y,
-                f"invalid_bounded_power_calibration:{exc}",
+        ref_resolved: float | None = None
+        r_ref: float | None = None
+        if tspec.floor is not None and tspec.ref is None:
+            # An explicit floor and bound fully define the baseline-free linear
+            # curve. Legacy terms without an explicit floor still calibrate from
+            # the best baseline below.
+            gamma = 1.0
+        else:
+            ref_resolved = _resolve_anchor(
+                tspec.ref, anchors, tspec.metric, tspec.direction
             )
+            if tspec.ref is not None and ref_resolved is None:
+                return invalid(raw_f, y, "unresolved_bounded_power_ref")
+            if ref_resolved is None:
+                ref_resolved = _default_ref(
+                    anchors, tspec.metric, tspec.direction
+                )
+            if ref_resolved is None or _is_missing_value(ref_resolved):
+                return invalid(raw_f, y, "missing_bounded_power_ref")
+            y_ref, transform_error = transform_value(
+                ref_resolved, "reference"
+            )
+            if transform_error is not None or y_ref is None:
+                return invalid(
+                    raw_f,
+                    y,
+                    transform_error or "invalid_reference_transform",
+                )
+            r_ref = _bounded_power_ref_ratio(y_floor, y_bound, y_ref)
+            try:
+                gamma = solve_gamma(
+                    y_floor, y_bound, y_ref, tspec.ref_score
+                )
+            except ValueError as exc:
+                return invalid(
+                    raw_f,
+                    y,
+                    f"invalid_bounded_power_calibration:{exc}",
+                )
 
         score = bounded_power(y, y_floor, y_bound, gamma)
         return TermResult(
@@ -351,11 +379,13 @@ def _score_term(
 
     if tspec.norm_type == "sigmoid":
         if tspec.scale is not None:
-            sc = float(tspec.scale)
-            if not math.isfinite(sc) or sc <= 0.0:
+            if not is_finite_real(tspec.scale) or float(tspec.scale) <= 0.0:
                 return invalid(raw_f, y, "invalid_sigmoid_scale")
+            sc = float(tspec.scale)
         else:
             ref_resolved = _resolve_anchor(tspec.ref, anchors, tspec.metric, tspec.direction)
+            if tspec.ref is not None and ref_resolved is None:
+                return invalid(raw_f, y, "unresolved_sigmoid_ref")
             if ref_resolved is None:
                 ref_resolved = _default_ref(anchors, tspec.metric, tspec.direction)
             if ref_resolved is None or _is_missing_value(ref_resolved):
@@ -406,12 +436,7 @@ def _load_leaderboard_records(lb_path: Path) -> list[dict[str, Any]]:
 
 
 def _is_missing_value(value: Any) -> bool:
-    if value is None or value == "":
-        return True
-    try:
-        return not math.isfinite(float(value))
-    except (TypeError, ValueError):
-        return True
+    return not is_finite_real(value)
 
 
 def _near_high_worst_default(raw: float, bound: float) -> bool:
@@ -514,9 +539,17 @@ def _score_setting(
         else:
             floor_raw = anchors.worst_for(tspec.metric, tspec.direction)
         tr = _score_term(tspec, raw_val, floor_raw, anchors)
+        if not is_finite_real(weight) or float(weight) <= 0.0:
+            tr.score = 0.0
+            tr.valid = False
+            tr.invalid_reason = "invalid_objective_weight"
+            tr.params = {"reason": tr.invalid_reason}
+            weight_f = 0.0
+        else:
+            weight_f = float(weight)
         term_results.append(tr)
         obj_scores.append(tr.score)
-        obj_weights.append(weight)
+        obj_weights.append(weight_f)
 
     # Weighted mean of objectives
     if obj_weights:
@@ -562,12 +595,9 @@ def _gmean(values: list[float]) -> float:
         return 0.0
     numeric: list[float] = []
     for value in values:
-        if isinstance(value, bool):
+        if not is_finite_real(value):
             return 0.0
-        try:
-            score = float(value)
-        except (TypeError, ValueError, OverflowError):
-            return 0.0
+        score = float(value)
         if not math.isfinite(score) or score <= 0.0:
             return 0.0
         numeric.append(score)

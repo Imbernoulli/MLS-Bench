@@ -11,6 +11,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from mlsbench.scoring._numeric import is_finite_real
+
 META_COLS = {"timestamp", "model", "is_final", "seed"}
 INFORMATIONAL_PREFIXES = ("elapsed_", "n_samples", "n_prompts")
 
@@ -20,9 +22,7 @@ def _is_final(record: dict) -> bool:
 
 
 def _is_real_metric_value(value) -> bool:
-    return isinstance(value, (int, float)) and not (
-        isinstance(value, float) and value != value
-    )
+    return is_finite_real(value)
 
 
 def _metric_count(record: dict) -> int:
@@ -172,12 +172,12 @@ class BaselineAnchors:
             for k in r:
                 if k in seen:
                     continue
-                seen.add(k)
                 if k in META_COLS:
                     continue
                 if k.endswith("_std"):
                     continue
                 if _is_real_metric_value(r[k]):
+                    seen.add(k)
                     anchor_cols.append(k)
 
         # Compute per-metric anchors from baseline data rows

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import math
 
+from mlsbench.scoring._numeric import is_finite_real
+
 GAMMA_MIN = 0.1
 GAMMA_MAX = 10.0
 
@@ -41,7 +43,7 @@ def bounded_power(x: float, floor: float, bound: float, gamma: float) -> float:
       (random floor) maps to 0. Values worse than ``bound`` clip to 0
       instead of being silently inverted to 1.
     """
-    if not all(math.isfinite(v) for v in (x, floor, bound, gamma)) or gamma <= 0.0:
+    if not all(is_finite_real(v) for v in (x, floor, bound, gamma)) or gamma <= 0.0:
         return 0.0
     if bound == floor:
         return 0.0
@@ -63,7 +65,7 @@ def solve_gamma(floor: float, bound: float, ref: float, ref_score: float) -> flo
     degenerate, or out-of-range calibration anchors raise instead of silently
     changing the score curve.
     """
-    if not all(math.isfinite(v) for v in (floor, bound, ref, ref_score)):
+    if not all(is_finite_real(v) for v in (floor, bound, ref, ref_score)):
         raise ValueError("bounded_power calibration values must be finite")
     if bound == floor:
         raise ValueError("bounded_power floor and bound are identical")
@@ -78,7 +80,7 @@ def solve_gamma(floor: float, bound: float, ref: float, ref_score: float) -> flo
             f"bounded_power reference is degenerate: r(ref)={r_ref:.4f} "
             f"(ref={ref}, floor={floor}, bound={bound})"
         )
-    if not math.isfinite(ref_score) or not 0.0 < ref_score < 1.0:
+    if not 0.0 < ref_score < 1.0:
         raise ValueError(f"bounded_power ref_score must be in (0, 1), got {ref_score}")
     gamma = math.log(ref_score) / math.log(r_ref)
     if not math.isfinite(gamma) or not GAMMA_MIN <= gamma <= GAMMA_MAX:
@@ -99,7 +101,7 @@ def logistic_score(y: float, midpoint: float, scale: float) -> float:
     ``midpoint`` maps to 0.5. Unlike ``sigmoid_score`` this has no hard floor,
     so values below the midpoint remain ordered instead of clipping to zero.
     """
-    if not all(math.isfinite(v) for v in (y, midpoint, scale)) or scale <= 0:
+    if not all(is_finite_real(v) for v in (y, midpoint, scale)) or scale <= 0:
         return 0.0
     z = (y - midpoint) / scale
     if z > 30:
@@ -117,7 +119,7 @@ def sigmoid_score(y: float, floor: float, scale: float) -> float:
 
     Maps floor -> 0, approaches 1 as y -> +inf.
     """
-    if not all(math.isfinite(v) for v in (y, floor, scale)) or scale <= 0:
+    if not all(is_finite_real(v) for v in (y, floor, scale)) or scale <= 0:
         return 0.0
     if y <= floor:
         return 0.0
@@ -137,13 +139,13 @@ def solve_scale(floor: float, ref: float, ref_score: float) -> float:
     =>    z = logit((ref_score + 1) / 2)
     =>    scale = (ref - floor) / z
     """
-    if not all(math.isfinite(v) for v in (floor, ref, ref_score)):
+    if not all(is_finite_real(v) for v in (floor, ref, ref_score)):
         raise ValueError("sigmoid calibration values must be finite")
     if ref <= floor:
         raise ValueError(
             f"sigmoid reference must be above floor, got ref={ref}, floor={floor}"
         )
-    if not math.isfinite(ref_score) or not 0.0 < ref_score < 1.0:
+    if not 0.0 < ref_score < 1.0:
         raise ValueError(f"sigmoid ref_score must be in (0, 1), got {ref_score}")
     p = (ref_score + 1.0) / 2.0
     # logit(p) = log(p / (1-p))
@@ -165,7 +167,7 @@ def penalty_upper(x: float, target: float, sharpness: float = 0.15) -> float:
 
     Returns 1.0 if satisfied, exponential decay otherwise.
     """
-    if not all(math.isfinite(v) for v in (x, target, sharpness)) or sharpness <= 0.0:
+    if not all(is_finite_real(v) for v in (x, target, sharpness)) or sharpness <= 0.0:
         return 0.0
     if x <= target:
         return 1.0
@@ -177,7 +179,7 @@ def penalty_lower(x: float, target: float, sharpness: float = 0.15) -> float:
 
     Returns 1.0 if satisfied, exponential decay otherwise.
     """
-    if not all(math.isfinite(v) for v in (x, target, sharpness)) or sharpness <= 0.0:
+    if not all(is_finite_real(v) for v in (x, target, sharpness)) or sharpness <= 0.0:
         return 0.0
     if x >= target:
         return 1.0
@@ -218,8 +220,10 @@ def apply_direction_and_transform(
 
     y = sign * transform(x)
     """
-    if not math.isfinite(x):
+    if not is_finite_real(x):
         raise ValueError(f"metric value must be finite, got {x}")
+    if not isinstance(transform, str):
+        raise ValueError(f"Unknown transform: {transform!r}")
     tfn = TRANSFORMS.get(transform)
     if tfn is None:
         raise ValueError(f"Unknown transform: {transform!r}")
