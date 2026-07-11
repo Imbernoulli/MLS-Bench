@@ -46,12 +46,21 @@ _FAILURE_MARKER_RE = re.compile(
 
 _STANDARD_FAILURE_MARKER_RES = (
     re.compile(
-        r"(?i)\b((?:verification|evaluation|training)\s+(?:failed|failure))\b"
+        r"(?i)\b("
+        r"(?:verification|evaluation|training)\s+(?:has\s+)?failed"
+        r"|(?:verification|evaluation|training)\s+did\s+not\s+complete"
+        r")\b"
     ),
     re.compile(r"(?m)^\s*(Traceback\s+\(most recent call last\):)"),
     re.compile(
-        r"(?m)^\s*("
-        r"(?:(?:[A-Za-z_][A-Za-z0-9_]*)\.)*"
+        r"(?mi)^\s*"
+        r"(?:(?:"
+        r"\d{4}-\d{2}-\d{2}(?:[T ][^\s]+)?"
+        r"|\[[0-9][^\]\r\n]*\]"
+        r")\s+)?"
+        r"(?:\[(?:ERROR|FATAL|CRITICAL)\]|(?:ERROR|FATAL|CRITICAL)\b)"
+        r"\s*:?\s+("
+        r"(?:[A-Za-z_][A-Za-z0-9_]*\.)*"
         r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)"
         r")\s*:"
     ),
