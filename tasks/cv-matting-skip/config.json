@@ -6,33 +6,13 @@
   ],
   "test_cmds": [
     {
-      "cmd": "scripts/matting_medium.sh",
-      "label": "medium",
+      "cmd": "scripts/composition1k.sh",
+      "label": "composition1k",
       "group": 1,
-      "compute": 1.0,
-      "time": "0:30:00",
-      "mem": 16,
+      "compute": 1,
+      "time": "24:00:00",
+      "mem": 32,
       "package": "image-matting"
-    },
-    {
-      "cmd": "scripts/matting_wide.sh",
-      "label": "wide",
-      "group": 1,
-      "compute": 1.0,
-      "time": "0:30:00",
-      "mem": 16,
-      "package": "image-matting",
-      "hidden": true
-    },
-    {
-      "cmd": "scripts/matting_xwide.sh",
-      "label": "xwide",
-      "group": 1,
-      "compute": 1.0,
-      "time": "0:30:00",
-      "mem": 16,
-      "package": "image-matting",
-      "hidden": true
     }
   ],
   "baselines": {
@@ -54,8 +34,8 @@
       ],
       "edit": [
         {
-          "start": 33,
-          "end": 37
+          "start": 15,
+          "end": 17
         }
       ]
     }

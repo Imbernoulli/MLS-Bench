@@ -1,10 +1,4 @@
-"""Good baseline for cv-matting-decoder-design: U-Net skip-connection decoder.
-
-Injects the encoder's high-resolution, low-level features into the decoder via SKIP
-connections so the matte keeps sharp boundaries (U-Net; cf. IndexNet index-guided
-upsampling, Lu et al. 2019) -> lower SAD / gradient error with clear headroom over
-the bilinear decoder. Reference: vendor/image-matting/baselines/decoder_unet.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/decoder.py"
 
@@ -35,5 +29,5 @@ _CONTENT = '''def build_decoder(enc_channels):
     return Dec()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 53, "end_line": 70, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 17, "end_line": 33, "content": _CONTENT},
 ]

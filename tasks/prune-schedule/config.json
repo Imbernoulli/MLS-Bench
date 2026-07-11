@@ -1,0 +1,52 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/prune.sh",
+      "label": "cifar10",
+      "group": 1,
+      "compute": 1.0,
+      "time": "12:00:00",
+      "mem": 32,
+      "package": "prune-lab"
+    },
+    {
+      "cmd": "scripts/prune_seed1.sh",
+      "label": "cifar10_seed1",
+      "group": 1,
+      "compute": 1.0,
+      "time": "12:00:00",
+      "mem": 32,
+      "package": "prune-lab"
+    }
+  ],
+  "baselines": {
+    "iterative": {
+      "edit_ops": "edits/strong.edit.py"
+    },
+    "oneshot": {
+      "edit_ops": "edits/weak.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "prune-lab/solution/schedule.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 15,
+          "end": 17
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,55 @@
+{
+  "allow_create": false,
+  "agent_data_prune": [
+    "/data/code-generation/data/problems.json",
+    "/data/code-generation/data/manifest.json"
+  ],
+  "verifier_data_deps": [
+    {"name": "codegen_problems", "host_path": "{data_root}/code-generation/data/problems.json", "dest": "data/code-generation/problems.json", "required": true},
+    {"name": "codegen_manifest", "host_path": "{data_root}/code-generation/data/manifest.json", "dest": "data/code-generation/manifest.json", "required": true}
+  ],
+  "verifier_only_package_files": [
+    "code-generation-lab/common.py",
+    "code-generation-lab/harness_docstring.py"
+  ],
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/mbpp.sh",
+      "label": "mbpp",
+      "group": 1,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "mem": 32,
+      "package": "code-generation-lab"
+    }
+  ],
+  "baselines": {
+    "structured_prompt": {
+      "edit_ops": "edits/strong.edit.py"
+    },
+    "minimal_prompt": {
+      "edit_ops": "edits/weak.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "code-generation-lab/solution/policy_docstring.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 10,
+          "end": 11
+        }
+      ]
+    }
+  ]
+}

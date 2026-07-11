@@ -1,28 +1,31 @@
-# Image Matting: Design the Encoder-Decoder Skip Fusion (drop vs concat)
+# Image Matting: Skip Fusion
 
 ## Research Question
-**Skip connections** (U-Net) inject the encoder's high-resolution, low-level features
-into the decoder so the matte keeps sharp boundaries. **Redesign the skip fusion**:
-dropping the skip loses that detail (blurry matte); a down-weighted partial skip
-recovers some; the full-strength concat skip (standard U-Net fusion) recovers the most.
+
+Design how an upsampled decoder feature and its matching encoder feature are fused.
+The relative quality of valid fusion rules is determined by evaluation.
 
 ## Implementation Contract
-Modify `fuse(dec_up, skip)` in `image-matting/solution/skip.py` to fuse an upsampled
-decoder feature `dec_up (B,C_dec,H,W)` with the encoder skip `skip (B,C_skip,H,W)`; the
-next decoder conv expects `C_dec + C_skip` channels (the default concat width). A
-malformed / crashing fuse falls back to the full concat skip.
 
-## Fixed Pipeline & Evaluation
-- Data: 100 train / 40 val **synthetic composites** (128x128), `I = a*F + (1-a)*B`
-  with an **exact** soft GT alpha of a random blobby shape with fine hair-like detail.
-- Network: a **fixed configurable matting U-Net** (encoder + skip-connection decoder),
-  fed RGB + the trimap, trained a short fine-tune with a fixed alpha-L1 + composition
-  loss. **Only your surface changes.**
-- Three settings = three **trimap-width** difficulties: `medium` (band width 6),
-  `wide` (band width 9), `xwide` (band width 12, thickest unknown band, hardest). The
-  trimap is re-derived from the exact GT alpha at eval time; training always uses the
-  medium band. The score is the **gmean over all three settings**.
-- Metric (lower is better): **alpha SAD** in the trimap unknown band on the val split;
-  MSE and gradient error are also recorded. A **constant-0.5 / copy-trimap predictor
-  scores `CONST_HALF_SAD`** (far above any real net), so the metric is monotone in
-  matting quality.
+Modify `fuse(dec_up, skip)` in `image-matting/solution/skip.py`. For inputs
+`(B,C_dec,H,W)` and `(B,C_skip,H,W)`, it must return a finite tensor of exact
+shape `(B,C_dec+C_skip,H,W)`.
+
+## Fixed Protocol
+
+- Data: the complete licensed Adobe Composition-1K inventory: 43,100 training
+  composites and all 1,000 test composites. Synthetic proxies and selected test
+  slices do not participate.
+- Training: one model for 100,000 optimizer steps, batch 8, random 320x320 crops,
+  Adam at 1e-4 with cosine decay, seed 42.
+- Evaluation: the trained model is evaluated on every test composite under
+  deterministic alpha-derived trimap widths 6 (`medium`), 9 (`wide`), and 12
+  (`xwide`). All three settings participate in scoring.
+- This is an explicit full-inventory research protocol. Its three trimaps are
+  derived from ground-truth alpha and are not presented as the official
+  Composition-1K single-trimap leaderboard protocol.
+- The scored metric is alpha SAD divided by 1000 after fixing known foreground and
+  background pixels. Whole-image MSE and a deterministic finite-difference edge
+  error are diagnostic only.
+- Missing, crashing, wrong-shape, negative-loss, or non-finite editable output
+  invalidates verification. The harness never substitutes another implementation.

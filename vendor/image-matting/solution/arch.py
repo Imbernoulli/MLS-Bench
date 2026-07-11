@@ -1,27 +1,8 @@
-"""Agent-editable surface: the WHOLE MATTING NETWORK (arch).
+"""Agent-editable whole-network surface for full-inventory image matting.
 
-Return a torch.nn.Module `net` via build_net(in_ch) whose forward
-    net(x, image=<B,3,H,W>, trimap=<B,H,W>) -> alpha (B,H,W) in [0,1]
-takes x = concat(RGB, trimap-encoding) with `in_ch` channels and predicts a soft
-alpha matte at FULL resolution. (image / trimap kwargs are provided for optional
-guided refinement; a net may ignore them.) The trimap encoding (raw channel), loss
-(fixed alpha-L1 + composition), data, optimiser, iterations, seed and eval are
-FIXED; only the network changes. Scored by SAD (LOWER is better) in the trimap
-UNKNOWN band, gmean over three trimap-width settings.
-
-This is the STRICT-BAR direction: the ordering
-    copy-trimap / constant (degenerate)  <  plain encoder-decoder
-      <  DIM deep-matting (encoder-decoder + U-Net skips + a refinement stage,
-         Xu et al. 2017 = SOTA)
-must hold across ALL THREE settings.
-
-The DEFAULT below is a deliberately weak PLAIN ENCODER-DECODER: it downsamples then
-bilinearly upsamples the deepest feature back to full resolution with NO skip
-connections and NO refinement, so it loses the fine transition detail -> high SAD.
-Redesign the network (add U-Net skip connections that inject the encoder's high-res
-features, and a second refinement stage as in Deep Image Matting) to recover a sharp
-matte with clear headroom. A malformed / crashing net falls back to the harness
-strong U-Net.
+Keep build_net(in_ch) and the documented forward contract. The selected module is
+trained and evaluated directly; load, type, shape, range, or numerical failures
+invalidate the run rather than selecting another implementation.
 """
 from __future__ import annotations
 
@@ -40,9 +21,7 @@ def _cbr(cin, cout):
 # EDITABLE REGION — design the whole matting network below
 # ================================================================
 def build_net(in_ch):
-    # Default: PLAIN encoder-decoder. Encode to a stride-8 bottleneck, then bilinearly
-    # upsample the deepest feature straight back to full resolution -> NO skip
-    # connections, NO refinement -> the fine soft transition is lost -> high SAD.
+    # Native plain encoder-decoder implementation.
     class Net(nn.Module):
         def __init__(self):
             super().__init__()

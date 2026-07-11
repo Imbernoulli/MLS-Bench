@@ -1,7 +1,43 @@
 {
-  "_dropped": true,
-  "_reason": "unet does not robustly beat bilinear on real PPM-100 cross-seed data: medium+xwide robust in intended direction, but wide robustly INVERTS both seeds with a real margin (-0.037 to -0.071 SAD). Same per-setting-robust-inversion pattern as deblur-loss-kind drop; not overridable by favourable task-gmean. See DROPPED.md.",
-  "test_cmds": [],
-  "baselines": {},
-  "files": []
+  "test_cmds": [
+    {
+      "cmd": "scripts/composition1k.sh",
+      "label": "composition1k",
+      "group": 1,
+      "compute": 1,
+      "time": "24:00:00",
+      "mem": 32,
+      "package": "image-matting"
+    }
+  ],
+  "baselines": {
+    "unet": {
+      "edit_ops": "edits/unet.edit.py"
+    },
+    "bilinear": {
+      "edit_ops": "edits/bilinear.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-matting/solution/decoder.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 17,
+          "end": 33
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "allow_create": false,
+  "rigorous_codebase": true
 }

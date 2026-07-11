@@ -1,10 +1,4 @@
-"""Weak baseline for cv-matting-dilation: SINGLE plain 3x3 conv block.
-
-A single 3x3 conv at the bottleneck (residual). Limited receptive field, no
-multi-scale context aggregation across the wide unknown band -> higher SAD. This is
-the starting default in vendor/image-matting/solution/dilation.py.
-Reference: vendor/image-matting/baselines/dilation_single.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/dilation.py"
 
@@ -20,5 +14,5 @@ _CONTENT = '''def build_dilation(ch):
     return SingleConv()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 35, "end_line": 47, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 16, "end_line": 26, "content": _CONTENT},
 ]

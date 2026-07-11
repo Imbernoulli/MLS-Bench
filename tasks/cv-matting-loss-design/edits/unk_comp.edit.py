@@ -1,10 +1,4 @@
-"""Good baseline for cv-matting-loss-design: unknown-band L1 + composition.
-
-Restricts the alpha-L1 to the trimap UNKNOWN band and adds a composition term
-|I - (a*F + (1-a)*B)| (Deep Image Matting, w=0.5), focusing capacity on the hard
-transition -> lower SAD with clear headroom over the whole-image L1.
-Reference: vendor/image-matting/baselines/loss_unk_comp.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/loss.py"
 
@@ -20,5 +14,5 @@ _CONTENT = '''def get_matting_loss():
     return loss_fn'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 47, "end_line": 57, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 15, "end_line": 19, "content": _CONTENT},
 ]

@@ -1,0 +1,44 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir numpy==1.26.4 torchvision==0.19.0",
+    "pip install --no-cache-dir torch-pruning==1.6.1",
+    "python -c \"import torch, torchvision, torch_pruning, numpy; print('prune-lab deps: torch', torch.__version__, 'tv', torchvision.__version__, 'tp', getattr(torch_pruning,'__version__','?'), 'np', numpy.__version__)\""
+  ],
+  "env": {
+    "PRUNE_DATA_ROOT": "/data/prune-lab/cifar",
+    "PRUNE_DENSE_CKPT": "/data/prune-lab/dense_resnet18_cifar10.pt",
+    "PRUNE_MANIFEST": "/data/prune-lab/manifest.json",
+    "PRUNE_SPARSITY": "0.70",
+    "PRUNE_RECOVERY_EPOCHS": "160",
+    "PYTHONPATH": "/workspace/prune-lab:${PYTHONPATH}",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "prune_lab_cifar10",
+      "host_path": "{data_root}/prune-lab",
+      "container_path": "/data/prune-lab",
+      "prepare": "vendor/data_scripts/prune-lab/prepare_data.py",
+      "verify_existing": true,
+      "ready_files": [
+        "{data_root}/prune-lab/manifest.json",
+        "{data_root}/prune-lab/dense_resnet18_cifar10.pt",
+        "{data_root}/prune-lab/dense_resnet18_cifar10.pt.sha256",
+        "{data_root}/prune-lab/cifar/cifar-10-batches-py/batches.meta",
+        "{data_root}/prune-lab/cifar/cifar-10-batches-py/data_batch_1",
+        "{data_root}/prune-lab/cifar/cifar-10-batches-py/data_batch_2",
+        "{data_root}/prune-lab/cifar/cifar-10-batches-py/data_batch_3",
+        "{data_root}/prune-lab/cifar/cifar-10-batches-py/data_batch_4",
+        "{data_root}/prune-lab/cifar/cifar-10-batches-py/data_batch_5",
+        "{data_root}/prune-lab/cifar/cifar-10-batches-py/test_batch"
+      ],
+      "description": "Portable offline bundle containing canonical CIFAR-10 (50,000 train / 10,000 test), a strictly loaded >=200-epoch CIFAR ResNet-18 checkpoint, its SHA-256 sidecar, and an image-prepared protocol manifest. Final verification performs no download, installation, extraction, dense pretraining, or data conversion."
+    }
+  ],
+  "use_cuda": true,
+  "requires_gpu": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace"
+}

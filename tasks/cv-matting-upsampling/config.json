@@ -1,7 +1,43 @@
 {
-  "_dropped": true,
-  "_reason": "learned robustly beats nearest on 2/3 trimap widths (medium, wide) cross-seed, but xwide is a degenerate near-tie that sign-flips at seed123 (small margin). Seed-unstable, not overridable by favourable task-gmean, per same bar as decoder-design drop. See DROPPED.md.",
-  "test_cmds": [],
-  "baselines": {},
-  "files": []
+  "test_cmds": [
+    {
+      "cmd": "scripts/composition1k.sh",
+      "label": "composition1k",
+      "group": 1,
+      "compute": 1,
+      "time": "24:00:00",
+      "mem": 32,
+      "package": "image-matting"
+    }
+  ],
+  "baselines": {
+    "learned": {
+      "edit_ops": "edits/learned.edit.py"
+    },
+    "nearest": {
+      "edit_ops": "edits/nearest.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-matting/solution/upsampling.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 15,
+          "end": 20
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "allow_create": false,
+  "rigorous_codebase": true
 }

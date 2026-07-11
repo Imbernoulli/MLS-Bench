@@ -1,28 +1,31 @@
 {
   "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime",
   "install_cmds": [
-    "pip install --no-cache-dir 'numpy<2' pillow",
+    "pip install --no-cache-dir numpy==1.26.4 pillow==10.4.0",
     "python -c \"import torch, numpy, PIL; print('image-matting deps: torch', torch.__version__, 'numpy', numpy.__version__)\""
   ],
   "env": {
-    "MATTING_DATA_ROOT": "/data/image-matting/composites",
-    "MATTING_ITERS": "400",
+    "MATTING_DATA_ROOT": "/data/image-matting/composition1k",
+    "MATTING_ITERS": "100000",
     "PYTHONPATH": "/workspace/image-matting:${PYTHONPATH}",
     "PYTHONUNBUFFERED": "1"
   },
   "data_deps": [
     {
-      "name": "image_matting_composites",
+      "name": "image_matting_composition1k",
       "host_path": "{data_root}/image-matting",
       "container_path": "/data/image-matting",
       "prepare": "vendor/data_scripts/image-matting/prepare_data.py",
-      "description": "REAL trimap-guided image-matting dataset built from PPM-100 (Photographic Portrait Matting: real Flickr portrait photos + real, hand-refined alpha mattes; HF mirror https://huggingface.co/datasets/realdream-ai/ppm-matting), 90 train / 10 val samples, cropped to a padded bbox of the alpha region and resized to 160x160. Each sample is a REAL composite photo I with its REAL GT alpha; foreground (F) and background (B) colour layers are synthesized from the SAME real photo via cv2.inpaint (TELEA) so I = a*F + (1-a)*B holds essentially exactly outside the unknown transition band (reconstruction error ~1e-3 overall). The harness re-derives a trimap (definite-fg / definite-bg / UNKNOWN band) from the real GT alpha at eval time at THREE band widths (6/9/12 = the medium/wide/xwide difficulty settings each task's score gmeans over), so the standard matting metrics (SAD / MSE / gradient error, all measured ONLY in the trimap unknown band, lower is better) are computed on genuine real-photo alpha transitions at three difficulties. Used by the trimap-guided alpha-matte cv-matting-* tasks (soft alpha regression, distinct from segmentation). Downloaded once from the HF mirror and cached; requires network access + opencv on the HOST at prepare time (see host_data_prepare_requirements)."
+      "verify_existing": true,
+      "ready_files": [
+        "{data_root}/image-matting/composition1k/manifest.json",
+        "{data_root}/image-matting/composition1k/train/manifest.json",
+        "{data_root}/image-matting/composition1k/test/manifest.json"
+      ],
+      "description": "Licensed Adobe Composition-1K full protocol staged offline before image construction: all 43,100 canonical training composites and all 1,000 canonical test composites, with train foreground/background/alpha layers and test alpha mattes. Training uses 320x320 crops for 100,000 optimizer steps; one trained model is evaluated on every test composite under trimap widths 6, 9, and 12. The final verifier performs no download, extraction, conversion, dependency installation, or data preparation."
     }
   ],
-  "host_data_prepare_requirements": [
-    "opencv-python-headless",
-    "pillow"
-  ],
+  "host_data_prepare_requirements": [],
   "use_cuda": true,
   "requires_gpu": true,
   "writable_tmpfs": true,

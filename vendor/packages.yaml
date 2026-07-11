@@ -272,3 +272,14 @@ packages:
     url: local
     commit: local
 
+  code-generation-lab:
+    url: local
+    commit: local
+
+  image-matting:
+    url: local
+    commit: local
+
+  prune-lab:
+    url: local
+    commit: local

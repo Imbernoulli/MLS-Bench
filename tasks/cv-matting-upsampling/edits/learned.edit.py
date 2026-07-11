@@ -1,10 +1,4 @@
-"""SOTA baseline for cv-matting-upsampling: LEARNED upsample (bilinear + refine conv).
-
-Bilinear upsample (x2) followed by a learned 3x3 refine conv (a lightweight learned
-upsampler). Reconstructs a smooth, sharp soft edge instead of a blocky nearest-
-neighbour tiling -> lowest SAD / gradient error with clear headroom.
-Reference: vendor/image-matting/baselines/upsampling_learned.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/upsampling.py"
 
@@ -20,5 +14,5 @@ _CONTENT = '''def build_upsampler(cin):
     return LearnedUp()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 31, "end_line": 38, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 15, "end_line": 20, "content": _CONTENT},
 ]

@@ -1,28 +1,31 @@
-# Image Matting: Design the Normalisation Layer (no-norm vs BatchNorm)
+# Image Matting: Normalization
 
 ## Research Question
-**Normalisation** stabilises and speeds up the matting net's short fine-tune. On this
-synthetic composite data (recurring low-frequency fg/bg statistics across images):
-no-norm (identity) < InstanceNorm (per-image) < **BatchNorm** (cross-image statistics,
-which are informative because the composite statistics recur across the fixed set).
-**Redesign the normalisation** used after each conv.
+
+Design the convolutional normalization operator and measure its effect under the
+complete fixed training schedule. No ordering is assumed in the instruction.
 
 ## Implementation Contract
-Modify `make_norm(num_ch)` in `image-matting/solution/norm.py` to return a
-`torch.nn.Module` normalisation layer (e.g. `nn.BatchNorm2d(num_ch)`). A malformed /
-crashing norm falls back to BatchNorm.
 
-## Fixed Pipeline & Evaluation
-- Data: 100 train / 40 val **synthetic composites** (128x128), `I = a*F + (1-a)*B`
-  with an **exact** soft GT alpha of a random blobby shape with fine hair-like detail.
-- Network: a **fixed configurable matting U-Net** (encoder + skip-connection decoder),
-  fed RGB + the trimap, trained a short fine-tune with a fixed alpha-L1 + composition
-  loss. **Only your surface changes.**
-- Three settings = three **trimap-width** difficulties: `medium` (band width 6),
-  `wide` (band width 9), `xwide` (band width 12, thickest unknown band, hardest). The
-  trimap is re-derived from the exact GT alpha at eval time; training always uses the
-  medium band. The score is the **gmean over all three settings**.
-- Metric (lower is better): **alpha SAD** in the trimap unknown band on the val split;
-  MSE and gradient error are also recorded. A **constant-0.5 / copy-trimap predictor
-  scores `CONST_HALF_SAD`** (far above any real net), so the metric is monotone in
-  matting quality.
+Modify `make_norm(num_ch)` in `image-matting/solution/norm.py`. It must return a
+`torch.nn.Module` that maps finite feature tensors to finite tensors without
+changing batch, channel, or spatial shape.
+
+## Fixed Protocol
+
+- Data: the complete licensed Adobe Composition-1K inventory: 43,100 training
+  composites and all 1,000 test composites. Synthetic proxies and selected test
+  slices do not participate.
+- Training: one model for 100,000 optimizer steps, batch 8, random 320x320 crops,
+  Adam at 1e-4 with cosine decay, seed 42.
+- Evaluation: the trained model is evaluated on every test composite under
+  deterministic alpha-derived trimap widths 6 (`medium`), 9 (`wide`), and 12
+  (`xwide`). All three settings participate in scoring.
+- This is an explicit full-inventory research protocol. Its three trimaps are
+  derived from ground-truth alpha and are not presented as the official
+  Composition-1K single-trimap leaderboard protocol.
+- The scored metric is alpha SAD divided by 1000 after fixing known foreground and
+  background pixels. Whole-image MSE and a deterministic finite-difference edge
+  error are diagnostic only.
+- Missing, crashing, wrong-shape, negative-loss, or non-finite editable output
+  invalidates verification. The harness never substitutes another implementation.

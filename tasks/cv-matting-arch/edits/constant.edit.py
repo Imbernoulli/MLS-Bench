@@ -1,12 +1,4 @@
-"""Degenerate baseline (negative control) for cv-matting-arch: CONSTANT / copy-trimap.
-
-Ignores the encoder entirely and predicts a constant alpha derived from the trimap
-(0.5 in the unknown band). Because the GT alpha in the unknown band is a genuine soft
-ramp spanning 0->1 (mean != 0.5), this scores a large SAD (~ CONST_HALF_SAD) and
-MAXIMAL gradient error -> it is beaten by every real matting net, confirming the
-metric is monotone in matting quality.
-Reference: vendor/image-matting/baselines/arch_constant.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/arch.py"
 
@@ -26,5 +18,5 @@ _CONTENT = '''def build_net(in_ch):
     return Net()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 42, "end_line": 64, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 23, "end_line": 43, "content": _CONTENT},
 ]

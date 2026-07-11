@@ -1,11 +1,4 @@
-"""SOTA baseline for cv-matting-dilation: DILATED multi-rate (ASPP-style) block.
-
-Parallel dilated convs at rates 1/2/4 (atrous spatial pyramid pooling, Chen et al.
-2017; dilated context, Iizuka et al. 2017) fused by a 1x1, added residually. Enlarges
-the receptive field WITHOUT losing resolution, aggregating wide context across the
-unknown band -> lowest SAD with clear headroom over a single 3x3.
-Reference: vendor/image-matting/baselines/dilation_aspp.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/dilation.py"
 
@@ -25,5 +18,5 @@ _CONTENT = '''def build_dilation(ch):
     return ASPP()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 35, "end_line": 47, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 16, "end_line": 26, "content": _CONTENT},
 ]

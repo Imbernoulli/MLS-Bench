@@ -1,7 +1,43 @@
 {
-  "_dropped": true,
-  "_reason": "aspp does not beat single on real PPM-100 cross-seed data on any of 3 trimap widths (0/3 robust); medium+wide sign-flip across seeds, xwide robustly inverts. Task-level gmean is robustly wrong both seeds. Worst case of the matting drops. See DROPPED.md.",
-  "test_cmds": [],
-  "baselines": {},
-  "files": []
+  "test_cmds": [
+    {
+      "cmd": "scripts/composition1k.sh",
+      "label": "composition1k",
+      "group": 1,
+      "compute": 1,
+      "time": "24:00:00",
+      "mem": 32,
+      "package": "image-matting"
+    }
+  ],
+  "baselines": {
+    "aspp": {
+      "edit_ops": "edits/aspp.edit.py"
+    },
+    "single": {
+      "edit_ops": "edits/single.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-matting/solution/dilation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 16,
+          "end": 26
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "allow_create": false,
+  "rigorous_codebase": true
 }

@@ -1,11 +1,4 @@
-"""Weak baseline (negative control) for cv-matting-arch: PLAIN encoder-decoder.
-
-Encodes to a stride-8 bottleneck then bilinearly upsamples the deepest feature
-straight back to full resolution -> NO skip connections, NO refinement -> the fine
-soft transition detail is lost -> high SAD. This is the starting default in
-vendor/image-matting/solution/arch.py.
-Reference: vendor/image-matting/baselines/arch_plain.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/arch.py"
 
@@ -31,5 +24,5 @@ _CONTENT = '''def build_net(in_ch):
     return Net()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 42, "end_line": 64, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 23, "end_line": 43, "content": _CONTENT},
 ]

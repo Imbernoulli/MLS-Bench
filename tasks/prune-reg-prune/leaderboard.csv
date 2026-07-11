@@ -1,0 +1,1 @@
+timestamp,model,is_final,seed,acc_cifar10,acc_cifar10_seed1,sparsity_cifar10,sparsity_cifar10_seed1,dense_acc_cifar10,dense_acc_cifar10_seed1,flops_cifar10,flops_cifar10_seed1

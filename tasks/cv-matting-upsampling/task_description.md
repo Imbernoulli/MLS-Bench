@@ -1,28 +1,32 @@
-# Image Matting: Design the Decoder Upsampling (nearest vs learned)
+# Image Matting: Decoder Upsampling
 
 ## Research Question
-The **upsampling** operator decides how much soft-edge detail survives the decoder:
-**nearest-neighbour** (blocky, aliases the soft matte edges) < **bilinear** (smooth) <
-a **learned / guided upsample** (transposed conv, or bilinear + a refine conv). **Redesign
-the decoder upsampling** to reconstruct a smooth, sharp soft edge.
+
+Design the decoder upsampling operator and measure its effect on soft-alpha
+reconstruction. The instruction does not provide an expected candidate ordering.
 
 ## Implementation Contract
-Modify `build_upsampler(cin)` in `image-matting/solution/upsampling.py` to return a
-`torch.nn.Module` mapping a decoder feature `(B,cin,H,W)` to `(B,cin,2H,2W)` (same
-channels; the harness resizes to the exact skip size if needed). A malformed /
-wrong-shape module falls back to bilinear.
 
-## Fixed Pipeline & Evaluation
-- Data: 100 train / 40 val **synthetic composites** (128x128), `I = a*F + (1-a)*B`
-  with an **exact** soft GT alpha of a random blobby shape with fine hair-like detail.
-- Network: a **fixed configurable matting U-Net** (encoder + skip-connection decoder),
-  fed RGB + the trimap, trained a short fine-tune with a fixed alpha-L1 + composition
-  loss. **Only your surface changes.**
-- Three settings = three **trimap-width** difficulties: `medium` (band width 6),
-  `wide` (band width 9), `xwide` (band width 12, thickest unknown band, hardest). The
-  trimap is re-derived from the exact GT alpha at eval time; training always uses the
-  medium band. The score is the **gmean over all three settings**.
-- Metric (lower is better): **alpha SAD** in the trimap unknown band on the val split;
-  MSE and gradient error are also recorded. A **constant-0.5 / copy-trimap predictor
-  scores `CONST_HALF_SAD`** (far above any real net), so the metric is monotone in
-  matting quality.
+Modify `build_upsampler(cin)` in
+`image-matting/solution/upsampling.py`. It must return a `torch.nn.Module` that
+maps `(B,cin,H,W)` to a finite tensor of exact shape `(B,cin,2H,2W)`. The
+harness does not resize malformed active output.
+
+## Fixed Protocol
+
+- Data: the complete licensed Adobe Composition-1K inventory: 43,100 training
+  composites and all 1,000 test composites. Synthetic proxies and selected test
+  slices do not participate.
+- Training: one model for 100,000 optimizer steps, batch 8, random 320x320 crops,
+  Adam at 1e-4 with cosine decay, seed 42.
+- Evaluation: the trained model is evaluated on every test composite under
+  deterministic alpha-derived trimap widths 6 (`medium`), 9 (`wide`), and 12
+  (`xwide`). All three settings participate in scoring.
+- This is an explicit full-inventory research protocol. Its three trimaps are
+  derived from ground-truth alpha and are not presented as the official
+  Composition-1K single-trimap leaderboard protocol.
+- The scored metric is alpha SAD divided by 1000 after fixing known foreground and
+  background pixels. Whole-image MSE and a deterministic finite-difference edge
+  error are diagnostic only.
+- Missing, crashing, wrong-shape, negative-loss, or non-finite editable output
+  invalidates verification. The harness never substitutes another implementation.

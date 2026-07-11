@@ -1,0 +1,27 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/composition1k.sh",
+      "label": "composition1k",
+      "group": 1,
+      "compute": 1,
+      "time": "24:00:00",
+      "mem": 32,
+      "package": "image-matting"
+    }
+  ],
+  "baselines": {
+    "raw": {"edit_ops": "edits/raw.edit.py"},
+    "onehot": {"edit_ops": "edits/onehot.edit.py"}
+  },
+  "files": [
+    {
+      "filename": "image-matting/solution/trimap.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 12, "end": 14}]
+    }
+  ]
+}

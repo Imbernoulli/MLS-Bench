@@ -1,5 +1,14 @@
-"""DROPPED surface (not shipped) -- see DROPPED.md. No live score spec."""
-from mlsbench.scoring.dsl import *  # noqa: F401,F403
-# Intentionally empty: this surface was dropped for a cross-seed seed-unstable near-tie on one
-# of three trimap-width settings (xwide) on real PPM-100 alpha matting data at full budget
-# (400 iters, seeds 42/123).
+"""Full-protocol SAD scoring across all three trimap widths."""
+
+from mlsbench.scoring.dsl import *
+
+
+for _setting in ("medium", "wide", "xwide"):
+    _metric = f"sad_{_setting}"
+    term(
+        _metric,
+        col(_metric).lower().id().sigmoid(),
+    )
+    setting(_setting, weighted_mean((_metric, 1.0)))
+
+task(gmean("medium", "wide", "xwide"))

@@ -1,13 +1,4 @@
-"""SOTA baseline for cv-matting-arch: DIM DEEP-IMAGE-MATTING network.
-
-The Deep Image Matting architecture (Xu et al. 2017, CVPR): an encoder-decoder with
-U-NET SKIP CONNECTIONS (the encoder's high-res features injected into the decoder so
-the matte keeps sharp boundaries) followed by a SECOND REFINEMENT STAGE (a shallow
-residual net that takes the coarse alpha + image and predicts a correction). This is
-the standard matting architecture and recovers a sharp matte -> lowest SAD with clear
-headroom over a plain encoder-decoder. Reference:
-vendor/image-matting/baselines/arch_dim.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/arch.py"
 
@@ -51,5 +42,5 @@ _CONTENT = '''def build_net(in_ch):
     return Net()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 42, "end_line": 64, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 23, "end_line": 43, "content": _CONTENT},
 ]

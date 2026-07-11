@@ -1,10 +1,4 @@
-"""Weak baseline (negative control) for cv-matting-decoder-design: bilinear decoder.
-
-Uses ONLY the deepest (stride-8) encoder feature, projects it to alpha and bilinearly
-upsamples -> no skip connections, discards all high-resolution detail -> blurry matte,
-high SAD. This is the starting default in vendor/image-matting/solution/decoder.py.
-Reference: vendor/image-matting/baselines/decoder_bilinear.py
-"""
+"""Unmeasured full-protocol reference candidate. It has no accepted ranking until fresh terminal measurements exist."""
 
 _FILE = "image-matting/solution/decoder.py"
 
@@ -26,5 +20,5 @@ _CONTENT = '''def build_decoder(enc_channels):
     return Dec()'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 53, "end_line": 70, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 17, "end_line": 33, "content": _CONTENT},
 ]
