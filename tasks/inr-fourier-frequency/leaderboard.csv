@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,psnr_low,psnr_medium,psnr_high,elapsed_low,elapsed_medium,elapsed_high
+2026-07-10T17:17:20.660719+00:00,baseline:sigma_high,true,0,31.916663,26.922403,30.099870,12.3,12.6,12.4
+2026-07-10T17:17:20.660719+00:00,baseline:sigma_low,true,0,31.423719,22.561327,20.417760,12.5,12.6,11.8
+2026-07-10T17:17:20.660719+00:00,baseline:sigma_tuned,true,0,38.989245,39.083427,33.648325,12.5,12.4,9.7

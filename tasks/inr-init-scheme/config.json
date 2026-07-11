@@ -1,0 +1,26 @@
+{
+  "_dropped": true,
+  "_reason": "The measured candidates change both initialization and SIREN frequency, so the observed gap cannot be attributed to initialization and duplicates inr-per-layer-w0. Re-ship requires fixed-frequency candidates and new measurements; see DROPPED.md.",
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "inr-signal-fitting/common.py",
+    "inr-signal-fitting/harness.py"
+  ],
+  "seeds": [
+    0
+  ],
+  "test_cmds": [],
+  "baselines": {
+    "naive_init": {
+      "edit_ops": "edits/naive_init.edit.py"
+    },
+    "siren_w0_low": {
+      "edit_ops": "edits/siren_w0_low.edit.py"
+    },
+    "siren_init": {
+      "edit_ops": "edits/siren_init.edit.py"
+    }
+  },
+  "files": []
+}

@@ -1,0 +1,19 @@
+{
+  "inr-fourier-frequency": {
+    "sigma_high": {
+      "low": 31.916663,
+      "medium": 26.922403,
+      "high": 30.09987
+    },
+    "sigma_low": {
+      "low": 31.423719,
+      "medium": 22.561327,
+      "high": 20.41776
+    },
+    "sigma_tuned": {
+      "low": 38.989245,
+      "medium": 39.083427,
+      "high": 33.648325
+    }
+  }
+}

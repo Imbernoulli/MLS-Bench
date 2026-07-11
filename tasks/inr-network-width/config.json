@@ -1,0 +1,80 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "inr-signal-fitting/common.py",
+    "inr-signal-fitting/harness.py"
+  ],
+  "agent_data_prune": [
+    "/data/inr-signal-fitting"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/inr-signal-fitting",
+      "dest": "data/inr-signal-fitting",
+      "required": true
+    }
+  ],
+  "seeds": [
+    0
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/fit_low.sh",
+      "label": "low",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:15:00",
+      "mem": 16,
+      "package": "inr-signal-fitting"
+    },
+    {
+      "cmd": "scripts/fit_medium.sh",
+      "label": "medium",
+      "group": 2,
+      "compute": 1.0,
+      "time": "0:15:00",
+      "mem": 16,
+      "package": "inr-signal-fitting"
+    },
+    {
+      "cmd": "scripts/fit_high.sh",
+      "label": "high",
+      "group": 3,
+      "compute": 1.0,
+      "time": "0:15:00",
+      "mem": 16,
+      "package": "inr-signal-fitting"
+    }
+  ],
+  "baselines": {
+    "width8": {
+      "edit_ops": "edits/width8.edit.py"
+    },
+    "width64": {
+      "edit_ops": "edits/width64.edit.py"
+    },
+    "width256": {
+      "edit_ops": "edits/width256.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "inr-signal-fitting/solution/width.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 34,
+          "end": 35
+        }
+      ]
+    }
+  ],
+  "calibration_status": "pending_exact_zero_task_specific_anchors",
+  "calibration_protocol": "inr-kodak-fullgrid-2000step-v2"
+}

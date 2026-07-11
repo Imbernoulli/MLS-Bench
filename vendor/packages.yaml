@@ -8,6 +8,10 @@ packages:
     url: local
     commit: local
 
+  inr-signal-fitting:
+    url: local
+    commit: local
+
   continual-learning:
     url: https://github.com/GMvandeVen/continual-learning.git
     commit: e6d795a
@@ -275,4 +279,3 @@ packages:
   sparse-attn-eval:
     url: local
     commit: local
-

@@ -1,0 +1,92 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "inr-signal-fitting/common.py",
+    "inr-signal-fitting/harness.py"
+  ],
+  "agent_data_prune": [
+    "/data/inr-signal-fitting"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/inr-signal-fitting",
+      "dest": "data/inr-signal-fitting",
+      "required": true
+    }
+  ],
+  "seeds": [
+    0
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/fit_low.sh",
+      "label": "low",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:15:00",
+      "mem": 16,
+      "package": "inr-signal-fitting"
+    },
+    {
+      "cmd": "scripts/fit_medium.sh",
+      "label": "medium",
+      "group": 2,
+      "compute": 1.0,
+      "time": "0:15:00",
+      "mem": 16,
+      "package": "inr-signal-fitting"
+    },
+    {
+      "cmd": "scripts/fit_high.sh",
+      "label": "high",
+      "group": 3,
+      "compute": 1.0,
+      "time": "0:15:00",
+      "mem": 16,
+      "package": "inr-signal-fitting"
+    }
+  ],
+  "baselines": {
+    "sigma_low": {
+      "edit_ops": "edits/sigma_low.edit.py"
+    },
+    "sigma_tuned": {
+      "edit_ops": "edits/sigma_tuned.edit.py"
+    },
+    "sigma_high": {
+      "edit_ops": "edits/sigma_high.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "inr-signal-fitting/solution/frequency.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 37,
+          "end": 38
+        }
+      ]
+    }
+  ],
+  "calibration_status": "measured_task_specific_full_official_anchors",
+  "calibration_protocol": "inr-kodak-fullgrid-2000step-v2",
+  "calibration_representative_task": "inr-fourier-frequency",
+  "calibration_representative_date": "2026-07-10",
+  "calibration_representative_seed": 0,
+  "calibration_representative_coordinates": 65536,
+  "calibration_representative_steps": 2000,
+  "calibration_evidence": {
+    "terminal_task_id": 95697,
+    "terminal_container_id": 4867945,
+    "manifest_sha256": "6917c0b86591942653d01eb44ac97c680fd9e5fc7b5892ff1659937012c004f9",
+    "anchors_tsv_sha256": "52bed4ed3190943022bf926d9dc85748e65e96223485a23cc159c35e017ac097",
+    "terminal_metrics_sha256": "5f3ca6bb31ef47ef7a82df118dee997aad4aff582d4516994ce96d01c2cbe3a8"
+  }
+}

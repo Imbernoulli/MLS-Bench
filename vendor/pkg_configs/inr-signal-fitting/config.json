@@ -1,0 +1,39 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-inr-signal-fitting@sha256:674af0eed3edb5fe7f916a225564abe2c1cbebb6a1fe9c9659bc45ba39d4bbe3",
+  "install_cmds": [
+    "pip install --no-cache-dir 'numpy<2'",
+    "python -c \"import torch, numpy; print('torch', torch.__version__, 'numpy', numpy.__version__, 'cuda', torch.cuda.is_available())\""
+  ],
+  "env": {
+    "INR_DATA": "/data/inr-signal-fitting",
+    "PYTHONPATH": "/workspace/inr-signal-fitting:${PYTHONPATH}"
+  },
+  "agent_pruned_files": [
+    "apply_real_anchors.py",
+    "gen_tasks.py",
+    "new_anchors.json",
+    "real_anchors.json",
+    "sweep_anchors.py",
+    "sweep_new_anchors.py",
+    "validate_all.py",
+    "validate_oracle.py"
+  ],
+  "data_deps": [
+    {
+      "name": "inr_signal_fitting_kodak",
+      "host_path": "{data_root}/inr-signal-fitting",
+      "container_path": "/data/inr-signal-fitting",
+      "prepare": "vendor/data_scripts/inr-signal-fitting/prepare_data.py",
+      "ready_files": [
+        "{data_root}/inr-signal-fitting/low.npz",
+        "{data_root}/inr-signal-fitting/medium.npz",
+        "{data_root}/inr-signal-fitting/high.npz"
+      ],
+      "description": "Three real Kodak reference photos (kodim10/kodim07/kodim13, center-cropped to 256x256) baked into fixed {low,medium,high}.npz coordinate/target tensors. Selection uses the minimum and maximum Laplacian-variance crops as endpoints and the remaining crop nearest their joint log-space midpoint in Laplacian variance and radial-FFT high-frequency fraction. Array digests pin the exact anchored pixels. Replaces prior synthetic targets; approximately 7.5 MB and deterministic."
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

@@ -1,0 +1,4 @@
+{
+  "_retired": true,
+  "reason": "This generator input is retired. gen_tasks.py is disabled; reviewed measurements live in real_anchors.json and checked-in leaderboards."
+}

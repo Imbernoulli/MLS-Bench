@@ -1,0 +1,26 @@
+{
+  "_dropped": true,
+  "_reason": "The unit-domain transform both halves the effective Fourier frequency and adds an absorbable paired-feature phase rotation; coordinate inflation also changes effective frequency. Both duplicate inr-fourier-frequency rather than identifying an independent research question; see DROPPED.md.",
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "inr-signal-fitting/common.py",
+    "inr-signal-fitting/harness.py"
+  ],
+  "seeds": [
+    0
+  ],
+  "test_cmds": [],
+  "baselines": {
+    "inflate": {
+      "edit_ops": "edits/inflate.edit.py"
+    },
+    "unit": {
+      "edit_ops": "edits/unit.edit.py"
+    },
+    "identity": {
+      "edit_ops": "edits/identity.edit.py"
+    }
+  },
+  "files": []
+}
