@@ -1,0 +1,68 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "calibration_status": "direct_bounded_accuracy_no_positive_fallback",
+  "calibration_protocol": "mamba_selective_copy_paper_e1_v1",
+  "protocol_status": "terminal_full_single_gpu_run_validated",
+  "protocol_proof": {
+    "source": "Gu and Dao, Mamba, Appendix E.1",
+    "sequence_length": 4096,
+    "memorized_tokens": 16,
+    "vocab_size": 16,
+    "layers": 2,
+    "d_model": 64,
+    "steps": 400000,
+    "learning_rate": 0.0001,
+    "batch_size": 64,
+    "train_examples": 25600000,
+    "train_tokens": 104857600000
+  },
+  "verifier_only_package_files": [
+    "mamba/common.py",
+    "mamba/harness/design_harness.py",
+    "mamba/harness/selective_copy_harness.py",
+    "mamba/harness/state_init_harness.py"
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/paper_e1.sh",
+      "label": "paper_e1",
+      "group": 1,
+      "compute": 1.0,
+      "time": "18:00:00",
+      "mem": 64,
+      "package": "mamba"
+    }
+  ],
+  "baselines": {
+    "lti": {
+      "edit_ops": "edits/lti.edit.py"
+    },
+    "bc_only": {
+      "edit_ops": "edits/bc_only.edit.py"
+    },
+    "selective": {
+      "edit_ops": "edits/selective.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "mamba/solution/selective_param.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 7,
+          "end": 7
+        }
+      ]
+    }
+  ]
+}
