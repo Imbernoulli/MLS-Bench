@@ -1,0 +1,55 @@
+{
+  "allow_create": false,
+  "_verifier_serial": true,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/spiral.sh",
+      "label": "spiral",
+      "group": 1,
+      "compute": 1,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mdn-density"
+    }
+  ],
+  "baselines": {
+    "init_collapsed": {
+      "edit_ops": "edits/init_collapsed.edit.py"
+    },
+    "init_mid": {
+      "edit_ops": "edits/init_mid.edit.py"
+    },
+    "init_good": {
+      "edit_ops": "edits/init_good.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "mdn-density/solution/initialization.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 5,
+          "end": 5
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "mdn-density/common.py",
+    "mdn-density/harness_mdn.py",
+    "mdn-density/mdn_blocks.py"
+  ],
+  "calibration_status": "pending_full_protocol_anchors_unscored",
+  "calibration_protocol": "mdn-custom-full-v3",
+  "protocol_status": "static_ready_pending_task_specific_calibration"
+}

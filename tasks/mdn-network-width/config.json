@@ -1,0 +1,55 @@
+{
+  "allow_create": false,
+  "_verifier_serial": true,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/spiral.sh",
+      "label": "spiral",
+      "group": 1,
+      "compute": 1,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mdn-density"
+    }
+  ],
+  "baselines": {
+    "width_narrow": {
+      "edit_ops": "edits/width_narrow.edit.py"
+    },
+    "width_mid": {
+      "edit_ops": "edits/width_mid.edit.py"
+    },
+    "width_wide": {
+      "edit_ops": "edits/width_wide.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "mdn-density/solution/network_width.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 5,
+          "end": 5
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "mdn-density/common.py",
+    "mdn-density/harness_mdn.py",
+    "mdn-density/mdn_blocks.py"
+  ],
+  "calibration_status": "pending_full_protocol_anchors_unscored",
+  "calibration_protocol": "mdn-custom-full-v3",
+  "protocol_status": "static_ready_pending_task_specific_calibration"
+}

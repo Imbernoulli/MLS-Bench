@@ -1,0 +1,37 @@
+{
+  "allow_create": false,
+  "_verifier_serial": true,
+  "rigorous_codebase": true,
+  "calibration_status": "pending_full_protocol_anchors_unscored",
+  "calibration_protocol": "mdn-custom-full-v3",
+  "protocol_status": "static_ready_pending_task_specific_calibration",
+  "verifier_only_package_files": [
+    "mdn-density/common.py",
+    "mdn-density/harness_mdn.py",
+    "mdn-density/mdn_blocks.py"
+  ],
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/spiral.sh",
+      "label": "spiral",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mdn-density"
+    }
+  ],
+  "baselines": {
+    "depth1": {"edit_ops": "edits/depth1.edit.py"},
+    "depth2": {"edit_ops": "edits/depth2.edit.py"},
+    "depth4": {"edit_ops": "edits/depth4.edit.py"}
+  },
+  "files": [
+    {
+      "filename": "mdn-density/solution/trunk_depth.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 5, "end": 5}]
+    }
+  ]
+}

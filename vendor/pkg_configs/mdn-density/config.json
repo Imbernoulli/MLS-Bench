@@ -1,0 +1,19 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-mdn-density@sha256:1420b9bbd32b5bbf2503f318c9da2504e946cc1e4c3f9d321fb25f707cf73b40",
+  "install_cmds": [
+    "pip install --no-cache-dir 'numpy<2'",
+    "python -c \"import torch; print('torch', torch.__version__, 'cuda', torch.cuda.is_available())\""
+  ],
+  "env": {
+    "PYTHONPATH": "/workspace/mdn-density:${PYTHONPATH}",
+    "OMP_NUM_THREADS": "4"
+  },
+  "data_deps": [],
+  "agent_pruned_files": [
+    "PROTOCOL.md"
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

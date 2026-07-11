@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,nll_inverse_sine,nll_two_branch,nll_spiral,elapsed_inverse_sine,elapsed_two_branch,elapsed_spiral
+2026-07-11T05:36:57+00:00,baseline:bench_point,true,42,-0.073271,1.578776,-0.084000,9.5,9.5,10.1
+2026-07-11T05:30:59+00:00,baseline:bench_mixture,true,42,-1.169754,-1.023576,-1.806954,11.9,12.4,12.0

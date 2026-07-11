@@ -1,0 +1,55 @@
+{
+  "allow_create": false,
+  "_verifier_serial": true,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/inverse_sine.sh",
+      "label": "inverse_sine",
+      "group": 1,
+      "compute": 1,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "mdn-density"
+    }
+  ],
+  "baselines": {
+    "k1_single": {
+      "edit_ops": "edits/k1_single.edit.py"
+    },
+    "k3_mixture": {
+      "edit_ops": "edits/k3_mixture.edit.py"
+    },
+    "k5_mixture": {
+      "edit_ops": "edits/k5_mixture.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "mdn-density/solution/num_components.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 5,
+          "end": 5
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "mdn-density/common.py",
+    "mdn-density/harness_mdn.py",
+    "mdn-density/mdn_blocks.py"
+  ],
+  "calibration_status": "pending_full_protocol_anchors_unscored",
+  "calibration_protocol": "mdn-custom-full-v3",
+  "protocol_status": "static_ready_pending_task_specific_calibration"
+}
