@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,protocol,acc_snli,acc_mnli_m,acc_mnli_mm,elapsed_seconds,zone,log_sha256
+2026-07-11T07:43:13.699733+00:00,baseline:majority,true,42,nli-full-snli-distilbert-v1,0.34283388,0.35445746,0.35221725,1.7,local-cpu,8ffe749c5a58b19c5cbf731dbac4711bf68e8e1fe2d07b41274d8026a1fcf51b
+2026-07-11T07:37:57.000000+00:00,baseline:frozen,true,42,nli-full-snli-distilbert-v1,0.57206840,0.39286806,0.38415378,990.4,K1-H20,45afcfa6e843527472c8549407b7849e46d5edb786fd0ca406f620088ae0a915
+2026-07-11T08:06:50.000000+00:00,baseline:finetune,true,42,nli-full-snli-distilbert-v1,0.89729235,0.69424350,0.70728234,2723.1,K1-H20,1bd91117fd84ec99a2e0e7c53371d0db4b388613cb39c1b73a399f3f7f0e208b

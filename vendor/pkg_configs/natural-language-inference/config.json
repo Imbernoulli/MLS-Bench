@@ -1,0 +1,47 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-natural-language-inference@sha256:3413891ea22deecf213026a9c34403d65133702286042175057dcb88f329e7e6",
+  "extra_files": [
+    {
+      "src": "{data_root}/natural-language-inference",
+      "dst": "/data/natural-language-inference"
+    }
+  ],
+  "install_cmds": [
+    "pip install --no-cache-dir 'transformers>=4.41,<4.50' 'tokenizers>=0.20,<0.22' 'huggingface_hub<1.0' 'numpy<2'",
+    "python -c \"import torch, transformers; from transformers import AutoModel, AutoTokenizer; print('transformers', transformers.__version__, 'torch', torch.__version__)\""
+  ],
+  "env": {
+    "NLI_MODEL": "/data/natural-language-inference/models/distilbert-base-uncased",
+    "NLI_DATA": "/data/natural-language-inference/data",
+    "HF_HOME": "/data/natural-language-inference/data/hf_home",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false"
+  },
+  "data_deps": [
+    {
+      "name": "natural_language_inference",
+      "description": "Pinned DistilBERT base uncased revision 12040acc plus the complete labeled 3-way NLI corpus. Training preserves all 549367 labeled SNLI train rows in source order. Evaluation preserves all 9824 labeled SNLI test rows, 9815 MultiNLI matched development rows, and 9832 MultiNLI mismatched development rows. Source parquet and canonical JSONL counts and SHA256 digests are authenticated; only SNLI label=-1 rows are omitted. The immutable repository image contains model, tokenizer, data, dependencies, and verifier runtime for offline execution.",
+      "host_path": "{data_root}/natural-language-inference",
+      "container_path": "/data/natural-language-inference",
+      "ready_files": [
+        "{data_root}/natural-language-inference/manifest.json",
+        "{data_root}/natural-language-inference/models/distilbert-base-uncased/config.json",
+        "{data_root}/natural-language-inference/models/distilbert-base-uncased/model.safetensors",
+        "{data_root}/natural-language-inference/models/distilbert-base-uncased/tokenizer.json",
+        "{data_root}/natural-language-inference/models/distilbert-base-uncased/tokenizer_config.json",
+        "{data_root}/natural-language-inference/models/distilbert-base-uncased/vocab.txt",
+        "{data_root}/natural-language-inference/data/snli/train.jsonl",
+        "{data_root}/natural-language-inference/data/snli/test.jsonl",
+        "{data_root}/natural-language-inference/data/mnli/dev_matched.jsonl",
+        "{data_root}/natural-language-inference/data/mnli/dev_mismatched.jsonl"
+      ],
+      "prepare": "vendor/data_scripts/natural-language-inference/prepare_data.py"
+    }
+  ],
+  "verify_existing_data": true,
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

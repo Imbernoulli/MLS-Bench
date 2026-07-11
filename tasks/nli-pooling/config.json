@@ -1,0 +1,104 @@
+{
+  "allow_create": false,
+  "agent_data_prune": [
+    "/data/natural-language-inference/data/snli/test.jsonl",
+    "/data/natural-language-inference/data/mnli/dev_matched.jsonl",
+    "/data/natural-language-inference/data/mnli/dev_mismatched.jsonl"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/natural-language-inference/data/snli/test.jsonl",
+      "dest": "data/natural-language-inference/snli/test.jsonl"
+    },
+    {
+      "host_path": "{data_root}/natural-language-inference/data/mnli/dev_matched.jsonl",
+      "dest": "data/natural-language-inference/mnli/dev_matched.jsonl"
+    },
+    {
+      "host_path": "{data_root}/natural-language-inference/data/mnli/dev_mismatched.jsonl",
+      "dest": "data/natural-language-inference/mnli/dev_mismatched.jsonl"
+    }
+  ],
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run.sh",
+      "label": "nli",
+      "group": 1,
+      "compute": 1,
+      "time": "6:00:00",
+      "mem": 64,
+      "package": "natural-language-inference"
+    }
+  ],
+  "baselines": {
+    "majority": {
+      "edit_ops": "edits/majority.edit.py"
+    },
+    "sum": {
+      "edit_ops": "edits/sum.edit.py"
+    },
+    "cls": {
+      "edit_ops": "edits/cls.edit.py"
+    },
+    "mean": {
+      "edit_ops": "edits/mean.edit.py"
+    },
+    "max": {
+      "edit_ops": "edits/max.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "natural-language-inference/solution/pooling.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 37,
+          "end": 39
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "natural-language-inference/common.py",
+    "natural-language-inference/harness_augmentation.py",
+    "natural-language-inference/harness_classifier_head.py",
+    "natural-language-inference/harness_class_weighting.py",
+    "natural-language-inference/harness_finetune.py",
+    "natural-language-inference/harness_hypothesis_bias.py",
+    "natural-language-inference/harness_interaction_head.py",
+    "natural-language-inference/harness_pair_encoding.py",
+    "natural-language-inference/harness_pooling.py",
+    "natural-language-inference/harness_regularization.py",
+    "natural-language-inference/harness_truncation.py"
+  ],
+  "pristine_manifest_mode": "scaffold",
+  "calibration_status": "fresh_fullscale_h20_anchors_and_static_sibling_audit_20260711",
+  "calibration_protocol": "nli-full-snli-distilbert-v1",
+  "calibration_representative_task": "nli-finetune",
+  "calibration_representative_date": "2026-07-11",
+  "calibration_representative_seed": 42,
+  "calibration_representative_hardware": "1x NVIDIA H20",
+  "calibration_anchor_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-natural-language-inference@sha256:054dc61204ab8731eccaddcc079e9a00a3783867e3a2f2a9f156a52204c1a955",
+  "calibration_runtime_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-natural-language-inference@sha256:3413891ea22deecf213026a9c34403d65133702286042175057dcb88f329e7e6",
+  "calibration_static_sibling_count": 10,
+  "calibration_train_rows": 549367,
+  "calibration_eval_rows": 29471,
+  "calibration_epochs": 3,
+  "calibration_optimizer_steps": 51504,
+  "calibration_majority_elapsed_seconds": 1.7,
+  "calibration_majority_log_sha256": "8ffe749c5a58b19c5cbf731dbac4711bf68e8e1fe2d07b41274d8026a1fcf51b",
+  "calibration_frozen_elapsed_seconds": 990.4,
+  "calibration_frozen_log_sha256": "45afcfa6e843527472c8549407b7849e46d5edb786fd0ca406f620088ae0a915",
+  "calibration_finetune_elapsed_seconds": 2723.1,
+  "calibration_finetune_log_sha256": "1bd91117fd84ec99a2e0e7c53371d0db4b388613cb39c1b73a399f3f7f0e208b"
+}
