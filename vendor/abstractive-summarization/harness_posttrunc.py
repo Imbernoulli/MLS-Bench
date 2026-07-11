@@ -37,7 +37,7 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = common.setup(args.seed)
-    t0 = time.time()
+    t0 = time.perf_counter()
 
     build_keep_sentences = common.load_surface(args.solution, "build_keep_sentences")
     keep = common.require_surface_int(
@@ -85,7 +85,7 @@ def main() -> None:
     )
     print(
         f"SUMM_DONE settings={len(common.SETTINGS)} total_docs={common.TOTAL_DOCS} "
-        f"seed={args.seed} elapsed={time.time() - t0:.1f}",
+        f"seed={args.seed} elapsed={time.perf_counter() - t0:.1f}",
         flush=True,
     )
 

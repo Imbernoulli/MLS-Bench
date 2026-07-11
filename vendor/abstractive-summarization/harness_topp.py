@@ -26,7 +26,7 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = common.setup(args.seed)
-    t0 = time.time()
+    t0 = time.perf_counter()
 
     build_top_p = common.load_surface(args.solution, "build_top_p")
     tp = common.require_surface_number(
@@ -49,7 +49,7 @@ def main() -> None:
     common.run_over_settings(build_gen, dev)
     print(
         f"SUMM_DONE settings={len(common.SETTINGS)} total_docs={common.TOTAL_DOCS} "
-        f"seed={args.seed} elapsed={time.time() - t0:.1f}",
+        f"seed={args.seed} elapsed={time.perf_counter() - t0:.1f}",
         flush=True,
     )
 

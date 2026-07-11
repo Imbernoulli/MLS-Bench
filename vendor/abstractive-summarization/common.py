@@ -20,7 +20,7 @@ from typing import Dict, List, Optional, Tuple
 # ---------------------------------------------------------------------------
 # Fixed evaluation constants (shared by ALL summ-* tasks)
 # ---------------------------------------------------------------------------
-DEFAULT_MAX_INPUT_TOKENS = 512  # default source truncation (some tasks override)
+DEFAULT_MAX_INPUT_TOKENS = 512  # fixed uniform source-token cap for all ten tasks
 GEN_BATCH_SIZE = 16        # fixed generation batch size
 SEED = 42
 PROTOCOL = "summ-full-official-test-v1"
@@ -55,16 +55,19 @@ MODEL_INVENTORY = {
         "revision": "5b2e376c845c201ddc34ec0e55fd1ad9890ba5ee",
         "weights_sha256": "6e9ebfc94e474225457570ad33c225cf66ca26279c5cd1cbfb67e089a03a791b",
         "weights_bytes": 611201041,
+        "parameter_count": 305510400,
     },
     "cnndm": {
         "revision": "a4f8f3ea906ed274767e9906dbaede7531d660ff",
         "weights_sha256": "3bac65d18c99463302d12ca75c2220ea714f9c81ce235f205fa818efe71df6ea",
         "weights_bytes": 1222317369,
+        "parameter_count": 305510400,
     },
     "samsum": {
         "revision": "e49b3d60d923f12db22bdd363356f1a4c68532ad",
         "weights_sha256": "9f453aa6edef4dba1893723b7313b57b06b60214442d308a8acc3baa9583dd7b",
         "weights_bytes": 1625565295,
+        "parameter_count": 406290432,
     },
 }
 
@@ -110,15 +113,18 @@ def setup(seed: int = SEED):
     import numpy as np
     import torch
 
+    if seed != SEED:
+        raise SystemExit(f"seed must be exactly {SEED}, got {seed}")
     os.environ.setdefault("HF_HUB_OFFLINE", "1")
     os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     random.seed(seed)
     np.random.seed(seed)
     torch.manual_seed(seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed_all(seed)
-    dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    if not torch.cuda.is_available():
+        raise SystemExit("summarization verification requires one CUDA GPU")
+    torch.cuda.manual_seed_all(seed)
+    dev = torch.device("cuda:0")
     return dev
 
 
@@ -209,6 +215,11 @@ def load_model_and_tokenizer(setting: str, device):
     model.to(device)
     model.eval()
     parameter_count = sum(parameter.numel() for parameter in model.parameters())
+    if parameter_count != expected["parameter_count"]:
+        raise SystemExit(
+            f"model parameter-count mismatch for {setting}: "
+            f"{parameter_count} != {expected['parameter_count']}"
+        )
     print(
         f"SUMM_MODEL setting={setting} model={_MODEL_DIRS[setting]} "
         f"revision={expected['revision']} params={parameter_count} "
@@ -382,12 +393,18 @@ def generate_summaries(model, tok, docs: List[str], gen_kwargs: dict,
                        ) -> List[str]:
     """Decode summaries for every document with the agent's decode config.
 
-    Source truncation (max_input_tokens), batching, and the frozen model are
+    Source truncation (512 tokenizer tokens), batching, and the frozen model are
     fixed by the harness; only `gen_kwargs` (the agent's decode config) varies.
-    Some tasks (input-truncation) sweep max_input_tokens explicitly.
     """
     import torch
 
+    if isinstance(max_input_tokens, bool) or max_input_tokens != DEFAULT_MAX_INPUT_TOKENS:
+        print(
+            f"SURFACE_ERROR summarization max_input_tokens must be "
+            f"{DEFAULT_MAX_INPUT_TOKENS}",
+            flush=True,
+        )
+        raise ValueError("invalid fixed source-token cap")
     gk = _sanitize_gen_kwargs(gen_kwargs)
     preds: List[str] = []
     for i in range(0, len(docs), GEN_BATCH_SIZE):
@@ -465,7 +482,7 @@ def run_over_settings(build_gen_for_setting, device,
 
     build_gen_for_setting(setting) -> gen_kwargs dict (or None if preds are
         produced by preds_override_for_setting instead of model.generate).
-    max_input_tokens_for_setting(setting) -> int (optional; defaults to 512).
+    max_input_tokens_for_setting(setting) -> int (optional; must remain 512).
     preds_override_for_setting(setting, docs) -> list[str] (optional; for
         non-model source policies like copy/empty/lead).
     """

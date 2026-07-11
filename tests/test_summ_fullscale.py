@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
+import math
 from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
 TASKS = sorted((ROOT / "tasks").glob("summ-*"))
+TASK_NAMES = tuple(task.name for task in TASKS)
 EXPECTED = {
     "xsum": {
         "rows": 11334,
@@ -34,6 +37,27 @@ EXPECTED = {
         "params": 406290432,
     },
 }
+SURFACES = {
+    "summ-beam-repetition": (
+        "SUMM_BEAM num_beams=1 no_repeat_ngram_size=0 repetition_penalty=1.0"
+    ),
+    "summ-beam-width": "SUMM_BEAMWIDTH num_beams=1",
+    "summ-decoding-length": (
+        "SUMM_LENGTH min_length=1 max_length=20 length_penalty=0.2"
+    ),
+    "summ-decoding-temperature": "SUMM_TEMPERATURE temperature=2.0",
+    "summ-diverse-beam": (
+        "SUMM_DIVERSE num_beams=4 num_beam_groups=4 diversity_penalty=1.0"
+    ),
+    "summ-norepeat-ngram": "SUMM_NOREPEAT no_repeat_ngram_size=0",
+    "summ-nucleus-topp": "SUMM_TOPP top_p=1.0",
+    "summ-post-truncation": "SUMM_POSTTRUNC keep_sentences=1",
+    "summ-sampling-vs-beam": (
+        "SUMM_STRATEGY strategy=sample num_beams=None top_p=0.95 "
+        "top_k=0 temperature=1.0"
+    ),
+    "summ-source-policy": "SUMM_SOURCE policy=abstractive",
+}
 VERIFIER_RUNTIME = {
     "abstractive-summarization/common.py",
     "abstractive-summarization/harness_beam.py",
@@ -49,25 +73,28 @@ VERIFIER_RUNTIME = {
 }
 
 
-def _parser():
-    path = ROOT / "tasks" / "summ-beam-width" / "parser.py"
-    spec = importlib.util.spec_from_file_location("summ_full_parser", path)
+def _parser(task_name: str):
+    path = ROOT / "tasks" / task_name / "parser.py"
+    spec = importlib.util.spec_from_file_location(f"parser_{task_name}", path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module.Parser()
 
 
-def _valid_log(*, include_models: bool = True, source_policy: str | None = None) -> str:
+def _valid_log(task_name: str, *, source_policy: str = "abstractive") -> str:
+    surface = SURFACES[task_name]
+    include_models = True
+    if task_name == "summ-source-policy":
+        surface = f"SUMM_SOURCE policy={source_policy}"
+        include_models = source_policy == "abstractive"
     lines = [
-        "SUMM_PROTOCOL version=summ-full-official-test-v1 settings=3 total_docs=23643"
+        surface,
+        "SUMM_PROTOCOL version=summ-full-official-test-v1 settings=3 total_docs=23643",
     ]
-    if source_policy is not None:
-        lines.append(f"SUMM_SOURCE policy={source_policy}")
     for index, (setting, item) in enumerate(EXPECTED.items()):
         lines.append(
-            f"SUMM_DATA setting={setting} n_docs={item['rows']} "
-            f"sha256={item['data']}"
+            f"SUMM_DATA setting={setting} n_docs={item['rows']} sha256={item['data']}"
         )
         if include_models:
             lines.append(
@@ -84,140 +111,332 @@ def _valid_log(*, include_models: bool = True, source_policy: str | None = None)
             f"SUMM_SETTING_DONE setting={setting} generated={item['rows']} "
             f"expected={item['rows']}"
         )
-    lines.extend([
-        "SUMM_EVAL_DONE settings=3 total_docs=23643",
-        "SUMM_DONE settings=3 total_docs=23643 seed=42 elapsed=1234.5",
-    ])
+    lines.extend(
+        (
+            "SUMM_EVAL_DONE settings=3 total_docs=23643",
+            "SUMM_DONE settings=3 total_docs=23643 seed=42 elapsed=1234.5",
+        )
+    )
     return "\n".join(lines)
 
 
-def test_complete_model_protocol_is_accepted():
-    result = _parser().parse("summ", _valid_log())
-    assert set(result.metrics) == {
-        f"rouge{metric}_{setting}"
-        for setting in EXPECTED
-        for metric in ("L", "1", "2")
-    }
+def _remove_first(log: str, prefix: str) -> str:
+    lines = log.splitlines()
+    index = next(i for i, line in enumerate(lines) if line.startswith(prefix))
+    del lines[index]
+    return "\n".join(lines)
 
 
-def test_complete_non_model_source_policy_is_accepted():
-    result = _parser().parse(
-        "summ", _valid_log(include_models=False, source_policy="lead3")
+def _duplicate_first(log: str, prefix: str) -> str:
+    lines = log.splitlines()
+    index = next(i for i, line in enumerate(lines) if line.startswith(prefix))
+    lines.insert(index + 1, lines[index])
+    return "\n".join(lines)
+
+
+def _swap_first(log: str, left_prefix: str, right_prefix: str) -> str:
+    lines = log.splitlines()
+    left = next(i for i, line in enumerate(lines) if line.startswith(left_prefix))
+    right = next(i for i, line in enumerate(lines) if line.startswith(right_prefix))
+    lines[left], lines[right] = lines[right], lines[left]
+    return "\n".join(lines)
+
+
+def _destructive_categories(task_name: str):
+    valid = _valid_log(task_name)
+    surface = valid.splitlines()[0]
+    other_surface = (
+        SURFACES["summ-nucleus-topp"]
+        if task_name != "summ-nucleus-topp"
+        else SURFACES["summ-beam-width"]
     )
-    assert len(result.metrics) == 9
-
-
-def test_every_incomplete_or_invalid_proof_rejects_all_metrics():
-    valid = _valid_log()
-    mutations = [
-        valid.replace("SUMM_EVAL_DONE settings=3 total_docs=23643", ""),
-        valid.replace("SUMM_DONE settings=3 total_docs=23643 seed=42", "SUMM_DONE settings=2 total_docs=23643 seed=42"),
-        valid.replace("n_docs=11334", "n_docs=11333", 1),
-        valid.replace(EXPECTED["xsum"]["data"], "0" * 64, 1),
-        valid.replace("dtype=float16", "dtype=float32", 1),
-        valid.replace(EXPECTED["cnndm"]["weights"], "1" * 64, 1),
-        valid.replace("rougeL=0.310000", "rougeL=nan", 1),
-        valid.replace("generated=819", "generated=818", 1),
-        valid + "\n" + next(
-            line for line in valid.splitlines()
-            if line.startswith("SUMM_METRICS setting=xsum")
+    categories = [
+        ("wrong_label", [("not-this-task", valid)]),
+        ("missing_surface", [(task_name, _remove_first(valid, "SUMM_"))]),
+        ("duplicate_surface", [(task_name, surface + "\n" + valid)]),
+        ("wrong_sibling_surface", [(task_name, valid.replace(surface, other_surface, 1))]),
+        (
+            "surface_protocol_order",
+            [(task_name, _swap_first(valid, surface, "SUMM_PROTOCOL"))],
         ),
-        valid.replace("elapsed=1234.5", "elapsed=nan"),
+        ("missing_protocol", [(task_name, _remove_first(valid, "SUMM_PROTOCOL"))]),
+        ("duplicate_protocol", [(task_name, _duplicate_first(valid, "SUMM_PROTOCOL"))]),
+        ("wrong_data_count", [(task_name, valid.replace("n_docs=11334", "n_docs=11333", 1))]),
+        ("wrong_data_digest", [(task_name, valid.replace(EXPECTED["xsum"]["data"], "0" * 64, 1))]),
+        (
+            "inexact_parameter_count",
+            [(task_name, valid.replace("params=305510400", "params=305510401", 1))],
+        ),
+        (
+            "wrong_checkpoint_identity",
+            [
+                (task_name, valid.replace(EXPECTED["xsum"]["revision"], "0" * 40, 1)),
+                (task_name, valid.replace(EXPECTED["cnndm"]["weights"], "1" * 64, 1)),
+            ],
+        ),
+        (
+            "out_of_order_setting_proof",
+            [
+                (
+                    task_name,
+                    _swap_first(valid, "SUMM_DATA setting=xsum", "SUMM_DATA setting=cnndm"),
+                )
+            ],
+        ),
+        (
+            "missing_setting_metric",
+            [(task_name, _remove_first(valid, "SUMM_METRICS setting=xsum"))],
+        ),
+        (
+            "duplicate_metric",
+            [(task_name, _duplicate_first(valid, "SUMM_METRICS setting=xsum"))],
+        ),
+        (
+            "invalid_metric_values",
+            [
+                (task_name, valid.replace("rougeL=0.300000", "rougeL=nan", 1)),
+                (task_name, valid.replace("rouge1=0.400000", "rouge1=inf", 1)),
+                (task_name, valid.replace("rouge2=0.200000", "rouge2=1.1", 1)),
+                (task_name, valid.replace("plen=42.0", "plen=-1", 1)),
+            ],
+        ),
+        (
+            "wrong_metric_inventory",
+            [
+                (
+                    task_name,
+                    valid.replace(
+                        "plen=42.0 n_docs=11334", "plen=42.0 n_docs=11333", 1
+                    ),
+                )
+            ],
+        ),
+        (
+            "invalid_setting_completion",
+            [
+                (task_name, valid.replace("generated=819", "generated=818", 1)),
+                (task_name, _duplicate_first(valid, "SUMM_SETTING_DONE setting=samsum")),
+                (task_name, _remove_first(valid, "SUMM_SETTING_DONE setting=samsum")),
+            ],
+        ),
+        (
+            "invalid_eval_completion",
+            [
+                (task_name, _remove_first(valid, "SUMM_EVAL_DONE")),
+                (task_name, _duplicate_first(valid, "SUMM_EVAL_DONE")),
+                (task_name, valid.replace("SUMM_EVAL_DONE settings=3", "SUMM_EVAL_DONE settings=2", 1)),
+            ],
+        ),
+        (
+            "invalid_final_completion",
+            [
+                (task_name, _remove_first(valid, "SUMM_DONE")),
+                (task_name, _duplicate_first(valid, "SUMM_DONE")),
+                (task_name, valid.replace("elapsed=1234.5", "elapsed=nan")),
+                (task_name, valid.replace("elapsed=1234.5", "elapsed=0")),
+            ],
+        ),
+        (
+            "trailing_or_failure_output",
+            [
+                (task_name, valid + "\ntrailing output"),
+                (task_name, valid + "\nTraceback (most recent call last):"),
+                (task_name, valid.replace("SUMM_DONE", "SURFACE_ERROR injected\nSUMM_DONE", 1)),
+                (task_name, valid.replace("SUMM_DONE", "VERIFICATION_FAILED rc=9\nSUMM_DONE", 1)),
+            ],
+        ),
     ]
-    for mutated in mutations:
-        result = _parser().parse("summ", mutated)
-        assert result.metrics == {}, result.feedback
+    assert len(categories) == 20
+    return categories
 
 
-def test_model_task_cannot_omit_model_completion_proofs():
-    result = _parser().parse("summ", _valid_log(include_models=False))
-    assert result.metrics == {}
-
-
-def test_ten_siblings_share_fail_closed_parser_and_fullscale_config():
+def test_all_ten_task_specific_protocols_are_accepted():
     assert len(TASKS) == 10
+    for task_name in TASK_NAMES:
+        result = _parser(task_name).parse(task_name, _valid_log(task_name))
+        assert len(result.metrics) == 9, (task_name, result.feedback)
+
+
+def test_non_model_source_policies_are_explicit_and_do_not_claim_model_proofs():
+    parser = _parser("summ-source-policy")
+    for policy in ("lead3", "copy_document", "first_token", "empty"):
+        result = parser.parse(
+            "summ-source-policy", _valid_log("summ-source-policy", source_policy=policy)
+        )
+        assert len(result.metrics) == 9, (policy, result.feedback)
+    invalid = _valid_log("summ-source-policy", source_policy="empty")
+    xsum = EXPECTED["xsum"]
+    injected = (
+        f"SUMM_MODEL setting=xsum model={xsum['model']} revision={xsum['revision']} "
+        f"params={xsum['params']} dtype=float16 weights_sha256={xsum['weights']}"
+    )
+    invalid = invalid.replace("SUMM_METRICS setting=xsum", injected + "\nSUMM_METRICS setting=xsum")
+    assert parser.parse("summ-source-policy", invalid).metrics == {}
+
+
+def test_twenty_destructive_categories_reject_for_every_sibling():
+    category_names: set[str] = set()
+    replay_count = 0
+    for task_name in TASK_NAMES:
+        parser = _parser(task_name)
+        for category, variants in _destructive_categories(task_name):
+            category_names.add(category)
+            for cmd_label, mutated in variants:
+                result = parser.parse(cmd_label, mutated)
+                assert result.metrics == {}, (task_name, category, result.feedback)
+                replay_count += 1
+    assert len(category_names) == 20
+    assert replay_count == 340
+
+
+def test_ten_siblings_share_parser_and_fullscale_config_contract():
     parser_hashes = {
-        hashlib.sha256((task / "parser.py").read_bytes()).hexdigest()
-        for task in TASKS
+        hashlib.sha256((task / "parser.py").read_bytes()).hexdigest() for task in TASKS
+    }
+    score_hashes = {
+        hashlib.sha256((task / "score_spec.py").read_bytes()).hexdigest() for task in TASKS
     }
     assert len(parser_hashes) == 1
+    assert len(score_hashes) == 1
     for task in TASKS:
         config = json.loads((task / "config.json").read_text())
         assert config["rigorous_codebase"] is True
-        assert "agent_data_prune" not in config
-        assert "verifier_data_deps" not in config
         assert config["seeds"] == [42]
+        assert config["test_cmds"] == [
+            {
+                "cmd": "scripts/run.sh",
+                "label": task.name,
+                "group": 1,
+                "compute": 1,
+                "time": "4:00:00",
+                "mem": 64,
+                "package": "abstractive-summarization",
+            }
+        ]
         assert config["calibration_protocol"] == "summ-full-official-test-v1"
         assert config["calibration_anchor_counts"] == {
             "xsum": 11334,
             "cnndm": 11490,
             "samsum": 819,
         }
+        details = config["calibration_protocol_details"]
+        assert details["settings_order"] == ["xsum", "cnndm", "samsum"]
+        assert details["total_documents"] == 23643
+        assert details["max_input_tokens"] == 512
+        assert details["generation_batch_size"] == 16
+        assert details["execution"] == "serial_single_gpu"
         assert set(config["verifier_only_package_files"]) == VERIFIER_RUNTIME
-        assert len(config["test_cmds"]) == 1
-        assert config["test_cmds"][0]["compute"] == 1
-        assert config["test_cmds"][0]["time"] == "4:00:00"
 
 
-def test_no_legacy_head_slice_assets_or_claims_remain():
-    assert not (ROOT / "vendor" / "abstractive-summarization" / "_summ_data").exists()
+def test_512_token_protocol_and_exact_checkpoint_counts_are_code_pinned():
+    common_path = ROOT / "vendor" / "abstractive-summarization" / "common.py"
+    source = common_path.read_text()
+    tree = ast.parse(source, filename=str(common_path))
+    assignments = {
+        node.targets[0].id: ast.literal_eval(node.value)
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Name)
+        and node.targets[0].id in {"DEFAULT_MAX_INPUT_TOKENS", "GEN_BATCH_SIZE"}
+    }
+    assert assignments == {"DEFAULT_MAX_INPUT_TOKENS": 512, "GEN_BATCH_SIZE": 16}
+    assert "max_length=int(max_input_tokens)" in source
+    assert "max_input_tokens != DEFAULT_MAX_INPUT_TOKENS" in source
+    for item in EXPECTED.values():
+        assert f'"parameter_count": {item["params"]}' in source
+    assert 'parameter_count != expected["parameter_count"]' in source
+
+
+def test_scripts_are_offline_strict_and_preserve_runner_gpu_visibility():
+    forbidden = ("pip install", "conda install", "apt-get", "curl ", "wget ", "git clone")
     for task in TASKS:
-        assert not (task / "data").exists()
-        searchable = "\n".join(
-            path.read_text(errors="replace")
-            for path in task.rglob("*")
-            if path.is_file() and path.suffix in {".py", ".md", ".json", ".sh"}
-        ).lower()
-        assert "300-doc" not in searchable
-        assert "300-document" not in searchable
-        assert "head-slice" not in searchable
+        script = (task / "scripts" / "run.sh").read_text()
+        assert "set -euo pipefail" in script
+        assert f'TASK_ID="{task.name}"' in script
+        assert "VERIFICATION_FAILED" in script
+        assert "cd /workspace/abstractive-summarization || exit 111" in script
+        assert "CUDA_VISIBLE_DEVICES" not in script
+        assert not any(token in script for token in forbidden)
 
 
-def test_agent_scaffolds_do_not_publish_baseline_answers():
+def test_pending_and_measured_leaderboards_have_no_fabricated_rows():
+    for task in TASKS:
+        rows = (task / "leaderboard.csv").read_text().splitlines()
+        if task.name == "summ-beam-width":
+            assert len(rows) == 2
+            assert rows[1].split(",")[1] == "baseline:greedy"
+            config = json.loads((task / "config.json").read_text())
+            evidence = config["calibration_provenance"]
+            assert evidence["task_id"] == 96438
+            assert evidence["container_id"] == 4932334
+            assert evidence["return_code"] == 0
+            assert evidence["raw_log_sha256"] == (
+                "c7d95e993d7e649d1f49f186f21ba97b8ca4407c3021771d76715b3e56dea23f"
+            )
+        else:
+            assert len(rows) == 1
+
+
+def test_all_score_specs_keep_missing_nonfinite_and_zero_setting_at_exact_zero():
+    from mlsbench.scoring.anchors import BaselineAnchors
+    from mlsbench.scoring.evaluate import load_expanded_spec, score_record_details
+
+    for task in TASKS:
+        anchors = BaselineAnchors(task)
+        spec = load_expanded_spec(task, anchors)
+        assert spec is not None
+        valid_record = {f"rougeL_{setting}": 0.30 for setting in EXPECTED}
+        score, _settings, valid = score_record_details(spec, valid_record, anchors)
+        assert valid and math.isclose(score, 0.5, rel_tol=0.0, abs_tol=1e-12)
+
+        destructive = [
+            {},
+            {**valid_record, "rougeL_xsum": math.nan},
+            {**valid_record, "rougeL_cnndm": math.inf},
+            {**valid_record, "rougeL_samsum": -math.inf},
+            {**valid_record, "rougeL_xsum": 0.0},
+        ]
+        for record in destructive:
+            failed_score, _settings, _valid = score_record_details(spec, record, anchors)
+            assert failed_score == 0.0
+
+
+def test_no_legacy_slice_assets_public_hidden_labels_or_answer_leaks_remain():
+    assert not (ROOT / "vendor" / "abstractive-summarization" / "_summ_data").exists()
     disallowed = (
+        "300-doc",
+        "300-document",
+        "head-slice",
+        "public setting",
+        "hidden setting",
         "weak baseline",
         "strong baseline",
         "standard strong",
         "reliably loses",
         "matches-or-beats",
-        "default here is weak",
     )
     for task in TASKS:
-        scaffold = (task / "edits" / "custom_template.py").read_text().lower()
+        searchable = "\n".join(
+            path.read_text(errors="replace").lower()
+            for path in task.rglob("*")
+            if path.is_file() and path.suffix in {".py", ".md", ".json", ".sh"}
+        )
         for phrase in disallowed:
-            assert phrase not in scaffold, f"{task.name} leaks {phrase!r}"
+            assert phrase not in searchable, f"{task.name} contains {phrase!r}"
 
 
-def test_verifier_harnesses_do_not_publish_directional_answers():
-    disallowed = (
-        "lifts rouge",
-        "raises precision",
-        "reliably beats",
-        "drops rouge",
-        "preserves overlap",
-        "keeping 0 destroys",
-    )
-    package = ROOT / "vendor" / "abstractive-summarization"
-    searchable = "\n".join(
-        path.read_text(errors="replace").lower()
-        for path in sorted(package.glob("harness_*.py"))
-    )
-    for phrase in disallowed:
-        assert phrase not in searchable, f"verifier harness leaks {phrase!r}"
-
-
-def test_every_baseline_edit_materializes_valid_python_on_the_native_scaffold():
+def test_every_baseline_edit_materializes_valid_python_on_native_scaffold():
+    editable_files: set[str] = set()
     for task in TASKS:
         config = json.loads((task / "config.json").read_text())
         editable = config["files"][0]["edit"][0]
+        editable_files.add(config["files"][0]["filename"])
         native_path = task / "edits" / "custom_template.py"
         native_lines = native_path.read_text().splitlines(keepends=True)
         if editable["start"] != -1:
-            segment = "".join(
-                native_lines[editable["start"] - 1:editable["end"]]
-            )
+            segment = "".join(native_lines[editable["start"] - 1 : editable["end"]])
             assert "def " in segment and "return " in segment
-
         for edit_path in sorted((task / "edits").glob("*.edit.py")):
             spec = importlib.util.spec_from_file_location(
                 f"edit_{task.name}_{edit_path.stem}", edit_path
@@ -228,12 +447,10 @@ def test_every_baseline_edit_materializes_valid_python_on_the_native_scaffold():
             assert len(module.OPS) == 1
             operation = module.OPS[0]
             assert operation["op"] == "replace"
-            start = operation["start_line"]
-            end = operation["end_line"]
-            content = operation["content"]
             materialized = "".join(
-                native_lines[:start - 1]
-                + [content.rstrip("\n") + "\n"]
-                + native_lines[end:]
+                native_lines[: operation["start_line"] - 1]
+                + [operation["content"].rstrip("\n") + "\n"]
+                + native_lines[operation["end_line"] :]
             )
             compile(materialized, str(edit_path), "exec")
+    assert len(editable_files) == 10

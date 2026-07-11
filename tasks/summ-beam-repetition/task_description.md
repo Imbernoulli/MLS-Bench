@@ -1,7 +1,11 @@
 # Beam and Repetition Configuration
 
 ## Research Question
-Evaluate beam width and repetition controls for frozen, domain-matched summarization models. The same policy is evaluated on every example in three complete official test splits.
+Evaluate the interaction among beam width, no-repeat n-gram blocking, and token
+repetition penalty for frozen, domain-matched summarization models. Unlike the
+single-variable beam-width and no-repeat siblings, this task exposes the joint
+three-control policy. The same joint policy is evaluated on every example in
+three complete official test splits.
 
 ## Implementation Contract
 Edit `abstractive-summarization/solution/beam.py` and implement:
@@ -23,4 +27,17 @@ All three required settings participate in the score:
 - CNN/DailyMail 3.0.0 official test: 11,490 documents.
 - SAMSum official test: 819 dialogues.
 
-The verifier runs the pinned domain-matched summarizers in FP16 on one GPU, serially over all 23,643 examples, and reports corpus ROUGE-L F1. A non-zero score requires every dataset digest, model digest, row count, generation count, finite metric, setting completion, and final completion proof to validate. Any command or verification failure receives zero.
+The verifier runs the pinned domain-matched summarizers in FP16 on one GPU,
+serially over all 23,643 examples with generation batch size 16, and reports
+mean per-example ROUGE-L F1 from Google's `rouge_score` implementation. For
+every model-based policy, the tokenizer truncates each source to at most 512
+subword tokens before padding to the longest source in that batch. This is a
+fixed uniform comparison protocol, not a claim that 512 is the model's maximum
+context and not a document subsample; every row in each official test split is
+still evaluated. Non-model source policies, when selected in the source-policy
+task, operate on every full source record according to the declared policy.
+
+A non-zero score requires the task-specific surface proof, every dataset digest,
+exact checkpoint revision, weight digest and parameter count, row and generation
+count, finite bounded metric, ordered setting completion, and terminal final
+proof to validate. Any command or verification failure receives zero.
