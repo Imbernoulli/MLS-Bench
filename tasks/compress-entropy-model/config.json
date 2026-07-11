@@ -28,6 +28,7 @@
     {
       "cmd": "scripts/full.sh",
       "label": "kodak24_q1q8",
+      "score_settings": ["full", "low", "mid", "high"],
       "group": 1,
       "compute": 1.0,
       "time": "6:00:00",
