@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.util
 import json
+import math
 from pathlib import Path
 
 
@@ -183,20 +185,48 @@ def test_incomplete_nonfinite_duplicate_and_trailing_proofs_are_empty():
         assert parser.parse("kodak24_q1q8", raw).metrics == {}
 
 
-def test_pending_calibration_scores_every_valid_result_exact_zero():
+def test_measured_calibration_scores_valid_families_and_missing_metrics_zero():
     from mlsbench.scoring.anchors import BaselineAnchors
     from mlsbench.scoring.evaluate import score_record_details
     from mlsbench.scoring.spec import load_score_spec
 
-    module = _load("compress_parser_score", TASK / "parser.py")
-    record = module.Parser().parse("kodak24_q1q8", _proof()).metrics
     spec = load_score_spec(TASK)
     assert spec is not None
-    score, settings, valid = score_record_details(spec, record, BaselineAnchors(TASK))
-    assert valid is True
+    anchors = BaselineAnchors(TASK)
+    expected = {
+        "factorized": 0.2,
+        "hyperprior_scale": 0.5,
+        "meanscale": 0.5942195237451419,
+    }
+    with (TASK / "leaderboard.csv").open(newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    assert {row["model"] for row in rows} == {
+        f"baseline:{family}" for family in expected
+    }
+
+    records = {}
+    for row in rows:
+        family = row["model"].removeprefix("baseline:")
+        record = {
+            key: float(value)
+            for key, value in row.items()
+            if key.startswith(("mean_rd_utility_", "psnr_", "bpp_"))
+        }
+        records[family] = record
+        score, settings, valid = score_record_details(spec, record, anchors)
+        assert valid is True
+        assert len(settings) == 4
+        assert math.isclose(score, expected[family], rel_tol=0, abs_tol=1e-12)
+
+    missing = dict(records["meanscale"])
+    del missing["mean_rd_utility_high"]
+    score, _settings, valid = score_record_details(spec, missing, anchors)
+    assert valid is False
     assert score == 0.0
-    assert len(settings) == 4
-    assert all(setting.score == 0.0 for setting in settings)
+
+    score, _settings, valid = score_record_details(spec, {}, anchors)
+    assert valid is False
+    assert score == 0.0
 
 
 def test_surface_is_literal_and_never_executed(tmp_path: Path):

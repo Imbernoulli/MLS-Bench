@@ -158,7 +158,7 @@ def main() -> None:
             writer.writerow(
                 {
                     "timestamp": timestamp,
-                    "model": f"baseline:official_zoo:{family}",
+                    "model": f"baseline:{family}",
                     "is_final": "true",
                     "seed": 42,
                     **{column: records[family][column] for column in metric_columns},
