@@ -173,7 +173,9 @@
 
 ## 2026-07-11 Real-Scale Runtime Ledger
 
-> **口径覆盖说明（截至 2026-07-11 20:30 CST）：**本节是当前 real-scale ship 口径，覆盖上文历史表中的 `Mangrove Done`、`Verification time`、“已计入 strict Done: 10”，以及与本节 named repo 冲突的旧 task-count/remaining-work 结论。旧任务跑通、旧 verifier 产生正分、旧文档写了 `Done`，都不能单独作为 real-scale ship 证据。当前严格交付队列为 **15/20 repos**；其中属于原 task `95310` 二十个 repo 的为 **12/20**。这两个分母含义不同：前者是本轮要 ship 的 20-repo 目标，后者是原 `95310` 的固定二十项。
+> **口径覆盖说明（截至 2026-07-11 20:30 CST）：**本节覆盖上文历史表中的 `Mangrove Done`、`Verification time`、“已计入 strict Done: 10”，以及与本节 named repo 冲突的旧 task-count/remaining-work 结论。旧任务跑通、旧 verifier 产生正分、旧文档写了 `Done`，都不能单独作为 real-scale ship 证据。此前候选交付队列写作 **15/20 repos**，其中原 task `95310` 固定二十项写作 **12/20**；2026-07-11 新增“fix 必须传播到 repo 全部 sibling”硬门槛后，除 Mamba 外的 14 个此前 accepted repo 正在独立零信任重审。重审完成前，`15/20` 和 `12/20` 都是**此前候选计数，不是当前最终 accepted 分子**。
+
+> **Sibling propagation re-audit：**下方 15 行 terminal runtime 仍是有效的代表任务实测记录，不因静态重审而作废；但其中前 14 个 repo 的 `SHIPPED` 标签暂时只表示此前结论，不能作为当前 repo-level acceptance。每个 reviewer 必须枚举该 repo 全部 tasks 并报告 `total / fixed / audited`。发现任一 sibling 留有旧 scale、旧 data/image pin、旧 parser/proof、旧 score/leaderboard、遗漏 setting/seed、正分 fallback、资源超过 4 GPU 或 instruction 泄漏时，整 repo 撤回，修完全部 siblings 后再恢复。
 
 ### 验收规则
 
@@ -183,6 +185,7 @@
 4. **Baseline 定义。** `native` 是 agent 不修改 workspace 时实际运行的 solution；`strong` 是同一数据、同一模型、同一预算下实测的校准参考编辑。Strong row 不能由预测值、手写常量或不同规模的旧实验代替。QA 的当前 score 是 baseline-free official F1 映射，因此单独标注。
 5. **Real scale 不能由墙钟时间反推。** 训练任务必须对齐 upstream/community 的数据量、steps/epochs/tokens、分辨率和序列长度；完整 canonical-split inference 可以在数分钟内结束。短成功不自动失败，长任务也不自动通过。
 6. **运行环境。** 最终 verification 使用一个按 digest 固定、依赖/模型/数据预装的 repo image；per-task build 只允许存在性检查、`rm` 和 `COPY _scaffold` 一类文件操作，不在 verification 中执行 `pip`、`apt`、`conda`、模型下载或编译。最终 Mangrove 每个 task 当前使用 1×H20 串行执行，且任何 task 最多 4 GPU。
+7. **Representative 只共享 runtime 证据，不豁免 sibling 修复。** 一个完整 representative 可以证明该 repo 共享协议在真实 scale 下的实测耗时，不要求把昂贵评测机械重复十次；但 protocol、data/model/image pins、parser completion contract、fail-closed、score spec、所有 setting/seed、资源上限和 instruction 清理必须传播到 repo 的每个 sibling。Task-specific scaffold/template/edit surface 可以不同。任何一个 sibling 仍使用旧实现，整个 repo 都不能标 `SHIPPED`。
 
 ### Runtime 的读法
 
@@ -217,7 +220,7 @@
 
 后续每个新 repo 只有在 terminal Mangrove artifact 出来后才能加入本表；同一次状态更新必须补齐 terminal task/container、GPU 与串并行方式、完整 data/steps/tokens/count、baseline、per-setting harness、setup、agent、verifier、trial、platform wall 以及 runtime 合理性说明。只有 config timeout 或 mlaunch anchor、没有 terminal Mangrove 的 repo 一律写 `PENDING（未实测）`，不能填成“预计耗时”或计入 `SHIPPED`。
 
-### 已通过的 15 个 repo
+### 此前 15 个候选 repo 的 terminal 证据（前 14 个全 sibling 重审中）
 
 #### 1. `text-simplification` — `SHIPPED`
 
@@ -394,7 +397,7 @@
 
 ### 当前结论
 
-- **严格 accepted delivery queue：`15/20 repos`。** `text-simplification`、`keyphrase-extraction`、`machine-translation`、`extractive-qa`、`constrained-decoding-lab`、`inr-signal-fitting`、`mdn-density`、`gpytorch-gp`、`normflows-density`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`、`mamba`。
-- **原 `95310` 二十项：`12/20 repos`。** `constrained-decoding-lab`、`gpytorch-gp`、`inr-signal-fitting`、`mdn-density`、`normflows-density`、`text-simplification`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`、`mamba`。其余 8 个不得因为旧任务有正分或很快结束而计入。
+- **此前 accepted candidate queue：`15/20 repos`，当前不得作为最终分子引用。** 候选为 `text-simplification`、`keyphrase-extraction`、`machine-translation`、`extractive-qa`、`constrained-decoding-lab`、`inr-signal-fitting`、`mdn-density`、`gpytorch-gp`、`normflows-density`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`、`mamba`；除 Mamba 外 14 个正在按全 sibling propagation gate 独立重审。
+- **原 `95310` 二十项此前候选：`12/20 repos`，当前最终分子待同一重审。** 候选为 `constrained-decoding-lab`、`gpytorch-gp`、`inr-signal-fitting`、`mdn-density`、`normflows-density`、`text-simplification`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`、`mamba`。其余 8 个不得因为旧任务有正分或很快结束而计入。
 - **正在占用 H20/H200 的正式工作：** Mamba final [96214](https://mangrove.msh.team/tasks/96214)、KGE final [96684](https://mangrove.msh.team/tasks/96684) 与 NLI final [96642](https://mangrove.msh.team/tasks/96642) 均已终态审计并计入分子；image-captioning、OpenCLIP、CompressAI、speaker verification、SOD 等仍在 worker 侧生成 full-scale terminal evidence，完成前不提前计入。
-- 本节中的 `SHIPPED` 只表示 repo 的一个代表 task 已有 real-scale terminal proof，且 10 个 sibling 的静态协议/可编辑面已审计；不表示每个 sibling 都重复跑了一次同样昂贵的 full evaluation。任何 sibling 的 task-specific scaffold/template 可以不同，但 required setting、数据 inventory、shared harness、strict parser/scorer 和 fail-closed 规则必须逐项静态一致。
+- 本节前 14 个详细条目中的 `SHIPPED` 是重审前标签；只有新的独立 reviewer 证明该 repo `total == fixed == audited` 后才能恢复为当前标签。一个代表 task 的 real-scale terminal proof可以共享，不表示每个 sibling 都要重复同样昂贵的 full evaluation；但 required setting、数据 inventory、shared harness、strict parser/scorer、fail-closed、image/resource 和 instruction 规则必须逐项传播并静态一致。
