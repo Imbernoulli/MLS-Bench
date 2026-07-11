@@ -1,0 +1,79 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "normflows-density/common.py",
+    "normflows-density/flow_blocks.py",
+    "normflows-density/harness_flow.py",
+    "normflows-density/_flow_data/8gaussians_seed42.npz",
+    "normflows-density/_flow_data/checkerboard_seed42.npz",
+    "normflows-density/_flow_data/moons_seed42.npz",
+    "normflows-density/_flow_data/pinwheel_seed42.npz"
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/checkerboard.sh",
+      "label": "checkerboard",
+      "group": 1,
+      "compute": 1,
+      "time": "0:25:00",
+      "mem": 16,
+      "package": "normflows-density"
+    },
+    {
+      "cmd": "scripts/moons.sh",
+      "label": "moons",
+      "group": 1,
+      "compute": 1,
+      "time": "0:25:00",
+      "mem": 16,
+      "package": "normflows-density"
+    },
+    {
+      "cmd": "scripts/8gaussians.sh",
+      "label": "8gaussians",
+      "group": 1,
+      "compute": 1,
+      "time": "0:25:00",
+      "mem": 16,
+      "package": "normflows-density"
+    }
+  ],
+  "baselines": {
+    "affine": {
+      "edit_ops": "edits/affine.edit.py"
+    },
+    "spline": {
+      "edit_ops": "edits/spline.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "normflows-density/solution/coupling.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 11,
+          "end": 12
+        }
+      ]
+    }
+  ],
+  "calibration_status": "fresh_community_20k_anchors_20260711",
+  "calibration_protocol": "flow-2d-community-20k-literal-ast-v3",
+  "calibration_representative_task": "flow-coupling-transform",
+  "calibration_representative_date": "2026-07-11",
+  "calibration_representative_seed": 42,
+  "calibration_representative_steps": 20000,
+  "calibration_representative_train_count": 30000,
+  "calibration_representative_test_count": 30000,
+  "calibration_representative_evidence_sha256": "ff9d55ea1e732d3d9f3997b750b86acf9dd7e5ab9ef49ae521a4d9c82cd06446"
+}

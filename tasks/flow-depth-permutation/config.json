@@ -1,0 +1,57 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/moons.sh",
+      "label": "moons",
+      "group": 1,
+      "compute": 1,
+      "time": "0:25:00",
+      "mem": 16,
+      "package": "normflows-density"
+    }
+  ],
+  "baselines": {
+    "shallow": {
+      "edit_ops": "edits/shallow.edit.py"
+    },
+    "medium": {
+      "edit_ops": "edits/medium.edit.py"
+    },
+    "deep": {
+      "edit_ops": "edits/deep.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "normflows-density/solution/depth.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 12,
+          "end": 13
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "normflows-density/common.py",
+    "normflows-density/flow_blocks.py",
+    "normflows-density/harness_flow.py",
+    "normflows-density/_flow_data/8gaussians_seed42.npz",
+    "normflows-density/_flow_data/checkerboard_seed42.npz",
+    "normflows-density/_flow_data/moons_seed42.npz",
+    "normflows-density/_flow_data/pinwheel_seed42.npz"
+  ],
+  "calibration_status": "pending_community_20k_reanchor",
+  "calibration_protocol": "flow-2d-community-20k-literal-ast-v3"
+}

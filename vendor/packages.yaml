@@ -279,3 +279,7 @@ packages:
   sparse-attn-eval:
     url: local
     commit: local
+
+  normflows-density:
+    url: local
+    commit: local

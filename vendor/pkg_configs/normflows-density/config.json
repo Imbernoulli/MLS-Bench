@@ -1,0 +1,16 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-normflows-density@sha256:3b81a711a7a6a00234a5717f7f5199ae124faee0d7cf24b0527e186ebbf40837",
+  "install_cmds": [
+    "pip install --no-cache-dir 'normflows==1.7.3' 'numpy<2'",
+    "python -c \"import normflows as nf, torch; print('normflows', nf.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())\""
+  ],
+  "env": {
+    "PYTHONPATH": "/workspace/normflows-density:${PYTHONPATH}",
+    "OMP_NUM_THREADS": "4"
+  },
+  "data_deps": [],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}
