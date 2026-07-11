@@ -36,6 +36,10 @@ packages:
     url: local
     commit: local
 
+  image-inpainting:
+    url: local
+    commit: local
+
   mamba:
     url: local
     commit: local
