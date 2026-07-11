@@ -105,7 +105,7 @@
 | 33 | `nerfstudio` | https://github.com/nerfstudio-project/nerfstudio | <10 tasks/questions（当前 config: 3，需扩展）；例：`cv-nerf-hash-encoding`, `cv-nerf-distortion-reg`, `cv-nerf-proposal-sampling`（3 个） | 已有 onboarding/config 证据，anchor 细节需复核 | 未计入 strict Done | 扩展到 >=10 questions；使用真实数据和原生 scale 跑 anchors，再做 Harbor/Mangrove strict。 | nerfstudio-onboarding.md | [#93474](https://mangrove.msh.team/tasks/93474) | 3m02s |
 | 34 | `open_clip` | https://github.com/mlfoundations/open_clip | <10 tasks/questions（当前 config: 8，需扩展）；例：`openclip-anchor-regularization`, `openclip-temperature-schedule`, `openclip-data-filtering` 等 8 个 | 已有本地/mlaunch anchor 证据，仍需 strict audit | 未计入 strict Done | 扩展到 >=10 questions；使用真实数据和原生 scale 跑 anchors，再做 Harbor/Mangrove strict。 | onboard-open_clip.md;openclip-repo-expanded-validated-2026-07-03.md | [#92693](https://mangrove.msh.team/tasks/92693) | 1m38s |
 | 35 | `visual-grounding` | https://github.com/allenai/reclip | <10 tasks/questions（当前 config: 3，需扩展）；例：`grounding-spatial-resolver`, `grounding-region-isolation`, `grounding-query-scoring`（3 个） | 已有本地/mlaunch anchor 证据，仍需 strict audit | 未计入 strict Done | 扩展到 >=10 questions；使用真实数据和原生 scale 跑 anchors，再做 Harbor/Mangrove strict。 | docs/REPO_ONBOARDING_STATUS.md; tasks/grounding-*/config.json; tasks/grounding-*/leaderboard.csv; onboarded/high-evidence supplemental, 3 tasks / 3 settings attribute-spatial-hard; needs Harbor/Mangrove strict. | [#92777](https://mangrove.msh.team/tasks/92777) | 3m02s |
-| 36 | `image-captioning` | https://github.com/rmokady/CLIP_prefix_caption | <10 tasks/questions（当前 config: 3，需扩展）；例：`caption-decoding-strategy`, `caption-training-objective`, `caption-visual-mapping`（3 个） | 已有本地/mlaunch anchor 证据，仍需 strict audit | 未计入 strict Done | 扩展到 >=10 questions；使用真实数据和原生 scale 跑 anchors，再做 Harbor/Mangrove strict。 | docs/REPO_ONBOARDING_STATUS.md; vendor/packages.yaml; tasks/caption-*/leaderboard.csv; 3 image-captioning tasks, Flickr8k subset + frozen CLIP/GPT-2 real CIDEr k1-H20 validation; needs >=10 RQ. | [#92695](https://mangrove.msh.team/tasks/92695) | 1m16s |
+| 36 | `image-captioning` | https://github.com/rmokady/CLIP_prefix_caption | 10 tasks/questions；代表 `caption-decoding-strategy`；其余 9 个 task-specific sibling 已做静态 propagation audit | canonical Flickr8k/Karpathy；6,000 train images / 30,000 image-caption pairs / 1,000 test images；10 epochs、batch40、7,500 steps；10/10 fresh render 与 80/80 destructive replay | **SHIPPED（real-scale representative + 10/10 sibling static gate）** | 代表 task 已完成；其余 9 个 sibling 在获得各自 task-specific anchors 前保持 pending exact-zero，不能伪造 strong row。 | source `4b4de1fc`; pinned image `sha256:2bc773cf...7c120e7c7`; terminal artifact uploaded | [#97436](https://mangrove.msh.team/tasks/97436) / DV `18826` / container `5006256` | **终态实测，1×H20 串行：** setup `98.870s`; nop agent `0.178s`; harness `208.656s`; verifier `210.444s`; trial `310.221s`; platform `312.046s`（约 5m12s） |
 | 37 | `lightly-ssl` | https://github.com/lightly-ai/lightly | <10 tasks/questions（当前 config: 2，需扩展）；例：`ssl-augmentation-policy`, `ssl-contrastive-loss`（2 个） | 已有 onboarding/config 证据，anchor 细节需复核 | 未计入 strict Done | 扩展到 >=10 questions；使用真实数据和原生 scale 跑 anchors，再做 Harbor/Mangrove strict。 | usb-ssl-onboarding.md | [#93220](https://mangrove.msh.team/tasks/93220) | 43s |
 | 38 | `whisper-asr` | https://github.com/openai/whisper | <10 tasks/questions（当前 config: 3，需扩展）；例：`asr-longform-chunking`, `asr-decoding-strategy`, `asr-noise-frontend`（3 个） | 已有 onboarding/config 证据，anchor 细节需复核 | 未计入 strict Done | 扩展到 >=10 questions；使用真实数据和原生 scale 跑 anchors，再做 Harbor/Mangrove strict。 | asteroid-onboarding.md;whisper-asr-onboarding.md;panns-audiotag-onboarding-new-audio-tagging-subfield-20.md | [#92837](https://mangrove.msh.team/tasks/92837) | 10s |
 | 39 | `pytorchvideo-action` | https://github.com/facebookresearch/pytorchvideo | <10 tasks/questions（当前 config: 3，需扩展）；例：`pv-classifier-head`, `pv-temporal-sampling`, `pv-temporal-aggregation`（3 个） | 已有 onboarding/config 证据，anchor 细节需复核 | 未计入 strict Done | 扩展到 >=10 questions；使用真实数据和原生 scale 跑 anchors，再做 Harbor/Mangrove strict。 | pytorchvideo-onboarding-done-video-new-modality-2026-07.md | [#92994](https://mangrove.msh.team/tasks/92994) | 6s |
@@ -185,7 +185,7 @@
 4. **Baseline 定义。** `native` 是 agent 不修改 workspace 时实际运行的 solution；`strong` 是同一数据、同一模型、同一预算下实测的校准参考编辑。Strong row 不能由预测值、手写常量或不同规模的旧实验代替。QA 的当前 score 是 baseline-free official F1 映射，因此单独标注。
 5. **Real scale 不能由墙钟时间反推。** 训练任务必须对齐 upstream/community 的数据量、steps/epochs/tokens、分辨率和序列长度；完整 canonical-split inference 可以在数分钟内结束。短成功不自动失败，长任务也不自动通过。
 6. **运行环境。** 最终 verification 使用一个按 digest 固定、依赖/模型/数据预装的 repo image；per-task build 只允许存在性检查、`rm` 和 `COPY _scaffold` 一类文件操作，不在 verification 中执行 `pip`、`apt`、`conda`、模型下载或编译。最终 Mangrove 每个 task 当前使用 1×H20 串行执行，且任何 task 最多 4 GPU。
-7. **Representative 只共享 runtime 证据，不豁免 sibling 修复。** 一个完整 representative 可以证明该 repo 共享协议在真实 scale 下的实测耗时，不要求把昂贵评测机械重复十次；但 protocol、data/model/image pins、parser completion contract、fail-closed、score spec、所有 setting/seed、资源上限和 instruction 清理必须传播到 repo 的每个 sibling。Task-specific scaffold/template/edit surface 可以不同。任何一个 sibling 仍使用旧实现，整个 repo 都不能标 `SHIPPED`。
+7. **Representative 只共享 runtime 证据，不豁免 sibling 修复。** 一个完整 representative 可以证明该 repo 在真实 scale 下的实测耗时，不要求把昂贵评测机械重复十次；其余 siblings 可以只做静态修复和验证，且 task-specific scaffold/template/edit surface、parser/spec 或 setting 可以不同。但 repo-level protocol/scale correction、data/model/image pins、completion contract、fail-closed、所有 setting/seed、资源上限和 instruction 清理必须传播，并逐 task 证明自身闭合。若后续修复只改 parser/scorer/proof/instruction，未改变 representative 的模型、数据、steps、分辨率或实际 workload path，已有 terminal runtime 可以继续使用；只有这些 material workload 项改变时才重跑 representative。任何一个 sibling 仍使用旧实现，整个 repo 都不能标 `SHIPPED`。
 
 ### Runtime 的读法
 
@@ -194,9 +194,9 @@
 - `verifier`：真正执行所有 required setting、解析指标并计算 reward 的时间。判断 scale 时主要看这一段及其内部 completion proof。
 - `total wall`：Mangrove container 的 `started_at -> finished_at`，近似 `setup + agent + verifier + framework overhead`。从 batch 提交到 container 启动的排队/dispatch wait 另算，不属于 compute。
 
-### Accepted repo 终态 runtime 总表
+### Terminal representative 终态 runtime 总表
 
-下表只记录 terminal Mangrove container 的**实测**时间。`setup / agent / verifier / trial / platform` 由对应 `/api/tasks/<id>/sync` 时间戳重新计算到毫秒；`harness/command` 来自同一个 terminal artifact 的 completion proof。所有 15 个代表任务均为 **1×H20、单 container**；有多个 required setting 时均在该 GPU 上串行执行并全部参与算分。表中的 `/` 表示同一 task 内依次执行的 setting，不表示多卡并行。
+下表只记录 terminal Mangrove container 的**实测**时间。`setup / agent / verifier / trial / platform` 由对应 `/api/tasks/<id>/sync` 时间戳重新计算到毫秒；`harness/command` 来自同一个 terminal artifact 的 completion proof。当前共有 16 条代表任务记录，均为 **1×H20、单 container**；有多个 required setting 时均在该 GPU 上串行执行并全部参与算分。表中的 `/` 表示同一 task 内依次执行的 setting，不表示多卡并行。Runtime 记录本身不等于 repo-level accepted；此前 14 个候选 repo 仍按全 sibling propagation gate 重审，Mamba 与新增 Caption 已完成该 gate。
 
 | repo | terminal evidence | native / calibration baseline | real-scale workload 摘要 | harness/command 实测 | setup | agent | verifier | trial / platform wall |
 |---|---|---|---|---:|---:|---:|---:|---:|
@@ -214,13 +214,14 @@
 | `torchreid-reid` | [96623](https://mangrove.msh.team/tasks/96623) / `4950705` | native average pooling; strong GeM | 完整 Market-1501；60 epochs / 11,003 steps；完整 query/gallery | `1,076.4s` | `164.083s` | `0.568s` | `1,085.342s` | `1,251.368s / 1,253.196s` |
 | `pykeen-kge` | [96684](https://mangrove.msh.team/tasks/96684) / `4953558` | native 100e; weak 5e; strong 200e | FB15k-237 / WN18RR / CoDEx-M；共 53,300 native steps + full ranking | `408.868 / 135.480 / 258.657s` | `38.851s` | `0.174s` | `822.966s` | `862.773s / 864.600s` |
 | `natural-language-inference` | [96642](https://mangrove.msh.team/tasks/96642) / `4950830` | native frozen encoder; strong full fine-tune | SNLI 549,367 train，3 epochs / 51,504 steps；29,471 eval rows | `990.8s` | `51.276s` | `0.284s` | `994.677s` | `1,047.003s / 1,048.760s` |
+| **`image-captioning`** | [97436](https://mangrove.msh.team/tasks/97436) / `5006256` | native sample; calibration greedy / beam5 | Flickr8k 6,000×5×10 pair-visits，7,500 steps，1,000 predictions | **`208.656s`** | **`98.870s`** | **`0.178s`** | **`210.444s`** | **`310.221s / 312.046s`** |
 | **`mamba`** | [96214](https://mangrove.msh.team/tasks/96214) / `4909980` | native `LTI`; mid/strong 未用于虚构校准 | Appendix E.1：L4096/M16/D64/N16/2L，400K steps，25.6M examples / 104.8576B tokens | **`15,244.250s`** | **`35.888s`** | **`0.163s`** | **`15,245.449s`** | **`15,282.190s / 15,284.081s`** |
 
-因此，当前 repo-level 验收口径下，Mamba 要跑的是一个 `paper_e1` representative：**1×H20，verifier 约 4h14m05s，完整 platform wall 约 4h14m44s，约 4.246 H20 GPU-hours**。Config 的 `18:00:00` command budget 和 rendered `66,720s` verifier timeout 只是保护上限，不是“需要 18 小时”的估算。九个 sibling 是静态核对后保持 pending exact-zero 的 task-specific surface；本轮不会把代表任务时间乘十，也不会把它们冒充十次独立 calibration。
+因此，当前 repo-level 验收口径下，Mamba 要跑的是一个 `paper_e1` representative：**1×H20，verifier 约 4h14m05s（4.235 H20 GPU-hours），完整 trial 约 4h14m42s，platform wall 约 4h14m44s（占用约 4.246 小时）**。Config 的 `18:00:00` command budget 和 rendered `66,720s` verifier timeout 只是保护上限，不是“需要 18 小时”的估算。九个 sibling 是静态核对后保持 pending exact-zero 的 task-specific surface；本轮不会把代表任务时间乘十，也不会把它们冒充十次独立 calibration。
 
 后续每个新 repo 只有在 terminal Mangrove artifact 出来后才能加入本表；同一次状态更新必须补齐 terminal task/container、GPU 与串并行方式、完整 data/steps/tokens/count、baseline、per-setting harness、setup、agent、verifier、trial、platform wall 以及 runtime 合理性说明。只有 config timeout 或 mlaunch anchor、没有 terminal Mangrove 的 repo 一律写 `PENDING（未实测）`，不能填成“预计耗时”或计入 `SHIPPED`。
 
-### 此前 15 个候选 repo 的 terminal 证据（前 14 个全 sibling 重审中）
+### 16 个 repo 的 terminal 证据（此前 14 个候选全 sibling 重审中）
 
 #### 1. `text-simplification` — `SHIPPED`
 
@@ -344,14 +345,16 @@
 - **Fail-closed 与 sibling 审计：**10 个 task 全部为 L4096/M16/vocab16/D64/N16/2-layer/400K/b64/Adam1e-4、1×H20、单一 `paper_e1`；source command budget 为 `18:00:00`，rendered verifier timeout 为 `66,720s`，实际 verifier 使用 `15,245.449s`。Instruction 无 public/hidden setting label；Dockerfile 只有 pinned `FROM`、`rm`、`COPY`，verification 无安装/下载/解压/编译。当前 rendered `score_task.py` 与 context-aware global fail-closed commit `830403af` 同 hash；完整有效日志重放仍为 `0.393066`，同一日志把 summary 改成 `rc=7` 后 reward 精确 `0`，且不生成 `metrics.json`/`verification_result.json`。缺 setting/seed、parser-empty、NaN/Inf、重复/trailing proof 或 failure marker 同样归零。
 - **为什么合理：**论文 setting 本身规定 L4096/400K/b64/2-layer D64；本次完整执行约 `104.86B` training tokens，H20 实测约 4.24 小时。旧协议 steps 少 50 倍、sequence length 小约 8-14 倍、LR 大 50 倍，几分钟结束不能代表 paper scale；新终态时间、step/token proof 与配置闭合，因此不需要为了 publication 清理重复跑四小时代表任务。
 
+#### 16. `image-captioning` — `SHIPPED`
+
+- **代表证据：** source/dataset branch `mls-caption-decoding-fullscale-r8-20260711-124755` @ `4b4de1fccb9cc04475204e5447eb00982dfb6d23`；dataset version `18826`；task [97436](https://mangrove.msh.team/tasks/97436) / container `5006256` / runtime container `2098706`；pinned image `sha256:2bc773cf6e838e9defe1b06e20efde3d93a3690b1b09e7cd2ea29217c120e7c7`；1×H20 on `virt-m3h20`；nop 保留 native solution；`finished`、retry `0`、`has_exception=false`、artifact uploaded。
+- **Verification setting：** canonical Flickr8k/Karpathy split；`6,000` train images、每图 5 captions、10 epochs，共 `300,000` image-caption pair-visits；batch `40`、恰好 `7,500` optimizer steps、seed `42`。Frozen CLIP image features 与 frozen GPT-2 124M，只训练 prefix adapter；完整 test 为 `1,000/1,000` images，每图固定 5 references。Artifact 绑定 split SHA `835459...84e7`、manifest SHA `235c38...fb9`、prediction SHA `0c3bd5...9f7`，要求唯一 terminal `status=ok`。
+- **Baselines 与计分：** native=`sample`，CIDEr `0.245972`、BLEU-4 `0.076101`；calibration greedy 为 `0.552901 / 0.198662`，beam5 为 `0.586622 / 0.218874`，同一完整协议的 H20 harness 分别约 `199.949 / 203.490 / 204.582s`。线上 native reward 精确为 `0.0`，原因是实测 native metric 位于显式 score floor，不是 verification failure、hardcoded positive fallback 或 score injection；线上 `verification_result.status=passed` 且 `strict_fail_closed=true`。
+- **实测时间：** environment setup `98.869532s`；nop agent `0.178322s`；harness `208.655919s`；Mangrove verifier `210.443894s`；trial `310.220628s`；platform wall `312.046313s`（约 5m12s）。Build 只有 pinned image、删除 `/opt/mlsbench-caption` 与五个 verifier-private data、清理 workspace 和 `COPY`；没有 verification-time 安装、下载、解压或编译。
+- **为什么合理：**完整 7,500-step adapter training 与 1,000-image generation 确实执行；CLIP features 已离线预计算并固定哈希，GPT-2 完全冻结，所以约 3.5 分钟 verifier 与三个独立 H20 full-scale anchors 的 200-205 秒一致，不是缩小 steps 或 inventory。旧 400-step Caption run 已否决。
+- **Sibling propagation：** Caption family `total=10 / fixed=10 / audited=10 / missing=0 / extra=0`；fresh render `10/10`，Caption tests `14/14`、global fail-closed `23/23`。10 tasks × 8 destructive cases 共 `80/80` 通过：非零 rc、missing summary/setting、7,499-step incomplete、NaN、Inf、parser-empty 均精确保留 `0\n`。10/10 Dockerfile、scaffold、parser/scorer、resources 与 data privacy 已逐项核对。九个非代表 sibling 没有各自 task-specific anchor 时保持 pending exact-zero；未来 Oracle 运行需补真实 anchor，不能伪造 strong row。
+
 ### 已否决或仍在重锚的重点 repo
-
-#### `image-captioning` — `PENDING_DATA_IMAGE_AND_FULL_RUN`
-
-- 目标 setting 已恢复为 canonical Flickr8k/Karpathy：`6,000` train images、每图 5 captions（`30,000` train captions）、`1,000` eval images、每图 5 references；frozen CLIP image features + frozen GPT-2 decoder，训练 prefix adapter `10` epochs、batch `40`、共 `7,500` optimizer steps，seed `42`，1 GPU。native=`sample`，mid=`greedy`，strong=`beam5`。
-- 早期 streaming/CPU data-prep 均失败，不能计入；2026-07-11 B0 H200 首次完成全部 `6,000 + 1,000` CLIP features 和 references，约 `170s`、worker `rc=0`。Second-pass audit 发现该 worker 使用的 staged source 比主树少了新补的 GPT-2 fixed-file SHA 和 CLIP repo/tag/checkpoint SHA 字段，因此这批文件只算完整性预备结果，不作为 final provenance。最新 source 已同步，preemption-capable provenance rebuild worker `dev-qfzsh-1696572-worker-0` 已提交；整节点申请是 rc-group 约束，进程严格只使用 `CUDA_VISIBLE_DEVICES=0` 的一张 H200。重复的 non-preempting queue `dev-zgnqx-1695286-worker-0` 已停止。
-- runtime-v3 dependency layer 的 hash audit 通过，且确实包含 `open_clip_torch 3.3.0`、`transformers 4.53.2`、`pycocoevalcap 1.2` 和 JDK；GPT-2 `model.safetensors` SHA 固定为 `c7d00560...e20373`，CLIP repo/revision/checkpoint SHA 也已硬编码并由 harness 检查。它仍不是 data-pinned final image；必须等待新 manifest 通过 source/caption/split/overlap validator，再构建不可变 final image并跑 7,500-step native/strong 与 Mangrove representative。
-- 10 个 sibling 已静态核对为相同 `6000x5x10 / batch40 / 7500-step / 1000-test` 协议；caption focused tests 当前 `14 passed`，pending/failed scoring 为精确 `0`，没有 positive fallback。剩余 ship blockers 是新 provenance manifest 的 terminal proof、final image、native/strong 实测 anchors、score calibration 和最终 Mangrove artifact；这些关闭前不计 `SHIPPED`。
 
 #### `crowd-counting` — `REJECTED_CUSTOM_SLICE -> COMMUNITY_SCALE_REBUILD_REQUIRED`
 
@@ -374,7 +377,7 @@
 
 | repo representative | old total | old verifier | 当前判定 |
 |---|---:|---:|---|
-| `caption-decoding-strategy` | `86.893s` | `62.527s` | `PENDING_DATA_IMAGE_AND_FULL_RUN`；旧 run 不是 7,500-step Flickr8k training |
+| `caption-decoding-strategy` | 旧 `86.893s`；新 `312.046s` | 旧 `62.527s`；新 `210.444s` | 旧 run 不是 7,500-step Flickr8k training；full Caption `97436` 完成 7,500 steps / 300K pair-visits / 1,000 predictions，`SHIPPED` |
 | `cd-numeric-answer` | `87.483s` | `30.144s` | repo 已由 full AG News `96042` 取代，`SHIPPED` |
 | `compress-activation` | `144.397s` | `49.679s` | `PENDING_SCALE_AUDIT`；`94968` 的长 wall 只是 image pull |
 | `cv-count-normalization` | `129.706s` | `40.834s` | `PENDING_SCALE_AUDIT`，旧正分不计 |
@@ -397,7 +400,8 @@
 
 ### 当前结论
 
-- **此前 accepted candidate queue：`15/20 repos`，当前不得作为最终分子引用。** 候选为 `text-simplification`、`keyphrase-extraction`、`machine-translation`、`extractive-qa`、`constrained-decoding-lab`、`inr-signal-fitting`、`mdn-density`、`gpytorch-gp`、`normflows-density`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`、`mamba`；除 Mamba 外 14 个正在按全 sibling propagation gate 独立重审。
-- **原 `95310` 二十项此前候选：`12/20 repos`，当前最终分子待同一重审。** 候选为 `constrained-decoding-lab`、`gpytorch-gp`、`inr-signal-fitting`、`mdn-density`、`normflows-density`、`text-simplification`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`、`mamba`。其余 8 个不得因为旧任务有正分或很快结束而计入。
-- **正在占用 H20/H200 的正式工作：** Mamba final [96214](https://mangrove.msh.team/tasks/96214)、KGE final [96684](https://mangrove.msh.team/tasks/96684) 与 NLI final [96642](https://mangrove.msh.team/tasks/96642) 均已终态审计并计入分子；image-captioning、OpenCLIP、CompressAI、speaker verification、SOD 等仍在 worker 侧生成 full-scale terminal evidence，完成前不提前计入。
+- **当前在新 sibling propagation gate 下已重新确认：`2 repos`。** `mamba` 与 `image-captioning` 都有一个 real-scale Mangrove representative，且当前 source/render 已证明 `total == fixed == audited == 10`。这不是最终 20-repo 数字，只是 14 个旧候选重审尚未完成时的保守 confirmed count。
+- **此前 accepted candidate queue：`15/20 repos`，仍保留为重审输入，不作为当前最终分子。** 候选为 `text-simplification`、`keyphrase-extraction`、`machine-translation`、`extractive-qa`、`constrained-decoding-lab`、`inr-signal-fitting`、`mdn-density`、`gpytorch-gp`、`normflows-density`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`、`mamba`；除 Mamba 外 14 个正在按全 sibling propagation gate 独立重审。Caption 是该旧队列之外新关闭的第 16 条 terminal representative。
+- **原 `95310` 二十项当前保守 confirmed：`2/20`，另有 11 个此前候选在重审。** 已确认 `mamba`、`image-captioning`；重审输入为 `constrained-decoding-lab`、`gpytorch-gp`、`inr-signal-fitting`、`mdn-density`、`normflows-density`、`text-simplification`、`abstractive-summarization`、`ood-detection-lab`、`torchreid-reid`、`pykeen-kge`、`natural-language-inference`。其余 7 个仍在 full-scale 重建，不得因为旧任务有正分或很快结束而计入。
+- **正在占用 H20/H200 的正式工作：** OpenCLIP、CompressAI、speaker verification、SOD、MolGen 等仍在 worker/Mangrove 侧生成或核对 full-scale evidence；完成一个 representative 并关闭全 sibling static gate 前不计入。
 - 本节前 14 个详细条目中的 `SHIPPED` 是重审前标签；只有新的独立 reviewer 证明该 repo `total == fixed == audited` 后才能恢复为当前标签。一个代表 task 的 real-scale terminal proof可以共享，不表示每个 sibling 都要重复同样昂贵的 full evaluation；但 required setting、数据 inventory、shared harness、strict parser/scorer、fail-closed、image/resource 和 instruction 规则必须逐项传播并静态一致。
