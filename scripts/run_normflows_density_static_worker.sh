@@ -78,9 +78,10 @@ python -m mls_bench.main \
     --h20-serial \
     2>&1 | tee "${RUN}/render.log"
 
-python - "${rendered}" <<'PY' | tee "${RUN}/render-audit.log"
+python - "${rendered}" "${RUN}" <<'PY' | tee "${RUN}/render-audit.log"
 from __future__ import annotations
 
+from datetime import datetime, timezone
 import json
 import re
 import sys
@@ -88,6 +89,7 @@ import tomllib
 from pathlib import Path
 
 root = Path(sys.argv[1])
+run = Path(sys.argv[2])
 tasks = sorted(path for path in root.glob("flow-*") if path.is_dir())
 assert len(tasks) == 10, [path.name for path in tasks]
 expected_image = (
@@ -133,14 +135,22 @@ for task in tasks:
     ), task.name
     assert any(path.name == "harness_flow.py" for path in task.joinpath("tests").rglob("*"))
 
-print(
+render_complete = (
     "NORMFLOWS_RENDER_COMPLETE tasks=10 pinned_image=pass gpu_h20=1 "
     "offline_verifier=pass private_assets=pass instruction_settings=pass"
 )
+summary = (
+    "NORMFLOWS_STATIC_COMPLETE siblings=10 valid=10 destructive=20 "
+    "pending_zero=9 anchor_calibration=pass global_failclosed=pass render=10/10\n"
+)
+finished = datetime.now(timezone.utc).isoformat()
+run.joinpath("summary").write_text(summary)
+run.joinpath("rc").write_text("0\n")
+run.joinpath("status").write_text("success\n")
+run.joinpath("FINISHED").write_text(f"{finished}\n")
+run.joinpath("SUCCESS").write_text(f"{finished}\n")
+print(render_complete)
+print(summary, end="")
 PY
-
-printf '%s\n' \
-    'NORMFLOWS_STATIC_COMPLETE siblings=10 valid=10 destructive=20 pending_zero=9 anchor_calibration=pass global_failclosed=pass render=10/10' \
-    > "${RUN}/summary"
 
 finish 0
