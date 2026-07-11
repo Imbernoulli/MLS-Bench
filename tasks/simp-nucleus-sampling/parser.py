@@ -32,8 +32,8 @@ DONE = re.compile(
     rf"SIMP_DONE protocol={re.escape(PROTOCOL)} "
     rf"task={re.escape(EXPECTED_TASK)} surface={re.escape(EXPECTED_SURFACE)} "
     rf"settings={re.escape(SETTINGS_BINDING)} seed=([0-9]+) "
-    rf"inventory_sha256=([0-9a-f]{64}) model=([a-z0-9_]+) "
-    rf"model_sha256=([0-9a-f]{64}) metrics_sha256=([0-9a-f]{64}) "
+    rf"inventory_sha256=([0-9a-f]{{64}}) model=([a-z0-9_]+) "
+    rf"model_sha256=([0-9a-f]{{64}}) metrics_sha256=([0-9a-f]{{64}}) "
     rf"elapsed=({NUMBER}) status=ok"
 )
 FAILURE_MARKERS = (
