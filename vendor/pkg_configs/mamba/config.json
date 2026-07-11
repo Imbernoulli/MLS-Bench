@@ -1,0 +1,17 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-mamba-paper-e1@sha256:d15909dfa459913838c8d8f2f91f1d86cc657f8b1dd8bda2fc4a79800ac74452",
+  "install_cmds": [
+    "pip install --no-cache-dir einops 'transformers>=4.43,<5'",
+    "PYTAG=$(python -c \"import sys;print(f'cp{sys.version_info.major}{sys.version_info.minor}')\"); pip install --no-cache-dir --no-deps https://github.com/Dao-AILab/causal-conv1d/releases/download/v1.4.0/causal_conv1d-1.4.0+cu122torch2.4cxx11abiFALSE-${PYTAG}-${PYTAG}-linux_x86_64.whl https://github.com/state-spaces/mamba/releases/download/v2.2.2/mamba_ssm-2.2.2+cu122torch2.4cxx11abiFALSE-${PYTAG}-${PYTAG}-linux_x86_64.whl",
+    "python -c \"import causal_conv1d; from mamba_ssm.ops.selective_scan_interface import selective_scan_fn; import mamba_ssm; print('mamba OK', mamba_ssm.__version__)\""
+  ],
+  "env": {
+    "PYTHONPATH": "/workspace/mamba:${PYTHONPATH}",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1"
+  },
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}
