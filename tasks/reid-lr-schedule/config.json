@@ -1,0 +1,66 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "torchreid-reid/common.py",
+    "torchreid-reid/harness_optim.py"
+  ],
+  "agent_data_prune": [
+    "/data/torchreid/market1501_full/query",
+    "/data/torchreid/market1501_full/gallery",
+    "/data/torchreid/_targeted",
+    "/data/torchreid/_cache"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/torchreid/market1501_full/query",
+      "dest": "data/market1501_full/query"
+    },
+    {
+      "host_path": "{data_root}/torchreid/market1501_full/gallery",
+      "dest": "data/market1501_full/gallery"
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "market",
+      "group": 1,
+      "compute": 1.0,
+      "time": "6:00:00",
+      "mem": 64,
+      "package": "torchreid-reid"
+    }
+  ],
+  "baselines": {
+    "flat": {
+      "edit_ops": "edits/flat.edit.py"
+    },
+    "step_decay": {
+      "edit_ops": "edits/step_decay.edit.py"
+    },
+    "warmup_cosine": {
+      "edit_ops": "edits/warmup_cosine.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "torchreid-reid/solution/schedule.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 6,
+          "end": 13
+        }
+      ]
+    }
+  ]
+}

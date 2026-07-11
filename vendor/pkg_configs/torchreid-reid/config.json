@@ -1,0 +1,31 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.1-cuda12.1-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-torchreid-reid@sha256:fbaaa5d4dcd03ea4e2bf1084b1b8cc78c5ae09723033b5a05d4ec96bd2b8264f",
+  "install_cmds": [
+    "pip install --no-cache-dir 'numpy<2' Pillow six scipy h5py gdown yacs opencv-python-headless matplotlib future imageio chardet tensorboard",
+    "PYTHONPATH=/workspace/torchreid-reid python -c \"import torchreid, torch, torchvision; print('torchreid', torchreid.__version__, 'torch', torch.__version__); from torchreid.losses import TripletLoss, CrossEntropyLoss; from torchreid.data.sampler import RandomIdentitySampler; from torchreid.data.transforms import RandomErasing; print('imports OK')\""
+  ],
+  "env": {
+    "REID_DATA": "/data/torchreid/market1501_full",
+    "REID_WEIGHTS": "/data/torchreid/weights/resnet50_imagenet.pth",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "PYTHONPATH": "/workspace/torchreid-reid:${PYTHONPATH}"
+  },
+  "data_deps": [
+    {
+      "name": "torchreid_market1501_full",
+      "host_path": "{data_root}/torchreid",
+      "container_path": "/data/torchreid",
+      "prepare": "vendor/data_scripts/torchreid-reid/prepare_data.py",
+      "description": "Complete official Market-1501: all 751 train identities and 12,936 training images, all 3,368 official query images, and the complete 19,732-image gallery including junk distractors. The verifier authenticates every JPEG and an ImageNet-pretrained torchvision ResNet-50 checkpoint by SHA-256 before running the fixed 60-epoch P x K protocol. All assets are staged in one pinned offline repo image."
+    }
+  ],
+  "agent_pruned_files": [
+    "baselines"
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace"
+}
