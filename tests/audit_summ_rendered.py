@@ -26,6 +26,19 @@ IMAGE = (
     "mlsbench-harbor-abstractive-summarization@"
     "sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a"
 )
+VERIFIER_RUNTIME = {
+    "abstractive-summarization/common.py",
+    "abstractive-summarization/harness_beam.py",
+    "abstractive-summarization/harness_beamwidth.py",
+    "abstractive-summarization/harness_diverse.py",
+    "abstractive-summarization/harness_length.py",
+    "abstractive-summarization/harness_norepeat.py",
+    "abstractive-summarization/harness_posttrunc.py",
+    "abstractive-summarization/harness_sampling.py",
+    "abstractive-summarization/harness_source.py",
+    "abstractive-summarization/harness_temperature.py",
+    "abstractive-summarization/harness_topp.py",
+}
 VISIBLE_DOMAINS = {
     "summ-beam-repetition": ("[1, 12]", "[0, 20]", "(0, 10]"),
     "summ-beam-width": ("[1, 12]",),
@@ -53,6 +66,30 @@ def require(condition: bool, message: str) -> None:
         raise AssertionError(message)
 
 
+def _require_source_config_contract(
+    task_name: str,
+    rendered_config: dict,
+    source_config: dict,
+    all_editable_files: set[str],
+) -> None:
+    for key, value in source_config.items():
+        require(
+            key in rendered_config and rendered_config[key] == value,
+            f"{task_name}: rendered config drift for source key {key!r}",
+        )
+    require(
+        set(rendered_config) - set(source_config)
+        == {"agent_pruned_package_files"},
+        f"{task_name}: unexpected rendered-only config keys",
+    )
+    current_editable = source_config["files"][0]["filename"]
+    require(
+        rendered_config["agent_pruned_package_files"]
+        == sorted(all_editable_files - {current_editable}),
+        f"{task_name}: wrong sibling-solution pruning inventory",
+    )
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         raise SystemExit("usage: audit_summ_rendered.py RENDER_ROOT SOURCE_ROOT")
@@ -62,6 +99,17 @@ def main() -> None:
 
     rendered_tasks = sorted(path.name for path in render_root.glob("summ-*") if path.is_dir())
     require(rendered_tasks == list(TASKS), f"wrong rendered inventory: {rendered_tasks}")
+    source_configs = {
+        task_name: json.loads(
+            (source_root / "tasks" / task_name / "config.json").read_text()
+        )
+        for task_name in TASKS
+    }
+    all_editable_files = {
+        config["files"][0]["filename"] for config in source_configs.values()
+    }
+    runtime_total = 0
+    scaffold_total = 0
 
     for task_name in TASKS:
         task = render_root / task_name
@@ -77,6 +125,7 @@ def main() -> None:
             "tests/meta/leaderboard.csv",
             "tests/meta/parser.py",
             "tests/meta/score_spec.py",
+            "tests/meta/task_description.md",
         )
         for relative in required:
             require((task / relative).is_file(), f"{task_name}: missing {relative}")
@@ -110,6 +159,10 @@ def main() -> None:
         require("public setting" not in instruction, f"{task_name}: public-setting semantics leaked")
 
         config = json.loads((task / "tests" / "meta" / "config.json").read_text())
+        source_config = source_configs[task_name]
+        _require_source_config_contract(
+            task_name, config, source_config, all_editable_files
+        )
         require(config["test_cmds"][0]["label"] == task_name, f"{task_name}: wrong command label")
         require(config["seeds"] == [42], f"{task_name}: wrong seed inventory")
         details = config["calibration_protocol_details"]
@@ -125,18 +178,55 @@ def main() -> None:
             digest(task / "tests" / "meta" / "score_spec.py") == digest(source / "score_spec.py"),
             f"{task_name}: rendered score spec drift",
         )
+        require(
+            digest(task / "tests" / "meta" / "leaderboard.csv")
+            == digest(source / "leaderboard.csv"),
+            f"{task_name}: rendered leaderboard drift",
+        )
+        require(
+            digest(task / "tests" / "meta" / "task_description.md")
+            == digest(source / "task_description.md"),
+            f"{task_name}: rendered task description drift",
+        )
+        source_edits_root = source / "edits"
+        rendered_edits_root = task / "tests" / "meta" / "edits"
+        source_edits = sorted(
+            path.relative_to(source_edits_root).as_posix()
+            for path in source_edits_root.rglob("*.py")
+            if path.is_file()
+        )
+        rendered_edits = sorted(
+            path.relative_to(rendered_edits_root).as_posix()
+            for path in rendered_edits_root.rglob("*.py")
+            if path.is_file()
+        )
+        require(
+            rendered_edits == source_edits,
+            f"{task_name}: rendered edit-op inventory drift",
+        )
+        for relative in source_edits:
+            require(
+                digest(rendered_edits_root / relative)
+                == digest(source_edits_root / relative),
+                f"{task_name}: rendered edit-op drift for {relative}",
+            )
         runtime_root = task / "tests" / "meta" / "verifier_package_files"
+        expected_runtime = sorted(source_config["verifier_only_package_files"])
+        require(
+            len(expected_runtime) == 11 and set(expected_runtime) == VERIFIER_RUNTIME,
+            f"{task_name}: source verifier-only runtime contract drift",
+        )
         rendered_runtime_inventory = sorted(
             path.relative_to(runtime_root).as_posix()
             for path in runtime_root.rglob("*")
             if path.is_file()
         )
         require(
-            rendered_runtime_inventory
-            == sorted(config["verifier_only_package_files"]),
+            rendered_runtime_inventory == expected_runtime,
             f"{task_name}: verifier-only runtime inventory drift",
         )
-        for relative in config["verifier_only_package_files"]:
+        runtime_total += len(expected_runtime)
+        for relative in expected_runtime:
             rendered_runtime = runtime_root / relative
             source_runtime = source_root / "vendor" / relative
             require(
@@ -190,6 +280,7 @@ def main() -> None:
             ]),
             f"{task_name}: agent scaffold inventory drift",
         )
+        scaffold_total += 1
         require(
             (
                 scaffold_root
@@ -236,9 +327,12 @@ def main() -> None:
         ]
         require(not leaked, f"{task_name}: verifier or answer material leaked: {leaked}")
 
+    require(runtime_total == 110, f"wrong verifier runtime total: {runtime_total}")
+    require(scaffold_total == 10, f"wrong scaffold total: {scaffold_total}")
     print(
         "SUMM_RENDER_AUDIT tasks=10 parsers=10 score_specs=10 scripts=10 "
-        "verifier_runtime=110 scaffolds=10 gpu=1 h20=10 settings=30 "
+        f"verifier_runtime={runtime_total} scaffolds={scaffold_total} "
+        "gpu=1 h20=10 settings=30 "
         "no_leak=10 image_pinned=10"
     )
 

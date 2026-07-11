@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import copy
 import hashlib
 import importlib.util
 import json
@@ -433,6 +434,58 @@ def test_package_uses_established_digest_pinned_mangrove_image_key():
         "mlsbench-harbor-abstractive-summarization@"
         "sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a"
     )
+
+
+def test_render_audit_config_contract_rejects_candidate_self_consistency():
+    audit_path = ROOT / "tests" / "audit_summ_rendered.py"
+    spec = importlib.util.spec_from_file_location("summ_render_audit_contract", audit_path)
+    audit = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(audit)
+
+    source_configs = {
+        task.name: json.loads((task / "config.json").read_text()) for task in TASKS
+    }
+    all_editables = {
+        config["files"][0]["filename"] for config in source_configs.values()
+    }
+    task_name = "summ-beam-width"
+    source = source_configs[task_name]
+    current_editable = source["files"][0]["filename"]
+    rendered = copy.deepcopy(source)
+    rendered["agent_pruned_package_files"] = sorted(
+        all_editables - {current_editable}
+    )
+    audit._require_source_config_contract(
+        task_name, rendered, source, all_editables
+    )
+
+    mutations = []
+    without_common = copy.deepcopy(rendered)
+    without_common["verifier_only_package_files"].remove(
+        "abstractive-summarization/common.py"
+    )
+    mutations.append(without_common)
+    wrong_command = copy.deepcopy(rendered)
+    wrong_command["test_cmds"][0]["label"] = "summ"
+    mutations.append(wrong_command)
+    wrong_editable = copy.deepcopy(rendered)
+    wrong_editable["files"][0]["filename"] = (
+        "abstractive-summarization/solution/diverse.py"
+    )
+    mutations.append(wrong_editable)
+    unexpected_extra = copy.deepcopy(rendered)
+    unexpected_extra["candidate_only"] = True
+    mutations.append(unexpected_extra)
+
+    for mutation in mutations:
+        try:
+            audit._require_source_config_contract(
+                task_name, mutation, source, all_editables
+            )
+        except AssertionError:
+            continue
+        raise AssertionError("candidate-mutated rendered config was accepted")
 
 
 def test_512_token_protocol_and_exact_checkpoint_counts_are_code_pinned():
