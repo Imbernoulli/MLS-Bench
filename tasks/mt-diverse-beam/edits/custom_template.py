@@ -11,7 +11,8 @@ Implement:
 
   num_beam_groups   : partition the 8 beams into this many groups (1 = plain beam;
                       must divide 8 -> snapped to 1/2/4/8).
-  diversity_penalty : Hamming penalty added across groups (>0 only with groups>1).
+  diversity_penalty : Hamming penalty added across groups. It must be zero for
+                      one group and strictly positive for multiple groups.
 
 Background:
   Diverse beam search improves the DIVERSITY of the n-best list, but for

@@ -26,6 +26,36 @@ import common
 _NUM_BEAMS = 8
 
 
+def _generation_kwargs(cfg: dict) -> dict:
+    """Validate the public surface before calling Transformers generation."""
+    groups = common.require_int(
+        cfg["num_beam_groups"], "num_beam_groups", 1, _NUM_BEAMS
+    )
+    if _NUM_BEAMS % groups:
+        raise ValueError(f"num_beam_groups must divide {_NUM_BEAMS}, got {groups}")
+    div = common.require_real(
+        cfg["diversity_penalty"], "diversity_penalty", 0.0, 5.0
+    )
+    if groups == 1 and div != 0.0:
+        raise ValueError("diversity_penalty must be zero when num_beam_groups is one")
+    if groups > 1 and div <= 0.0:
+        raise ValueError(
+            "diversity_penalty must be strictly positive with multiple beam groups"
+        )
+
+    kwargs = {
+        "num_beams": _NUM_BEAMS,
+        "length_penalty": 1.0,
+        "max_new_tokens": 128,
+    }
+    if groups > 1:
+        kwargs["num_beam_groups"] = groups
+        kwargs["diversity_penalty"] = div
+    else:
+        kwargs["early_stopping"] = True
+    return kwargs
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--solution", required=True)
@@ -43,22 +73,9 @@ def main() -> None:
         "build_divbeam_config",
         {"num_beam_groups", "diversity_penalty"},
     )
-    groups = common.require_int(
-        cfg["num_beam_groups"], "num_beam_groups", 1, _NUM_BEAMS
-    )
-    if _NUM_BEAMS % groups:
-        raise ValueError(f"num_beam_groups must divide {_NUM_BEAMS}, got {groups}")
-    div = common.require_real(cfg["diversity_penalty"], "diversity_penalty", 0.0, 5.0)
-    if groups == 1 and div != 0.0:
-        raise ValueError("diversity_penalty must be zero when num_beam_groups is one")
-    gen_kwargs = {"num_beams": _NUM_BEAMS, "length_penalty": 1.0,
-                  "max_new_tokens": 128}
-    if groups > 1:
-        gen_kwargs["num_beam_groups"] = groups
-        gen_kwargs["diversity_penalty"] = div
-        # diverse beam requires early_stopping unset default; group decoding is fine
-    else:
-        gen_kwargs["early_stopping"] = True
+    gen_kwargs = _generation_kwargs(cfg)
+    groups = int(cfg["num_beam_groups"])
+    div = float(cfg["diversity_penalty"])
     print(f"MT_DIVBEAM num_beam_groups={groups} diversity_penalty={div}", flush=True)
 
     model, tok = common.load_model_and_tokenizer(dev)

@@ -11,7 +11,7 @@ Modify `machine-translation/solution/divbeam.py` so
 `build_divbeam_config() -> dict` returns exactly
 `num_beam_groups` and `diversity_penalty`. The group count must be a positive
 divisor of eight, and the finite penalty must lie in `[0, 5]`. A one-group policy
-must use a zero penalty.
+must use a zero penalty; a multi-group policy must use a strictly positive penalty.
 
 ## Fixed Evaluation
 - Three pinned frozen OPUS-MT MarianMT checkpoints (~75M parameters each).

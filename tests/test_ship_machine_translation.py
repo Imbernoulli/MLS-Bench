@@ -6,6 +6,7 @@ import json
 import math
 from pathlib import Path
 import runpy
+import sys
 
 import pytest
 
@@ -156,6 +157,22 @@ def test_generation_config_validation_does_not_clamp(common) -> None:
         common._sanitize_gen_kwargs(
             {"num_beams": 8, "num_beam_groups": 3, "max_new_tokens": 10}
         )
+
+
+def test_diverse_beam_rejects_zero_penalty_for_multiple_groups(
+    common, monkeypatch
+) -> None:
+    monkeypatch.setitem(sys.modules, "common", common)
+    harness = _load("ship_mt_divbeam", VENDOR / "harness_divbeam.py")
+    with pytest.raises(ValueError, match="strictly positive"):
+        harness._generation_kwargs(
+            {"num_beam_groups": 2, "diversity_penalty": 0.0}
+        )
+    kwargs = harness._generation_kwargs(
+        {"num_beam_groups": 2, "diversity_penalty": 0.2}
+    )
+    assert kwargs["num_beam_groups"] == 2
+    assert kwargs["diversity_penalty"] == pytest.approx(0.2)
 
 
 def test_complete_official_split_is_required(common, tmp_path: Path, monkeypatch) -> None:
