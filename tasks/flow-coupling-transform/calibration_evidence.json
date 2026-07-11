@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "task_name": "flow-coupling-transform",
+  "recorded_date": "2026-07-11",
+  "fixed_workload": {
+    "seed": 42,
+    "optimizer": "Adam",
+    "optimizer_steps": 20000,
+    "train_count": 30000,
+    "test_count": 30000,
+    "settings": [
+      "checkerboard",
+      "moons",
+      "8gaussians"
+    ],
+    "gpu_count": 1,
+    "gpu_type": "H20"
+  },
+  "current_parser_replay": {
+    "protocol": "flow-2d-community-20k-literal-ast-v3",
+    "accepted": false,
+    "scope": "all nine archived verifier logs listed in this file",
+    "reason": "The unchanged legacy logs predate v3: they omit FLOW_PROTOCOL and data hashes and use the old FLOW_DESIGN and FLOW_SETTING_COMPLETE shapes. The current parser correctly rejects each log as malformed or unknown protocol record. No archived log was rewritten for replay."
+  },
+  "leaderboard_calibration": {
+    "scope": "The two runs in this section are the only sources for the positive leaderboard rows. Their FLOW_METRICS harness elapsed values, not verifier command wall elapsed values, are stored in leaderboard.csv.",
+    "dataset_version_id": 18721,
+    "dataset_item_id": 679350,
+    "source_commit": "cf0202decf342200005fa40dbc00726c23ed45db",
+    "source_commit_scope": "rendered Harbor dataset repository",
+    "harbor_render_revision": "cf0202decf342200005fa40dbc00726c23ed45db",
+    "task_checksum": "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546",
+    "runs": [
+      {
+        "role": "strong_anchor",
+        "leaderboard_model": "baseline:spline",
+        "leaderboard_timestamp": "2026-07-11T05:34:52+00:00",
+        "mangrove_task_db_id": 96207,
+        "mangrove_container_db_id": 4909807,
+        "runtime_container_id": "1331951",
+        "agent": "oracle",
+        "runner_id": "virt-v6h20",
+        "gpu_count": 1,
+        "gpu_type": "H20",
+        "has_exception": false,
+        "platform_score": 0.5982193562139632,
+        "verifier_started_at": "2026-07-11T04:22:18.803317Z",
+        "verifier_finished_at": "2026-07-11T05:34:52.906193Z",
+        "sync_snapshot_sha256": "a1763e42f6a2055a203982c3c933924a5dfd73d0f23d6745ff6c4c920c2328e7",
+        "artifact_archive_sha256": "59c084d1424dbda122e4ca5983fb186a1410ffd48cb25500c73d7c25bbe217b1",
+        "artifact_file_sha256": {
+          "config.json": "f032b6a0c9e0dfdcfdd9945923a0973b410e01dc16069cb2e94b2564b5a94487",
+          "mangrove-meta.json": "8c615c961f26cfc5b76eff4b3c55ff7a09df57f9423fc89a863d4fd15a2c1140",
+          "result.json": "cbe3c5a830f54308cf2c3571fc7ad66ec2719686102e4ce8278a10062745f5a4",
+          "verifier/eval_summary.json": "24cf60a582d09c01bd76bf262acd60efa0be4085f0f8ea78b300d6a76923cdf0",
+          "verifier/metrics.json": "29df7ff1cb1ca968b8afec073509b060f2da0e7ac416b4398fede5767bb7cd68",
+          "verifier/checkerboard__seed42.log": "dc79ce0d4621954e684d8dc12ccbf495c42aded05203f08581dcfc9b7cdcf4f0",
+          "verifier/moons__seed42.log": "61a7628c679fa738a722b2bba268808f681ff850b4b808082ec17e535356b5db",
+          "verifier/8gaussians__seed42.log": "8df50987943b38e10c4d1426d0cadbab37888f945d04fd30bea627250909648a"
+        },
+        "settings": {
+          "checkerboard": {
+            "nll": 2.954646,
+            "bpd": 2.131326,
+            "parameter_count": 79776,
+            "trace_record_count": 101,
+            "trace_first_step": 0,
+            "trace_final_step": 19999,
+            "reported_harness_elapsed_seconds": 1446.7,
+            "verifier_wall_elapsed_seconds": 1449.2145833969116
+          },
+          "moons": {
+            "nll": 1.025927,
+            "bpd": 0.74005,
+            "parameter_count": 79776,
+            "trace_record_count": 101,
+            "trace_first_step": 0,
+            "trace_final_step": 19999,
+            "reported_harness_elapsed_seconds": 1443.3,
+            "verifier_wall_elapsed_seconds": 1445.709393978119
+          },
+          "8gaussians": {
+            "nll": 2.373422,
+            "bpd": 1.712062,
+            "parameter_count": 79776,
+            "trace_record_count": 101,
+            "trace_first_step": 0,
+            "trace_final_step": 19999,
+            "reported_harness_elapsed_seconds": 1455.4,
+            "verifier_wall_elapsed_seconds": 1457.71036362648
+          }
+        }
+      },
+      {
+        "role": "weak_anchor",
+        "leaderboard_model": "baseline:affine",
+        "leaderboard_timestamp": "2026-07-11T04:33:05+00:00",
+        "mangrove_task_db_id": 96208,
+        "mangrove_container_db_id": 4909808,
+        "runtime_container_id": "1331952",
+        "agent": "nop",
+        "runner_id": "virt-v6h20",
+        "gpu_count": 1,
+        "gpu_type": "H20",
+        "has_exception": false,
+        "platform_score": 0.26029711016835855,
+        "verifier_started_at": "2026-07-11T04:22:16.100019Z",
+        "verifier_finished_at": "2026-07-11T04:33:03.625775Z",
+        "sync_snapshot_sha256": "53b6a59bd9d38196743f8a5048b35b6cce9e44e113d1a7800556a0e2f67a0a33",
+        "artifact_archive_sha256": "5ca4212163ff5108205d940fe9cf18557c74ee5652735700e484c29e35accabd",
+        "artifact_file_sha256": {
+          "config.json": "d3c86a83eec28c82db569e1e1dcff975e91af55326e2177b1135ff0aa7f16702",
+          "mangrove-meta.json": "60af853dbcec5f6a8d9499d78e9f54b2487dec74e3e29845cfc973407ebad7d9",
+          "result.json": "7cdc19462f4f226e5a366746d8d23a80823f8fafaf076b0ea73462937671051f",
+          "verifier/eval_summary.json": "0e0626b5c69521d891a5dbceb039ab680493ce5b1363fb62b10e88d24c72bd8c",
+          "verifier/metrics.json": "e6f71fd380fa8b875308f33cd8a8748dada2ba3482fcaecd5ea33b92fcd13ae9",
+          "verifier/checkerboard__seed42.log": "035ca849a1ec993dfd5e60ba7edcb6c6fca1875be697bb6b937daac1af375378",
+          "verifier/moons__seed42.log": "90e9b53c549ca18aa7dc0c17515dad7b5d0f1846640b84d1155b9390e040602b",
+          "verifier/8gaussians__seed42.log": "eb2c68ad87e4888536db6f02a9ef4e38eef12d60259f1ff7318e550a2fc866fa"
+        },
+        "settings": {
+          "checkerboard": {
+            "nll": 3.125589,
+            "bpd": 2.254636,
+            "parameter_count": 35344,
+            "trace_record_count": 101,
+            "trace_first_step": 0,
+            "trace_final_step": 19999,
+            "reported_harness_elapsed_seconds": 212.7,
+            "verifier_wall_elapsed_seconds": 215.03215265274048
+          },
+          "moons": {
+            "nll": 1.030755,
+            "bpd": 0.743533,
+            "parameter_count": 35344,
+            "trace_record_count": 101,
+            "trace_first_step": 0,
+            "trace_final_step": 19999,
+            "reported_harness_elapsed_seconds": 211.8,
+            "verifier_wall_elapsed_seconds": 214.03293681144714
+          },
+          "8gaussians": {
+            "nll": 2.386391,
+            "bpd": 1.721417,
+            "parameter_count": 35344,
+            "trace_record_count": 101,
+            "trace_first_step": 0,
+            "trace_final_step": 19999,
+            "reported_harness_elapsed_seconds": 215.1,
+            "verifier_wall_elapsed_seconds": 217.03385210037231
+          }
+        }
+      }
+    ]
+  },
+  "final_render_runtime_reproduction": {
+    "scope": "Runtime and workload reproduction for the native affine baseline only. This run is not the source of either leaderboard row or any leaderboard elapsed value.",
+    "leaderboard_source": false,
+    "same_affine_nll_as_leaderboard": true,
+    "dataset_version_id": 18738,
+    "dataset_item_id": 679817,
+    "source_commit": "809b5ca1c659f2ceb3ff2632ff67ecaeeb3f8514",
+    "source_commit_scope": "rendered Harbor dataset repository",
+    "harbor_render_revision": "809b5ca1c659f2ceb3ff2632ff67ecaeeb3f8514",
+    "task_checksum": "b37d6416fc3155f43b180934b8037e173eb54c41afea0da8e96ed4f1dd6e0f5b",
+    "mangrove_task_db_id": 96410,
+    "mangrove_container_db_id": 4930273,
+    "runtime_container_id": "1475852",
+    "agent": "nop",
+    "baseline": "affine",
+    "runner_id": "virt-v6h20",
+    "gpu_count": 1,
+    "gpu_type": "H20",
+    "has_exception": false,
+    "platform_score": 0.09999999999999998,
+    "verifier_started_at": "2026-07-11T05:55:22.944079Z",
+    "verifier_finished_at": "2026-07-11T06:07:54.458701Z",
+    "sync_snapshot_sha256": "734d86b2e2b822ce81aa90c80cfdd3d512f2f1de9a4f696659d89f20d825d211",
+    "artifact_archive_sha256": "8aa5ae30af3eb35b9e8e72760421ae23ba2eef588b68ddb7b86bab2b5177c3f4",
+    "artifact_file_sha256": {
+      "config.json": "a9fddd0dd5a481696dad0acfd97e1c1e69e2b9807732b65080e5d8468e9c10e1",
+      "mangrove-meta.json": "a4a38ca28afaaf3e936e9e23e4efddff85100b3ba7bda28eaea697cb7432fc09",
+      "result.json": "04c83f529f5f1fedd66babf1e52f7745660959f3120c9f2d493b0401de495540",
+      "verifier/eval_summary.json": "b5deff17d78071f917203119141d9fc3df6c81aea0ce1a9cede63a0e04f39ffb",
+      "verifier/metrics.json": "fc6100836d80c573cb711a6d1b8c6b0a18563079e6ef40d546c835ab0981067f",
+      "verifier/checkerboard__seed42.log": "6ecd5e54f8e79e01a41c83d1c110e40564c76f88b7fff3ed81c0a113bfc6f0c7",
+      "verifier/moons__seed42.log": "e851efb59f9dfa2c047107c7b102124899f2dbe978eb772f7da036ed352cbd92",
+      "verifier/8gaussians__seed42.log": "53880751539e280b2ccf3e785cd058f131bdedbc41a1c4e64c70ed16b3994efc"
+    },
+    "settings": {
+      "checkerboard": {
+        "nll": 3.125589,
+        "bpd": 2.254636,
+        "parameter_count": 35344,
+        "trace_record_count": 101,
+        "trace_first_step": 0,
+        "trace_final_step": 19999,
+        "reported_harness_elapsed_seconds": 249.1,
+        "verifier_wall_elapsed_seconds": 252.0468828678131
+      },
+      "moons": {
+        "nll": 1.030755,
+        "bpd": 0.743533,
+        "parameter_count": 35344,
+        "trace_record_count": 101,
+        "trace_first_step": 0,
+        "trace_final_step": 19999,
+        "reported_harness_elapsed_seconds": 246.7,
+        "verifier_wall_elapsed_seconds": 248.54560589790344
+      },
+      "8gaussians": {
+        "nll": 2.386391,
+        "bpd": 1.721417,
+        "parameter_count": 35344,
+        "trace_record_count": 101,
+        "trace_first_step": 0,
+        "trace_final_step": 19999,
+        "reported_harness_elapsed_seconds": 247.8,
+        "verifier_wall_elapsed_seconds": 249.5444414615631
+      }
+    }
+  }
+}

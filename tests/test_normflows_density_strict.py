@@ -420,6 +420,185 @@ def test_representative_leaderboard_has_only_fresh_full_scale_rows() -> None:
     assert all(float(row["elapsed_checkerboard"]) > 200.0 for row in rows)
 
 
+def test_representative_provenance_is_explicit_and_bound() -> None:
+    task_dir = ROOT / "tasks" / "flow-coupling-transform"
+    config = json.loads(task_dir.joinpath("config.json").read_text())
+    evidence_path = task_dir / config["calibration_representative_evidence_file"]
+    evidence_bytes = evidence_path.read_bytes()
+    assert hashlib.sha256(evidence_bytes).hexdigest() == (
+        config["calibration_representative_evidence_sha256"]
+    )
+    evidence = json.loads(evidence_bytes)
+
+    assert evidence["schema_version"] == 1
+    assert evidence["task_name"] == "flow-coupling-transform"
+    assert evidence["fixed_workload"] == {
+        "seed": 42,
+        "optimizer": "Adam",
+        "optimizer_steps": 20_000,
+        "train_count": 30_000,
+        "test_count": 30_000,
+        "settings": ["checkerboard", "moons", "8gaussians"],
+        "gpu_count": 1,
+        "gpu_type": "H20",
+    }
+    replay = evidence["current_parser_replay"]
+    assert replay["protocol"] == PROTOCOL
+    assert replay["accepted"] is False
+    assert replay["scope"] == "all nine archived verifier logs listed in this file"
+    assert "No archived log was rewritten" in replay["reason"]
+
+    calibration = evidence["leaderboard_calibration"]
+    assert calibration["dataset_version_id"] == 18_721
+    assert calibration["dataset_item_id"] == 679_350
+    assert calibration["source_commit"] == (
+        "cf0202decf342200005fa40dbc00726c23ed45db"
+    )
+    assert calibration["source_commit_scope"] == "rendered Harbor dataset repository"
+    assert calibration["harbor_render_revision"] == (
+        "cf0202decf342200005fa40dbc00726c23ed45db"
+    )
+    assert calibration["task_checksum"] == (
+        "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546"
+    )
+
+    expected_runs = {
+        "baseline:spline": {
+            "role": "strong_anchor",
+            "task": 96_207,
+            "container": 4_909_807,
+            "runtime_container": "1331951",
+            "agent": "oracle",
+            "dataset_version": 18_721,
+            "source_commit": "cf0202decf342200005fa40dbc00726c23ed45db",
+            "task_checksum": "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546",
+            "runner_id": "virt-v6h20",
+            "archive": "59c084d1424dbda122e4ca5983fb186a1410ffd48cb25500c73d7c25bbe217b1",
+            "logs": {
+                "checkerboard": "dc79ce0d4621954e684d8dc12ccbf495c42aded05203f08581dcfc9b7cdcf4f0",
+                "moons": "61a7628c679fa738a722b2bba268808f681ff850b4b808082ec17e535356b5db",
+                "8gaussians": "8df50987943b38e10c4d1426d0cadbab37888f945d04fd30bea627250909648a",
+            },
+        },
+        "baseline:affine": {
+            "role": "weak_anchor",
+            "task": 96_208,
+            "container": 4_909_808,
+            "runtime_container": "1331952",
+            "agent": "nop",
+            "dataset_version": 18_721,
+            "source_commit": "cf0202decf342200005fa40dbc00726c23ed45db",
+            "task_checksum": "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546",
+            "runner_id": "virt-v6h20",
+            "archive": "5ca4212163ff5108205d940fe9cf18557c74ee5652735700e484c29e35accabd",
+            "logs": {
+                "checkerboard": "035ca849a1ec993dfd5e60ba7edcb6c6fca1875be697bb6b937daac1af375378",
+                "moons": "90e9b53c549ca18aa7dc0c17515dad7b5d0f1846640b84d1155b9390e040602b",
+                "8gaussians": "eb2c68ad87e4888536db6f02a9ef4e38eef12d60259f1ff7318e550a2fc866fa",
+            },
+        },
+    }
+    runs = {run["leaderboard_model"]: run for run in calibration["runs"]}
+    assert set(runs) == set(expected_runs)
+
+    with task_dir.joinpath("leaderboard.csv").open(newline="") as handle:
+        rows = {row["model"]: row for row in csv.DictReader(handle)}
+    assert set(rows) == set(expected_runs)
+    for model, expected in expected_runs.items():
+        run = runs[model]
+        row = rows[model]
+        assert run["role"] == expected["role"]
+        assert run["mangrove_task_db_id"] == expected["task"]
+        assert run["mangrove_container_db_id"] == expected["container"]
+        assert run["runtime_container_id"] == expected["runtime_container"]
+        assert run["agent"] == expected["agent"]
+        assert run["runner_id"] == expected["runner_id"]
+        assert run["artifact_archive_sha256"] == expected["archive"]
+        assert run["has_exception"] is False
+        assert run["gpu_count"] == 1 and run["gpu_type"] == "H20"
+        assert row["timestamp"] == run["leaderboard_timestamp"]
+        assert row["is_final"] == "true" and int(row["seed"]) == 42
+        for setting in ("checkerboard", "moons", "8gaussians"):
+            setting_evidence = run["settings"][setting]
+            assert float(row[f"nll_{setting}"]) == setting_evidence["nll"]
+            assert float(row[f"elapsed_{setting}"]) == (
+                setting_evidence["reported_harness_elapsed_seconds"]
+            )
+            assert setting_evidence["trace_record_count"] == 101
+            assert setting_evidence["trace_first_step"] == 0
+            assert setting_evidence["trace_final_step"] == 19_999
+            log_path = f"verifier/{setting}__seed42.log"
+            assert run["artifact_file_sha256"][log_path] == expected["logs"][setting]
+        for digest in [
+            run["sync_snapshot_sha256"],
+            run["artifact_archive_sha256"],
+            *run["artifact_file_sha256"].values(),
+        ]:
+            assert re.fullmatch(r"[0-9a-f]{64}", digest)
+
+    config_runs = {
+        run["role"]: run for run in config["calibration_representative_mangrove_runs"]
+    }
+    for expected in expected_runs.values():
+        config_run = config_runs[expected["role"]]
+        assert config_run == {
+            "role": expected["role"],
+            "task_db_id": expected["task"],
+            "container_db_id": expected["container"],
+            "dataset_version_id": expected["dataset_version"],
+            "agent": expected["agent"],
+            "source_commit": expected["source_commit"],
+            "task_checksum": expected["task_checksum"],
+            "runner_id": expected["runner_id"],
+            "has_exception": False,
+            "artifact_archive_sha256": expected["archive"],
+        }
+
+    runtime = evidence["final_render_runtime_reproduction"]
+    assert runtime["scope"].startswith("Runtime and workload reproduction")
+    assert runtime["leaderboard_source"] is False
+    assert runtime["same_affine_nll_as_leaderboard"] is True
+    assert runtime["dataset_version_id"] == 18_738
+    assert runtime["dataset_item_id"] == 679_817
+    assert runtime["source_commit"] == (
+        "809b5ca1c659f2ceb3ff2632ff67ecaeeb3f8514"
+    )
+    assert runtime["source_commit_scope"] == "rendered Harbor dataset repository"
+    assert runtime["harbor_render_revision"] == (
+        "809b5ca1c659f2ceb3ff2632ff67ecaeeb3f8514"
+    )
+    assert runtime["task_checksum"] == (
+        "b37d6416fc3155f43b180934b8037e173eb54c41afea0da8e96ed4f1dd6e0f5b"
+    )
+    assert runtime["mangrove_task_db_id"] == 96_410
+    assert runtime["mangrove_container_db_id"] == 4_930_273
+    assert runtime["runtime_container_id"] == "1475852"
+    assert runtime["agent"] == "nop" and runtime["baseline"] == "affine"
+    assert runtime["has_exception"] is False
+    assert runtime["gpu_count"] == 1 and runtime["gpu_type"] == "H20"
+    assert runtime["artifact_archive_sha256"] == (
+        "8aa5ae30af3eb35b9e8e72760421ae23ba2eef588b68ddb7b86bab2b5177c3f4"
+    )
+    weak = runs["baseline:affine"]
+    for setting in ("checkerboard", "moons", "8gaussians"):
+        assert runtime["settings"][setting]["nll"] == weak["settings"][setting]["nll"]
+        assert runtime["settings"][setting]["reported_harness_elapsed_seconds"] != (
+            weak["settings"][setting]["reported_harness_elapsed_seconds"]
+        )
+    assert config["calibration_runtime_reproduction"] == {
+        "scope": "runtime_only_not_leaderboard",
+        "task_db_id": 96_410,
+        "container_db_id": 4_930_273,
+        "dataset_version_id": 18_738,
+        "agent": "nop",
+        "source_commit": "809b5ca1c659f2ceb3ff2632ff67ecaeeb3f8514",
+        "task_checksum": "b37d6416fc3155f43b180934b8037e173eb54c41afea0da8e96ed4f1dd6e0f5b",
+        "runner_id": "virt-v6h20",
+        "has_exception": False,
+        "artifact_archive_sha256": "8aa5ae30af3eb35b9e8e72760421ae23ba2eef588b68ddb7b86bab2b5177c3f4",
+    }
+
+
 def test_one_pinned_repository_image_and_host_only_dgp() -> None:
     package_config = json.loads(
         (ROOT / "vendor" / "pkg_configs" / "normflows-density" / "config.json").read_text()
