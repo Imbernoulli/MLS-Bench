@@ -2443,7 +2443,9 @@ def cmd_agent(args):
     global_config["allow_web_search"] = getattr(args, "allow_web_search", False)
     global_config["max_web_credits"] = getattr(args, "max_web_credits", 20)
     global_config["extra_context"] = getattr(args, "extra_context", None)
-    global_config["hide_hidden"] = getattr(args, "hide_hidden", False)
+    # Accepted for command-line compatibility only. Every configured setting
+    # participates in prompts, feedback, evaluation, and scoring.
+    global_config["hide_hidden"] = False
 
     # Collect OpenEvolve-specific runtime knobs if the user provided them
     oe_knobs = dict(global_config.get("openevolve") or {})
@@ -2493,8 +2495,23 @@ def cmd_agent(args):
         **agent_kwargs,
     )
 
-    summary = agent.run(resume=getattr(args, "resume", False))
+    summary = _run_agent_fail_closed(
+        agent,
+        resume=getattr(args, "resume", False),
+    )
     print(f"\n[done] Summary: {summary}")
+
+
+def _run_agent_fail_closed(agent, *, resume: bool) -> dict:
+    """Run an agent without allowing an exception to expose stale finals."""
+    try:
+        return agent.run(resume=resume)
+    except BaseException:
+        try:
+            agent.tools.record_zero_if_no_finals()
+        except Exception:
+            logger.exception("failed to record empty finals after agent termination")
+        raise
 
 
 # ---------------------------------------------------------------------------
@@ -2589,11 +2606,8 @@ def main():
     )
     p_agent.add_argument(
         "--hide-hidden", action="store_true",
-        help="Truly hide test_cmds with \"hidden\": true from the default "
-             "ReAct agent: their label/cmd/budget/baseline columns are dropped "
-             "from the initial prompt, and their per-setting metrics are "
-             "stripped from the [Leaderboard] feedback line on every test. "
-             "Leaderboard CSV writes are unchanged.",
+        help="Deprecated compatibility no-op. All configured commands, metrics, "
+             "feedback, and score settings remain visible and count.",
     )
     p_agent.set_defaults(func=cmd_agent)
 

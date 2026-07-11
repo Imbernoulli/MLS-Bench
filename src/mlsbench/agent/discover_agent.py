@@ -47,31 +47,14 @@ from typing import Any, Callable
 from mlsbench.agent.base import BaseAgent
 
 
-class _AllHiddenScoreSpecError(ValueError):
-    """Raised when hidden filtering leaves no reward settings."""
-
-
 def _hidden_labels_from_test_cmds(config_task: dict) -> set[str]:
-    return {
-        str(tc["label"]).replace("-", "_")
-        for tc in config_task.get("test_cmds", [])
-        if tc.get("hidden") and "label" in tc
-    }
+    """Retain the legacy helper while treating hidden labels as no-ops."""
+    return set()
 
 
 def _filter_hidden_metrics(metrics: dict[str, Any], hidden_labels: set[str]) -> dict[str, Any]:
-    if not hidden_labels:
-        return metrics
-    return {
-        k: v
-        for k, v in metrics.items()
-        if k == "combined_score" or not any(
-            h in str(k).replace("-", "_")
-            or str(k).replace("-", "_").startswith(f"{h}_")
-            or str(k).replace("-", "_").endswith(f"_{h}")
-            for h in hidden_labels
-        )
-    }
+    """Return all metrics; hidden labels are legacy-compatible input only."""
+    return metrics
 
 
 def _safe_type_name(value: Any) -> str | None:
@@ -461,8 +444,6 @@ class DiscoverAgent(BaseAgent):
             task_name: primary_assets.hidden_labels
         }
         self._hidden_labels: set[str] = primary_assets.hidden_labels
-        print("[discover-agent] hidden metrics excluded from candidate response: "
-              f"{sorted(self._hidden_labels)}")
 
     # ------------------------------------------------------------------
     def get_action(self, messages: list) -> dict | None:  # pragma: no cover
@@ -791,12 +772,10 @@ class DiscoverAgent(BaseAgent):
     def _load_score_spec_safely(self, task_name: str | None = None) -> None:
         """Load the task's score_spec.py + baseline anchors.
 
-        Strips settings backed by hidden test_cmds so the RL reward isn't
-        peeking at held-out evaluations. Final leaderboard scoring (done by
-        external tooling) still uses the full spec including hidden settings.
+        Every configured setting remains in the RL reward and feedback. The
+        legacy hidden flag never changes evaluation behavior.
         """
         task_name = task_name or self.task_name
-        assets = self._get_task_assets(task_name)
         task_dir = self.project_root / "tasks" / task_name
         spec_path = task_dir / "score_spec.py"
         if not spec_path.exists():
@@ -806,7 +785,6 @@ class DiscoverAgent(BaseAgent):
             return
 
         try:
-            import copy as _copy
             from mlsbench.scoring.anchors import BaselineAnchors
             from mlsbench.scoring.evaluate import load_expanded_spec
 
@@ -823,29 +801,8 @@ class DiscoverAgent(BaseAgent):
                       "candidates will receive fail-closed reward")
                 return
 
-            hidden_labels = {
-                tc["label"] for tc in assets.config_task.get("test_cmds", [])
-                if tc.get("hidden") and "label" in tc
-            }
-            if hidden_labels:
-                visible = _copy.deepcopy(spec)
-                visible.settings = {
-                    name: s for name, s in visible.settings.items()
-                    if name not in hidden_labels
-                }
-                if not visible.settings:
-                    raise _AllHiddenScoreSpecError(
-                        "score_spec.py has no visible settings after excluding "
-                        f"hidden labels {sorted(hidden_labels)}. Widen score_spec "
-                        "to include a visible setting, or remove the hidden flag "
-                        "from at least one scored test_cmd."
-                    )
-                score_spec = visible
-                print(f"[discover-agent] using score_spec.py (excluding hidden labels: "
-                      f"{sorted(hidden_labels)}) for {task_name}")
-            else:
-                score_spec = spec
-                print(f"[discover-agent] using score_spec.py from {task_dir}")
+            score_spec = spec
+            print(f"[discover-agent] using full score_spec.py from {task_dir}")
             self._task_score_specs[task_name] = score_spec
             self._task_score_anchors[task_name] = anchors
             self._task_score_spec_errors[task_name] = None
@@ -853,8 +810,6 @@ class DiscoverAgent(BaseAgent):
                 self._score_spec = score_spec
                 self._score_anchors = anchors
                 self._score_spec_error = None
-        except _AllHiddenScoreSpecError:
-            raise
         except Exception as exc:
             score_spec_error = f"score_spec load failed: {exc!r}"
             self._task_score_spec_errors[task_name] = score_spec_error
@@ -868,6 +823,9 @@ class DiscoverAgent(BaseAgent):
         entry: dict,
         task_name: str | None = None,
     ) -> tuple[float, dict]:
+        if entry.get("had_failures"):
+            return (0.0, {})
+
         task_name = task_name or getattr(self, "task_name", "")
         seed_metrics: list[dict] = entry.get("seed_metrics") or []
         if not seed_metrics:
@@ -1762,10 +1720,7 @@ You have at most {self._max_actions_per_episode} turns. If you reach the limit w
                 logged_idx: int,
                 meta: dict,
             ):
-                hidden = getattr(agent_self, "_task_hidden_labels", {}).get(
-                    env_task_id, getattr(agent_self, "_hidden_labels", set())
-                )
-                visible_metrics = _filter_hidden_metrics(metrics, hidden)
+                visible_metrics = _filter_hidden_metrics(metrics, set())
                 meta = dict(meta)
                 meta["discover_metrics"] = visible_metrics
                 self._log_tool_result(logged_idx, feedback, meta=meta)

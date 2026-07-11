@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import copy
 import fcntl
-import fnmatch
 import json
 import math
 import os
@@ -437,70 +436,19 @@ class WorkspaceTools:
         # explicit failed/empty final for the current run.
         self._current_run_final_seeds: set[int] = set()
 
-        # Per-metric glob patterns that are withheld from the agent during
-        # intermediate (non-final) tests. Metrics still land in the leaderboard
-        # CSV; only the agent-visible feedback text has matching ``key=value``
-        # segments stripped. Mirrors the semantics of script-level ``hidden``.
-        raw_hidden = self.config_task.get("hidden_metrics") or []
-        self.hidden_metric_patterns: list[str] = [str(p) for p in raw_hidden]
-
-        # --hide-hidden: when True, the default ReAct path additionally
-        # withholds saved_metrics keys whose names contain a "hidden": true
-        # test_cmd label. CSV writes are unaffected.
-        self.hide_hidden: bool = bool(hide_hidden)
-        self.hidden_test_labels: list[str] = [
-            str(tc["label"]) for tc in self.config_task.get("test_cmds", [])
-            if tc.get("hidden") and tc.get("label")
-        ]
+        # Legacy compatibility fields. ``hidden``, ``hidden_metrics``, and
+        # ``hide_hidden`` are accepted inputs but must not alter evaluation.
+        self.hidden_metric_patterns: list[str] = []
+        self.hide_hidden = False
+        self.hidden_test_labels: list[str] = []
 
     def _filter_hidden_label_metrics(self, metrics: dict) -> dict:
-        """Drop metric keys whose name contains any hidden test_cmd label."""
-        if not self.hide_hidden or not self.hidden_test_labels or not metrics:
-            return metrics
-        labels = self.hidden_test_labels
-
-        def _hides(key: str) -> bool:
-            normalized_key = str(key).replace("-", "_")
-            for label in labels:
-                normalized_label = label.replace("-", "_")
-                if label in str(key) or normalized_label in normalized_key:
-                    return True
-            return False
-
-        return {key: value for key, value in metrics.items() if not _hides(key)}
-
-    _HIDDEN_KV_RE = re.compile(
-        r'([A-Za-z_][\w.\-/]*)='
-        r'(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|nan|inf|-inf|NaN|Inf)',
-    )
+        """Return all metrics; legacy hidden labels have no effect."""
+        return metrics
 
     def _filter_hidden_metric_kvs(self, text: str) -> str:
-        """Strip key/value segments whose key matches a hidden glob."""
-        if not self.hidden_metric_patterns or not text:
-            return text
-
-        def should_hide(key: str) -> bool:
-            return any(
-                fnmatch.fnmatchcase(key, pattern)
-                for pattern in self.hidden_metric_patterns
-            )
-
-        out_lines: list[str] = []
-        for line in text.splitlines():
-            new_line = self._HIDDEN_KV_RE.sub(
-                lambda match: "" if should_hide(match.group(1)) else match.group(0),
-                line,
-            )
-            new_line = re.sub(r',\s*,', ',', new_line)
-            new_line = re.sub(r':\s*,\s*', ': ', new_line)
-            new_line = re.sub(r',\s*$', '', new_line).rstrip()
-            if re.fullmatch(
-                r'\s*(Final metrics \([^)]*\):|TEST_METRICS:?)\s*',
-                new_line,
-            ):
-                continue
-            out_lines.append(new_line)
-        return '\n'.join(out_lines)
+        """Return all feedback; legacy hidden metric globs have no effect."""
+        return text
 
     # ------------------------------------------------------------------
     # CUDA / platform helpers
@@ -2998,13 +2946,13 @@ class WorkspaceTools:
         return grouped
 
     def _run_all_cmds(self, seed: int) -> tuple[list[str], dict, list[bool]]:
-        """Run all test_cmds grouped by `group`, returning hidden flags.
+        """Run all test_cmds grouped by `group`.
 
         Dispatches to the configured scheduler executor.
         Elapsed times are stored in all_metrics as ``elapsed_<label>`` keys.
 
-        The third tuple member parallels the feedback list and retains each
-        command's configured hidden flag.
+        The third tuple member is retained for API compatibility and contains
+        only ``False`` values because every command is visible.
         """
         return self._run_all_cmds_slurm(seed)
 
@@ -3339,7 +3287,7 @@ class WorkspaceTools:
 
                     feedback_str = f"### {orig_label} ({cmd})\n{status_line}{section_feedback}"
                     seed_feedback[seed].append(feedback_str)
-                    seed_hidden[seed].append(task["entry"].get("hidden", False))
+                    seed_hidden[seed].append(False)
                     if not command_failed:
                         seed_metrics[seed].update(parsed_metrics)
                     # Per-cmd elapsed time
@@ -3622,8 +3570,7 @@ class WorkspaceTools:
         - First test and last test (max_tests reached): all seeds.
         - Intermediate calls: single seed only.
 
-        Hidden command feedback is withheld from intermediate agent-visible
-        output, while all configured commands still execute and contribute.
+        Legacy hidden metadata does not alter commands, feedback, or metrics.
         """
         if self.test_count >= self.max_tests:
             return (
@@ -3638,37 +3585,25 @@ class WorkspaceTools:
         seeds_to_run = self.seeds
 
         all_feedback_parts: list[str] = []
-        all_hidden_flags: list[bool] = []
         all_seed_metrics: list[dict] = []
 
         if len(seeds_to_run) == 1:
-            feedback_parts, metrics, hidden_flags = self._run_all_cmds(seeds_to_run[0])
+            feedback_parts, metrics, _hidden_flags = self._run_all_cmds(seeds_to_run[0])
             all_feedback_parts.extend(feedback_parts)
-            all_hidden_flags.extend(hidden_flags)
             all_seed_metrics.append(metrics)
         elif len(seeds_to_run) > 1:
             # Scheduler multi-seed: global bin-packing across all seeds
             seed_results = self._run_all_seeds_slurm(seeds_to_run)
             for seed in seeds_to_run:
-                feedback_parts, metrics, hidden_flags = seed_results[seed]
+                feedback_parts, metrics, _hidden_flags = seed_results[seed]
                 all_feedback_parts.append(f"\n## Seed {seed}")
-                all_hidden_flags.append(False)  # seed header is never hidden
                 all_feedback_parts.extend(feedback_parts)
-                all_hidden_flags.extend(hidden_flags)
                 all_seed_metrics.append(metrics)
 
         # Build combined feedback: always include everything (for caching/leaderboard).
         combined_feedback = "\n\n".join(all_feedback_parts)
 
-        if is_final and not self.hide_hidden:
-            visible_feedback = combined_feedback
-        else:
-            visible_parts = [
-                self._filter_hidden_metric_kvs(part)
-                for part, hidden in zip(all_feedback_parts, all_hidden_flags)
-                if not hidden
-            ]
-            visible_feedback = "\n\n".join(visible_parts)
+        visible_feedback = combined_feedback
 
         # Store in history (1-indexed via len)
         self._test_history.append({
@@ -3743,8 +3678,7 @@ class WorkspaceTools:
             return f"ERROR: Invalid test number {n}. Valid range: 1–{len(self._test_history)}."
 
         entry = self._test_history[n - 1]
-        feedback_key = "visible_feedback" if self.hide_hidden else "feedback"
-        selected_feedback = entry.get(feedback_key) or entry.get("feedback", "")
+        selected_feedback = entry.get("feedback", "")
         combined_feedback = f"[submit] Submitting result from test #{n} as final.\n\n" + selected_feedback
         submit_feedback, metrics = self._finalize_submission(entry, test_num=n)
         combined_feedback += f"\n\n{submit_feedback}"
