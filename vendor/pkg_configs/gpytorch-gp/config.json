@@ -1,0 +1,29 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.4.0-cuda12.1-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-gpytorch-gp@sha256:40ecc4be93217d703883579fd26990f14fa39ec5bb6a03b1fa80623cb946faaa",
+  "install_cmds": [
+    "pip install --no-cache-dir 'gpytorch==1.13' 'numpy<2' scikit-learn",
+    "python -c \"import gpytorch, torch; print('gpytorch', gpytorch.__version__, 'torch', torch.__version__, 'cuda', torch.cuda.is_available())\""
+  ],
+  "env": {
+    "GP_DATA": "/data/gpytorch-gp",
+    "PYTHONPATH": "/workspace/gpytorch-gp:${PYTHONPATH}"
+  },
+  "data_deps": [
+    {
+      "name": "gpytorch_uci",
+      "description": "Fixed UCI regression splits (concrete 1030x8, elevators ~16.6k x18, kin8nm 8192x8) staged as .npz train/test arrays (90/10 split, seed 42) so the gp-* tasks resolve fully offline. Standardization is done in-harness from train stats; NLL/RMSE are reported on the original y scale. ~5MB.",
+      "host_path": "{data_root}/gpytorch-gp",
+      "container_path": "/data/gpytorch-gp",
+      "ready_files": [
+        "{data_root}/gpytorch-gp/concrete.npz",
+        "{data_root}/gpytorch-gp/elevators.npz",
+        "{data_root}/gpytorch-gp/kin8nm.npz"
+      ],
+      "prepare": "vendor/data_scripts/gpytorch-gp/prepare_data.py"
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

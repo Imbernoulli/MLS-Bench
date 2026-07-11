@@ -1,0 +1,82 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "calibration_status": "measured_h20_solver_anchors_pending_final_v2_replay",
+  "calibration_protocol": "openml-full-random90-10-seed42-v1",
+  "verification_protocol": "openml_full_v2",
+  "protocol_status": "full_openml_protocol_static_ready_pending_final_v2_replay",
+  "verifier_only_package_files": [
+    "gpytorch-gp/common.py",
+    "gpytorch-gp/harness_deepkernel.py",
+    "gpytorch-gp/harness_exact.py",
+    "gpytorch-gp/harness_kernel.py",
+    "gpytorch-gp/harness_sparse.py",
+    "gpytorch-gp/harness_svgp.py"
+  ],
+  "agent_data_prune": [
+    "/data/gpytorch-gp"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/gpytorch-gp",
+      "dest": "data/gpytorch-gp"
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/concrete.sh",
+      "label": "concrete",
+      "group": 2,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "gpytorch-gp"
+    },
+    {
+      "cmd": "scripts/kin8nm.sh",
+      "label": "kin8nm",
+      "group": 3,
+      "compute": 1.0,
+      "time": "0:20:00",
+      "mem": 16,
+      "package": "gpytorch-gp"
+    },
+    {
+      "cmd": "scripts/elevators.sh",
+      "label": "elevators",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:30:00",
+      "mem": 24,
+      "package": "gpytorch-gp"
+    }
+  ],
+  "baselines": {
+    "ard_matern": {
+      "edit_ops": "edits/ard_matern.edit.py"
+    },
+    "rbf": {
+      "edit_ops": "edits/rbf.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "gpytorch-gp/solution/kernel_design.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 5,
+          "end": 5
+        }
+      ]
+    }
+  ]
+}
