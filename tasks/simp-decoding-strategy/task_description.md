@@ -1,47 +1,33 @@
-# Text Simplification: Sampling vs. Beam-Search Decoding Strategy
+# Simplification Decode Strategy
 
 ## Research Question
-Given a FROZEN small pretrained sentence-simplification model
-(`mrm8488/t5-base-finetuned-turk-text-simplification`), which top-level **decoding
-strategy** maximizes simplification quality (corpus **SARI**) across three distinct
-test sets: plain multinomial **sampling**, nucleus (top-p) **sampling**, or
-deterministic **beam search**? All three share the same fixed length window
-(`max_length=128`) and the same frozen model; only the search strategy varies.
+Evaluate the fixed decode strategy family for a frozen text-simplification pipeline. The same implementation
+is evaluated on the complete official test partitions and their fixed reference
+sets.
 
-## Background
-Sentence simplification rewrites a complex sentence into a simpler,
-meaning-preserving one, scored by **SARI** (Xu et al. 2016):
-`SARI = (F1_add + F1_keep + P_del)/3` over n=1..4. Beam search approximately
-maximizes sequence probability by keeping the top-k partial hypotheses at each step;
-sampling-based decoding (with or without nucleus truncation) never performs this
-search, so it systematically under-performs beam search on a precision-sensitive
-reference metric like SARI. This task compares the three strategies directly, on the
-same model / same length window, isolating the STRATEGY choice from the more
-fine-grained temperature / top-p / beam-width levers that sibling simp-* tasks vary
-within each strategy family.
+## Data and Model Visibility
+The action workspace contains the complete source-only ASSET (359), TurkCorpus
+(359), and WikiAuto (720) partitions so implementations can inspect the sentences
+they must simplify. Human reference simplifications are never present in the
+action workspace; they are mounted only for verifier scoring. Revision-pinned
+frozen checkpoint files are staged offline and are readable because they are the
+inference targets, not scoring labels. The verifier checks their file and
+architecture manifests before accepting a completion proof.
+The shared runtime, SARI implementation, and this task's active harness are also
+agent-readable so the execution path can be inspected. Other sibling harnesses,
+human references, parser, calibration evidence, and scores are not action inputs.
 
 ## Implementation Contract
-Modify `text-simplification/solution/strategy.py`:
+Edit `text-simplification/solution/strategy.py` and implement:
 
 ```python
 def build_strategy() -> str:
-    return "beam"
+    ...
 ```
 
-Must be one of `"sample"` (do_sample=True, num_beams=1, temperature=1.0),
-`"topp"` (do_sample=True, num_beams=1, top_p=0.9), or
-`"beam"` (num_beams=5, no_repeat_ngram_size=3). The model, the `simplify: ` prefix,
-`max_length=128`, the three corpora, the references, the tokenizer, and the SARI
-evaluator are all frozen in the harness.
+Return one policy string supported by the solution interface. Invalid values, missing keys, non-finite metrics, generation errors,
+or incomplete outputs fail verification. The harness does not clamp or repair an
+editable configuration and does not substitute another policy.
 
-## Fixed Pipeline & Evaluation
-- Model: `mrm8488/t5-base-finetuned-turk-text-simplification` (T5-base, ~220M),
-  FROZEN, eval mode.
-- THREE FIXED test settings (from the ungated parquet `GEM/wiki_auto_asset_turk`,
-  staged offline as JSONL `{source, references}`): `asset` (10 refs, multi-op),
-  `turk` (7-8 refs, lexical), `wiki` (1 ref, real Wikipedia, longer sources).
-- Metric (higher is better): `sari_{setting}` = corpus **SARI** (0-100); the task
-  score is the geometric mean over the three settings. `bleu_{setting}` secondary.
-- Deterministic given a fixed seed; runs on one small GPU in a few minutes.
-- Scoring is a per-setting logistic anchored between the weak plain-sampling
-  strategy and the strong beam-search strategy.
+## Evaluation
+The verifier reports corpus SARI from complete predictions and fixed evaluation references. Every configured evaluation must complete with finite metrics.

@@ -7,5 +7,5 @@ _FILE = "text-simplification/solution/capacity.py"
 _CONTENT = '''    return "small_turk"'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 47, "end_line": 47, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 46, "end_line": 46, "content": _CONTENT},
 ]

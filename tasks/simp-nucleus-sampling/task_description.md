@@ -1,45 +1,33 @@
-# Text Simplification: Nucleus (Top-p) Sampling
+# Simplification Nucleus Sampling
 
 ## Research Question
-Given a FROZEN small pretrained sentence-simplification model
-(`mrm8488/t5-base-finetuned-turk-text-simplification`), decoded via SAMPLING
-(`do_sample=True`, `num_beams=1` FIXED, `temperature=1.0` FIXED — no beam search, no
-temperature reshaping), how should the **nucleus (top-p)** mass be set to maximize
-simplification quality (corpus **SARI**) across three distinct test sets? Nucleus
-sampling (Holtzman et al. 2019) keeps the smallest token set whose cumulative
-probability >= `top_p`, renormalizes, and samples only from that set.
+Evaluate the nucleus sampling mass for a frozen text-simplification pipeline. The same implementation
+is evaluated on complete official test partitions; human references are
+available only to the verifier.
 
-## Background
-Sentence simplification rewrites a complex sentence into a simpler,
-meaning-preserving one, scored by **SARI** (Xu et al. 2016):
-`SARI = (F1_add + F1_keep + P_del)/3` over n=1..4. A WIDE nucleus (`top_p` close to
-1.0) samples from (nearly) the full vocabulary, including many low-probability /
-off-distribution tokens that rarely land on a correct simplified phrasing, hurting
-SARI. A TIGHT nucleus restricts sampling to only the model's most probable tokens,
-staying closer to a faithful (near-greedy) simplification and improving SARI. This
-isolates the top-p lever from temperature and beam search (both FIXED).
+## Data and Model Visibility
+The action workspace contains the complete source-only ASSET (359), TurkCorpus
+(359), and WikiAuto (720) partitions so implementations can inspect the sentences
+they must simplify. Human reference simplifications are never present in the
+action workspace; they are mounted only for verifier scoring. Revision-pinned
+frozen checkpoint files are staged offline and are readable because they are the
+inference targets, not scoring labels. The verifier checks their file and
+architecture manifests before accepting a completion proof.
+The shared runtime, SARI implementation, and this task's active harness are also
+agent-readable so the execution path can be inspected. Other sibling harnesses,
+human references, parser, calibration evidence, and scores are not action inputs.
 
 ## Implementation Contract
-Modify `text-simplification/solution/nucleus.py`:
+Edit `text-simplification/solution/nucleus.py` and implement:
 
 ```python
 def build_top_p() -> float:
-    return 0.6
+    ...
 ```
 
-`top_p` is hard-capped to `[0.01, 1.0]` by the shared sanitizer. The model, the
-`simplify: ` prefix, `do_sample=True`, `num_beams=1`, `temperature=1.0`,
-`no_repeat_ngram_size=3`, `max_length=128`, the three corpora, the references, the
-tokenizer, and the SARI evaluator are all frozen in the harness.
+Return a finite probability in the accepted interval. Invalid values, missing keys, non-finite metrics, generation errors,
+or incomplete outputs fail verification. The harness does not clamp or repair an
+editable configuration and does not substitute another policy.
 
-## Fixed Pipeline & Evaluation
-- Model: `mrm8488/t5-base-finetuned-turk-text-simplification` (T5-base, ~220M),
-  FROZEN, eval mode.
-- THREE FIXED test settings (from the ungated parquet `GEM/wiki_auto_asset_turk`,
-  staged offline as JSONL `{source, references}`): `asset` (10 refs, multi-op),
-  `turk` (7-8 refs, lexical), `wiki` (1 ref, real Wikipedia, longer sources).
-- Metric (higher is better): `sari_{setting}` = corpus **SARI** (0-100); the task
-  score is the geometric mean over the three settings. `bleu_{setting}` secondary.
-- Deterministic given a fixed seed; runs on one small GPU in a few minutes.
-- Scoring is a per-setting logistic anchored between the weak wide-nucleus sample
-  and the strong tight-nucleus sample.
+## Evaluation
+The verifier reports corpus SARI from complete predictions and verifier-only references. Every configured evaluation must complete with finite metrics.

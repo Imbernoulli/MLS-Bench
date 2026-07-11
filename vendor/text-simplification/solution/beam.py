@@ -1,6 +1,7 @@
 """Text-simplification beam / repetition decode surface (agent-editable).
 
-A FROZEN pretrained t5-base simplifier rewrites a FIXED small ASSET test slice;
+A FROZEN pretrained t5-base simplifier rewrites the complete pinned official
+ASSET, TurkCorpus, and WikiAuto test partitions;
 you control ONLY the BEAM / REPETITION config of the decode (the length window is
 FIXED). The rewrites are scored on corpus SARI (higher is better) against the
 FIXED multi-reference set.
@@ -8,25 +9,26 @@ FIXED multi-reference set.
 Implement:
 
     def build_beam_config() -> dict:
-        return {"num_beams": 5, "no_repeat_ngram_size": 3, "repetition_penalty": 1.0}
+        return {"num_beams": ..., "no_repeat_ngram_size": ..., "repetition_penalty": ...}
 
 The three knobs (transformers `model.generate`):
-  num_beams            : beam width. Greedy (1) under-searches and leaves SARI on
-                         the table; a tuned beam (4-6) is the standard strong
-                         simplification decode. Hard-capped at 12.
-  no_repeat_ngram_size : block repeated n-grams (0 = off). A small value (2-3)
-                         avoids degenerate repetition without hurting real edits.
+  num_beams            : bounded positive integer controlling search width.
+                         No candidate ordering is prescribed.
+                         Invalid values fail instead of being clamped.
+  no_repeat_ngram_size : bounded non-negative repeated-span control.
+                         Zero disables the constraint.
   repetition_penalty   : >1.0 discourages token repetition; too high distorts the
                          rewrite.
 
 Background:
-  Beam search is the standard lever for extractive/abstractive decode quality.
-  For simplification, a real beam decode adds the right simpler words and deletes
-  the right complex ones (both credited by SARI). The DEFAULT here is a WEAK
-  greedy config (num_beams=1, no repetition control).
+  Search and repetition controls change the generated sequence distribution.
+  Every valid mapping is evaluated on the same official test partitions.
+  Measured ordering and preferred values are intentionally omitted here.
+  The native mapping remains runnable for no-edit verification.
 
 Notes:
-  * Inference-only. Deterministic. Runs on a single GPU in well under a minute.
+  * Inference-only and deterministic. Verification must generate a complete
+    prediction for every official test example; no reduced path is valid.
 """
 from __future__ import annotations
 
@@ -35,7 +37,7 @@ from __future__ import annotations
 # EDITABLE REGION — return your beam / repetition decode config below
 # ================================================================
 def build_beam_config() -> dict:
-    # Default (weak): greedy, no repetition control.
+    # Native no-edit mapping; replace it to test another beam configuration.
     return {"num_beams": 1, "no_repeat_ngram_size": 0, "repetition_penalty": 1.0}
 # ================================================================
 # END EDITABLE REGION

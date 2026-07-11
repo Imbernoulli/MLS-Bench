@@ -1,32 +1,27 @@
-"""Text-simplification rewrite-POLICY surface (agent-editable; monotonicity task).
+"""Text-simplification rewrite-POLICY surface (agent-editable).
 
 Across THREE FIXED simplification test settings (asset / turk / wiki), you choose
 HOW each sentence is rewritten. The output is scored on corpus SARI (higher is
 better) against each setting's FIXED multi-reference set; the task score is the
 geometric mean over the three settings, so a policy must win on ALL THREE.
 
-Implement:
-
-    def build_policy() -> str:
-        return "beam"
-
 Options:
-  "beam"        : simplify the FROZEN t5-base with a tuned config (beam 5,
-                  no-repeat-3gram) — the strong, real simplification (SOTA-scale).
-  "greedy"      : simplify the FROZEN model greedily (beam 1) — real but weaker.
+  "beam"        : run the FROZEN t5-base simplifier with a fixed multi-beam config
+                  and no-repeat n-gram blocking.
+  "greedy"      : run the FROZEN t5-base simplifier with greedy decoding.
   "truncate"    : keep the first 75% of the words (naive tail deletion).
-  "first_token" : DEGENERATE FLOOR — return only the first source word. Low SARI.
-  "empty"       : DEGENERATE FLOOR — return an empty string. Low SARI.
+  "first_token" : return only the first source word.
+  "empty"       : return an empty string.
 
 Background:
-  This task verifies SARI is MONOTONE and UN-GAMEABLE. SARI compares the SOURCE,
-  the system output, AND multiple references, rewarding correct ADD / KEEP / DELETE
-  n-gram edits. A meaning-destroying output (empty / first-token) scores a
-  genuinely LOW SARI on every setting, while a real T5 simplifier reaches the
-  SOTA-scale top. You should pick the policy that actually maximizes SARI.
+  SARI compares the SOURCE, the system output, AND multiple references, rewarding
+  correct ADD / KEEP / DELETE n-gram edits. The terms trade off across the three
+  datasets. No policy ordering is prescribed; compare submitted verifier results.
 
 Notes:
-  * Inference-only. Deterministic. Runs on a single GPU in a few minutes.
+  * Inference-only and deterministic. Model-backed policies must generate a
+    complete prediction for every official test example; shortcut policies do not
+    constitute execution evidence for the frozen model path.
 """
 from __future__ import annotations
 
@@ -35,7 +30,7 @@ from __future__ import annotations
 # EDITABLE REGION — return your rewrite policy below
 # ================================================================
 def build_policy() -> str:
-    # Default (degenerate floor): emit nothing (no simplification -> low SARI).
+    # Native no-edit selector; replace it to test another supported policy.
     return "empty"
 # ================================================================
 # END EDITABLE REGION

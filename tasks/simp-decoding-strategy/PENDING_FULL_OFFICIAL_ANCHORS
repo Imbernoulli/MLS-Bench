@@ -1,0 +1,6 @@
+gem-full-test-v2
+Fresh task-bound strict anchor evidence is required before positive calibration.
+Legacy v1 logs and representative runs are provenance only and must not be
+written back as scores. Until every configured baseline has rc=0, parser_rc=0,
+a unique final SIMP_DONE record, and bound raw-log/worker/image evidence, this
+task's leaderboard remains header-only and its score remains exactly zero.

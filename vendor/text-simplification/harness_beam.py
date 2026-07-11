@@ -7,8 +7,7 @@ config (solution/beam.py -> build_beam_config -> {num_beams, no_repeat_ngram_siz
 repetition_penalty}). The length window (max_length / length_penalty) is FIXED, so
 ONLY the beam/repetition config varies. Scores corpus SARI per setting.
 
-Emits one metric line PER SETTING:
-    SIMP_METRICS setting=<S> sari=<V> bleu=<B> n_sents=<N> plen=<W> lenratio=<R>
+Emits three task-bound v2 metric records and one unique terminal SIMP_DONE proof.
 """
 from __future__ import annotations
 
@@ -16,6 +15,9 @@ import argparse
 import time
 
 import common
+
+TASK_ID = "simp-decoding-beam"
+SURFACE = "beam"
 
 
 def main() -> None:
@@ -25,14 +27,18 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = common.setup(args.seed)
-    t0 = time.time()
+    t0 = time.perf_counter()
 
     build_beam_config = common.load_surface(args.solution, "build_beam_config")
-    cfg = build_beam_config()
+    cfg = common.require_surface_config(
+        build_beam_config(),
+        {"num_beams", "no_repeat_ngram_size", "repetition_penalty"},
+        surface="build_beam_config",
+    )
     gen_kwargs = {
-        "num_beams": int(cfg.get("num_beams", 1)),
-        "no_repeat_ngram_size": int(cfg.get("no_repeat_ngram_size", 0)),
-        "repetition_penalty": float(cfg.get("repetition_penalty", 1.0)),
+        "num_beams": cfg["num_beams"],
+        "no_repeat_ngram_size": cfg["no_repeat_ngram_size"],
+        "repetition_penalty": cfg["repetition_penalty"],
         "max_length": 128,           # FIXED length window
         "length_penalty": 1.0,       # FIXED
         "early_stopping": True,      # FIXED
@@ -42,6 +48,7 @@ def main() -> None:
           f"repetition_penalty={gen_kwargs['repetition_penalty']}", flush=True)
 
     model, tok = common.load_model_and_tokenizer(dev)
+    metric_lines = []
     for setting in common.SETTINGS:
         srcs, refs = common.load_dataset(setting)
         preds = common.simplify(model, tok, srcs, dict(gen_kwargs), dev)
@@ -49,11 +56,16 @@ def main() -> None:
         bleu = common.bleu_corpus(preds, refs)
         plen = common.mean_pred_len_words(preds)
         lr = common.length_ratio(srcs, preds)
-        print(f"SIMP_METRICS setting={setting} sari={sari:.6f} bleu={bleu:.4f} "
-              f"n_sents={len(srcs)} plen={plen:.1f} lenratio={lr:.3f}", flush=True)
+        metric_lines.append(common.emit_metrics(
+            task=TASK_ID, surface=SURFACE, setting=setting, sari=sari,
+            bleu=bleu, n_sents=len(srcs), plen=plen, lenratio=lr,
+        ))
 
-    dt = time.time() - t0
-    print(f"SIMP_DONE elapsed={dt:.1f}", flush=True)
+    common.emit_done(
+        task=TASK_ID, surface=SURFACE, seed=args.seed,
+        model_choice="base_turk", metric_lines=metric_lines,
+        elapsed=time.perf_counter() - t0,
+    )
 
 
 if __name__ == "__main__":

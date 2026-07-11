@@ -1,40 +1,39 @@
 """Text-simplification MODEL-CAPACITY / CHECKPOINT-CHOICE surface (agent-editable).
 
-You control ONLY WHICH FROZEN, staged-offline pretrained simplifier decodes a FIXED
-small ASSET/TURK/WikiAuto test slice under an IDENTICAL strong beam decode config
-(num_beams=5, no_repeat_ngram_size=3, length_penalty=1.0, all FIXED for every
-choice). The rewrites are scored on corpus SARI (higher is better) against the
+You control ONLY WHICH FROZEN, staged-offline pretrained simplifier decodes the
+complete pinned official ASSET, TurkCorpus, and WikiAuto test partitions under
+one decode configuration that is identical for every choice. The rewrites are
+scored on corpus SARI (higher is better) against the
 FIXED multi-reference set.
 
 Implement:
 
     def build_model_choice() -> str:
-        return "base_turk"
+        return ...
 
 Must be one of the three staged checkpoints (all from the wiki_auto_asset_turk
 family of simplification fine-tunes; NONE trained here — this is a "which existing
 checkpoint" lever, not a training task):
-  "small_turk"     : t5-small-finetuned-turk-text-simplification (t5-small, 60M
-                     params, mainly TurkCorpus-style lexical edits).
-  "small_wikiauto" : t5-small-finetuned-text-simplification (t5-small, 60M params,
-                     broader wiki_auto_asset_turk fine-tune mix).
-  "base_turk"      : t5-base-finetuned-turk-text-simplification (t5-base, ~220M
-                     params — 3.7x the parameters of either t5-small checkpoint;
-                     the model used by every other simp-* task).
+  "small_turk"     : a staged T5-small checkpoint.
+  "small_wikiauto" : another staged T5-small checkpoint.
+  "base_turk"      : a staged T5-base checkpoint.
+  Every choice is loaded offline with the same decode settings.
+  Invalid or missing checkpoint selectors fail before generation.
+  No checkpoint is substituted after a load failure.
+  No checkpoint ordering is prescribed.
 
 Background:
-  Holding the decode config fixed, MORE MODEL CAPACITY (t5-base vs t5-small) is the
-  standard "bigger backbone helps" lever in seq2seq NLP; measured on GPU (k1 H20,
-  2026-07-05), SARI improves `small_wikiauto` (39.9/39.1/38.2) < `small_turk`
-  (41.9/42.0/42.2) < `base_turk` (45.1/43.7/43.3) on all three settings -- capacity
-  AND fine-tuning-data family both matter, and base_turk (the model every other
-  simp-* task uses) is the clean strongest choice. The DEFAULT here is the WEAKEST
-  measured checkpoint (`small_wikiauto`).
+  Checkpoint size and fine-tuning data can affect simplification behavior.
+  This task compares the staged candidates under one fixed evaluation protocol.
+  Exact metrics, baseline ordering, and preferred checkpoints are not exposed.
+  Every declared setting must produce complete predictions and finite SARI.
+  The native selector remains runnable for no-edit verification.
+  Use submitted verifier results to compare alternatives.
+  Runtime failures abort verification.
 
 Notes:
-  * Inference-only. Deterministic. Loads a DIFFERENT frozen checkpoint per choice
-    (not the one loaded by the shared harness default) but runs on a single GPU in
-    well under a minute either way.
+  * Inference-only and deterministic. Loads a DIFFERENT frozen checkpoint per
+    choice and must generate a complete prediction for every official test example.
 """
 from __future__ import annotations
 
@@ -43,7 +42,7 @@ from __future__ import annotations
 # EDITABLE REGION — return your model choice below
 # ================================================================
 def build_model_choice() -> str:
-    # Default (weak): smaller t5-small checkpoint, broader (less-targeted) fine-tune.
+    # Native no-edit selector; replace it to test another staged checkpoint.
     return "small_wikiauto"
 # ================================================================
 # END EDITABLE REGION

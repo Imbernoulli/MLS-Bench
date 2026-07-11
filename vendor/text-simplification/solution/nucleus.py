@@ -1,7 +1,8 @@
 """Text-simplification NUCLEUS (top-p) sampling surface (agent-editable).
 
-A FROZEN pretrained t5-base simplifier rewrites a FIXED small ASSET/TURK/WikiAuto
-test slice using SAMPLING (do_sample=True, num_beams=1, temperature=1.0,
+A FROZEN pretrained t5-base simplifier rewrites the complete pinned official
+ASSET, TurkCorpus, and WikiAuto test partitions using SAMPLING (do_sample=True,
+num_beams=1, temperature=1.0,
 no_repeat_ngram_size=3 all FIXED); you control ONLY the NUCLEUS (top-p) mass kept
 before sampling. The rewrites are scored on corpus SARI (higher is better) against
 the FIXED multi-reference set.
@@ -9,24 +10,24 @@ the FIXED multi-reference set.
 Implement:
 
     def build_top_p() -> float:
-        return 0.6
+        return ...
 
-`top_p` is hard-capped to [0.01, 1.0] by the shared sanitizer. Nucleus sampling
-(Holtzman et al. 2019) keeps the smallest token set whose cumulative probability
->= top_p, renormalizes, and samples from that set only.
-  * WIDE nucleus (top_p close to 1.0): samples from (nearly) the full vocabulary,
-    including many low-probability / off-distribution tokens -> LOWER SARI.
-  * TIGHT nucleus (top_p small): restricts sampling to only the model's most
-    probable tokens -> closer to the model's mode -> HIGHER SARI.
+`top_p` must be finite and inside the documented probability interval. Nucleus
+sampling keeps the smallest token set whose cumulative probability reaches that
+mass, renormalizes, and samples from it.
+Invalid values fail instead of being clamped.
+All candidate values use the same frozen model and private references.
+No candidate value or ordering is prescribed.
+No fallback mass is substituted after a failure.
 
 Background:
-  A tight nucleus is the standard fix for the well-known "sampling from the full
-  distribution produces incoherent text" failure mode. The DEFAULT here is a WEAK
-  wide nucleus (1.0, i.e. unrestricted full-distribution sampling).
+  Nucleus mass changes the token distribution under the fixed sampling pipeline.
+  Compare valid values across every declared setting.
+  The native value remains runnable for no-edit verification.
 
 Notes:
-  * Inference-only. Runs on a single GPU in well under a minute. Sampling with a
-    FIXED seed (`common.setup`) is deterministic run-to-run.
+  * Inference-only. Sampling with a FIXED seed (`common.setup`) is deterministic
+    run-to-run. Verification must generate every official test prediction.
 """
 from __future__ import annotations
 
@@ -35,7 +36,7 @@ from __future__ import annotations
 # EDITABLE REGION — return your nucleus (top-p) mass below
 # ================================================================
 def build_top_p() -> float:
-    # Default (weak): wide nucleus -> unrestricted (near-full-distribution) sampling.
+    # Native no-edit value; replace it to test another nucleus mass.
     return 1.0
 # ================================================================
 # END EDITABLE REGION

@@ -7,5 +7,5 @@ _FILE = "text-simplification/solution/policy.py"
 _CONTENT = '''    return "greedy"'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 39, "end_line": 39, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 34, "end_line": 35, "content": _CONTENT},
 ]

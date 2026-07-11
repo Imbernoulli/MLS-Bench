@@ -7,5 +7,5 @@ _FILE = "text-simplification/solution/strategy.py"
 _CONTENT = '''    return "topp"'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 41, "end_line": 41, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 43, "end_line": 43, "content": _CONTENT},
 ]
