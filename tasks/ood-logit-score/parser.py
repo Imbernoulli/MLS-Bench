@@ -118,8 +118,11 @@ class Parser(OutputParser):
             summaries.append(
                 f"{ood_name}: AUROC={auroc:.6f}, FPR95={fpr95:.6f}, n_ood={expected_count}"
             )
-        if set(observed_settings) != set(EXPECTED) or len(set(accuracies)) != 1:
-            return ParseResult(feedback="full OOD settings are incomplete or inconsistent", metrics={})
+        if observed_settings != list(EXPECTED) or len(set(accuracies)) != 1:
+            return ParseResult(
+                feedback="full OOD settings are reordered, incomplete, or inconsistent",
+                metrics={},
+            )
         return ParseResult(
             feedback="complete full-image OOD evaluation; " + "; ".join(summaries),
             metrics=metrics,

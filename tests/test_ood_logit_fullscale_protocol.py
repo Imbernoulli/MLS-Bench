@@ -75,6 +75,11 @@ def _valid_log() -> str:
     )
 
 
+def _swap_first_two_metric_rows(text: str) -> str:
+    lines = text.splitlines()
+    return "\n".join((lines[0], lines[2], lines[1], *lines[3:]))
+
+
 @pytest.fixture(autouse=True)
 def _pin_test_checkpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(PARSER, "EXPECTED_MODEL_SHA256", MODEL_SHA)
@@ -129,6 +134,7 @@ def test_agent_failure_can_leave_the_untouched_native_solution_to_verify() -> No
         "command failed\n" + _valid_log(),
         "node_fail\n" + _valid_log(),
         _valid_log().replace("OOD_PROTOCOL", "ood_protocol", 1),
+        _swap_first_two_metric_rows(_valid_log()),
     ],
 )
 def test_parser_rejects_failed_ambiguous_or_incomplete_logs(raw_output: str) -> None:

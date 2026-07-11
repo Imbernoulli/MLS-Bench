@@ -214,8 +214,11 @@ def build_parser(task: str):
                 metrics[f"fpr95_{setting}"] = fpr95
                 metrics[f"id_acc_{setting}"] = accuracy
                 summaries.append(f"{ood_name}: AUROC={auroc:.6f}, FPR95={fpr95:.6f}")
-            if set(observed) != set(expected) or len(set(accuracies)) != 1:
-                return ParseResult(feedback="full OOD settings are incomplete or inconsistent", metrics={})
+            if observed != list(expected) or len(set(accuracies)) != 1:
+                return ParseResult(
+                    feedback="full OOD settings are reordered, incomplete, or inconsistent",
+                    metrics={},
+                )
             return ParseResult(
                 feedback=f"complete authenticated full-image OOD evaluation for {task}; "
                 + "; ".join(summaries),

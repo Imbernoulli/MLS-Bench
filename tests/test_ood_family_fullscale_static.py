@@ -79,6 +79,11 @@ def _valid_log(task: str) -> str:
     return "\n".join(rows)
 
 
+def _swap_first_two_metric_rows(text: str) -> str:
+    lines = text.splitlines()
+    return "\n".join((lines[0], lines[2], lines[1], *lines[3:]))
+
+
 @pytest.mark.parametrize("task", TASKS)
 def test_nonlogit_parser_accepts_only_complete_task_bound_full_protocol(task: str) -> None:
     parser = _load_parser(task)
@@ -112,6 +117,7 @@ def test_nonlogit_parser_accepts_only_complete_task_bound_full_protocol(task: st
         lambda text: text.replace("n_ood=26032", "n_ood=5000", 1),
         lambda text: text.replace("auroc=0.75000000", "auroc=nan", 1),
         lambda text: text.replace("OOD_PROTOCOL", "ood_protocol", 1),
+        _swap_first_two_metric_rows,
         lambda text: text + "\ntrailing output",
         lambda text: "Budget Check Failed\n" + text,
         lambda text: "status: failed\n" + text,
@@ -250,6 +256,24 @@ def test_every_baseline_targets_the_declared_surface_and_compiles(task: str) -> 
         candidate = list(source_lines)
         candidate[start - 1:end] = operation["content"].splitlines()
         compile("\n".join(candidate) + "\n", f"{task}-{name}", "exec")
+
+
+@pytest.mark.parametrize("task", TASKS)
+def test_every_nonlogit_custom_template_matches_the_final_surface(task: str) -> None:
+    task_dir = ROOT / "tasks" / task
+    config = json.loads((task_dir / "config.json").read_text())
+    source = ROOT / "vendor" / config["files"][0]["filename"]
+    assert (task_dir / "edits/custom_template.py").read_bytes() == source.read_bytes()
+
+
+def test_near_far_hybrid_baseline_name_matches_its_implementation() -> None:
+    task_dir = ROOT / "tasks/ood-near-far"
+    config = json.loads((task_dir / "config.json").read_text())
+    assert set(config["baselines"]) == {"msp", "energy", "energy_knn"}
+    hybrid = (task_dir / "edits/energy_knn.edit.py").read_text()
+    assert "energy" in hybrid.lower()
+    assert "k-nn" in hybrid.lower()
+    assert "mahalanobis" not in hybrid.lower()
 
 
 def test_full_harnesses_are_static_valid_and_have_no_training_fallback() -> None:

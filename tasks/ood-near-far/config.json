@@ -29,8 +29,8 @@
     "energy": {
       "edit_ops": "edits/energy.edit.py"
     },
-    "maha_knn": {
-      "edit_ops": "edits/maha_knn.edit.py"
+    "energy_knn": {
+      "edit_ops": "edits/energy_knn.edit.py"
     }
   },
   "files": [
