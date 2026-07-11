@@ -1,4 +1,6 @@
 """WorkspaceTools: file editing and test execution tools for the MLS-Bench agent."""
+from __future__ import annotations
+
 
 import copy
 import fcntl
@@ -15,6 +17,55 @@ from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+
+
+_FAILURE_MARKER_RE = re.compile(
+    r"(?m)^\s*("
+    r"(?:[A-Z][A-Z0-9_]*(?:FALLBACK|NONFINITE)[A-Z0-9_]*)"
+    r"|SURFACE_ERROR"
+    r"|TRAIN_ERROR"
+    r"|EVAL_FAILED"
+    r"|PROMPT_CFG\s+build_prompt\s+failed"
+    r"|TOKENSTRAT_CFG\s+(?:model_cfg_)?set_failed"
+    r"|LAYER_CFG\s+surgery_failed"
+    r"|PROMPT_TEMPLATE_ERROR"
+    r"|TOKEN_SURFACE_ERROR"
+    r"|DETECTOR_ERROR"
+    r")\b"
+)
+
+_STANDARD_FAILURE_MARKER_RES = (
+    re.compile(
+        r"(?i)\b("
+        r"(?:verification|evaluation|training)\s+(?:has\s+)?failed"
+        r"|(?:verification|evaluation|training)\s+did\s+not\s+complete"
+        r")\b"
+    ),
+    re.compile(r"(?m)^\s*(Traceback\s+\(most recent call last\):)"),
+    re.compile(
+        r"(?mi)^\s*"
+        r"(?:(?:"
+        r"\d{4}-\d{2}-\d{2}(?:[T ][^\s]+)?"
+        r"|\[[0-9][^\]\r\n]*\]"
+        r")\s+)?"
+        r"(?:\[(?:ERROR|FATAL|CRITICAL)\]|(?:ERROR|FATAL|CRITICAL)\b)"
+        r"\s*:?\s+("
+        r"(?:[A-Za-z_][A-Za-z0-9_]*\.)*"
+        r"[A-Za-z_][A-Za-z0-9_]*(?:Error|Exception)"
+        r")\s*:"
+    ),
+)
+
+
+def _failure_marker(raw_output: str) -> str | None:
+    match = _FAILURE_MARKER_RE.search(raw_output)
+    if match:
+        return match.group(1)
+    for pattern in _STANDARD_FAILURE_MARKER_RES:
+        match = pattern.search(raw_output)
+        if match:
+            return match.group(1)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -381,6 +432,10 @@ class WorkspaceTools:
         self._test_history: list[dict] = []  # each: {feedback, seed_metrics, seeds}
         self._current_test_had_failures = False
         self._last_test_had_failures = False
+        # Finals written by this WorkspaceTools instance only. Historical
+        # leaderboard rows belong to older runs and must never suppress an
+        # explicit failed/empty final for the current run.
+        self._current_run_final_seeds: set[int] = set()
 
         # Per-metric glob patterns that are withheld from the agent during
         # intermediate (non-final) tests. Metrics still land in the leaderboard
@@ -399,66 +454,50 @@ class WorkspaceTools:
         ]
 
     def _filter_hidden_label_metrics(self, metrics: dict) -> dict:
-        """Drop metric keys whose name contains any hidden test_cmd label.
-
-        Substring/contains match against both the raw label and its
-        hyphen→underscore variant, mirroring openevolve_agent._filter_hidden_metrics.
-        Returns ``metrics`` unchanged when ``hide_hidden`` is off or no
-        hidden labels exist.
-        """
+        """Drop metric keys whose name contains any hidden test_cmd label."""
         if not self.hide_hidden or not self.hidden_test_labels or not metrics:
             return metrics
         labels = self.hidden_test_labels
-        def _hides(k: str) -> bool:
-            kn = str(k).replace("-", "_")
-            for lab in labels:
-                ln = lab.replace("-", "_")
-                if lab in str(k) or ln in kn:
+
+        def _hides(key: str) -> bool:
+            normalized_key = str(key).replace("-", "_")
+            for label in labels:
+                normalized_label = label.replace("-", "_")
+                if label in str(key) or normalized_label in normalized_key:
                     return True
             return False
-        return {k: v for k, v in metrics.items() if not _hides(k)}
 
-    # ------------------------------------------------------------------
-    # Hidden-metric filtering
-    # ------------------------------------------------------------------
+        return {key: value for key, value in metrics.items() if not _hides(key)}
 
-    # Matches ``key=value`` where the key is identifier-like (allows
-    # hyphen/underscore/dot/slash so column keys like ``piqa_lm-eval-345m``
-    # are captured) and the value is a numeric literal or nan/inf sentinel.
     _HIDDEN_KV_RE = re.compile(
         r'([A-Za-z_][\w.\-/]*)='
         r'(-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|nan|inf|-inf|NaN|Inf)',
     )
 
     def _filter_hidden_metric_kvs(self, text: str) -> str:
-        """Strip ``key=value`` segments whose key matches a hidden glob.
-
-        Applied only when constructing agent-visible feedback for
-        intermediate (non-final) tests. The leaderboard still receives
-        the full metric dict — this only affects what the model sees.
-        """
+        """Strip key/value segments whose key matches a hidden glob."""
         if not self.hidden_metric_patterns or not text:
             return text
 
-        patterns = self.hidden_metric_patterns
-
         def should_hide(key: str) -> bool:
-            return any(fnmatch.fnmatchcase(key, p) for p in patterns)
+            return any(
+                fnmatch.fnmatchcase(key, pattern)
+                for pattern in self.hidden_metric_patterns
+            )
 
         out_lines: list[str] = []
         for line in text.splitlines():
             new_line = self._HIDDEN_KV_RE.sub(
-                lambda m: '' if should_hide(m.group(1)) else m.group(0),
+                lambda match: "" if should_hide(match.group(1)) else match.group(0),
                 line,
             )
-            # Collapse comma artefacts left behind by stripped kv pairs.
             new_line = re.sub(r',\s*,', ',', new_line)
             new_line = re.sub(r':\s*,\s*', ': ', new_line)
-            new_line = re.sub(r',\s*$', '', new_line)
-            new_line = new_line.rstrip()
-            # Drop "Final metrics (...): " / "TEST_METRICS: " header stubs
-            # whose payload was fully removed.
-            if re.fullmatch(r'\s*(Final metrics \([^)]*\):|TEST_METRICS:?)\s*', new_line):
+            new_line = re.sub(r',\s*$', '', new_line).rstrip()
+            if re.fullmatch(
+                r'\s*(Final metrics \([^)]*\):|TEST_METRICS:?)\s*',
+                new_line,
+            ):
                 continue
             out_lines.append(new_line)
         return '\n'.join(out_lines)
@@ -2432,6 +2471,7 @@ class WorkspaceTools:
             timeout_secs=120,
         )
         if timed_out:
+            self._current_test_had_failures = True
             return [
                 (
                     f"### {entry.get('label', 'test')} ({entry.get('cmd', 'unknown')})\n{launch_output}",
@@ -2441,6 +2481,7 @@ class WorkspaceTools:
                 for entry in cmd_entries
             ]
         if launch_result is None or launch_result.returncode != 0:
+            self._current_test_had_failures = True
             output = launch_output or "[ERROR] Failed to start long-lived Docker container."
             return [
                 (
@@ -2474,9 +2515,11 @@ class WorkspaceTools:
                     rc = getattr(_budget_result, "returncode", None) if _budget_result else None
                     self._log_budget_output(label, seed, budget_output or "", rc)
                     if budget_timed_out:
+                        self._current_test_had_failures = True
                         results[idx] = (f"### {label} ({cmd})\n{budget_output}", {}, _time.time() - budget_start)
                         continue
                     if _budget_result is None or _budget_result.returncode != 0:
+                        self._current_test_had_failures = True
                         output = budget_output or "[BUDGET CHECK FAILED]"
                         results[idx] = (f"### {label} ({cmd})\n[BUDGET CHECK FAILED]\n{output}", {}, _time.time() - budget_start)
                         continue
@@ -2503,17 +2546,53 @@ class WorkspaceTools:
                 elapsed = _time.time() - t_start
 
                 if cmd_timed_out:
-                    parse_result = self.parser.parse(label, raw_output)
-                    return idx, (f"### {label} ({cmd})\n{raw_output}", parse_result.metrics or {}, elapsed)
+                    self._current_test_had_failures = True
+                    return idx, (f"### {label} ({cmd})\n{raw_output}", {}, elapsed)
 
                 if result is None:
+                    self._current_test_had_failures = True
                     raw_output = raw_output or "[ERROR] docker exec failed unexpectedly."
                     return idx, (f"### {label} ({cmd})\n{raw_output}", {}, elapsed)
 
                 if not raw_output:
                     raw_output = f"[exit code {result.returncode}, no output]"
-                parse_result = self.parser.parse(label, raw_output)
+                status_line = ""
+                command_failed = result.returncode != 0
+                if command_failed:
+                    self._current_test_had_failures = True
+                    status_line = f"[STATUS: FAILED exit={result.returncode}]\n"
+                    raw_output = (
+                        f"[COMMAND FAILED exit={result.returncode}]\n{raw_output}"
+                    )
+                marker = _failure_marker(raw_output)
+                if marker:
+                    self._current_test_had_failures = True
+                    command_failed = True
+                    status_line += f"[STATUS: FAILED harness-marker={marker}]\n"
+                try:
+                    parse_result = self.parser.parse(label, raw_output)
+                except Exception as exc:
+                    self._current_test_had_failures = True
+                    return idx, (
+                        f"### {label} ({cmd})\n{status_line}"
+                        f"[STATUS: FAILED parser-error={type(exc).__name__}]\n"
+                        f"{raw_output}",
+                        {},
+                        elapsed,
+                    )
                 section_feedback = parse_result.feedback
+                parsed_metrics = parse_result.metrics
+                if parsed_metrics is None:
+                    parsed_metrics = {}
+                parser_metric_error = self._parser_metrics_error(parsed_metrics)
+                if parser_metric_error is not None:
+                    self._current_test_had_failures = True
+                    command_failed = True
+                    status_line += (
+                        "[STATUS: FAILED invalid-parser-metric="
+                        f"{parser_metric_error}]\n"
+                    )
+                    parsed_metrics = {}
                 max_chars_per_cmd = 6000
                 if len(section_feedback) > max_chars_per_cmd:
                     half = max_chars_per_cmd // 2
@@ -2522,7 +2601,11 @@ class WorkspaceTools:
                         + "\n...[truncated]...\n"
                         + section_feedback[-half:]
                     )
-                return idx, (f"### {label} ({cmd})\n{section_feedback}", parse_result.metrics or {}, elapsed)
+                return idx, (
+                    f"### {label} ({cmd})\n{status_line}{section_feedback}",
+                    {} if command_failed else parsed_metrics,
+                    elapsed,
+                )
 
             if len(runnable) == 1:
                 idx, result = _run_one_session_entry(runnable[0])
@@ -2538,6 +2621,7 @@ class WorkspaceTools:
                         try:
                             result_idx, result_tuple = future.result()
                         except Exception as exc:
+                            self._current_test_had_failures = True
                             entry = cmd_entries[idx]
                             label = entry.get("label", "test")
                             cmd = entry.get("cmd", "unknown")
@@ -2700,9 +2784,8 @@ class WorkspaceTools:
                     f"Your algorithm is too slow — reduce model size or computational complexity."
                 )
                 elapsed = _time.time() - t_start
-                parse_result = self.parser.parse(label, raw_output)
                 feedback_str = f"### {label} ({cmd})\n{raw_output}"
-                return feedback_str, parse_result.metrics or {}, elapsed
+                return feedback_str, {}, elapsed
 
             elapsed = _time.time() - t_start
             if not raw_output:
@@ -2712,9 +2795,32 @@ class WorkspaceTools:
                 self._current_test_had_failures = True
                 status_line = f"[STATUS: FAILED exit={result.returncode}]\n"
                 raw_output = f"[COMMAND FAILED exit={result.returncode}]\n{raw_output}"
+            marker = _failure_marker(raw_output)
+            if marker:
+                self._current_test_had_failures = True
+                status_line += f"[STATUS: FAILED harness-marker={marker}]\n"
 
-            parse_result = self.parser.parse(label, raw_output)
+            try:
+                parse_result = self.parser.parse(label, raw_output)
+            except Exception as exc:
+                self._current_test_had_failures = True
+                return (
+                    f"### {label} ({cmd})\n{status_line}"
+                    f"[STATUS: FAILED parser-error={type(exc).__name__}]\n{raw_output}",
+                    {},
+                    elapsed,
+                )
             section_feedback = parse_result.feedback
+            parsed_metrics = parse_result.metrics
+            if parsed_metrics is None:
+                parsed_metrics = {}
+            parser_metric_error = self._parser_metrics_error(parsed_metrics)
+            if parser_metric_error is not None:
+                self._current_test_had_failures = True
+                status_line += (
+                    f"[STATUS: FAILED invalid-parser-metric={parser_metric_error}]\n"
+                )
+                parsed_metrics = {}
             max_chars_per_cmd = 6000
             if len(section_feedback) > max_chars_per_cmd:
                 half = max_chars_per_cmd // 2
@@ -2724,7 +2830,12 @@ class WorkspaceTools:
                     + section_feedback[-half:]
                 )
             feedback_str = f"### {label} ({cmd})\n{status_line}{section_feedback}"
-            return feedback_str, parse_result.metrics or {}, elapsed
+            metrics = (
+                {}
+                if result.returncode != 0 or marker or parser_metric_error is not None
+                else parsed_metrics
+            )
+            return feedback_str, metrics, elapsed
 
         container_result = self._build_container_cmd(cmd_entry, seed, gpu_devices=gpu_devices)
 
@@ -2754,9 +2865,8 @@ class WorkspaceTools:
                 if timed_out:
                     self._current_test_had_failures = True
                     elapsed = _time.time() - t_start
-                    parse_result = self.parser.parse(label, raw_output)
                     feedback_str = f"### {label} ({cmd})\n{raw_output}"
-                    return feedback_str, parse_result.metrics or {}, elapsed
+                    return feedback_str, {}, elapsed
             else:
                 result = subprocess.run(
                     container_cmd,
@@ -2775,9 +2885,8 @@ class WorkspaceTools:
             )
             self._current_test_had_failures = True
             elapsed = _time.time() - t_start
-            parse_result = self.parser.parse(label, raw_output)
             feedback_str = f"### {label} ({cmd})\n{raw_output}"
-            return feedback_str, parse_result.metrics or {}, elapsed
+            return feedback_str, {}, elapsed
 
         elapsed = _time.time() - t_start
 
@@ -2788,10 +2897,33 @@ class WorkspaceTools:
             self._current_test_had_failures = True
             status_line = f"[STATUS: FAILED exit={result.returncode}]\n"
             raw_output = f"[COMMAND FAILED exit={result.returncode}]\n{raw_output}"
+        marker = _failure_marker(raw_output)
+        if marker:
+            self._current_test_had_failures = True
+            status_line += f"[STATUS: FAILED harness-marker={marker}]\n"
 
         # Parse the output for feedback and metrics
-        parse_result = self.parser.parse(label, raw_output)
+        try:
+            parse_result = self.parser.parse(label, raw_output)
+        except Exception as exc:
+            self._current_test_had_failures = True
+            return (
+                f"### {label} ({cmd})\n{status_line}"
+                f"[STATUS: FAILED parser-error={type(exc).__name__}]\n{raw_output}",
+                {},
+                elapsed,
+            )
         section_feedback = parse_result.feedback
+        parsed_metrics = parse_result.metrics
+        if parsed_metrics is None:
+            parsed_metrics = {}
+        parser_metric_error = self._parser_metrics_error(parsed_metrics)
+        if parser_metric_error is not None:
+            self._current_test_had_failures = True
+            status_line += (
+                f"[STATUS: FAILED invalid-parser-metric={parser_metric_error}]\n"
+            )
+            parsed_metrics = {}
 
         # Truncate per-cmd feedback if too long
         max_chars_per_cmd = 6000
@@ -2804,7 +2936,12 @@ class WorkspaceTools:
             )
 
         feedback_str = f"### {label} ({cmd})\n{status_line}{section_feedback}"
-        return feedback_str, parse_result.metrics or {}, elapsed
+        metrics = (
+            {}
+            if result.returncode != 0 or marker or parser_metric_error is not None
+            else parsed_metrics
+        )
+        return feedback_str, metrics, elapsed
 
     def _run_parallel_cmds(
         self,
@@ -2833,6 +2970,7 @@ class WorkspaceTools:
                     label = entry.get("label", "test")
                     cmd = entry.get("cmd", "unknown")
                     print(f"[test] Parallel cmd failed ({label}): {exc}")
+                    self._current_test_had_failures = True
                     feedback = f"### {label} ({cmd})\n[ERROR] Command failed with exception: {exc}"
                     metrics = {}
                     elapsed = 0.0
@@ -2860,16 +2998,13 @@ class WorkspaceTools:
         return grouped
 
     def _run_all_cmds(self, seed: int) -> tuple[list[str], dict, list[bool]]:
-        """Run all test_cmds grouped by `group`, return (feedback_parts, all_metrics, hidden_flags).
+        """Run all test_cmds grouped by `group`, returning hidden flags.
 
         Dispatches to the configured scheduler executor.
         Elapsed times are stored in all_metrics as ``elapsed_<label>`` keys.
 
-        ``hidden_flags`` is a parallel list to ``feedback_parts`` indicating
-        whether each feedback entry comes from a test_cmd with ``"hidden": true``.
-        Hidden feedback is still executed and metrics are recorded, but the
-        feedback string should be withheld from the agent during intermediate
-        (non-final) test calls.
+        The third tuple member parallels the feedback list and retains each
+        command's configured hidden flag.
         """
         return self._run_all_cmds_slurm(seed)
 
@@ -2982,9 +3117,7 @@ class WorkspaceTools:
         Globally packs all (entry, seed) combinations across seeds to minimize
         the total number of SLURM jobs. Different groups still run sequentially.
 
-        Returns per-seed ``(feedback_parts, metrics, hidden_flags)`` where
-        ``hidden_flags[i]`` mirrors the ``"hidden"`` field of the originating
-        test_cmd entry.
+        Returns per-seed ``(feedback_parts, metrics, hidden_flags)``.
         """
         grouped = self._group_entries()
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -3147,6 +3280,7 @@ class WorkspaceTools:
                     if not raw_output:
                         raw_output = f"[exit code {exit_code}, no output]"
                     status_line = ""
+                    command_failed = False
                     if not label_had_exit_code and status in {"TIMEOUT", "CANCELLED", "OUT_OF_MEMORY", "NODE_FAIL", "FAILED"}:
                         # SLURM killed the wrapper before it could write exit_codes.txt:
                         # this command was running when the SLURM job hit its wall/limit.
@@ -3157,13 +3291,42 @@ class WorkspaceTools:
                             f"This result is INVALID and will not count.]\n"
                         )
                         raw_output = f"[COMMAND FAILED — slurm {status}]\n{raw_output}"
+                        command_failed = True
                     elif exit_code != 0:
                         self._current_test_had_failures = True
                         status_line = f"[STATUS: FAILED exit={exit_code}]\n"
                         raw_output = f"[COMMAND FAILED exit={exit_code}]\n{raw_output}"
+                        command_failed = True
 
-                    parse_result = self.parser.parse(orig_label, raw_output)
-                    section_feedback = parse_result.feedback
+                    marker = _failure_marker(raw_output)
+                    if marker:
+                        self._current_test_had_failures = True
+                        command_failed = True
+                        status_line += f"[STATUS: FAILED harness-marker={marker}]\n"
+
+                    try:
+                        parse_result = self.parser.parse(orig_label, raw_output)
+                        section_feedback = parse_result.feedback
+                        parsed_metrics = parse_result.metrics
+                        if parsed_metrics is None:
+                            parsed_metrics = {}
+                        parser_metric_error = self._parser_metrics_error(parsed_metrics)
+                        if parser_metric_error is not None:
+                            self._current_test_had_failures = True
+                            command_failed = True
+                            status_line += (
+                                "[STATUS: FAILED invalid-parser-metric="
+                                f"{parser_metric_error}]\n"
+                            )
+                            parsed_metrics = {}
+                    except Exception as exc:
+                        self._current_test_had_failures = True
+                        command_failed = True
+                        section_feedback = (
+                            f"[STATUS: FAILED parser-error={type(exc).__name__}]\n"
+                            f"{raw_output}"
+                        )
+                        parsed_metrics = {}
 
                     max_chars_per_cmd = 6000
                     if len(section_feedback) > max_chars_per_cmd:
@@ -3177,9 +3340,10 @@ class WorkspaceTools:
                     feedback_str = f"### {orig_label} ({cmd})\n{status_line}{section_feedback}"
                     seed_feedback[seed].append(feedback_str)
                     seed_hidden[seed].append(task["entry"].get("hidden", False))
-                    seed_metrics[seed].update(parse_result.metrics or {})
+                    if not command_failed:
+                        seed_metrics[seed].update(parsed_metrics)
                     # Per-cmd elapsed time
-                    if label in elapsed_map:
+                    if not command_failed and label in elapsed_map:
                         seed_metrics[seed][f"elapsed_{orig_label}"] = elapsed_map[label]
 
         # Clear recovery flag after all groups have been processed
@@ -3189,9 +3353,38 @@ class WorkspaceTools:
         return {s: (seed_feedback[s], seed_metrics[s], seed_hidden[s]) for s in seeds}
 
     @staticmethod
+    def _parser_metrics_error(metrics: object) -> str | None:
+        """Return why a parser metric mapping is unsafe, or ``None``."""
+        if not isinstance(metrics, dict):
+            return f"expected-dict-got-{type(metrics).__name__}"
+        has_real_metric = False
+        for key, value in metrics.items():
+            if not isinstance(key, str) or not key:
+                return f"invalid-key-{key!r}"
+            if isinstance(value, bool):
+                return f"{key}=bool"
+            try:
+                numeric = float(value)
+            except (TypeError, ValueError, OverflowError):
+                return f"{key}=nonnumeric"
+            if not math.isfinite(numeric):
+                return f"{key}=nonfinite"
+            if (
+                key not in {"timestamp", "model", "is_final", "seed"}
+                and not key.startswith("elapsed_")
+                and not key.endswith("_std")
+            ):
+                has_real_metric = True
+        if not has_real_metric:
+            return "no-real-metrics"
+        return None
+
+    @staticmethod
     def _aggregate_metrics(metrics_list: list[dict]) -> dict:
         """Aggregate metrics across seeds by computing numeric means."""
         if not metrics_list:
+            return {}
+        if any(WorkspaceTools._parser_metrics_error(metrics) for metrics in metrics_list):
             return {}
         if len(metrics_list) == 1:
             return metrics_list[0]
@@ -3237,14 +3430,35 @@ class WorkspaceTools:
         seeds: list[int],
         metrics_list: list[dict],
     ) -> tuple[list[int], list[dict]]:
-        """Keep only per-seed metric dicts that contain real task metrics."""
-        valid_seeds: list[int] = []
-        valid_metrics: list[dict] = []
-        for seed, metrics in zip(seeds, metrics_list):
-            if self._has_real_metrics(metrics):
-                valid_seeds.append(seed)
-                valid_metrics.append(metrics)
-        return valid_seeds, valid_metrics
+        """Accept a seed matrix only when every requested seed has metrics."""
+        if len(metrics_list) != len(seeds):
+            return [], []
+        expected_keys: set[str] | None = None
+        for metrics in metrics_list:
+            if self._parser_metrics_error(metrics) is not None:
+                return [], []
+            keys: set[str] = set()
+            for key, value in metrics.items():
+                if (
+                    key in {"timestamp", "model", "is_final", "seed"}
+                    or key.startswith("elapsed_")
+                    or key.endswith("_std")
+                ):
+                    continue
+                try:
+                    numeric = float(value)
+                except (TypeError, ValueError):
+                    return [], []
+                if not math.isfinite(numeric):
+                    return [], []
+                keys.add(key)
+            if not keys:
+                return [], []
+            if expected_keys is None:
+                expected_keys = keys
+            elif keys != expected_keys:
+                return [], []
+        return list(seeds), list(metrics_list)
 
     def _decorated_model_name(self) -> str:
         """Append :ctx_<kind> and/or :web suffixes."""
@@ -3307,6 +3521,12 @@ class WorkspaceTools:
             record.update(seed_metric)
             record.update(params_col)
             self.leaderboard.add(record)
+            if is_final:
+                current_finals = getattr(self, "_current_run_final_seeds", None)
+                if current_finals is None:
+                    current_finals = set()
+                    self._current_run_final_seeds = current_finals
+                current_finals.add(int(seed))
         if len(valid_seeds) > 1:
             record = {"model": model_name, "is_final": is_final, "seed": "mean"}
             record.update(all_metrics)
@@ -3343,64 +3563,17 @@ class WorkspaceTools:
             return False
         return True
 
-    def _latest_valid_nonfinal_batch(self) -> tuple[list[int], list[dict]]:
-        """Return the latest non-final leaderboard batch with real metrics for this model."""
-        if self.leaderboard is None:
-            return [], []
-
-        non_final = [
-            r for r in self.leaderboard.all_records()
-            if self._is_my_model_row(r.get("model"))
-            and str(r.get("is_final", "")) == "false"
-            and r.get("seed") != "mean"
-            and self._has_real_metrics(r)
-        ]
-        if not non_final:
-            return [], []
-
-        seen_timestamps: set[str] = set()
-        timestamps: list[str] = []
-        for record in reversed(non_final):
-            ts = str(record.get("timestamp", ""))
-            if ts and ts not in seen_timestamps:
-                seen_timestamps.add(ts)
-                timestamps.append(ts)
-
-        for ts in timestamps:
-            batch = [r for r in non_final if str(r.get("timestamp", "")) == ts]
-            batch_seeds: list[int] = []
-            batch_metrics: list[dict] = []
-            for record in batch:
-                seed = self._coerce_seed(record.get("seed"))
-                if seed is None:
-                    continue
-                metrics = {
-                    k: v for k, v in record.items()
-                    if k not in ("timestamp", "model", "is_final", "seed")
-                }
-                if not self._has_real_metrics(metrics):
-                    continue
-                batch_seeds.append(seed)
-                batch_metrics.append(metrics)
-            if batch_metrics:
-                return batch_seeds, batch_metrics
-
-        return [], []
-
     def _resolve_submission_payload(self, entry: dict) -> tuple[list[int], list[dict], str]:
         """Resolve the metrics to use for a final submission."""
+        if entry.get("had_failures"):
+            return [], [], "none"
         seeds, metrics = self._filter_valid_seed_metrics(entry["seeds"], entry["seed_metrics"])
         if metrics:
             return seeds, metrics, "history"
-
-        fallback_seeds, fallback_metrics = self._latest_valid_nonfinal_batch()
-        if fallback_metrics:
-            return fallback_seeds, fallback_metrics, "leaderboard"
-
         return [], [], "none"
 
     def _finalize_submission(self, entry: dict, *, test_num: int | None = None) -> tuple[str, dict]:
-        """Write a final submission from a history entry or leaderboard fallback.
+        """Write a final submission from one complete, successful history entry.
 
         Only submits results from the selected entry (same code version).
         Missing seeds are NOT filled from other tests (different code).
@@ -3418,15 +3591,8 @@ class WorkspaceTools:
         if not all_metrics:
             return "[submit] No valid metrics available to submit.", {}
 
-        if source == "history":
-            selected = f"test #{test_num}" if test_num is not None else "the selected test"
-            prefix = f"[submit] Finalized {selected} as final."
-        else:
-            selected = f"test #{test_num}" if test_num is not None else "the selected test"
-            prefix = (
-                f"[submit] {selected} had no valid metrics; "
-                "used the latest valid non-final leaderboard result instead."
-            )
+        selected = f"test #{test_num}" if test_num is not None else "the selected test"
+        prefix = f"[submit] Finalized {selected} as final."
         visible_metrics = self._filter_hidden_label_metrics(all_metrics)
         if visible_metrics:
             return prefix + f"\n\n[Leaderboard] Results saved: {visible_metrics}", all_metrics
@@ -3456,11 +3622,8 @@ class WorkspaceTools:
         - First test and last test (max_tests reached): all seeds.
         - Intermediate calls: single seed only.
 
-        Hidden test_cmds:
-        - If a test_cmd entry has ``"hidden": true``, its feedback is withheld
-          from the agent during intermediate (non-final) test calls.
-        - Metrics from hidden test_cmds are still collected and recorded to
-          the leaderboard regardless.
+        Hidden command feedback is withheld from intermediate agent-visible
+        output, while all configured commands still execute and contribute.
         """
         if self.test_count >= self.max_tests:
             return (
@@ -3497,10 +3660,6 @@ class WorkspaceTools:
         # Build combined feedback: always include everything (for caching/leaderboard).
         combined_feedback = "\n\n".join(all_feedback_parts)
 
-        # Build agent-visible feedback: hide entries from test_cmds with "hidden": true
-        # during intermediate tests. With --hide-hidden, keep them hidden on
-        # final tests as well. Also strip any metric key=value segments matching
-        # ``hidden_metrics`` glob patterns.
         if is_final and not self.hide_hidden:
             visible_feedback = combined_feedback
         else:
@@ -3523,10 +3682,15 @@ class WorkspaceTools:
 
         # Always write leaderboard records as non-final; final records are
         # written only when the agent explicitly calls submit().
+        metrics_to_record = (
+            [{} for _ in all_seed_metrics]
+            if self._current_test_had_failures
+            else all_seed_metrics
+        )
         saved_metrics = self._write_leaderboard_records(
             is_final=False,
             seeds=seeds_to_run,
-            metrics_list=all_seed_metrics,
+            metrics_list=metrics_to_record,
             always_record=True,
         )
 
@@ -3593,25 +3757,17 @@ class WorkspaceTools:
     def record_zero_if_no_finals(self) -> None:
         """Record empty-metric final entries for seeds missing valid finals.
 
-        Called at the end of a run.  Checks each seed individually: if a
-        seed already has a final row with real metrics, it is skipped.
-        Seeds without valid finals get an ``is_final=true`` row with empty
-        metric columns, meaning "participated but produced no valid output".
-        Empty metrics are naturally ranked worst regardless of direction.
+        Called at the end of a run. Only successful finals written by this
+        ``WorkspaceTools`` instance count. Historical positive rows for the
+        same model belong to older runs and cannot mask a current failure.
+        Seeds without a current-run final get an ``is_final=true`` row with
+        empty metric columns, meaning "participated but produced no valid
+        output". Empty metrics are naturally ranked worst regardless of
+        direction.
         """
         if self.leaderboard is None:
             return
-        records = self.leaderboard.all_records()
-        # Find seeds that already have valid final entries
-        final_seeds: set[int] = set()
-        for r in records:
-            if (self._is_my_model_row(r.get("model"))
-                    and str(r.get("is_final", "")).lower() == "true"
-                    and r.get("seed") != "mean"
-                    and self._has_real_metrics(r)):
-                s = self._coerce_seed(r.get("seed"))
-                if s is not None:
-                    final_seeds.add(s)
+        final_seeds = set(getattr(self, "_current_run_final_seeds", set()))
         missing = [s for s in self.seeds if s not in final_seeds]
         if not missing:
             return

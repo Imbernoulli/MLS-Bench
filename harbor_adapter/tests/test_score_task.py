@@ -1352,7 +1352,7 @@ def test_score_hash_survives_mangrove_json_transport(tmp_path: Path):
     ).hexdigest()
 
 
-def test_test_sh_wires_sanitized_meta_only_to_run_evals():
+def test_test_sh_keeps_normal_eval_workspace_semantics():
     script = (
         Path(__file__).resolve().parents[1]
         / "src"
@@ -1361,11 +1361,11 @@ def test_test_sh_wires_sanitized_meta_only_to_run_evals():
         / "tests"
         / "test.sh"
     ).read_text()
-    guard_block = script.split(" guard \\\n", 1)[1].split("guard_rc=$?", 1)[0]
     eval_block = script.split(" run-evals \\\n", 1)[1].split("|| _RUN_EVALS_RC", 1)[0]
 
-    assert "--eval-task-meta" not in guard_block
-    assert '--eval-task-meta "${EVAL_META}"' in eval_block
+    assert "--eval-task-meta" not in eval_block
+    assert "MLSBENCH_EVAL_UID" not in script
+    assert 'chmod -R a-s,go-w,a+rX "${WORKDIR}"' not in script
 
 
 def test_test_sh_preserves_zero_until_success_proof_is_committed():
@@ -1391,10 +1391,10 @@ def test_test_sh_preserves_zero_until_success_proof_is_committed():
     score_block = script.split(' score \\\n', 1)[1].split("_PROOF_RC=0", 1)[0]
     assert '--reward-out "${_CANDIDATE_REWARD}"' in score_block
     assert "--reward-out /logs/verifier/reward.txt" not in score_block
-    assert "canonical_proof_text" in script
-    assert '_remove_reward_candidate' in script
+    assert "canonical_proof" in script
+    assert '_cleanup_verifier' in script
     assert 'if [ "${_VERIFICATION_COMMITTED:-0}" -ne 1 ]; then' in script
-    assert "trap _abort_verifier HUP INT TERM" in script
+    assert "trap 'exit 0' HUP INT TERM" in script
     assert "metrics_sha256" in script
 
 
@@ -1420,6 +1420,8 @@ def _stage_verifier_shell_fixture(
     tmp_path: Path,
     *,
     pause_before_proof: bool = False,
+    fail_python_audit: bool = False,
+    eval_exit_code: int = 0,
 ) -> tuple[Path, Path, Path, Path, Path | None]:
     repo_root = Path(__file__).resolve().parents[2]
     fixture_root = tmp_path / "verifier-smoke"
@@ -1441,15 +1443,6 @@ def _stage_verifier_shell_fixture(
         solution_root,
     ):
         directory.mkdir(parents=True, exist_ok=True)
-
-    # pytest's per-run parents are normally mode 0700. The verifier's nobody
-    # process must be able to traverse to the staged eval script and workspace.
-    for parent in [fixture_root, *fixture_root.parents]:
-        if parent == Path("/"):
-            break
-        parent.chmod(parent.stat().st_mode | 0o055)
-        if parent == Path("/tmp"):
-            break
 
     source = "def native_solution():\n    return 1\n"
     (package / "solution.py").write_text(source)
@@ -1499,18 +1492,17 @@ def _stage_verifier_shell_fixture(
     eval_script.write_text(
         "#!/bin/bash\n"
         "set -euo pipefail\n"
-        "test \"$(id -u)\" = 65534\n"
         "test -r \"${TASK_DIR}/config.json\"\n"
-        "test ! -r \"${TASK_DIR}/parser.py\"\n"
-        "test ! -r \"${TASK_DIR}/score_spec.py\"\n"
-        "test ! -r \"${TASK_DIR}/leaderboard.csv\"\n"
-        "test ! -w solution.py\n"
+        "test -r \"${TASK_DIR}/parser.py\"\n"
+        "test -w solution.py\n"
+        "printf 'checkpoint-ok\\n' > checkpoint.bin\n"
         "mkdir -p \"${XDG_CACHE_HOME}\"\n"
         "printf 'home-ok\\n' > \"${HOME}/home-artifact.txt\"\n"
         "printf 'cache-ok\\n' > \"${XDG_CACHE_HOME}/cache-artifact.txt\"\n"
         "mkdir -p \"${OUTPUT_DIR}\"\n"
         "printf 'artifact-ok\\n' > \"${OUTPUT_DIR}/artifact.txt\"\n"
         "printf 'artifact_write=ok\\nscore=1.0\\n'\n"
+        f"exit {eval_exit_code}\n"
     )
     eval_script.chmod(0o755)
 
@@ -1549,6 +1541,10 @@ def _stage_verifier_shell_fixture(
         ("/root", str(fake_root)),
     ):
         test_source = test_source.replace(original, replacement)
+    if fail_python_audit:
+        audit_cmd = "timeout --kill-after=5s 30s"
+        assert audit_cmd in test_source
+        test_source = test_source.replace(audit_cmd, "false", 1)
 
     pause_marker = None
     if pause_before_proof:
@@ -1581,6 +1577,7 @@ def _stage_verifier_shell_fixture(
 def _verifier_env() -> dict[str, str]:
     return {
         **os.environ,
+        "MLSBENCH_DISABLE_HEARTBEAT": "1",
         "MLSBENCH_VERIFIER_LOG_INTERVAL_SEC": "9999",
     }
 
@@ -1606,9 +1603,6 @@ def _wait_for_path(path: Path, proc: subprocess.Popen, timeout: float = 30.0) ->
 
 
 def test_verifier_shell_end_to_end_with_unchanged_native_solution(tmp_path: Path):
-    if os.geteuid() != 0:
-        pytest.skip("full verifier smoke requires root to exercise uid drop")
-
     fixture_root, test_script, verifier_logs, solution_file, _ = (
         _stage_verifier_shell_fixture(tmp_path)
     )
@@ -1628,6 +1622,7 @@ def test_verifier_shell_end_to_end_with_unchanged_native_solution(tmp_path: Path
         result.stdout + result.stderr
     )
     assert solution_file.read_text() == "def native_solution():\n    return 1\n"
+    assert (solution_file.parent / "checkpoint.bin").read_text() == "checkpoint-ok\n"
     assert "artifact_write=ok" in (verifier_logs / "eval__seed42.log").read_text()
     proof = json.loads((verifier_logs / "verification_result.json").read_text())
     assert proof["status"] == "passed"
@@ -1635,10 +1630,49 @@ def test_verifier_shell_end_to_end_with_unchanged_native_solution(tmp_path: Path
     assert not (verifier_logs / ".reward.candidate").exists()
 
 
-def test_verifier_sigkill_before_proof_keeps_public_reward_exact_zero(tmp_path: Path):
-    if os.geteuid() != 0:
-        pytest.skip("full verifier smoke requires root to exercise uid drop")
+def test_verifier_python_audit_failure_does_not_block_evaluation(tmp_path: Path):
+    fixture_root, test_script, verifier_logs, _solution_file, _ = (
+        _stage_verifier_shell_fixture(tmp_path, fail_python_audit=True)
+    )
 
+    result = subprocess.run(
+        ["bash", str(test_script)],
+        cwd=str(fixture_root),
+        env=_verifier_env(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert float((verifier_logs / "reward.txt").read_text()) > 0.0
+    assert "audit unavailable or timed out" in (
+        verifier_logs / "python_audit.txt"
+    ).read_text()
+
+
+def test_verifier_eval_nonzero_keeps_public_reward_exact_zero(tmp_path: Path):
+    fixture_root, test_script, verifier_logs, _solution_file, _ = (
+        _stage_verifier_shell_fixture(tmp_path, eval_exit_code=7)
+    )
+
+    result = subprocess.run(
+        ["bash", str(test_script)],
+        cwd=str(fixture_root),
+        env=_verifier_env(),
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert (verifier_logs / "reward.txt").read_text() == "0\n"
+    assert not (verifier_logs / "verification_result.json").exists()
+
+
+def test_verifier_sigkill_before_proof_keeps_public_reward_exact_zero(tmp_path: Path):
     fixture_root, test_script, verifier_logs, _solution_file, pause_marker = (
         _stage_verifier_shell_fixture(tmp_path, pause_before_proof=True)
     )
@@ -1665,9 +1699,6 @@ def test_verifier_sigkill_before_proof_keeps_public_reward_exact_zero(tmp_path: 
 
 
 def test_verifier_caught_signal_removes_reward_candidate(tmp_path: Path):
-    if os.geteuid() != 0:
-        pytest.skip("full verifier smoke requires root to exercise uid drop")
-
     fixture_root, test_script, verifier_logs, _solution_file, pause_marker = (
         _stage_verifier_shell_fixture(tmp_path, pause_before_proof=True)
     )
@@ -1694,9 +1725,6 @@ def test_verifier_caught_signal_removes_reward_candidate(tmp_path: Path):
 
 
 def test_verifier_invalid_proof_removes_candidate_and_keeps_zero(tmp_path: Path):
-    if os.geteuid() != 0:
-        pytest.skip("full verifier smoke requires root to exercise uid drop")
-
     fixture_root, test_script, verifier_logs, _solution_file, pause_marker = (
         _stage_verifier_shell_fixture(tmp_path, pause_before_proof=True)
     )

@@ -56,17 +56,27 @@ case ":$PATH:" in
 esac
 export MLSBENCH_VERIFIER_PYTHON="${PYTHON_BIN}"
 
-# Snapshot the verifier python's integrity so a tampered binary is at least
-# logged for postmortem. We cannot prevent a root agent from replacing it,
-# but a mismatch against the base image's recorded sha lets us flag it.
-"${PYTHON_BIN}" -c "import hashlib,sys; print('verifier_python_sha256='+hashlib.sha256(open(sys.executable,'rb').read()).hexdigest())" 2>&1 \
-    | tee -a /logs/verifier/python_audit.txt >/dev/null || true
-
 set -uo pipefail
 
 mkdir -p /logs/verifier
-# Pre-write reward so Mangrove always finds a file even if we get killed.
-echo "0" > /logs/verifier/reward.txt
+# Pre-write reward before any auxiliary diagnostics so interruption always
+# leaves an explicit exact zero for the platform to collect.
+printf '0\n' > /logs/verifier/reward.txt
+# Interpreter hashing is diagnostic only. Bound it so slow node/layer I/O
+# cannot block the actual training and evaluation pipeline.
+if command -v timeout >/dev/null 2>&1; then
+    timeout --kill-after=5s 30s "${PYTHON_BIN}" -I -c \
+        "import hashlib,sys; print('verifier_python_sha256='+hashlib.sha256(open(sys.executable,'rb').read()).hexdigest())" \
+        > /logs/verifier/python_audit.txt 2>&1 \
+        || printf 'verifier python audit unavailable or timed out\n' \
+            > /logs/verifier/python_audit.txt
+else
+    printf 'verifier python audit skipped: timeout command unavailable\n' \
+        > /logs/verifier/python_audit.txt
+fi
+_CANDIDATE_REWARD="/logs/verifier/.reward.candidate"
+rm -f -- "${_CANDIDATE_REWARD}"
+_VERIFICATION_COMMITTED=0
 
 TASK_ID="$(cat /tests/meta/task_id 2>/dev/null || echo unknown)"
 PKG_NAME="$(cat /tests/meta/package 2>/dev/null || echo unknown)"
@@ -79,7 +89,22 @@ cp /tests/score_task.py "${PRIVATE_ROOT}/score_task.py"
 chmod -R a-w /tests/meta
 chmod -R a-w "${PRIVATE_META}" "${PRIVATE_ROOT}/score_task.py"
 chmod go-rwx "${PRIVATE_ROOT}" || true
-trap 'rm -rf "${PRIVATE_ROOT}"' EXIT
+
+_cleanup_verifier() {
+    if [ "${_VERIFICATION_COMMITTED:-0}" -ne 1 ]; then
+        printf '0\n' > /logs/verifier/reward.txt 2>/dev/null || true
+    fi
+    rm -f -- "${_CANDIDATE_REWARD}" 2>/dev/null || true
+    if [ -n "${_HB_PID:-}" ]; then
+        kill "${_HB_PID}" 2>/dev/null || true
+        wait "${_HB_PID}" 2>/dev/null || true
+        _HB_PID=""
+    fi
+    chmod -R u+w "${PRIVATE_ROOT}" 2>/dev/null || true
+    rm -rf "${PRIVATE_ROOT}"
+}
+trap _cleanup_verifier EXIT
+trap 'exit 0' HUP INT TERM
 
 # Provide /workspace/_task as a stable handle to the verifier-only meta dir.
 # Several tasks' eval scripts and edit_ops resolve task files (data/, task_description.md)
@@ -125,22 +150,100 @@ fi
 # Heartbeat: some GPU clusters kill containers that produce no stdout for
 # extended periods. Print a short line every 10 minutes so the cluster
 # knows the process is still alive.
-_heartbeat() { while sleep 600; do echo "[heartbeat] $(date -u +%H:%M:%S) eval running"; done; }
-_heartbeat &
-_HB_PID=$!
+_heartbeat() {
+    while sleep 600; do
+        echo "[heartbeat] $(date -u +%H:%M:%S) eval running"
+    done
+}
+if [ "${MLSBENCH_DISABLE_HEARTBEAT:-0}" = 1 ]; then
+    _HB_PID=""
+else
+    _heartbeat &
+    _HB_PID=$!
+fi
 
+_RUN_EVALS_RC=0
 "${PYTHON_BIN}" -I "${PRIVATE_ROOT}/score_task.py" run-evals \
     --task-meta "${PRIVATE_META}" \
     --workspace "${WORKDIR}" \
     --eval-root /tests/eval \
-    --out-dir /logs/verifier
+    --out-dir /logs/verifier || _RUN_EVALS_RC=$?
 
-kill $_HB_PID 2>/dev/null || true
+kill "${_HB_PID}" 2>/dev/null || true
+wait "${_HB_PID}" 2>/dev/null || true
+_HB_PID=""
+
+if [ "${_RUN_EVALS_RC}" -ne 0 ]; then
+    printf '0\n' > /logs/verifier/reward.txt
+    exit 0
+fi
 
 # Step 3: aggregate metrics → combined_score → reward.txt.
+_SCORE_RC=0
 "${PYTHON_BIN}" -I "${PRIVATE_ROOT}/score_task.py" score \
     --task-meta "${PRIVATE_META}" \
     --out-dir /logs/verifier \
-    --reward-out /logs/verifier/reward.txt
+    --reward-out "${_CANDIDATE_REWARD}" || _SCORE_RC=$?
+
+_PROOF_RC=1
+if [ "${_SCORE_RC}" -eq 0 ] && [ -f "${_CANDIDATE_REWARD}" ]; then
+    _PROOF_RC=0
+    "${PYTHON_BIN}" -I - \
+        /logs/verifier/verification_result.json \
+        /logs/verifier/metrics.json \
+        "${_CANDIDATE_REWARD}" <<'PY' || _PROOF_RC=$?
+import hashlib
+import json
+import math
+import sys
+from pathlib import Path
+
+proof_path, metrics_path, reward_path = map(Path, sys.argv[1:])
+proof_text = proof_path.read_text()
+proof = json.loads(proof_text)
+metrics_text = metrics_path.read_text()
+metrics = json.loads(metrics_text)
+reward_text = reward_path.read_text()
+reward = float(reward_text.strip())
+canonical_proof = json.dumps(
+    proof,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=True,
+    allow_nan=False,
+)
+canonical_metrics = json.dumps(
+    metrics,
+    sort_keys=True,
+    separators=(",", ":"),
+    ensure_ascii=True,
+    allow_nan=False,
+)
+if proof_text != canonical_proof or proof.get("schema_version") != 1:
+    raise SystemExit(1)
+if proof.get("status") != "passed" or proof.get("strict_fail_closed") is not True:
+    raise SystemExit(1)
+if not math.isfinite(reward) or not 0.0 <= reward <= 1.0:
+    raise SystemExit(1)
+if reward_text != f"{reward}\n":
+    raise SystemExit(1)
+if proof.get("reward") != reward or metrics.get("reward") != reward:
+    raise SystemExit(1)
+if metrics_text != canonical_metrics:
+    raise SystemExit(1)
+if proof.get("metrics_sha256") != hashlib.sha256(metrics_text.encode()).hexdigest():
+    raise SystemExit(1)
+PY
+fi
+
+if [ "${_SCORE_RC}" -eq 0 ] && [ "${_PROOF_RC}" -eq 0 ] \
+        && mv -f -- "${_CANDIDATE_REWARD}" /logs/verifier/reward.txt; then
+    _VERIFICATION_COMMITTED=1
+else
+    printf '0\n' > /logs/verifier/reward.txt
+    rm -f /logs/verifier/verification_result.json /logs/verifier/metrics.json
+    printf 'score stage failed or produced invalid success proof (score_rc=%s proof_rc=%s)\n' \
+        "${_SCORE_RC}" "${_PROOF_RC}" >> /logs/verifier/score_error.txt
+fi
 
 exit 0
