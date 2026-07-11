@@ -18,6 +18,10 @@ import re
 import sys
 import time
 
+# PyTorch requires this to be present before the first CUDA context is created
+# when deterministic algorithms cover CuBLAS-backed operations.
+os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+
 import torch
 import torch.nn.functional as F
 
