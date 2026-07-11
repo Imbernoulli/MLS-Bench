@@ -16,7 +16,7 @@ cd "${RUN}" || exit 111
 exec > >(tee worker.log) 2>&1
 
 finish() {
-    rc=$?
+    local rc="${1:-$?}"
     trap - EXIT HUP INT TERM
     date -Iseconds > FINISHED
     printf '%s\n' "${rc}" > rc
@@ -142,3 +142,5 @@ PY
 printf '%s\n' \
     'NORMFLOWS_STATIC_COMPLETE siblings=10 valid=10 destructive=20 pending_zero=9 anchor_calibration=pass global_failclosed=pass render=10/10' \
     | tee "${RUN}/summary"
+
+finish 0
