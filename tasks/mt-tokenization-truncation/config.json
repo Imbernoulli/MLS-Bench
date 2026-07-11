@@ -1,0 +1,157 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/opus_de_en.sh",
+      "label": "de_en",
+      "group": 1,
+      "compute": 1,
+      "time": "1:30:00",
+      "mem": 24,
+      "package": "machine-translation"
+    },
+    {
+      "cmd": "scripts/opus_fr_en.sh",
+      "label": "fr_en",
+      "group": 2,
+      "compute": 1,
+      "time": "1:30:00",
+      "mem": 24,
+      "package": "machine-translation"
+    },
+    {
+      "cmd": "scripts/opus_ru_en.sh",
+      "label": "ru_en",
+      "group": 3,
+      "compute": 1,
+      "time": "1:30:00",
+      "mem": 24,
+      "package": "machine-translation"
+    }
+  ],
+  "baselines": {
+    "t12": {
+      "edit_ops": "edits/t12.edit.py"
+    },
+    "t32": {
+      "edit_ops": "edits/t32.edit.py"
+    },
+    "full": {
+      "edit_ops": "edits/full.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "machine-translation/solution/tok.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 11,
+          "end": 11
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "machine-translation/common.py",
+    "machine-translation/harness_tok.py"
+  ],
+  "agent_pruned_package_files": [
+    "machine-translation/baselines/beam_greedy.py",
+    "machine-translation/baselines/beam_tuned.py",
+    "machine-translation/baselines/divbeam_mid.py",
+    "machine-translation/baselines/divbeam_over.py",
+    "machine-translation/baselines/divbeam_plain.py",
+    "machine-translation/baselines/earlystop_false.py",
+    "machine-translation/baselines/earlystop_never.py",
+    "machine-translation/baselines/earlystop_true.py",
+    "machine-translation/baselines/length_short.py",
+    "machine-translation/baselines/length_tuned.py",
+    "machine-translation/baselines/maxlen_10.py",
+    "machine-translation/baselines/maxlen_128.py",
+    "machine-translation/baselines/maxlen_32.py",
+    "machine-translation/baselines/norep3.py",
+    "machine-translation/baselines/norep_agg1.py",
+    "machine-translation/baselines/norep_off.py",
+    "machine-translation/baselines/postproc_lower.py",
+    "machine-translation/baselines/postproc_norm.py",
+    "machine-translation/baselines/postproc_strip.py",
+    "machine-translation/baselines/reppen_high.py",
+    "machine-translation/baselines/reppen_off.py",
+    "machine-translation/baselines/reppen_tuned.py",
+    "machine-translation/baselines/sampling_beam.py",
+    "machine-translation/baselines/sampling_greedy.py",
+    "machine-translation/baselines/sampling_t1.py",
+    "machine-translation/baselines/sampling_topp.py",
+    "machine-translation/baselines/strategy_beam.py",
+    "machine-translation/baselines/strategy_copy_source.py",
+    "machine-translation/baselines/strategy_greedy.py",
+    "machine-translation/baselines/temp_1.py",
+    "machine-translation/baselines/temp_cold.py",
+    "machine-translation/baselines/temp_hot.py",
+    "machine-translation/baselines/tok_12.py",
+    "machine-translation/baselines/tok_32.py",
+    "machine-translation/baselines/tok_full.py",
+    "machine-translation/harness_beam.py",
+    "machine-translation/harness_divbeam.py",
+    "machine-translation/harness_earlystop.py",
+    "machine-translation/harness_length.py",
+    "machine-translation/harness_maxlen.py",
+    "machine-translation/harness_norep.py",
+    "machine-translation/harness_postproc.py",
+    "machine-translation/harness_reppen.py",
+    "machine-translation/harness_sampling.py",
+    "machine-translation/harness_strategy.py",
+    "machine-translation/harness_temperature.py",
+    "machine-translation/prepare_fullscale_data.py",
+    "machine-translation/solution/beam.py",
+    "machine-translation/solution/divbeam.py",
+    "machine-translation/solution/earlystop.py",
+    "machine-translation/solution/length.py",
+    "machine-translation/solution/maxlen.py",
+    "machine-translation/solution/norep.py",
+    "machine-translation/solution/postproc.py",
+    "machine-translation/solution/reppen.py",
+    "machine-translation/solution/sampling.py",
+    "machine-translation/solution/strategy.py",
+    "machine-translation/solution/temperature.py"
+  ],
+  "agent_data_prune": [
+    "/data/machine-translation/data"
+  ],
+  "verifier_data_deps": [
+    {
+      "name": "opus100_de_en_test",
+      "host_path": "{data_root}/machine-translation/data/de_en_test.jsonl",
+      "dest": "data/machine-translation/data/de_en_test.jsonl",
+      "required": true
+    },
+    {
+      "name": "opus100_fr_en_test",
+      "host_path": "{data_root}/machine-translation/data/fr_en_test.jsonl",
+      "dest": "data/machine-translation/data/fr_en_test.jsonl",
+      "required": true
+    },
+    {
+      "name": "opus100_ru_en_test",
+      "host_path": "{data_root}/machine-translation/data/ru_en_test.jsonl",
+      "dest": "data/machine-translation/data/ru_en_test.jsonl",
+      "required": true
+    },
+    {
+      "name": "opus100_source_manifest",
+      "host_path": "{data_root}/machine-translation/data/source_manifest.json",
+      "dest": "data/machine-translation/data/source_manifest.json",
+      "required": true
+    }
+  ]
+}
