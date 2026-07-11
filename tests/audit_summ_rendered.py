@@ -91,6 +91,10 @@ def main() -> None:
             "rm -rf /data/abstractive-summarization" not in dockerfile,
             f"{task_name}: rendered image deletes verifier data",
         )
+        require(
+            "RUN rm -rf /workspace/abstractive-summarization" in dockerfile,
+            f"{task_name}: stale image-baked package tree remains agent-visible",
+        )
 
         task_toml = tomllib.loads((task / "task.toml").read_text())
         environment = task_toml["environment"]
@@ -121,12 +125,29 @@ def main() -> None:
             digest(task / "tests" / "meta" / "score_spec.py") == digest(source / "score_spec.py"),
             f"{task_name}: rendered score spec drift",
         )
+        for relative in config["verifier_only_package_files"]:
+            rendered_runtime = (
+                task / "tests" / "meta" / "verifier_package_files" / relative
+            )
+            source_runtime = source_root / "vendor" / relative
+            require(
+                rendered_runtime.is_file(),
+                f"{task_name}: missing verifier-only runtime {relative}",
+            )
+            require(
+                digest(rendered_runtime) == digest(source_runtime),
+                f"{task_name}: verifier-only runtime drift for {relative}",
+            )
         score_text = (task / "tests" / "meta" / "score_spec.py").read_text()
         for setting in ("xsum", "cnndm", "samsum"):
             require(setting in score_text, f"{task_name}: score omits {setting}")
 
         eval_script = task / "tests" / "eval" / "scripts" / "run.sh"
         require(eval_script.is_file(), f"{task_name}: missing active eval script")
+        require(
+            digest(eval_script) == digest(source / "scripts" / "run.sh"),
+            f"{task_name}: active eval script drift",
+        )
         script = eval_script.read_text()
         require("set -euo pipefail" in script, f"{task_name}: script is not strict")
         require("VERIFICATION_FAILED" in script, f"{task_name}: script lacks failure proof")
@@ -136,6 +157,12 @@ def main() -> None:
 
         scaffold = task / "environment" / "_scaffold" / "abstractive-summarization"
         require(scaffold.is_dir(), f"{task_name}: missing agent scaffold")
+        editable = Path(config["files"][0]["filename"])
+        require(
+            digest(task / "environment" / "_scaffold" / editable)
+            == digest(source / "edits" / "custom_template.py"),
+            f"{task_name}: rendered editable scaffold drift",
+        )
         agent_visible = instruction + "\n" + "\n".join(
             path.read_text().lower()
             for path in scaffold.rglob("*.py")
@@ -170,7 +197,8 @@ def main() -> None:
 
     print(
         "SUMM_RENDER_AUDIT tasks=10 parsers=10 score_specs=10 scripts=10 "
-        "gpu=1 h20=10 settings=30 no_leak=10 image_pinned=10"
+        "verifier_runtime=110 scaffolds=10 gpu=1 h20=10 settings=30 "
+        "no_leak=10 image_pinned=10"
     )
 
 
