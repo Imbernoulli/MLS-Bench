@@ -3,7 +3,9 @@
 Each task defines its own Parser subclass in tasks/<task>/parser.py.
 The base OutputParser provides pass-through behavior (raw output, no metrics).
 """
+from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -37,6 +39,8 @@ class OutputParser:
         try:
             value = float(raw_value)
         except ValueError:
+            return None
+        if not math.isfinite(value):
             return None
 
         return metric_name, value
