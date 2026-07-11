@@ -87,10 +87,24 @@ def test_all_siblings_are_serial_full_scale_and_verifier_owned() -> None:
     from mlsbench.scoring.spec import load_score_spec
 
     assert {path.name for path in TASKS.glob("mt-*") if path.is_dir()} == set(SURFACES)
-    package_python = {
+    package_files = {
         path.relative_to(ROOT / "vendor").as_posix()
-        for path in VENDOR.rglob("*.py")
-        if path.name != "__init__.py" and "__pycache__" not in path.parts
+        for path in VENDOR.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
+    }
+    evidence_files = {
+        "machine-translation/artifact_provenance.json",
+        "machine-translation/image_provenance.json",
+        "machine-translation/representative_logs/de_en.log",
+        "machine-translation/representative_logs/fr_en.log",
+        "machine-translation/representative_logs/ru_en.log",
+        "machine-translation/representative_probe.json",
+        "machine-translation/runtime_probe.json",
+        "machine-translation/surface_probe_early_stopping.json",
+        "machine-translation/surface_probe_maxlen.json",
+        "machine-translation/surface_probe_postprocess.json",
     }
     for task_name, (filename, surface, harness_name) in SURFACES.items():
         task_dir = TASKS / task_name
@@ -111,7 +125,9 @@ def test_all_siblings_are_serial_full_scale_and_verifier_owned() -> None:
         }
         assert active not in verifier_files
         pruned_files = set(config["agent_pruned_package_files"])
-        assert pruned_files == package_python - verifier_files - {active}
+        public_files = {"machine-translation/__init__.py", active}
+        assert pruned_files == package_files - verifier_files - public_files
+        assert evidence_files <= pruned_files
         assert config["agent_data_prune"] == ["/data/machine-translation/data"]
         assert [dep["dest"] for dep in config["verifier_data_deps"]] == [
             "data/machine-translation/data/de_en_test.jsonl",

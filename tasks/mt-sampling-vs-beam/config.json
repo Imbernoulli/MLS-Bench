@@ -66,6 +66,16 @@
     "machine-translation/harness_sampling.py"
   ],
   "agent_pruned_package_files": [
+    "machine-translation/artifact_provenance.json",
+    "machine-translation/image_provenance.json",
+    "machine-translation/representative_logs/de_en.log",
+    "machine-translation/representative_logs/fr_en.log",
+    "machine-translation/representative_logs/ru_en.log",
+    "machine-translation/representative_probe.json",
+    "machine-translation/runtime_probe.json",
+    "machine-translation/surface_probe_early_stopping.json",
+    "machine-translation/surface_probe_maxlen.json",
+    "machine-translation/surface_probe_postprocess.json",
     "machine-translation/baselines/beam_greedy.py",
     "machine-translation/baselines/beam_tuned.py",
     "machine-translation/baselines/divbeam_mid.py",
