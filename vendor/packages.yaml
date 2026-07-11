@@ -44,6 +44,10 @@ packages:
     url: local
     commit: local
 
+  prompt-optimization-lab:
+    url: local
+    commit: local
+
   continual-learning:
     url: https://github.com/GMvandeVen/continual-learning.git
     commit: e6d795a
