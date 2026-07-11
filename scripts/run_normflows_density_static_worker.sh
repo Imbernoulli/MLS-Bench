@@ -141,6 +141,6 @@ PY
 
 printf '%s\n' \
     'NORMFLOWS_STATIC_COMPLETE siblings=10 valid=10 destructive=20 pending_zero=9 anchor_calibration=pass global_failclosed=pass render=10/10' \
-    | tee "${RUN}/summary"
+    > "${RUN}/summary"
 
 finish 0
