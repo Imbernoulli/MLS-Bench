@@ -207,6 +207,8 @@ def test_all_native_and_declared_baseline_surfaces_are_finite_literals(
 def test_every_parser_accepts_only_the_exact_v2_terminal_proof(task_name: str) -> None:
     parser_module, rows = _strict_log(task_name)
     parser = parser_module.Parser()
+    assert parser_module.DONE.pattern.count("([0-9a-f]{64})") == 3
+    assert "([0-9a-f]64)" not in parser_module.DONE.pattern
     valid = parser.parse("simplify", "\n".join(rows))
     assert set(valid.metrics) == EXPECTED_METRICS
 
