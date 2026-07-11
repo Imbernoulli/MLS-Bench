@@ -448,4 +448,5 @@ def test_one_pinned_repository_image_and_host_only_dgp() -> None:
     assert 'date -Iseconds > FINISHED' in worker
     assert "printf '%s\\n' \"${rc}\" > rc" in worker
     assert 'date -Iseconds > SUCCESS' in worker
+    assert '| tee "${RUN}/summary"' not in worker
     assert worker.rstrip().endswith("finish 0")
