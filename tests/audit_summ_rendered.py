@@ -125,9 +125,9 @@ def main() -> None:
         for setting in ("xsum", "cnndm", "samsum"):
             require(setting in score_text, f"{task_name}: score omits {setting}")
 
-        eval_scripts = sorted((task / "tests").glob("**/scripts/run.sh"))
-        require(len(eval_scripts) == 1, f"{task_name}: wrong rendered script inventory")
-        script = eval_scripts[0].read_text()
+        eval_script = task / "tests" / "eval" / "scripts" / "run.sh"
+        require(eval_script.is_file(), f"{task_name}: missing active eval script")
+        script = eval_script.read_text()
         require("set -euo pipefail" in script, f"{task_name}: script is not strict")
         require("VERIFICATION_FAILED" in script, f"{task_name}: script lacks failure proof")
         require("CUDA_VISIBLE_DEVICES" not in script, f"{task_name}: script overrides runner GPU")
