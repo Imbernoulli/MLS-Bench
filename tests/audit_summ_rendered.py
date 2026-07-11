@@ -125,10 +125,19 @@ def main() -> None:
             digest(task / "tests" / "meta" / "score_spec.py") == digest(source / "score_spec.py"),
             f"{task_name}: rendered score spec drift",
         )
+        runtime_root = task / "tests" / "meta" / "verifier_package_files"
+        rendered_runtime_inventory = sorted(
+            path.relative_to(runtime_root).as_posix()
+            for path in runtime_root.rglob("*")
+            if path.is_file()
+        )
+        require(
+            rendered_runtime_inventory
+            == sorted(config["verifier_only_package_files"]),
+            f"{task_name}: verifier-only runtime inventory drift",
+        )
         for relative in config["verifier_only_package_files"]:
-            rendered_runtime = (
-                task / "tests" / "meta" / "verifier_package_files" / relative
-            )
+            rendered_runtime = runtime_root / relative
             source_runtime = source_root / "vendor" / relative
             require(
                 rendered_runtime.is_file(),
@@ -144,6 +153,16 @@ def main() -> None:
 
         eval_script = task / "tests" / "eval" / "scripts" / "run.sh"
         require(eval_script.is_file(), f"{task_name}: missing active eval script")
+        eval_root = task / "tests" / "eval"
+        require(
+            sorted(
+                path.relative_to(eval_root).as_posix()
+                for path in eval_root.rglob("*")
+                if path.is_file()
+            )
+            == ["scripts/run.sh"],
+            f"{task_name}: active eval inventory drift",
+        )
         require(
             digest(eval_script) == digest(source / "scripts" / "run.sh"),
             f"{task_name}: active eval script drift",
@@ -158,8 +177,30 @@ def main() -> None:
         scaffold = task / "environment" / "_scaffold" / "abstractive-summarization"
         require(scaffold.is_dir(), f"{task_name}: missing agent scaffold")
         editable = Path(config["files"][0]["filename"])
+        scaffold_root = task / "environment" / "_scaffold"
         require(
-            digest(task / "environment" / "_scaffold" / editable)
+            sorted(
+                path.relative_to(scaffold_root).as_posix()
+                for path in scaffold_root.rglob("*")
+                if path.is_file()
+            )
+            == sorted([
+                "abstractive-summarization/__init__.py",
+                editable.as_posix(),
+            ]),
+            f"{task_name}: agent scaffold inventory drift",
+        )
+        require(
+            (
+                scaffold_root
+                / "abstractive-summarization"
+                / "__init__.py"
+            ).read_bytes()
+            == b"\n",
+            f"{task_name}: scaffold package initializer is not canonical",
+        )
+        require(
+            digest(scaffold_root / editable)
             == digest(source / "edits" / "custom_template.py"),
             f"{task_name}: rendered editable scaffold drift",
         )
