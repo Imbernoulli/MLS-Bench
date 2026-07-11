@@ -1,0 +1,52 @@
+{
+  "allow_create": false,
+  "pristine_manifest_mode": "scaffold",
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run.sh",
+      "label": "summ",
+      "group": 1,
+      "compute": 1,
+      "time": "4:00:00",
+      "mem": 64,
+      "package": "abstractive-summarization"
+    }
+  ],
+  "baselines": {
+    "hot": {
+      "edit_ops": "edits/hot.edit.py"
+    },
+    "cold": {
+      "edit_ops": "edits/cold.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "abstractive-summarization/solution/temperature.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 31,
+          "end": 33
+        }
+      ]
+    }
+  ],
+  "calibration_status": "pending_full_official_test_anchors",
+  "calibration_protocol": "summ-full-official-test-v1",
+  "calibration_anchor_seed": 42,
+  "calibration_anchor_counts": {
+    "xsum": 11334,
+    "cnndm": 11490,
+    "samsum": 819
+  }
+}

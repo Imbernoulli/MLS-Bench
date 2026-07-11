@@ -1,0 +1,41 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "install_cmds": [
+    "pip install --no-cache-dir 'transformers>=4.41,<4.50' 'tokenizers>=0.20,<0.22' 'huggingface_hub<1.0' 'datasets>=2.19,<3' 'accelerate>=0.30' rouge-score 'sentencepiece' 'numpy<2'",
+    "python -c \"import transformers, torch; from rouge_score import rouge_scorer; from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; print('transformers', transformers.__version__, 'torch', torch.__version__)\""
+  ],
+  "env": {
+    "SUMM_MODELS": "/data/abstractive-summarization/models",
+    "SUMM_DATA": "/data/abstractive-summarization/data",
+    "HF_HOME": "/data/abstractive-summarization/hf_home",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false"
+  },
+  "data_deps": [
+    {
+      "name": "abstractive_summarization",
+      "description": "Pinned frozen distilbart-xsum-12-6, distilbart-cnn-12-6, and bart-large-cnn-samsum checkpoints plus the complete official XSum (11,334), CNN/DailyMail 3.0.0 (11,490), and SAMSum (819) test splits. Dataset revisions, converted JSONL digests, model revisions, checkpoint digests, row counts, and completion proofs are enforced by the shared runtime and parser. Every setting participates in the geometric-mean ROUGE-L score. No download, install, compilation, or head slicing occurs during verification.",
+      "host_path": "{data_root}/abstractive-summarization",
+      "container_path": "/data/abstractive-summarization",
+      "ready_files": [
+        "{data_root}/abstractive-summarization/manifest.json",
+        "{data_root}/abstractive-summarization/models/distilbart-xsum-12-6/config.json",
+        "{data_root}/abstractive-summarization/models/distilbart-cnn-12-6/config.json",
+        "{data_root}/abstractive-summarization/models/bart-large-cnn-samsum/config.json",
+        "{data_root}/abstractive-summarization/data/xsum_test.jsonl",
+        "{data_root}/abstractive-summarization/data/cnndm_test.jsonl",
+        "{data_root}/abstractive-summarization/data/samsum_test.jsonl"
+      ],
+      "prepare": "vendor/data_scripts/abstractive-summarization/prepare_data.py"
+    }
+  ],
+  "host_data_prepare_requirements": [
+    "huggingface_hub",
+    "pyarrow"
+  ],
+  "pinned_harbor_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-abstractive-summarization@sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a",
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

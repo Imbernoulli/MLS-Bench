@@ -1,0 +1,1 @@
+timestamp,model,is_final,seed,rougeL_xsum,rougeL_cnndm,rougeL_samsum,rouge1_xsum,rouge1_cnndm,rouge1_samsum,rouge2_xsum,rouge2_cnndm,rouge2_samsum,elapsed_seconds

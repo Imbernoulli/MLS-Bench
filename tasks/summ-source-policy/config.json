@@ -1,0 +1,65 @@
+{
+  "allow_create": false,
+  "verifier_only_package_files": [
+    "abstractive-summarization/common.py",
+    "abstractive-summarization/harness_beam.py",
+    "abstractive-summarization/harness_beamwidth.py",
+    "abstractive-summarization/harness_diverse.py",
+    "abstractive-summarization/harness_length.py",
+    "abstractive-summarization/harness_norepeat.py",
+    "abstractive-summarization/harness_posttrunc.py",
+    "abstractive-summarization/harness_sampling.py",
+    "abstractive-summarization/harness_source.py",
+    "abstractive-summarization/harness_temperature.py",
+    "abstractive-summarization/harness_topp.py"
+  ],
+  "pristine_manifest_mode": "scaffold",
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run.sh",
+      "label": "summ",
+      "group": 1,
+      "compute": 1,
+      "time": "4:00:00",
+      "mem": 64,
+      "package": "abstractive-summarization"
+    }
+  ],
+  "baselines": {
+    "empty": {
+      "edit_ops": "edits/empty.edit.py"
+    },
+    "abstractive": {
+      "edit_ops": "edits/abstractive.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "abstractive-summarization/solution/source.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "calibration_status": "pending_full_official_test_anchors",
+  "calibration_protocol": "summ-full-official-test-v1",
+  "calibration_anchor_seed": 42,
+  "calibration_anchor_counts": {
+    "xsum": 11334,
+    "cnndm": 11490,
+    "samsum": 819
+  }
+}

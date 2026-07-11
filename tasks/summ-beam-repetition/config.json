@@ -1,0 +1,55 @@
+{
+  "allow_create": false,
+  "pristine_manifest_mode": "scaffold",
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run.sh",
+      "label": "summ",
+      "group": 1,
+      "compute": 1,
+      "time": "4:00:00",
+      "mem": 64,
+      "package": "abstractive-summarization"
+    }
+  ],
+  "baselines": {
+    "greedy": {
+      "edit_ops": "edits/greedy.edit.py"
+    },
+    "beam_only": {
+      "edit_ops": "edits/beam_only.edit.py"
+    },
+    "tuned": {
+      "edit_ops": "edits/tuned.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "abstractive-summarization/solution/beam.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 38,
+          "end": 40
+        }
+      ]
+    }
+  ],
+  "calibration_status": "pending_full_official_test_anchors",
+  "calibration_protocol": "summ-full-official-test-v1",
+  "calibration_anchor_seed": 42,
+  "calibration_anchor_counts": {
+    "xsum": 11334,
+    "cnndm": 11490,
+    "samsum": 819
+  }
+}

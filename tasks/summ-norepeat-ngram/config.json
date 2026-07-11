@@ -1,0 +1,52 @@
+{
+  "allow_create": false,
+  "pristine_manifest_mode": "scaffold",
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run.sh",
+      "label": "summ",
+      "group": 1,
+      "compute": 1,
+      "time": "4:00:00",
+      "mem": 64,
+      "package": "abstractive-summarization"
+    }
+  ],
+  "baselines": {
+    "off": {
+      "edit_ops": "edits/off.edit.py"
+    },
+    "ngram3": {
+      "edit_ops": "edits/ngram3.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "abstractive-summarization/solution/norepeat.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 32,
+          "end": 34
+        }
+      ]
+    }
+  ],
+  "calibration_status": "pending_full_official_test_anchors",
+  "calibration_protocol": "summ-full-official-test-v1",
+  "calibration_anchor_seed": 42,
+  "calibration_anchor_counts": {
+    "xsum": 11334,
+    "cnndm": 11490,
+    "samsum": 819
+  }
+}
