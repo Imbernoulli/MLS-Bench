@@ -996,9 +996,11 @@ def test_validate_eval_summary_rejects_surface_error_marker(tmp_path: Path):
     [
         "verification failed",
         "training failed",
-        "evaluation failure",
+        "training has failed",
+        "evaluation did not complete",
         "Traceback (most recent call last):",
-        "RuntimeError: boom",
+        "[ERROR] RuntimeError: boom",
+        "2026-07-11 12:34:56 ERROR ValueError: boom",
     ],
 )
 def test_validate_eval_summary_rejects_standard_failure_markers(
@@ -1025,7 +1027,14 @@ def test_validate_eval_summary_rejects_standard_failure_markers(
 
 @pytest.mark.parametrize(
     "diagnostic",
-    ["failed_samples=0", "failure_rate=0", "RuntimeError handled and recovered"],
+    [
+        "No training failure occurred",
+        "training failure count: 0",
+        "MeanSquaredError: 0.012",
+        "RuntimeError: handled and recovered",
+        "failed_samples=0",
+        "failure_rate=0",
+    ],
 )
 def test_failure_marker_does_not_match_diagnostic_identifiers(diagnostic: str):
     score_task = _load_score_task()
