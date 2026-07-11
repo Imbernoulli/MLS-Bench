@@ -272,3 +272,6 @@ packages:
     url: local
     commit: local
 
+  normflows-density:
+    url: local
+    commit: local
