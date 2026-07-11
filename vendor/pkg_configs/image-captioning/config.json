@@ -1,0 +1,37 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.7.0-cuda12.8-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-image-captioning-full@sha256:2bc773cf6e838e9defe1b06e20efde3d93a3690b1b09e7cd2ea29217c120e7c7",
+  "install_cmds": [
+    "pip install --no-cache-dir open_clip_torch==3.3.0 'transformers==4.53.2' 'tokenizers>=0.21,<0.22' pycocoevalcap==1.2 jdk4py==17.0.9.2 'protobuf<6' ftfy regex pillow",
+    "python -c \"import jdk4py, open_clip, transformers, torch; from importlib.metadata import version; from pycocoevalcap.bleu.bleu_scorer import BleuScorer; from pycocoevalcap.cider.cider_scorer import CiderScorer; assert version('pycocoevalcap') == '1.2'; assert version('jdk4py') == '17.0.9.2'; assert jdk4py.JAVA.is_file(); print('caption OK', transformers.__version__, torch.__version__)\""
+  ],
+  "env": {
+    "CAPTION_DATA": "/data/image-captioning",
+    "CAPTION_GPT2": "/data/image-captioning/gpt2",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1"
+  },
+  "agent_pruned_files": [
+    "baselines"
+  ],
+  "data_deps": [
+    {
+      "name": "image_captioning_flickr8k",
+      "host_path": "{data_root}/image-captioning",
+      "container_path": "/data/image-captioning",
+      "prepare": "vendor/data_scripts/image-captioning/prepare_data.py",
+      "ready_files": [
+        "{data_root}/image-captioning/gpt2/config.json",
+        "{data_root}/image-captioning/source_manifest.json",
+        "{data_root}/image-captioning/train_clip.pt",
+        "{data_root}/image-captioning/train_refs.json",
+        "{data_root}/image-captioning/eval_clip.pt",
+        "{data_root}/image-captioning/eval_refs.json"
+      ],
+      "description": "Pinned official Flickr8k protocol: all 6000 training images and five captions per image (30000 image-caption pairs), plus all 1000 official test images and five references per image. Frozen CLIP ViT-B/32 embeddings and a pinned frozen GPT-2 small snapshot are hash-verified before ten complete mapping-training epochs and full CIDEr/BLEU-4 evaluation."
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

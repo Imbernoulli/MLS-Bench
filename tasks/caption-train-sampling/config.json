@@ -1,0 +1,88 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": false,
+  "verifier_only_package_files": [
+    "image-captioning/harness.py"
+  ],
+  "agent_image_prune": [
+    "/opt/mlsbench-caption"
+  ],
+  "agent_data_prune": [
+    "/data/image-captioning/source_manifest.json",
+    "/data/image-captioning/train_clip.pt",
+    "/data/image-captioning/train_refs.json",
+    "/data/image-captioning/eval_clip.pt",
+    "/data/image-captioning/eval_refs.json"
+  ],
+  "verifier_data_deps": [
+    {
+      "name": "caption_source_manifest_json",
+      "host_path": "{data_root}/image-captioning/source_manifest.json",
+      "dest": "data/image-captioning/source_manifest.json",
+      "required": true
+    },
+    {
+      "name": "caption_train_clip_pt",
+      "host_path": "{data_root}/image-captioning/train_clip.pt",
+      "dest": "data/image-captioning/train_clip.pt",
+      "required": true
+    },
+    {
+      "name": "caption_train_refs_json",
+      "host_path": "{data_root}/image-captioning/train_refs.json",
+      "dest": "data/image-captioning/train_refs.json",
+      "required": true
+    },
+    {
+      "name": "caption_eval_clip_pt",
+      "host_path": "{data_root}/image-captioning/eval_clip.pt",
+      "dest": "data/image-captioning/eval_clip.pt",
+      "required": true
+    },
+    {
+      "name": "caption_eval_refs_json",
+      "host_path": "{data_root}/image-captioning/eval_refs.json",
+      "dest": "data/image-captioning/eval_refs.json",
+      "required": true
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run.sh",
+      "label": "flickr",
+      "group": 1,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "mem": 48,
+      "package": "image-captioning"
+    }
+  ],
+  "baselines": {
+    "uniform": {
+      "edit_ops": "edits/uniform.edit.py"
+    },
+    "bucketed": {
+      "edit_ops": "edits/bucketed.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-captioning/solution/sampling.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 8,
+          "end": 8
+        }
+      ]
+    }
+  ]
+}

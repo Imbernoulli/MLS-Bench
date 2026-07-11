@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,cider_flickr,bleu4_flickr,elapsed_flickr
+2026-07-11T11:45:17.091422+00:00,calibration:decoding_sample,true,42,0.245972,0.076101,199.949204206
+2026-07-11T11:54:00.521367+00:00,calibration:decoding_greedy,true,42,0.552901,0.198662,203.490382433
+2026-07-11T11:57:47.549080+00:00,calibration:decoding_beam5,true,42,0.586622,0.218874,204.582225323
