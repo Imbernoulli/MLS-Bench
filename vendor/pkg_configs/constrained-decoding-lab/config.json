@@ -1,0 +1,36 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-constrained-decoding-lab@sha256:be762906f145195af4d5013b6eff60c46ea277cbbd4acf7a0d88c0496e8c896f",
+  "install_cmds": [
+    "pip install --no-cache-dir 'transformers>=4.44,<4.49' 'accelerate>=0.30' 'datasets>=2.19,<3' interegular sentencepiece protobuf",
+    "python -c \"import torch, transformers, interegular; print('cd-lab', torch.__version__, transformers.__version__)\""
+  ],
+  "env": {
+    "CD_MODEL": "/data/constrained-decoding/models/Qwen2.5-0.5B-Instruct",
+    "CD_DATA": "/data/constrained-decoding/data",
+    "HF_HOME": "/data/constrained-decoding/hf_home",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_DATASETS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "PYTHONPATH": "/workspace/constrained-decoding-lab:${PYTHONPATH}"
+  },
+  "data_deps": [
+    {
+      "name": "constrained-decoding",
+      "host_path": "{data_root}/constrained-decoding",
+      "container_path": "/data/constrained-decoding",
+      "prepare": "vendor/data_scripts/constrained-decoding-lab/prepare_data.py",
+      "ready_files": [
+        "{data_root}/constrained-decoding/source_manifest.json",
+        "{data_root}/constrained-decoding/models/Qwen2.5-0.5B-Instruct/config.json",
+        "{data_root}/constrained-decoding/data/gsm8k.json",
+        "{data_root}/constrained-decoding/data/classification.json"
+      ],
+      "description": "Qwen2.5-0.5B-Instruct (frozen) plus the full pinned official test inventories: 1,319 GSM8K examples for numeric cd-* tasks and 7,600 AG News examples for choice cd-* tasks. Deterministic seed 42."
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

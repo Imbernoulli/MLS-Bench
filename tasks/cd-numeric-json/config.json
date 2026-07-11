@@ -1,0 +1,63 @@
+{
+  "allow_create": false,
+  "agent_data_prune": [
+    "/data/constrained-decoding/data"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/constrained-decoding/data",
+      "dest": "data/constrained-decoding",
+      "required": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/gsm8k.sh",
+      "label": "gsm8k",
+      "group": 1,
+      "compute": 1,
+      "time": "2:30:00",
+      "mem": 24,
+      "package": "constrained-decoding-lab"
+    }
+  ],
+  "baselines": {
+    "json_broken": {
+      "edit_ops": "edits/json_broken.edit.py"
+    },
+    "json_loose": {
+      "edit_ops": "edits/json_loose.edit.py"
+    },
+    "json_robust": {
+      "edit_ops": "edits/json_robust.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "constrained-decoding-lab/solution/decoder_json.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 18,
+          "end": 28
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "constrained-decoding-lab/common.py",
+    "constrained-decoding-lab/harness_choice.py",
+    "constrained-decoding-lab/harness_numeric.py"
+  ],
+  "calibration_protocol": "full-official-literal-ast-v2",
+  "calibration_status": "pending_exact_zero_full_official_anchors"
+}

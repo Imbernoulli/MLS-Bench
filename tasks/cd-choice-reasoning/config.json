@@ -1,0 +1,63 @@
+{
+  "allow_create": false,
+  "agent_data_prune": [
+    "/data/constrained-decoding/data"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/constrained-decoding/data",
+      "dest": "data/constrained-decoding",
+      "required": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/agnews.sh",
+      "label": "agnews",
+      "group": 1,
+      "compute": 1,
+      "time": "8:00:00",
+      "mem": 24,
+      "package": "constrained-decoding-lab"
+    }
+  ],
+  "baselines": {
+    "reason_none": {
+      "edit_ops": "edits/reason_none.edit.py"
+    },
+    "reason_short": {
+      "edit_ops": "edits/reason_short.edit.py"
+    },
+    "reason_full": {
+      "edit_ops": "edits/reason_full.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "constrained-decoding-lab/solution/decoder_choice_reasoning.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 18,
+          "end": 28
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "constrained-decoding-lab/common.py",
+    "constrained-decoding-lab/harness_choice.py",
+    "constrained-decoding-lab/harness_numeric.py"
+  ],
+  "calibration_protocol": "full-official-literal-ast-v2",
+  "calibration_status": "baseline_free_official_accuracy_natural_bounds"
+}
