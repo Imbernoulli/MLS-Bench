@@ -501,6 +501,9 @@ def test_all_task_scripts_use_pinned_private_fullscale_data() -> None:
                 "required": True,
             }
         ]
+        assert config["agent_pruned_package_files"] == [
+            "constrained-decoding-lab/anchor_baselines"
+        ]
         script_path = task_dir / config["test_cmds"][0]["cmd"]
         script = script_path.read_text()
         assert "set -euo pipefail" in script
@@ -517,6 +520,45 @@ def test_all_task_scripts_use_pinned_private_fullscale_data() -> None:
         else:
             assert "--n 7600" in script
             assert "classification.json" in script
+
+
+def test_agent_scaffold_static_whitelist_contains_only_active_solution() -> None:
+    package_root = ROOT / "vendor/constrained-decoding-lab"
+    package_files = {
+        f"constrained-decoding-lab/{path.relative_to(package_root).as_posix()}"
+        for path in package_root.rglob("*")
+        if path.is_file()
+        and "__pycache__" not in path.parts
+        and path.suffix not in {".pyc", ".pyo"}
+    }
+    for task_name in TASK_IDENTITIES:
+        config = json.loads((ROOT / "tasks" / task_name / "config.json").read_text())
+        active = config["files"][0]["filename"]
+        private_roots = {
+            *config["verifier_only_package_files"],
+            *config["agent_pruned_package_files"],
+        }
+
+        visible = set()
+        for rel in package_files:
+            path = Path(rel)
+            explicitly_private = any(
+                path == Path(private) or Path(private) in path.parents
+                for private in private_roots
+            )
+            reference_private = any(part in {"anchors", "baselines"} for part in path.parts)
+            sibling_solution_private = (
+                len(path.parts) >= 3
+                and path.parts[1] == "solution"
+                and rel != active
+            )
+            if not (explicitly_private or reference_private or sibling_solution_private):
+                visible.add(rel)
+
+        assert visible == {
+            "constrained-decoding-lab/__init__.py",
+            active,
+        }
 
 
 def test_harnesses_reject_mismatched_task_surface_identity() -> None:

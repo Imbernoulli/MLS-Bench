@@ -58,6 +58,9 @@
     "constrained-decoding-lab/harness_choice.py",
     "constrained-decoding-lab/harness_numeric.py"
   ],
+  "agent_pruned_package_files": [
+    "constrained-decoding-lab/anchor_baselines"
+  ],
   "calibration_protocol": "full-official-literal-ast-v3",
   "calibration_status": "baseline_free_official_accuracy_natural_bounds"
 }

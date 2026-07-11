@@ -5,6 +5,9 @@
     "constrained-decoding-lab/harness_choice.py",
     "constrained-decoding-lab/harness_numeric.py"
   ],
+  "agent_pruned_package_files": [
+    "constrained-decoding-lab/anchor_baselines"
+  ],
   "agent_data_prune": [
     "/data/constrained-decoding/data"
   ],
