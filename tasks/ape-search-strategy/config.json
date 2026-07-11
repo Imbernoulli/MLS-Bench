@@ -1,0 +1,52 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/agnews.sh",
+      "label": "agnews",
+      "group": 1,
+      "compute": 1,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "prompt-optimization-lab"
+    },
+    {
+      "cmd": "scripts/sst2.sh",
+      "label": "sst2",
+      "group": 2,
+      "compute": 1,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "prompt-optimization-lab"
+    }
+  ],
+  "baselines": {
+    "weak": {
+      "edit_ops": "edits/weak.edit.py"
+    },
+    "strong": {
+      "edit_ops": "edits/strong.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "prompt-optimization-lab/solution/strategy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 45,
+          "end": 47
+        }
+      ]
+    }
+  ]
+}
