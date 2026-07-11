@@ -6,11 +6,19 @@ from types import SimpleNamespace
 import pytest
 
 from mlsbench.agent.base import BaseAgent
-from mlsbench.agent.discover_agent import DiscoverAgent
-from mlsbench.agent.openevolve_agent import OpenEvolveAgent
+from mlsbench.agent.discover_agent import (
+    DiscoverAgent,
+    _filter_hidden_metrics as _filter_discover_hidden_metrics,
+    _hidden_labels_from_test_cmds as _discover_hidden_labels,
+)
+from mlsbench.agent.openevolve_agent import (
+    OpenEvolveAgent,
+    _filter_hidden_metrics as _filter_openevolve_hidden_metrics,
+    _hidden_labels_from_test_cmds as _openevolve_hidden_labels,
+)
 from mlsbench.agent.parsers import OutputParser, ParseResult
 from mlsbench.agent.tools import WorkspaceTools, _failure_marker
-from mlsbench.cli import _run_agent_fail_closed
+from mlsbench.cli import _run_agent_fail_closed, cmd_agent, main
 from mlsbench.scoring.evaluate import _validate_setting
 from mlsbench.scoring.spec import SettingSpec, TermSpec
 
@@ -63,6 +71,179 @@ def test_hidden_commands_remain_in_agent_instruction(tmp_path: Path) -> None:
     assert "scripts/public.sh" in prompt
     assert "scripts/formerly-hidden.sh" in prompt
     assert "`formerly-hidden`" in prompt
+
+
+def test_hidden_true_and_absent_produce_identical_agent_instruction(
+    tmp_path: Path,
+) -> None:
+    def build_prompt(*, hidden: bool, hide_hidden: bool) -> str:
+        agent = object.__new__(_PromptAgent)
+        agent.project_root = tmp_path
+        agent.task_name = "hidden-semantics"
+        formerly_hidden = {
+            "cmd": "scripts/formerly-hidden.sh",
+            "label": "formerly-hidden",
+            "time": "00:02:00",
+        }
+        if hidden:
+            formerly_hidden["hidden"] = True
+        agent.config_task = {
+            "test_cmds": [
+                {"cmd": "scripts/public.sh", "label": "public", "time": "00:01:00"},
+                formerly_hidden,
+            ]
+        }
+        agent.config_edit = []
+        agent._extra_context_text = ""
+        agent._extra_context_request = None
+        agent.tools = SimpleNamespace(hide_hidden=hide_hidden, max_tests=1)
+        agent.leaderboard = _FakeLeaderboard()
+        agent.max_steps = 3
+        return BaseAgent.build_initial_prompt(agent)
+
+    assert build_prompt(hidden=True, hide_hidden=True) == build_prompt(
+        hidden=False,
+        hide_hidden=False,
+    )
+
+
+def test_legacy_hidden_inputs_do_not_change_test_or_submission(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "mlsbench.agent.slurm.SlurmExecutor",
+        lambda _config, _project_root: object(),
+    )
+
+    def make_tools(*, hidden: bool, hide_hidden: bool) -> WorkspaceTools:
+        formerly_hidden = {
+            "cmd": "scripts/formerly-hidden.sh",
+            "label": "formerly-hidden",
+            "time": "00:02:00",
+        }
+        config_task = {
+            "test_cmds": [
+                {"cmd": "scripts/public.sh", "label": "public", "time": "00:01:00"},
+                formerly_hidden,
+            ]
+        }
+        if hidden:
+            formerly_hidden["hidden"] = True
+            config_task["hidden_metrics"] = ["acc_formerly_hidden"]
+        tools = WorkspaceTools(
+            task_name="hidden-semantics",
+            config_task=config_task,
+            config_edit=[],
+            workspace_root=tmp_path / "workspace",
+            project_root=tmp_path,
+            max_tests=1,
+            model_name="agent",
+            parser=SimpleNamespace(),
+            leaderboard=_FakeLeaderboard(),
+            seeds=[42],
+            slurm_config={"partition": "test"},
+            hide_hidden=hide_hidden,
+        )
+        feedback = [
+            "### public (scripts/public.sh)\nTEST_METRICS: acc_public=0.5",
+            (
+                "### formerly-hidden (scripts/formerly-hidden.sh)\n"
+                "TEST_METRICS: acc_formerly_hidden=0.75"
+            ),
+        ]
+        metrics = {"acc_public": 0.5, "acc_formerly_hidden": 0.75}
+        hidden_flags = [bool(entry.get("hidden")) for entry in tools.test_cmd_entries]
+        tools._run_all_cmds = lambda _seed: (feedback, metrics, hidden_flags)
+        return tools
+
+    legacy = make_tools(hidden=True, hide_hidden=True)
+    plain = make_tools(hidden=False, hide_hidden=False)
+
+    assert legacy.hide_hidden is plain.hide_hidden is False
+    assert legacy.hidden_metric_patterns == plain.hidden_metric_patterns == []
+    assert legacy.hidden_test_labels == plain.hidden_test_labels == []
+    assert [
+        (entry["label"], entry["cmd"]) for entry in legacy.test_cmd_entries
+    ] == [
+        (entry["label"], entry["cmd"]) for entry in plain.test_cmd_entries
+    ]
+
+    legacy_test = legacy.test()
+    plain_test = plain.test()
+    legacy_submit = legacy.submit(_force=True)
+    plain_submit = plain.submit(_force=True)
+
+    assert legacy_test == plain_test
+    assert legacy.latest_test_history_entry() == plain.latest_test_history_entry()
+    assert legacy_submit == plain_submit
+    assert legacy.leaderboard.added == plain.leaderboard.added
+    assert "acc_formerly_hidden" in legacy_test
+    assert "acc_formerly_hidden" in legacy_submit
+
+
+def test_openevolve_and_discover_hidden_helpers_are_identity_operations() -> None:
+    config = {
+        "test_cmds": [
+            {"label": "public"},
+            {"label": "formerly-hidden", "hidden": True},
+        ]
+    }
+    metrics = {"combined_score": 0.5, "acc_formerly_hidden": 0.75}
+
+    assert _openevolve_hidden_labels(config) == set()
+    assert _discover_hidden_labels(config) == set()
+    assert _filter_openevolve_hidden_metrics(metrics, {"formerly_hidden"}) is metrics
+    assert _filter_discover_hidden_metrics(metrics, {"formerly_hidden"}) is metrics
+
+
+def test_failed_verification_is_zero_reward_for_search_agents() -> None:
+    entry = {
+        "had_failures": True,
+        "seed_metrics": [{"acc_public": 0.99}],
+    }
+    openevolve = object.__new__(OpenEvolveAgent)
+    discover = object.__new__(DiscoverAgent)
+
+    assert OpenEvolveAgent._primary_metric_from_entry(openevolve, entry) == (0.0, {})
+    assert DiscoverAgent._primary_metric_from_entry(discover, entry) == (0.0, {})
+
+
+def test_hide_hidden_cli_option_is_a_deprecated_noop(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config_path = tmp_path / "config.yaml"
+    config_path.write_text("hide_hidden: true\n")
+    captured: dict = {}
+
+    class FakeInteractiveAgent:
+        def __init__(self, *, global_config: dict, **_kwargs) -> None:
+            captured.update(global_config)
+
+        def run(self, *, resume: bool) -> dict:
+            return {"resume": resume}
+
+    monkeypatch.setattr(
+        "mlsbench.agent.interactive.InteractiveAgent",
+        FakeInteractiveAgent,
+    )
+    cmd_agent(SimpleNamespace(
+        config=str(config_path),
+        model="test-model",
+        task="hidden-semantics",
+        workspace=None,
+        hide_hidden=True,
+        agent_type="interactive",
+    ))
+    assert captured["hide_hidden"] is False
+
+    monkeypatch.setattr("sys.argv", ["mlsbench", "agent", "--help"])
+    with pytest.raises(SystemExit) as exc_info:
+        main()
+    assert exc_info.value.code == 0
+    assert "Deprecated compatibility no-op" in capsys.readouterr().out
 
 
 def _full_score_spec() -> SimpleNamespace:

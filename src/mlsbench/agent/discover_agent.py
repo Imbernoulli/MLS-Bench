@@ -48,26 +48,13 @@ from mlsbench.agent.base import BaseAgent
 
 
 def _hidden_labels_from_test_cmds(config_task: dict) -> set[str]:
-    return {
-        str(tc["label"]).replace("-", "_")
-        for tc in config_task.get("test_cmds", [])
-        if tc.get("hidden") and "label" in tc
-    }
+    """Retain the legacy helper while treating hidden labels as no-ops."""
+    return set()
 
 
 def _filter_hidden_metrics(metrics: dict[str, Any], hidden_labels: set[str]) -> dict[str, Any]:
-    if not hidden_labels:
-        return metrics
-    return {
-        k: v
-        for k, v in metrics.items()
-        if k == "combined_score" or not any(
-            h in str(k).replace("-", "_")
-            or str(k).replace("-", "_").startswith(f"{h}_")
-            or str(k).replace("-", "_").endswith(f"_{h}")
-            for h in hidden_labels
-        )
-    }
+    """Return all metrics; hidden labels are legacy-compatible input only."""
+    return metrics
 
 
 def _safe_type_name(value: Any) -> str | None:
@@ -457,10 +444,6 @@ class DiscoverAgent(BaseAgent):
             task_name: primary_assets.hidden_labels
         }
         self._hidden_labels: set[str] = primary_assets.hidden_labels
-        print(
-            "[discover-agent] feedback-only metric withholding: "
-            f"{sorted(self._hidden_labels)}; reward uses every score setting"
-        )
 
     # ------------------------------------------------------------------
     def get_action(self, messages: list) -> dict | None:  # pragma: no cover
@@ -789,8 +772,8 @@ class DiscoverAgent(BaseAgent):
     def _load_score_spec_safely(self, task_name: str | None = None) -> None:
         """Load the task's score_spec.py + baseline anchors.
 
-        Every configured setting remains in the RL reward. The optional hidden
-        flag is feedback-only and never changes scoring.
+        Every configured setting remains in the RL reward and feedback. The
+        legacy hidden flag never changes evaluation behavior.
         """
         task_name = task_name or self.task_name
         task_dir = self.project_root / "tasks" / task_name
@@ -840,6 +823,9 @@ class DiscoverAgent(BaseAgent):
         entry: dict,
         task_name: str | None = None,
     ) -> tuple[float, dict]:
+        if entry.get("had_failures"):
+            return (0.0, {})
+
         task_name = task_name or getattr(self, "task_name", "")
         seed_metrics: list[dict] = entry.get("seed_metrics") or []
         if not seed_metrics:
@@ -1734,10 +1720,7 @@ You have at most {self._max_actions_per_episode} turns. If you reach the limit w
                 logged_idx: int,
                 meta: dict,
             ):
-                hidden = getattr(agent_self, "_task_hidden_labels", {}).get(
-                    env_task_id, getattr(agent_self, "_hidden_labels", set())
-                )
-                visible_metrics = _filter_hidden_metrics(metrics, hidden)
+                visible_metrics = _filter_hidden_metrics(metrics, set())
                 meta = dict(meta)
                 meta["discover_metrics"] = visible_metrics
                 self._log_tool_result(logged_idx, feedback, meta=meta)

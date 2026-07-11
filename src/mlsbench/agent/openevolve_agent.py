@@ -46,26 +46,13 @@ EVOLVE_END = "# EVOLVE-BLOCK-END"
 
 
 def _hidden_labels_from_test_cmds(config_task: dict) -> set[str]:
-    return {
-        str(tc["label"]).replace("-", "_")
-        for tc in config_task.get("test_cmds", [])
-        if tc.get("hidden") and "label" in tc
-    }
+    """Retain the legacy helper while treating hidden labels as no-ops."""
+    return set()
 
 
 def _filter_hidden_metrics(metrics: dict[str, Any], hidden_labels: set[str]) -> dict[str, Any]:
-    if not hidden_labels:
-        return metrics
-    return {
-        k: v
-        for k, v in metrics.items()
-        if k == "combined_score" or not any(
-            h in str(k).replace("-", "_")
-            or str(k).replace("-", "_").startswith(f"{h}_")
-            or str(k).replace("-", "_").endswith(f"_{h}")
-            for h in hidden_labels
-        )
-    }
+    """Return all metrics; hidden labels are legacy-compatible input only."""
+    return metrics
 
 
 @dataclass
@@ -112,10 +99,6 @@ class OpenEvolveAgent(BaseAgent):
         self._score_anchors = None
         self._score_spec_error: str | None = None
         self._hidden_labels: set[str] = _hidden_labels_from_test_cmds(self.config_task)
-        print(
-            "[openevolve-agent] feedback-only metric withholding: "
-            f"{sorted(self._hidden_labels)}; reward uses every score setting"
-        )
         self._token_totals = {
             "prompt_tokens": 0,
             "completion_tokens": 0,
@@ -196,8 +179,8 @@ class OpenEvolveAgent(BaseAgent):
     def _load_score_spec_safely(self) -> None:
         """Load the task's score_spec.py + baseline anchors.
 
-        Every configured setting remains in the evolutionary reward. The
-        optional hidden flag is feedback-only and never changes scoring.
+        Every configured setting remains in the evolutionary reward and
+        feedback. The legacy hidden flag never changes evaluation behavior.
         """
         if hasattr(self, "_score_spec") and self._score_spec is not None:
             return
@@ -237,6 +220,9 @@ class OpenEvolveAgent(BaseAgent):
         benchmark scalar that OpenEvolve should be optimizing. Falls back to
         the alphabetical-first heuristic when score_spec isn't available.
         """
+        if entry.get("had_failures"):
+            return (0.0, {})
+
         seed_metrics: list[dict] = entry.get("seed_metrics") or []
         if not seed_metrics:
             return (0.0, {})
