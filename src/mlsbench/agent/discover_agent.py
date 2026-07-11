@@ -852,7 +852,7 @@ class DiscoverAgent(BaseAgent):
         if score_spec_error:
             print(f"[discover-agent] ERROR: {score_spec_error}; "
                   "returning fail-closed reward")
-            return (-1e9, avg)
+            return (0.0, {})
 
         # score_spec.py path — build a seed=mean record and call score_record
         score_spec = getattr(self, "_task_score_specs", {}).get(task_name)
@@ -872,7 +872,7 @@ class DiscoverAgent(BaseAgent):
             except Exception as exc:
                 print(f"[discover-agent] ERROR: score_record failed: {exc!r}; "
                       "returning fail-closed reward")
-                return (-1e9, avg)
+                return (0.0, {})
 
         # Fallback: alphabetical-first metric across seed-averaged values
         primary_key = sorted(avg.keys())[0]

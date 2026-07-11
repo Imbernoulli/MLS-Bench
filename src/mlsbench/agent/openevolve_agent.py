@@ -248,7 +248,7 @@ class OpenEvolveAgent(BaseAgent):
         if getattr(self, "_score_spec_error", None):
             print(f"[openevolve-agent] ERROR: {self._score_spec_error}; "
                   "returning fail-closed reward")
-            return (-1e9, avg)
+            return (0.0, {})
 
         if getattr(self, "_score_spec", None) is not None and getattr(self, "_score_anchors", None) is not None:
             try:
@@ -259,7 +259,7 @@ class OpenEvolveAgent(BaseAgent):
             except Exception as exc:
                 print(f"[openevolve-agent] ERROR: score_record failed: {exc!r}; "
                       "returning fail-closed reward")
-                return (-1e9, avg)
+                return (0.0, {})
 
         primary_key = sorted(avg.keys())[0]
         return (avg[primary_key], avg)
