@@ -209,6 +209,55 @@ def test_failed_verification_is_zero_reward_for_search_agents() -> None:
     assert DiscoverAgent._primary_metric_from_entry(discover, entry) == (0.0, {})
 
 
+def test_score_spec_load_failure_is_zero_reward_for_search_agents() -> None:
+    entry = {
+        "had_failures": False,
+        "seed_metrics": [{"acc": 0.99}],
+    }
+
+    openevolve = object.__new__(OpenEvolveAgent)
+    openevolve._score_spec_error = "load failed"
+
+    discover = object.__new__(DiscoverAgent)
+    discover.task_name = "test-task"
+    discover._task_score_spec_errors = {"test-task": "load failed"}
+    discover._score_spec_error = None
+
+    assert OpenEvolveAgent._primary_metric_from_entry(openevolve, entry) == (0.0, {})
+    assert DiscoverAgent._primary_metric_from_entry(discover, entry) == (0.0, {})
+
+
+def test_score_record_exception_is_zero_reward_for_search_agents(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    entry = {
+        "had_failures": False,
+        "seed_metrics": [{"acc": 0.99}],
+    }
+
+    def fail_score_record(*_args, **_kwargs):
+        raise RuntimeError("scoring failed")
+
+    monkeypatch.setattr("mlsbench.scoring.evaluate.score_record", fail_score_record)
+
+    openevolve = object.__new__(OpenEvolveAgent)
+    openevolve._score_spec_error = None
+    openevolve._score_spec = object()
+    openevolve._score_anchors = object()
+
+    discover = object.__new__(DiscoverAgent)
+    discover.task_name = "test-task"
+    discover._task_score_spec_errors = {"test-task": None}
+    discover._task_score_specs = {"test-task": object()}
+    discover._task_score_anchors = {"test-task": object()}
+    discover._score_spec_error = None
+    discover._score_spec = None
+    discover._score_anchors = None
+
+    assert OpenEvolveAgent._primary_metric_from_entry(openevolve, entry) == (0.0, {})
+    assert DiscoverAgent._primary_metric_from_entry(discover, entry) == (0.0, {})
+
+
 def test_hide_hidden_cli_option_is_a_deprecated_noop(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
