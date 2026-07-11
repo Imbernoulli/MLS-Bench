@@ -90,6 +90,74 @@ def _require_source_config_contract(
     )
 
 
+def _docker_instructions(dockerfile: str) -> list[str]:
+    instructions = []
+    current = ""
+    for raw_line in dockerfile.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#"):
+            continue
+        current = f"{current} {line}".strip()
+        if current.endswith("\\"):
+            current = current[:-1].rstrip()
+            continue
+        instructions.append(current)
+        current = ""
+    require(not current, "Dockerfile ends with an unterminated continuation")
+    return instructions
+
+
+def _require_dockerfile_contract(task_name: str, dockerfile: str) -> None:
+    expected = [
+        f"FROM {IMAGE}",
+        "RUN rm -rf /workspace/abstractive-summarization",
+        "COPY _scaffold/ /workspace/",
+        'CMD ["sh", "-c", "sleep infinity"]',
+    ]
+    require(
+        _docker_instructions(dockerfile) == expected,
+        f"{task_name}: Dockerfile operational contract drift",
+    )
+
+
+def _require_task_toml_contract(task_name: str, task_toml: dict) -> None:
+    expected = {
+        "version": "1.0",
+        "metadata": {
+            "author_name": "MLS-Bench",
+            "difficulty": "hard",
+            "category": "ml-research",
+        },
+        "task": {"name": task_name},
+        "agent": {"timeout_sec": 1800},
+        "verifier": {"timeout_sec": 16320},
+        "environment": {
+            "allow_internet": False,
+            "build_timeout_sec": 3600,
+            "cpus": 8,
+            "memory_mb": 131072,
+            "storage_mb": 81920,
+            "gpus": 1,
+            "gpu_types": ["H20"],
+        },
+    }
+    require(task_toml == expected, f"{task_name}: task.toml contract drift")
+
+
+def _require_canonical_file(
+    task_name: str,
+    rendered_path: Path,
+    canonical_path: Path,
+    label: str,
+) -> None:
+    require(canonical_path.is_file(), f"missing canonical {label}: {canonical_path}")
+    require(rendered_path.is_file(), f"{task_name}: missing rendered {label}")
+    require(
+        digest(rendered_path) == digest(canonical_path),
+        f"{task_name}: rendered {label} drift",
+    )
+
+
 def main() -> None:
     if len(sys.argv) != 3:
         raise SystemExit("usage: audit_summ_rendered.py RENDER_ROOT SOURCE_ROOT")
@@ -108,6 +176,11 @@ def main() -> None:
     all_editable_files = {
         config["files"][0]["filename"] for config in source_configs.values()
     }
+    canonical_tests = (
+        source_root / "harbor_adapter" / "src" / "mls_bench" / "task-template" / "tests"
+    )
+    canonical_score_task = canonical_tests / "score_task.py"
+    canonical_test_runner = canonical_tests / "test.sh"
     runtime_total = 0
     scaffold_total = 0
 
@@ -130,26 +203,24 @@ def main() -> None:
         for relative in required:
             require((task / relative).is_file(), f"{task_name}: missing {relative}")
 
-        dockerfile = (task / "environment" / "Dockerfile").read_text()
-        from_lines = [line.strip() for line in dockerfile.splitlines() if line.strip().startswith("FROM ")]
-        require(from_lines == [f"FROM {IMAGE}"], f"{task_name}: image is not digest-pinned")
-        lower_docker = dockerfile.lower()
-        for token in ("pip install", "conda install", "apt-get", "curl ", "wget ", "git clone"):
-            require(token not in lower_docker, f"{task_name}: Dockerfile installs at verification time")
-        require(
-            "rm -rf /data/abstractive-summarization" not in dockerfile,
-            f"{task_name}: rendered image deletes verifier data",
+        _require_canonical_file(
+            task_name,
+            task / "tests" / "score_task.py",
+            canonical_score_task,
+            "score_task.py",
         )
-        require(
-            "RUN rm -rf /workspace/abstractive-summarization" in dockerfile,
-            f"{task_name}: stale image-baked package tree remains agent-visible",
+        _require_canonical_file(
+            task_name,
+            task / "tests" / "test.sh",
+            canonical_test_runner,
+            "test.sh",
         )
 
+        dockerfile = (task / "environment" / "Dockerfile").read_text()
+        _require_dockerfile_contract(task_name, dockerfile)
+
         task_toml = tomllib.loads((task / "task.toml").read_text())
-        environment = task_toml["environment"]
-        require(environment["gpus"] == 1, f"{task_name}: expected exactly one GPU")
-        require(environment["gpu_types"] == ["H20"], f"{task_name}: expected H20")
-        require(environment["allow_internet"] is False, f"{task_name}: internet must be disabled")
+        _require_task_toml_contract(task_name, task_toml)
 
         instruction = (task / "instruction.md").read_text().lower()
         for setting in ("xsum", "cnn/dailymail", "samsum"):

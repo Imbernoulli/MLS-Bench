@@ -488,6 +488,126 @@ def test_render_audit_config_contract_rejects_candidate_self_consistency():
         raise AssertionError("candidate-mutated rendered config was accepted")
 
 
+def test_render_audit_binds_dockerfile_execution_and_task_resources():
+    audit_path = ROOT / "tests" / "audit_summ_rendered.py"
+    spec = importlib.util.spec_from_file_location("summ_render_audit_runtime", audit_path)
+    audit = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(audit)
+
+    task_name = "summ-beam-width"
+    dockerfile = "\n".join(
+        [
+            f"FROM {audit.IMAGE}",
+            "RUN rm -rf /workspace/abstractive-summarization",
+            "COPY _scaffold/ /workspace/",
+            'CMD ["sh", "-c", "sleep infinity"]',
+        ]
+    )
+    audit._require_dockerfile_contract(task_name, dockerfile)
+    docker_mutations = [
+        dockerfile.replace(
+            "COPY _scaffold/ /workspace/",
+            "COPY _scaffold/ /tmp/wrong-workspace/",
+        ),
+        dockerfile.replace(
+            "COPY _scaffold/ /workspace/",
+            "COPY _scaffold/ /workspace/\nRUN rm -rf /workspace",
+        ),
+        dockerfile.replace(
+            "RUN rm -rf /workspace/abstractive-summarization",
+            "RUN rm -rf /data\nRUN rm -rf /workspace/abstractive-summarization",
+        ),
+    ]
+    for mutation in docker_mutations:
+        try:
+            audit._require_dockerfile_contract(task_name, mutation)
+        except AssertionError:
+            continue
+        raise AssertionError("unsafe Dockerfile mutation was accepted")
+
+    task_toml = {
+        "version": "1.0",
+        "metadata": {
+            "author_name": "MLS-Bench",
+            "difficulty": "hard",
+            "category": "ml-research",
+        },
+        "task": {"name": task_name},
+        "agent": {"timeout_sec": 1800},
+        "verifier": {"timeout_sec": 16320},
+        "environment": {
+            "allow_internet": False,
+            "build_timeout_sec": 3600,
+            "cpus": 8,
+            "memory_mb": 131072,
+            "storage_mb": 81920,
+            "gpus": 1,
+            "gpu_types": ["H20"],
+        },
+    }
+    audit._require_task_toml_contract(task_name, task_toml)
+    task_mutations = []
+    mutable_image = copy.deepcopy(task_toml)
+    mutable_image["environment"]["docker_image"] = "malformed-unpinned-image:latest"
+    task_mutations.append(mutable_image)
+    timeout_one = copy.deepcopy(task_toml)
+    timeout_one["verifier"]["timeout_sec"] = 1
+    task_mutations.append(timeout_one)
+    wrong_gpu = copy.deepcopy(task_toml)
+    wrong_gpu["environment"]["gpus"] = 4
+    task_mutations.append(wrong_gpu)
+    for mutation in task_mutations:
+        try:
+            audit._require_task_toml_contract(task_name, mutation)
+        except AssertionError:
+            continue
+        raise AssertionError("unsafe task.toml mutation was accepted")
+
+
+def test_render_audit_binds_shared_runner_bytes(tmp_path):
+    audit_path = ROOT / "tests" / "audit_summ_rendered.py"
+    spec = importlib.util.spec_from_file_location("summ_render_audit_runner", audit_path)
+    audit = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(audit)
+
+    canonical_score = tmp_path / "canonical-score-task.py"
+    canonical_runner = tmp_path / "canonical-test.sh"
+    rendered_score = tmp_path / "rendered-score-task.py"
+    rendered_runner = tmp_path / "rendered-test.sh"
+    canonical_score.write_bytes(b"fail-closed canonical scorer\n")
+    canonical_runner.write_bytes(b"fail-closed canonical runner\n")
+    rendered_score.write_bytes(canonical_score.read_bytes())
+    rendered_runner.write_bytes(canonical_runner.read_bytes())
+    audit._require_canonical_file(
+        "summ-beam-width", rendered_score, canonical_score, "score_task.py"
+    )
+    audit._require_canonical_file(
+        "summ-beam-width", rendered_runner, canonical_runner, "test.sh"
+    )
+
+    rendered_score.write_bytes(b"")
+    try:
+        audit._require_canonical_file(
+            "summ-beam-width", rendered_score, canonical_score, "score_task.py"
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("truncated rendered score_task.py was accepted")
+
+    rendered_runner.write_bytes(b"#!/bin/sh\nexit 0\n")
+    try:
+        audit._require_canonical_file(
+            "summ-beam-width", rendered_runner, canonical_runner, "test.sh"
+        )
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("mutated rendered test.sh was accepted")
+
+
 def test_512_token_protocol_and_exact_checkpoint_counts_are_code_pinned():
     common_path = ROOT / "vendor" / "abstractive-summarization" / "common.py"
     source = common_path.read_text()
