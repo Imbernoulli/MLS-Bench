@@ -453,6 +453,9 @@ def test_512_token_protocol_and_exact_checkpoint_counts_are_code_pinned():
     for item in EXPECTED.values():
         assert f'"parameter_count": {item["params"]}' in source
     assert 'parameter_count != expected["parameter_count"]' in source
+    assert "torch.cuda.device_count() != 1" in source
+    assert "parameter_dtypes != {torch.float16}" in source
+    assert 'parameter_device_types != {"cuda"}' in source
 
 
 def test_scripts_are_offline_strict_and_preserve_runner_gpu_visibility():

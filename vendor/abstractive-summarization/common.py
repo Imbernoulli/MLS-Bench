@@ -123,6 +123,11 @@ def setup(seed: int = SEED):
     torch.manual_seed(seed)
     if not torch.cuda.is_available():
         raise SystemExit("summarization verification requires one CUDA GPU")
+    if torch.cuda.device_count() != 1:
+        raise SystemExit(
+            "summarization verification requires exactly one visible CUDA GPU, "
+            f"got {torch.cuda.device_count()}"
+        )
     torch.cuda.manual_seed_all(seed)
     dev = torch.device("cuda:0")
     return dev
@@ -214,16 +219,32 @@ def load_model_and_tokenizer(setting: str, device):
     )
     model.to(device)
     model.eval()
-    parameter_count = sum(parameter.numel() for parameter in model.parameters())
+    parameter_count = 0
+    parameter_dtypes = set()
+    parameter_device_types = set()
+    for parameter in model.parameters():
+        parameter_count += parameter.numel()
+        parameter_dtypes.add(parameter.dtype)
+        parameter_device_types.add(parameter.device.type)
     if parameter_count != expected["parameter_count"]:
         raise SystemExit(
             f"model parameter-count mismatch for {setting}: "
             f"{parameter_count} != {expected['parameter_count']}"
         )
+    if parameter_dtypes != {torch.float16}:
+        raise SystemExit(
+            f"model parameter dtype mismatch for {setting}: {parameter_dtypes}"
+        )
+    if parameter_device_types != {"cuda"}:
+        raise SystemExit(
+            f"model parameter device mismatch for {setting}: "
+            f"{parameter_device_types}"
+        )
+    actual_dtype = next(iter(parameter_dtypes))
     print(
         f"SUMM_MODEL setting={setting} model={_MODEL_DIRS[setting]} "
         f"revision={expected['revision']} params={parameter_count} "
-        f"dtype={str(dtype).replace('torch.', '')} "
+        f"dtype={str(actual_dtype).replace('torch.', '')} "
         f"weights_sha256={actual_weights_sha256}",
         flush=True,
     )
