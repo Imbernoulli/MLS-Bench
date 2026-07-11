@@ -361,6 +361,7 @@ def test_static_protocol_and_question_quality() -> None:
     coupling_description = (
         ROOT / "tasks" / "flow-coupling-transform" / "task_description.md"
     ).read_text()
+    coupling_description = re.sub(r"\s+", " ", coupling_description)
     assert "eight coupling transforms" in coupling_description
     assert "eight between-coupling permutation" in coupling_description
     assert "16 total" in coupling_description
