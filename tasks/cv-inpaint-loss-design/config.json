@@ -1,0 +1,58 @@
+{
+  "allow_create": false,
+  "verifier_only_package_files": [
+    "image-inpainting/harness.py"
+  ],
+  "agent_data_prune": [
+    "/data/image-inpainting"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/image-inpainting/community_v1",
+      "dest": "data/image-inpainting/community_v1"
+    }
+  ],
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/run_inpaint.sh loss solution/loss.py",
+      "label": "full",
+      "group": 1,
+      "compute": 1,
+      "time": "16:00:00",
+      "mem": 64,
+      "package": "image-inpainting"
+    }
+  ],
+  "baselines": {
+    "hole_grad": {
+      "edit_ops": "edits/hole_grad.edit.py"
+    },
+    "hole_supervised": {
+      "edit_ops": "edits/hole_supervised.edit.py"
+    },
+    "visible_only": {
+      "edit_ops": "edits/visible_only.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "image-inpainting/solution/loss.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 15,
+          "end": 16
+        }
+      ]
+    }
+  ]
+}
