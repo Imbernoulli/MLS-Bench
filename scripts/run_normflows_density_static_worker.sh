@@ -18,14 +18,14 @@ exec > >(tee worker.log) 2>&1
 finish() {
     local rc="${1:-$?}"
     trap - EXIT HUP INT TERM
-    date -Iseconds > FINISHED
-    printf '%s\n' "${rc}" > rc
+    date -Iseconds > "${RUN}/FINISHED"
+    printf '%s\n' "${rc}" > "${RUN}/rc"
     if [[ ${rc} -eq 0 ]]; then
-        printf 'success\n' > status
-        date -Iseconds > SUCCESS
+        printf 'success\n' > "${RUN}/status"
+        date -Iseconds > "${RUN}/SUCCESS"
     else
-        printf 'failed\n' > status
-        rm -f SUCCESS
+        printf 'failed\n' > "${RUN}/status"
+        rm -f "${RUN}/SUCCESS"
     fi
     exit "${rc}"
 }
@@ -50,9 +50,9 @@ run_logged() {
     fi
 }
 
-date -Iseconds > STARTED
-printf 'running\n' > status
-rm -f SUCCESS
+date -Iseconds > "${RUN}/STARTED"
+printf 'running\n' > "${RUN}/status"
+rm -f "${RUN}/SUCCESS"
 
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader > gpu-inventory.log
 allocated_gpu_count=$(wc -l < gpu-inventory.log)
