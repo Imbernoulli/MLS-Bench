@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,auroc_ood_logit_svhn_full,fpr95_ood_logit_svhn_full,id_acc_ood_logit_svhn_full,auroc_ood_logit_cifar100_full,fpr95_ood_logit_cifar100_full,id_acc_ood_logit_cifar100_full,auroc_ood_logit_tin_full,fpr95_ood_logit_tin_full,id_acc_ood_logit_tin_full,elapsed_ood_logit_full_protocol
+2026-07-11T07:10:32+00:00,baseline:msp,true,42,0.92846834,0.44875538,0.95140000,0.87088166,0.57320000,0.95140000,0.87007299,0.55510000,0.95140000,11
+2026-07-11T07:24:33+00:00,baseline:pseudo_cosine,true,42,0.93220756,0.43661647,0.95140000,0.89527483,0.51750000,0.95140000,0.89377779,0.49770000,0.95140000,11

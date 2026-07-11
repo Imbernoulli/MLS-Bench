@@ -1,0 +1,43 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "ood-detection-lab/common.py",
+    "ood-detection-lab/openood_resnet18.py",
+    "ood-detection-lab/harness.py",
+    "ood-detection-lab/parser_contract.py"
+  ],
+  "agent_pruned_package_files": [
+    "ood-detection-lab/harness_full_logit.py"
+  ],
+  "seeds": [42],
+  "test_cmds": [
+    {
+      "cmd": "scripts/ood_near_far_full.sh",
+      "label": "ood_near_far_full_protocol",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "ood-detection-lab"
+    }
+  ],
+  "baselines": {
+    "msp": {
+      "edit_ops": "edits/msp.edit.py"
+    },
+    "energy": {
+      "edit_ops": "edits/energy.edit.py"
+    },
+    "maha_knn": {
+      "edit_ops": "edits/maha_knn.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ood-detection-lab/solution/score.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 13, "end": 18}]
+    }
+  ]
+}

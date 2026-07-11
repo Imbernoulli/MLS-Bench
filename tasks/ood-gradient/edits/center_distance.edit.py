@@ -1,0 +1,1 @@
+OPS = [{"op": "replace", "file": "ood-detection-lab/solution/gradient_score.py", "start_line": 14, "end_line": 20, "content": "class Scorer:\n    def fit(self, ctx):\n        self.center = ctx.tr_gradients.double().mean(dim=0)\n        return self\n\n    def score(self, gradients):\n        return (-(gradients.double() - self.center).norm(dim=-1)).numpy()"}]

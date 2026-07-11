@@ -1,0 +1,28 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-ood-detection-lab@sha256:c96492da2073103f2d59b3aad629b7c9560ed07d9ce6b5d315e0d46ec046fe8e",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-ood-detection-lab@sha256:c96492da2073103f2d59b3aad629b7c9560ed07d9ce6b5d315e0d46ec046fe8e",
+  "install_cmds": [
+    "python -c \"import numpy, torch; print('ood-detection-lab runtime ok', 'numpy', numpy.__version__, 'torch', torch.__version__)\""
+  ],
+  "env": {
+    "OOD_DATA": "/data/ood-detection-lab",
+    "PYTHONPATH": "/workspace/ood-detection-lab:${PYTHONPATH}",
+    "PYTHONUNBUFFERED": "1"
+  },
+  "data_deps": [
+    {
+      "name": "ood_detection_lab",
+      "description": "Full OpenOOD-style CIFAR-10 OOD protocol, staged entirely offline: uint8 CIFAR-10 train 50000 + test 10000, SVHN test 26032, CIFAR-100 test 10000, Tiny-ImageNet val 10000 resized to 32x32, plus a frozen CIFAR ResNet-18 trained for 100 epochs with the public OpenOOD baseline recipe. Final verification performs real inference over all 106032 images and does not install, download, extract, compile, or train.",
+      "host_path": "{data_root}/ood-detection-lab",
+      "container_path": "/data/ood-detection-lab",
+      "ready_files": [
+        "{data_root}/ood-detection-lab/ood_full_eval_uint8.npz",
+        "{data_root}/ood-detection-lab/openood_resnet18_cifar10_seed0.pt"
+      ],
+      "prepare": "vendor/data_scripts/ood-detection-lab/prepare_full_assets.sh --data-root {data_root}"
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}

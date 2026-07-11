@@ -1,0 +1,52 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "ood-detection-lab/common.py",
+    "ood-detection-lab/openood_resnet18.py",
+    "ood-detection-lab/harness.py",
+    "ood-detection-lab/parser_contract.py"
+  ],
+  "agent_pruned_package_files": [
+    "ood-detection-lab/harness_full_logit.py"
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/ood_distance_metric_full.sh",
+      "label": "ood_distance_metric_full_protocol",
+      "group": 1,
+      "compute": 1.0,
+      "time": "4:00:00",
+      "mem": 32,
+      "package": "ood-detection-lab"
+    }
+  ],
+  "baselines": {
+    "euclidean_unnorm": {
+      "edit_ops": "edits/euclidean_unnorm.edit.py"
+    },
+    "cosine_l2norm": {
+      "edit_ops": "edits/cosine_l2norm.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ood-detection-lab/solution/distance_metric_score.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 11,
+          "end": 12
+        }
+      ]
+    }
+  ]
+}

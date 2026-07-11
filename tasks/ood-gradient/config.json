@@ -1,0 +1,52 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "verifier_only_package_files": [
+    "ood-detection-lab/common.py",
+    "ood-detection-lab/openood_resnet18.py",
+    "ood-detection-lab/harness.py",
+    "ood-detection-lab/parser_contract.py"
+  ],
+  "agent_pruned_package_files": [
+    "ood-detection-lab/harness_full_logit.py"
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/ood_gradient_full.sh",
+      "label": "ood_gradient_full_protocol",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "mem": 32,
+      "package": "ood-detection-lab"
+    }
+  ],
+  "baselines": {
+    "center_distance": {
+      "edit_ops": "edits/center_distance.edit.py"
+    },
+    "total_magnitude": {
+      "edit_ops": "edits/total_magnitude.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ood-detection-lab/solution/gradient_score.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 14,
+          "end": 20
+        }
+      ]
+    }
+  ]
+}
