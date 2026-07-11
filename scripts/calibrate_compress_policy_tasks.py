@@ -468,6 +468,8 @@ def main() -> None:
         )
         manifest["tasks"][task_id] = calibration_record
 
+    for cache_dir in args.output.rglob("__pycache__"):
+        shutil.rmtree(cache_dir)
     (args.output / "policy_calibration.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     )
