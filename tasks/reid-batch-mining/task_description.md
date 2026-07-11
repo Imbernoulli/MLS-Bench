@@ -30,7 +30,9 @@ training and evaluation completion records. An interrupted or malformed run is
 invalid. Historical 40-identity / ResNet-18 / 200-step anchors do not apply to
 this protocol.
 
-This sibling is pending full-protocol calibration. Parser-valid runs remain
-exact-zero until its pending marker is replaced with authenticated anchors.
+Every parser-valid run is scored directly from official mAP across all three
+groups. No empirical anchor or historical leaderboard value participates in
+the score. A failed, incomplete, malformed, or non-finite verification scores
+exactly zero.
 
 Do not modify the harness, scorer, data, scripts, or unrelated solution files.

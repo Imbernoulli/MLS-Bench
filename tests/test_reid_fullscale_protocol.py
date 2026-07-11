@@ -188,11 +188,7 @@ def test_all_ten_siblings_use_bound_fullscale_budget_and_fail_closed_parsers():
         verifier_files = set(config["verifier_only_package_files"])
         assert "torchreid-reid/common.py" in verifier_files
         assert any(path.startswith("torchreid-reid/harness_") for path in verifier_files)
-        if task_dir.name != "reid-spatial-pooling":
-            assert (task_dir / "PENDING_FULL_MARKET1501_ANCHORS").is_file()
-            assert "pending_full_market1501_anchors" in (
-                task_dir / "score_spec.py"
-            ).read_text()
+        assert not (task_dir / "PENDING_FULL_MARKET1501_ANCHORS").exists()
 
     harnesses = sorted((ROOT / "vendor/torchreid-reid").glob("harness_*.py"))
     assert len(harnesses) == 9
@@ -249,7 +245,7 @@ def test_fullscale_reranking_baselines_do_not_build_dense_gallery_graphs():
     assert np.isfinite(result).all()
 
 
-def test_uncalibrated_fullscale_siblings_score_exact_zero():
+def test_all_fullscale_siblings_use_baseline_free_official_map_scale():
     from mlsbench.scoring.anchors import BaselineAnchors
     from mlsbench.scoring.evaluate import score_record_details
     from mlsbench.scoring.spec import load_score_spec
@@ -260,31 +256,37 @@ def test_uncalibrated_fullscale_siblings_score_exact_zero():
         for metric in ("map", "rank1", "rank5")
     }
     for task_dir in sorted((ROOT / "tasks").glob("reid-*")):
-        if task_dir.name == "reid-spatial-pooling":
-            continue
+        leaderboard_lines = (task_dir / "leaderboard.csv").read_text().splitlines()
+        assert len(leaderboard_lines) == 1
+        spec_source = (task_dir / "score_spec.py").read_text()
+        assert 'for _setting in ("easy", "medium", "hard")' in spec_source
+        assert "bounded_power(" in spec_source
+        assert "bound=const(1.0)" in spec_source
+        assert "floor=const(0.0)" in spec_source
+        assert "gamma=" not in spec_source
+        assert "sigmoid(" not in spec_source
+        assert 'task(gmean("easy", "medium", "hard"))' in spec_source
         spec = load_score_spec(task_dir)
         assert spec is not None
         score, settings, valid = score_record_details(
             spec, metrics, BaselineAnchors(task_dir)
         )
         assert valid is True
-        assert score == 0.0
+        assert score == pytest.approx(0.75)
         assert len(settings) == 3
-        assert all(setting.score == 0.0 for setting in settings)
+        assert all(setting.score == pytest.approx(0.75) for setting in settings)
+
+        incomplete = dict(metrics)
+        incomplete.pop("map_hard")
+        failed_score, _, failed_valid = score_record_details(
+            spec, incomplete, BaselineAnchors(task_dir)
+        )
+        assert failed_valid is False
+        assert failed_score == 0.0
 
 
-def test_spatial_pooling_uses_baseline_free_official_map_scale():
+def test_spatial_pooling_records_representative_provenance():
     task_dir = ROOT / "tasks/reid-spatial-pooling"
-    leaderboard_lines = (task_dir / "leaderboard.csv").read_text().splitlines()
-    assert len(leaderboard_lines) == 1
-    spec = (task_dir / "score_spec.py").read_text()
-    assert 'for _setting in ("easy", "medium", "hard")' in spec
-    assert "bounded_power(" in spec
-    assert "bound=const(1.0)" in spec
-    assert "floor=const(0.0)" in spec
-    assert "gamma=1.0" in spec
-    assert "sigmoid(" not in spec
-    assert "task(gmean(\"easy\", \"medium\", \"hard\"))" in spec
     provenance = (task_dir / "CALIBRATION_PROVENANCE.md").read_text()
     assert "96623" in provenance and "4950705" in provenance
 
