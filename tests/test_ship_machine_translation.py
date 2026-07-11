@@ -203,8 +203,74 @@ def test_diverse_beam_rejects_zero_penalty_for_multiple_groups(
 
 def test_data_and_model_manifests_are_exact_and_parser_pinned(common) -> None:
     evidence = json.loads((VENDOR / "artifact_provenance.json").read_text())
+    image_evidence = json.loads((VENDOR / "image_provenance.json").read_text())
+    runtime_probe = json.loads((VENDOR / "runtime_probe.json").read_text())
+    image = (
+        "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/"
+        "mlsbench-harbor-machine-translation@"
+        "sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e"
+    )
     assert evidence["schema_version"] == 1
-    assert evidence["count_status"].startswith("unconfirmed until a fresh worker")
+    assert image_evidence["schema_version"] == 1
+    assert image_evidence["final_image"] == image
+    assert image_evidence["strict_probe"]["evidence_file"] == "runtime_probe.json"
+    assert image_evidence["strict_probe"]["rc"] == 0
+    assert image_evidence["layer"]["digest"] == (
+        "sha256:7c1c38923723e35ca136dc35faf0a19db277bd9554accb14f0ae20108ee1d114"
+    )
+    assert image_evidence["manifest"]["recorded_base_digest"] == (
+        image_evidence["base_image"].rsplit("@", 1)[1]
+    )
+    assert "/data/machine-translation/data/flores_de_en_test.jsonl" in (
+        image_evidence["layer"]["removals"]
+    )
+    assert evidence["count_status"].startswith("confirmed by strict actual-load")
+    assert evidence["runtime_probe"] == {
+        "evidence_file": "runtime_probe.json",
+        "image": image,
+        "persistent_worker_path": (
+            "/home/lvbohan/mt-proof-probe-c58e4a9e7/output-final-strict-v4"
+        ),
+        "rc": 0,
+        "worker": "dev-qghqc-53440-worker-0",
+        "worker_gpu": "NVIDIA H20-3e",
+        "worker_zone": "m4h20",
+    }
+    assert runtime_probe["image_ref"] == image
+    assert runtime_probe["image_digest"] == image.rsplit("@", 1)[1]
+    assert runtime_probe["worker"]["hostname"] == "dev-qghqc-53440-worker-0"
+    assert runtime_probe["worker"]["cuda_device_count"] == 1
+    assert runtime_probe["worker"]["cuda_device_names"] == ["NVIDIA H20-3e"]
+    data_probe = runtime_probe["data"]
+    expected_data_inventory = {
+        common.DIRECTIONS[direction][1]: {
+            "sha256": spec["output_sha256"],
+        }
+        for direction, spec in common.DATA_SPECS.items()
+    }
+    source_manifest_bytes = common._canonical_json_bytes(
+        common.expected_source_manifest()
+    )
+    expected_data_inventory["source_manifest.json"] = {
+        "sha256": hashlib.sha256(source_manifest_bytes).hexdigest(),
+    }
+    observed_data_inventory = {
+        record["path"]: {"sha256": record["sha256"]}
+        for record in data_probe["top_level_inventory"]
+        if not record["symlink"]
+    }
+    assert len(observed_data_inventory) == len(data_probe["top_level_inventory"])
+    assert observed_data_inventory == expected_data_inventory
+    assert data_probe["source_manifest_sha256"] == common.source_manifest_sha256()
+    for direction, proof in data_probe["directions"].items():
+        assert proof == {
+            "dataset": common.DATASET_ID,
+            "direction": direction,
+            "manifest_sha256": common.source_manifest_sha256(),
+            "revision": common.DATASET_REVISION,
+            "rows": common.OFFICIAL_TEST_PAIRS,
+            "split_sha256": common.DATA_SPECS[direction]["output_sha256"],
+        }
     for direction in common.MODEL_SPECS:
         checkpoint_count = evidence["formula_crosscheck"]["checkpoint_derived"][direction]
         formula_count = evidence["formula_crosscheck"]["independent_formula"][direction]
@@ -253,11 +319,55 @@ def test_data_and_model_manifests_are_exact_and_parser_pinned(common) -> None:
         }
         assert manifest_files == expected_files
 
+        actual = runtime_probe["models"][direction]
+        assert actual["direction"] == direction
+        assert actual["expected_runtime_files_match"] is True
+        assert actual["checkpoint_candidates"] == [spec["checkpoint_file"]]
+        assert actual["selected_checkpoint"] == spec["checkpoint_file"]
+        assert actual["loader_checkpoint_paths"] == [
+            f"/data/machine-translation/models/{common.DIRECTIONS[direction][0]}/"
+            f"{spec['checkpoint_file']}"
+        ]
+        assert actual["model_class"].endswith(".MarianMTModel")
+        assert actual["tokenizer_class"].endswith(".MarianTokenizer")
+        assert actual["config_class"].endswith(".MarianConfig")
+        assert actual["vocab_size"] == actual["tokenizer_length"] == spec["vocab_size"]
+        assert actual["parameter_tensor_count"] == 255
+        assert actual["state_dict_tensor_count"] == 259
+        assert actual["parameter_numel"] == spec["parameter_count"]
+        assert actual["final_logits_bias"]["numel"] == (
+            spec["checkpoint_tensor_elements"] - spec["parameter_count"]
+        )
+        assert actual["parameter_plus_final_logits_bias_numel"] == spec[
+            "checkpoint_tensor_elements"
+        ]
+        assert all(actual["tied_aliases"].values())
+        assert all(not values for values in actual["loading_info"].values())
+        expected_inventory = {
+            name: {"size": size, "sha256": digest}
+            for name, (size, digest) in spec["files"].items()
+        }
+        manifest_bytes = common._canonical_json_bytes(manifest)
+        expected_inventory["model_manifest.json"] = {
+            "size": len(manifest_bytes),
+            "sha256": hashlib.sha256(manifest_bytes).hexdigest(),
+        }
+        observed_inventory = {
+            record["path"]: {
+                "size": record["size"],
+                "sha256": record["sha256"],
+            }
+            for record in actual["top_level_inventory"]
+            if record["kind"] == "file" and not record["symlink"]
+        }
+        assert len(observed_inventory) == len(actual["top_level_inventory"])
+        assert observed_inventory == expected_inventory
+
     package_config = json.loads(
         (ROOT / "vendor" / "pkg_configs" / "machine-translation" / "config.json")
         .read_text()
     )
-    assert "mangrove_base_image" not in package_config
+    assert package_config["mangrove_base_image"] == image
     ready_files = package_config["data_deps"][0]["ready_files"]
     assert sum(path.endswith("/model_manifest.json") for path in ready_files) == 3
     assert any(path.endswith("/source_manifest.json") for path in ready_files)
@@ -316,6 +426,147 @@ def test_all_parsers_require_unique_ordered_terminal_proof() -> None:
     for task_name, module in modules.items():
         if task_name != "mt-decoding-beam":
             assert module.Parser().parse("de_en", beam_log).metrics == {}
+
+
+def test_representative_worker_run_covers_all_settings_with_real_parser() -> None:
+    evidence = json.loads((VENDOR / "representative_probe.json").read_text())
+    package_config = json.loads(
+        (ROOT / "vendor" / "pkg_configs" / "machine-translation" / "config.json")
+        .read_text()
+    )
+    assert evidence["schema_version"] == 1
+    assert evidence["accepted"] is True
+    assert evidence["task"] == "mt-decoding-beam"
+    assert evidence["surface"] == "build_beam_config"
+    assert evidence["image_ref"] == package_config["mangrove_base_image"]
+    execution = evidence["execution"]
+    assert execution["overall_rc"] == 0
+    assert execution["gpu_count"] == 1
+    assert execution["mode"] == "serial"
+    assert execution["requested_zone"] == "m4h20"
+
+    runner = ROOT / execution["runner_script"]
+    runner_source = runner.read_text()
+    assert hashlib.sha256(runner.read_bytes()).hexdigest() == execution[
+        "runner_script_sha256"
+    ]
+    assert 'export MT_DIR="${direction}"' in runner_source
+    assert "MT_DIRECTION" not in runner_source
+    assert "direction_count" in runner_source
+
+    discarded = evidence["discarded_predecessor"]
+    assert discarded["accepted"] is False
+    assert discarded["overall_rc"] == 0
+    assert "MT_DIRECTION" in discarded["reason"]
+
+    parser_module = _load(
+        "ship_mt_representative_parser", TASKS / "mt-decoding-beam" / "parser.py"
+    )
+    assert set(evidence["settings"]) == {"de_en", "fr_en", "ru_en"}
+    observed_hashes = set()
+    for direction, record in evidence["settings"].items():
+        log_path = VENDOR / record["log_path"]
+        raw = log_path.read_text()
+        digest = hashlib.sha256(log_path.read_bytes()).hexdigest()
+        observed_hashes.add(digest)
+        assert digest == record["log_sha256"]
+        assert len(raw.splitlines()) == record["protocol_lines"] == 5
+        assert record["rc"] == 0
+        assert record["wall_seconds"] > 0
+        parsed = parser_module.Parser().parse(direction, raw)
+        assert parsed.metrics == record["metrics"]
+    assert len(observed_hashes) == 3
+
+
+def test_worker_spotchecks_keep_question_surfaces_distinct(
+    common, tmp_path: Path, monkeypatch
+) -> None:
+    image = json.loads(
+        (ROOT / "vendor" / "pkg_configs" / "machine-translation" / "config.json")
+        .read_text()
+    )["mangrove_base_image"]
+    probes = {
+        name: json.loads((VENDOR / f"surface_probe_{name}.json").read_text())
+        for name in ("postprocess", "early_stopping", "maxlen")
+    }
+    for name, probe in probes.items():
+        assert probe["schema_version"] == 1
+        assert probe["surface"] == name
+        assert probe["image_ref"] == image
+        assert probe["direction"] == "de_en"
+        assert probe["rows"] == common.OFFICIAL_TEST_PAIRS
+        assert probe["model_proof"]["manifest_sha256"] == common.model_manifest_sha256(
+            "de_en"
+        )
+        assert probe["data_proof"]["split_sha256"] == common.DATA_SPECS["de_en"][
+            "output_sha256"
+        ]
+        for record in probe["records"].values():
+            assert record["rows"] == common.OFFICIAL_TEST_PAIRS
+            assert math.isfinite(record["bleu"])
+            assert math.isfinite(record["chrf"])
+
+    postprocess = probes["postprocess"]
+    assert postprocess["pairwise_output_differences"]["identity_vs_normalize"] == 0
+    assert postprocess["records"]["identity"]["prediction_sha256"] == (
+        postprocess["records"]["normalize"]["prediction_sha256"]
+    )
+    assert postprocess["pairwise_output_differences"]["identity_vs_lowercase"] > 0
+    assert postprocess["pairwise_output_differences"]["identity_vs_strip_punct"] > 0
+    monkeypatch.setitem(sys.modules, "common", common)
+    postprocess_harness = _load(
+        "ship_mt_postprocess", VENDOR / "harness_postproc.py"
+    )
+    assert postprocess_harness._VALID == {"normalize", "lowercase", "strip_punct"}
+
+    early_stopping = probes["early_stopping"]
+    assert all(
+        difference > 0
+        for difference in early_stopping["pairwise_output_differences"].values()
+    )
+    assert len({
+        record["prediction_sha256"]
+        for record in early_stopping["records"].values()
+    }) == 3
+
+    maxlen = probes["maxlen"]
+    assert maxlen["pairwise_output_differences"]["m10_vs_m32"] > 0
+    assert maxlen["pairwise_output_differences"]["m10_vs_m128"] > 0
+    assert maxlen["pairwise_output_differences"]["m32_vs_m128"] > 0
+    assert maxlen["pairwise_output_differences"][
+        "m128_vs_length_norm1_m128"
+    ] == 0
+    assert maxlen["records"]["m128"]["prediction_sha256"] == maxlen["records"][
+        "length_norm1_m128"
+    ]["prediction_sha256"]
+
+    length_source = (VENDOR / "solution" / "length.py").read_text()
+    assert set(common.load_surface_value(
+        str(VENDOR / "solution" / "length.py"), "build_length_config"
+    )) == {"length_penalty"}
+    config = json.loads((TASKS / "mt-length-penalty" / "config.json").read_text())
+    for baseline in config["baselines"].values():
+        operations = runpy.run_path(
+            str(TASKS / "mt-length-penalty" / baseline["edit_ops"])
+        )["OPS"]
+        candidate = tmp_path / f"length-{Path(baseline['edit_ops']).stem}.py"
+        candidate.write_text(_apply_ops(length_source, operations))
+        assert set(common.load_surface_value(
+            str(candidate), "build_length_config"
+        )) == {"length_penalty"}
+    length_harness = (VENDOR / "harness_length.py").read_text()
+    assert '{"length_penalty"}' in length_harness
+    assert '"max_new_tokens": 128' in length_harness
+
+    forbidden = ("measured order", "scores highest", "sweet spot", "degenerate")
+    for task_name in (
+        "mt-postprocess-detok",
+        "mt-early-stopping",
+        "mt-batch-maxlen",
+        "mt-length-penalty",
+    ):
+        template = (TASKS / task_name / "edits" / "custom_template.py").read_text().lower()
+        assert not any(token in template for token in forbidden)
 
 
 def test_parser_copies_match_canonical_generator() -> None:

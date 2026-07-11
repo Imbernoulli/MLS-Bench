@@ -7,18 +7,14 @@ applied to the model output before it is scored (solution/postproc.py ->
 build_postproc -> a rule string). Scores corpus sacreBLEU / chrF against the
 FIXED (cased, punctuated) English references.
 
-sacreBLEU is applied to raw text with an internal tokenizer, so what matters is
-whether the surface form MATCHES the reference convention. The model already emits
-properly cased, punctuated, SentencePiece-detokenized English, so the correct
-policy is a light NORMALIZATION (collapse whitespace) — anything close to identity.
-Lossy "normalizations" that DROP information the references keep tank BLEU:
-  "identity"   : model output unchanged                              [reference]
-  "normalize"  : collapse repeated whitespace / strip edges          [strong; ~identity]
-  "lowercase"  : lowercase everything -> mismatches cased references  [degenerate]
-  "strip_punct": remove all punctuation -> loses ref punctuation n-grams [degenerate]
+sacreBLEU is applied to raw text with an internal tokenizer, so the selected
+policy determines which surface convention reaches the metric:
+  "normalize"  : collapse repeated whitespace and strip edges
+  "lowercase"  : normalize whitespace and lowercase the output
+  "strip_punct": remove punctuation and normalize whitespace
 
-This is the "don't destroy the model's good detok with a bad post-processor" lever;
-a lossy post-processor must score LOWER than leaving the fluent output alone.
+The alternatives are evaluated as literal deterministic transformations; the
+fixed corpus metric decides which surface convention is most compatible.
 
 Emits:  MT_METRICS bleu=<B> chrf=<C> n_pairs=<N> plen=<W> elapsed=<T>
 """
@@ -30,7 +26,7 @@ import time
 
 import common
 
-_VALID = {"identity", "normalize", "lowercase", "strip_punct"}
+_VALID = {"normalize", "lowercase", "strip_punct"}
 TASK_NAME = "mt-postprocess-detok"
 SURFACE_NAME = "build_postproc"
 _WS = re.compile(r"\s+")
@@ -38,8 +34,6 @@ _PUNCT = re.compile(r"[^\w\s]", flags=re.UNICODE)
 
 
 def _apply(preds, rule):
-    if rule == "identity":
-        return preds
     if rule == "normalize":
         return [_WS.sub(" ", p).strip() for p in preds]
     if rule == "lowercase":

@@ -80,10 +80,9 @@ DATA_SPECS = {
 }
 
 # File digests and count-probe details are recorded in artifact_provenance.json.
-# Counts are checkpoint-derived candidates from the safetensors header (fr-en)
-# or legacy torch pickle metadata prefix (de-en/ru-en).  A fresh worker must
-# confirm sum(p.numel()); a mismatch is intentionally fatal and requires a
-# source update before rendering.
+# Counts were first derived from the safetensors header (fr-en) or legacy torch
+# pickle metadata (de-en/ru-en), then confirmed by an actual model load on the
+# pinned repository image.  runtime_probe.json records the worker evidence.
 MODEL_SPECS = {
     "de_en": {
         "repository": "Helsinki-NLP/opus-mt-de-en",

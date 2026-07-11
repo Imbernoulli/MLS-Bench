@@ -9,7 +9,7 @@ spacing, preserve the decoded surface, or remove case and punctuation informatio
 Modify `machine-translation/solution/postproc.py` so
 `build_postproc() -> str` returns one of:
 
-`identity` | `normalize` | `lowercase` | `strip_punct`
+`normalize` | `lowercase` | `strip_punct`
 
 The model output before post-processing, corpus, references, tokenizer, and evaluator
 are fixed.

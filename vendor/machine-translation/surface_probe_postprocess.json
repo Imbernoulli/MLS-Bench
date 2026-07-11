@@ -1,0 +1,63 @@
+{
+  "data_proof": {
+    "dataset": "Helsinki-NLP/opus-100",
+    "direction": "de_en",
+    "manifest_sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+    "revision": "805090dc28bf78897da9641cdf08b61287580df9",
+    "rows": 2000,
+    "split_sha256": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc"
+  },
+  "direction": "de_en",
+  "image_ref": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+  "model_proof": {
+    "checkpoint_sha256": "e743c3070f61f477cb62fe95ef2c9be2e77f3e488cb6b8030ff8a19e8295c87d",
+    "direction": "de_en",
+    "manifest_sha256": "008cc43d43dbab7913e920a9681f6939bca3fd4718df0bbd4b9b7cbf5712e430",
+    "parameter_count": 74410496,
+    "repository": "Helsinki-NLP/opus-mt-de-en",
+    "revision": "1a922f3b32a8e809e17a47d4b32142d8105924e5",
+    "tokenizer_manifest_sha256": "db30174fffd23d5ab12dcadfd4e88ec87ddf97147680faa50969405933b3cb07"
+  },
+  "pairwise_output_differences": {
+    "identity_vs_lowercase": 1905,
+    "identity_vs_normalize": 0,
+    "identity_vs_strip_punct": 1935
+  },
+  "records": {
+    "identity": {
+      "bleu": 25.1980793312378,
+      "chrf": 49.24887352593359,
+      "elapsed_seconds": 67.00478277355433,
+      "mean_words": 16.28,
+      "prediction_sha256": "91503fe564081133efeed1e4d1ab296840a0895c6974bbe70d05f0fe9d69bfc5",
+      "rows": 2000
+    },
+    "lowercase": {
+      "bleu": 17.745808455447666,
+      "chrf": 44.58873485347921,
+      "elapsed_seconds": 0.0,
+      "mean_words": 16.28,
+      "prediction_sha256": "187654f368090338cbe7cb458033c767d33278f722cd0804c9b6ffb4e09e9edf",
+      "rows": 2000
+    },
+    "normalize": {
+      "bleu": 25.1980793312378,
+      "chrf": 49.24887352593359,
+      "elapsed_seconds": 0.0,
+      "mean_words": 16.28,
+      "prediction_sha256": "91503fe564081133efeed1e4d1ab296840a0895c6974bbe70d05f0fe9d69bfc5",
+      "rows": 2000
+    },
+    "strip_punct": {
+      "bleu": 19.23403033350187,
+      "chrf": 45.263041244998384,
+      "elapsed_seconds": 0.0,
+      "mean_words": 15.4245,
+      "prediction_sha256": "1d22b3f8c021dc1abf7204404e302c11e56290bec757833ab3ff67a4c5890d76",
+      "rows": 2000
+    }
+  },
+  "rows": 2000,
+  "schema_version": 1,
+  "surface": "postprocess"
+}

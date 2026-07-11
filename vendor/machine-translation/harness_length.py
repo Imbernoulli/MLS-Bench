@@ -2,9 +2,10 @@
 """mt-length-penalty harness (fixed pipeline).
 
 Translates each complete pinned OPUS-100 source-to-English test split with the
-matching FROZEN OPUS-MT MarianMT model, using the agent's LENGTH-NORMALIZATION decode
-config (solution/length.py -> build_length_config -> {length_penalty, min_length,
-max_new_tokens}). num_beams is FIXED to 5 here so ONLY the length policy varies.
+matching FROZEN OPUS-MT MarianMT model, using the agent's LENGTH-NORMALIZATION
+coefficient (solution/length.py -> build_length_config -> {length_penalty}).
+Beam width, minimum length, and output budget are fixed so only normalization
+varies.
 Scores corpus sacreBLEU (and chrF) on the FIXED references.
 
 Beam search WITHOUT length normalization biases toward too-short translations
@@ -43,7 +44,7 @@ def main() -> None:
     cfg = common.require_config(
         common.load_surface_value(args.solution, "build_length_config"),
         "build_length_config",
-        {"length_penalty", "min_length", "max_new_tokens"},
+        {"length_penalty"},
     )
     gen_kwargs = {
         "num_beams": 5,                 # FIXED
@@ -52,15 +53,9 @@ def main() -> None:
         "length_penalty": common.require_real(
             cfg["length_penalty"], "length_penalty", 0.0, 5.0
         ),
-        "min_length": common.require_int(
-            cfg["min_length"], "min_length", 0, common.MAX_NEW_TOKENS_CAP
-        ),
-        "max_new_tokens": common.require_int(
-            cfg["max_new_tokens"], "max_new_tokens", 1, common.MAX_NEW_TOKENS_CAP
-        ),
+        "min_length": 0,                   # FIXED
+        "max_new_tokens": 128,             # FIXED; owned by mt-batch-maxlen
     }
-    if gen_kwargs["min_length"] > gen_kwargs["max_new_tokens"]:
-        raise ValueError("min_length cannot exceed max_new_tokens")
     model, tok, model_proof = common.load_model_and_tokenizer(dev)
     common.emit_provenance(model_proof, data_proof)
     preds = common.translate(model, tok, srcs, gen_kwargs, dev)

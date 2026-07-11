@@ -8,20 +8,17 @@ FIXED cased, punctuated English references.
 Implement:
 
     def build_postproc() -> str:
-        return "normalize"
+        return "lowercase"
 
 Rules:
-  "identity"    : model output unchanged                              [reference].
-  "normalize"   : collapse repeated whitespace / strip edges          [strong].
-  "lowercase"   : lowercase everything -> mismatches cased references  [degenerate].
-  "strip_punct" : remove all punctuation -> loses ref punctuation n-grams [degenerate].
+  "normalize"   : collapse repeated whitespace and strip edges.
+  "lowercase"   : normalize whitespace and lowercase the output.
+  "strip_punct" : remove punctuation and normalize whitespace.
 
 Background:
-  The model already emits properly cased, punctuated, SentencePiece-detokenized
-  English, so the right policy is a light normalization (near-identity). Lossy
-  "normalizations" that DESTROY information the references keep (case, punctuation)
-  tank BLEU. Order: lowercase ~ strip_punct < identity ~ normalize. The lesson:
-  don't wreck the model's good detok with a bad post-processor.
+  Corpus metrics compare the final surface form to fixed references. The policy
+  should therefore be selected for compatibility with the reference convention,
+  rather than assumed to improve every corpus.
 
 Notes:
   * Inference-only. Deterministic. Aggregated over three directions. Minute-scale.
@@ -33,7 +30,7 @@ from __future__ import annotations
 # EDITABLE REGION — return your post-processing policy below
 # ================================================================
 def build_postproc() -> str:
-    # Default (degenerate): lowercase everything (mismatches cased references).
+    # Default policy; choose the transformation justified by the fixed metric.
     return "lowercase"
 # ================================================================
 # END EDITABLE REGION

@@ -1,5 +1,6 @@
 {
   "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
   "install_cmds": [
     "pip install --no-cache-dir 'transformers>=4.41,<4.50' 'tokenizers>=0.20,<0.22' 'huggingface_hub<1.0' sentencepiece sacremoses 'sacrebleu>=2.3,<3' 'numpy<2'",
     "python -c \"import torch, transformers, sacrebleu; from transformers import AutoModelForSeq2SeqLM, AutoTokenizer; print('transformers', transformers.__version__, 'sacrebleu', sacrebleu.__version__, 'torch', torch.__version__)\""

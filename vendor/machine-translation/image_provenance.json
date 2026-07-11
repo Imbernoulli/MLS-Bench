@@ -1,0 +1,54 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:8dfc00ac296d6c5404e482af44ad862fb8a24c60b54029bd340c13a49076efba",
+  "build": {
+    "layer_script": "scripts/create_mt_strict_layer.sh",
+    "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/layer-files-strict-proof-c58e4a9e7-v4",
+    "rc": 0,
+    "worker": "dev-2bmq5-53016-worker-0",
+    "worker_gpu_count": 1,
+    "worker_zone": "m4h20"
+  },
+  "final_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+  "layer": {
+    "additions": [
+      "/data/machine-translation/data/source_manifest.json",
+      "/data/machine-translation/models/opus-mt-de-en/model_manifest.json",
+      "/data/machine-translation/models/opus-mt-fr-en/model_manifest.json",
+      "/data/machine-translation/models/opus-mt-ru-en/model_manifest.json"
+    ],
+    "digest": "sha256:7c1c38923723e35ca136dc35faf0a19db277bd9554accb14f0ae20108ee1d114",
+    "removals": [
+      "/data/machine-translation/data/flores_de_en_test.jsonl",
+      "/data/machine-translation/models/opus-mt-de-en/.cache",
+      "/data/machine-translation/models/opus-mt-de-en/.gitattributes",
+      "/data/machine-translation/models/opus-mt-de-en/README.md",
+      "/data/machine-translation/models/opus-mt-fr-en/.cache",
+      "/data/machine-translation/models/opus-mt-fr-en/.gitattributes",
+      "/data/machine-translation/models/opus-mt-fr-en/README.md",
+      "/data/machine-translation/models/opus-mt-fr-en/pytorch_model.bin",
+      "/data/machine-translation/models/opus-mt-ru-en/.cache",
+      "/data/machine-translation/models/opus-mt-ru-en/.gitattributes",
+      "/data/machine-translation/models/opus-mt-ru-en/README.md"
+    ],
+    "size": 2585
+  },
+  "manifest": {
+    "config_digest": "sha256:3c921ca9170aa97bd56786323b8e418ef09249b3008e033d37620e6243776451",
+    "layer_count": 16,
+    "media_type": "application/vnd.oci.image.manifest.v1+json",
+    "recorded_base_digest": "sha256:8dfc00ac296d6c5404e482af44ad862fb8a24c60b54029bd340c13a49076efba"
+  },
+  "push": {
+    "control_plane_script": "scripts/push_mt_strict_layer.sh",
+    "persistent_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/push-v4",
+    "registry_digest_rc": 0,
+    "tag": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation:strict-proof-c58e4a9e7-v4"
+  },
+  "schema_version": 1,
+  "strict_probe": {
+    "evidence_file": "runtime_probe.json",
+    "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/output-final-strict-v4",
+    "rc": 0,
+    "worker": "dev-qghqc-53440-worker-0"
+  }
+}

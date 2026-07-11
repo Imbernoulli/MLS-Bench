@@ -1,5 +1,5 @@
-"""Weak length baseline: strongly LONG-biased length penalty -> over-generation."""
+"""Length-normalization baseline with length_penalty=2.0."""
 
 
 def build_length_config() -> dict:
-    return {"length_penalty": 2.0, "min_length": 0, "max_new_tokens": 128}
+    return {"length_penalty": 2.0}

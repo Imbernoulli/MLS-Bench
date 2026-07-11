@@ -2,21 +2,19 @@
 """mt-early-stopping harness (fixed pipeline).
 
 Translates each complete pinned OPUS-100 source-to-English test split with a FROZEN OPUS-MT model under beam-5
-with a SHORT-biased length policy (length_penalty=0.6, the tuned MT optimum for
-this model); the agent controls ONLY the beam-search STOPPING policy
+with a fixed short-biased length policy (length_penalty=0.6); the agent controls
+ONLY the beam-search STOPPING policy
 (solution/earlystop.py -> build_early_stopping -> one of True / False / "never").
 Scores corpus sacreBLEU / chrF.
 
 `early_stopping` governs when beam search stops expanding (HF `generate`):
-  True     : stop as soon as `num_beams` finished hypotheses exist. With a
-             short-biased length_penalty this can stop too early on a still-
-             improving beam -> slightly worse.
+  True     : stop as soon as `num_beams` finished hypotheses exist.
   False    : heuristic stop (stop when it is unlikely a better hypothesis remains).
   "never"  : canonical stopping — only stop when NO better hypothesis can exist
-             given the length_penalty (Huang et al. 2017 "When to Finish?"); this
-             is the theoretically-correct policy and matches/exceeds the others.
+             given the length penalty (Huang et al. 2017 "When to Finish?").
 
-The gap is small (this is a genuine minor lever): "never" >= False >= True.
+These criteria can select different hypotheses because the fixed length policy
+changes the bound used to decide whether unfinished beams can still improve.
 
 Emits:  MT_METRICS bleu=<B> chrf=<C> n_pairs=<N> plen=<W> elapsed=<T>
 """

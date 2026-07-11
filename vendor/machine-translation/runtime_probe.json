@@ -1,0 +1,385 @@
+{
+  "data": {
+    "directions": {
+      "de_en": {
+        "dataset": "Helsinki-NLP/opus-100",
+        "direction": "de_en",
+        "manifest_sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+        "revision": "805090dc28bf78897da9641cdf08b61287580df9",
+        "rows": 2000,
+        "split_sha256": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc"
+      },
+      "fr_en": {
+        "dataset": "Helsinki-NLP/opus-100",
+        "direction": "fr_en",
+        "manifest_sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+        "revision": "805090dc28bf78897da9641cdf08b61287580df9",
+        "rows": 2000,
+        "split_sha256": "09477f8a19e67d3f7c09c320d076f5a32168ab4cde55d8f1d88ffb66c02f68a1"
+      },
+      "ru_en": {
+        "dataset": "Helsinki-NLP/opus-100",
+        "direction": "ru_en",
+        "manifest_sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+        "revision": "805090dc28bf78897da9641cdf08b61287580df9",
+        "rows": 2000,
+        "split_sha256": "c072e931f99d1ed04829ec4f63b18c34ebc9ead4b1b19b25fceec60720650eb0"
+      }
+    },
+    "source_manifest_sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+    "top_level_inventory": [
+      {
+        "path": "de_en_test.jsonl",
+        "sha256": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc",
+        "size": 361291,
+        "symlink": false
+      },
+      {
+        "path": "fr_en_test.jsonl",
+        "sha256": "09477f8a19e67d3f7c09c320d076f5a32168ab4cde55d8f1d88ffb66c02f68a1",
+        "size": 499910,
+        "symlink": false
+      },
+      {
+        "path": "ru_en_test.jsonl",
+        "sha256": "c072e931f99d1ed04829ec4f63b18c34ebc9ead4b1b19b25fceec60720650eb0",
+        "size": 521210,
+        "symlink": false
+      },
+      {
+        "path": "source_manifest.json",
+        "sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+        "size": 1388,
+        "symlink": false
+      }
+    ]
+  },
+  "image_digest": "sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+  "image_ref": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+  "models": {
+    "de_en": {
+      "checkpoint_candidates": [
+        "pytorch_model.bin"
+      ],
+      "config_class": "transformers.models.marian.configuration_marian.MarianConfig",
+      "direction": "de_en",
+      "expected_parameter_numel": 74410496,
+      "expected_parameter_plus_bias_numel": 74468597,
+      "expected_runtime_files_match": true,
+      "final_logits_bias": {
+        "dtype": "torch.float32",
+        "numel": 58101,
+        "shape": [
+          1,
+          58101
+        ]
+      },
+      "loader_checkpoint_paths": [
+        "/data/machine-translation/models/opus-mt-de-en/pytorch_model.bin"
+      ],
+      "loading_info": {
+        "error_msgs": [],
+        "mismatched_keys": [],
+        "missing_keys": [],
+        "unexpected_keys": []
+      },
+      "model_class": "transformers.models.marian.modeling_marian.MarianMTModel",
+      "model_dir": "/data/machine-translation/models/opus-mt-de-en",
+      "parameter_numel": 74410496,
+      "parameter_plus_final_logits_bias_numel": 74468597,
+      "parameter_tensor_count": 255,
+      "repository": "Helsinki-NLP/opus-mt-de-en",
+      "revision": "1a922f3b32a8e809e17a47d4b32142d8105924e5",
+      "selected_checkpoint": "pytorch_model.bin",
+      "selected_checkpoint_sha256": "e743c3070f61f477cb62fe95ef2c9be2e77f3e488cb6b8030ff8a19e8295c87d",
+      "state_dict_numel_with_aliases": 163711733,
+      "state_dict_tensor_count": 259,
+      "tied_aliases": {
+        "decoder_embedding_is_shared": true,
+        "encoder_embedding_is_shared": true,
+        "lm_head_is_shared": true
+      },
+      "tokenizer_class": "transformers.models.marian.tokenization_marian.MarianTokenizer",
+      "tokenizer_length": 58101,
+      "top_level_inventory": [
+        {
+          "kind": "file",
+          "path": "config.json",
+          "sha256": "89368ef76ea89581025cdf605caac75b8a22af2c1a90ec57c8a5001f10537eeb",
+          "size": 1381,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "generation_config.json",
+          "sha256": "e5cccf365761fb31175fc978a75f5e857a822f173d0e447aa3a25d7cbcda15a4",
+          "size": 293,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "model_manifest.json",
+          "sha256": "008cc43d43dbab7913e920a9681f6939bca3fd4718df0bbd4b9b7cbf5712e430",
+          "size": 1642,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "pytorch_model.bin",
+          "sha256": "e743c3070f61f477cb62fe95ef2c9be2e77f3e488cb6b8030ff8a19e8295c87d",
+          "size": 297928209,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "source.spm",
+          "sha256": "bbd1f495eea99c8e21ae086d9146e0fa7b096c3dfdd9ba07ab8b631889df5c9b",
+          "size": 796845,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "target.spm",
+          "sha256": "678f2a1177d8389f67b66299762dcc4fc567e89b07e212ba91b0c56daecf47ce",
+          "size": 768489,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "tokenizer_config.json",
+          "sha256": "51c3c3260d27cb7c4d11d0c53752b8fe87f2367129d7636fa917ce588b97306c",
+          "size": 42,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "vocab.json",
+          "sha256": "0d70d89fee4a8b4ef99a56d712163baadcabd5600a597f71515547ee70306329",
+          "size": 1273232,
+          "symlink": false
+        }
+      ],
+      "vocab_size": 58101
+    },
+    "fr_en": {
+      "checkpoint_candidates": [
+        "model.safetensors"
+      ],
+      "config_class": "transformers.models.marian.configuration_marian.MarianConfig",
+      "direction": "fr_en",
+      "expected_parameter_numel": 75133952,
+      "expected_parameter_plus_bias_numel": 75193466,
+      "expected_runtime_files_match": true,
+      "final_logits_bias": {
+        "dtype": "torch.float32",
+        "numel": 59514,
+        "shape": [
+          1,
+          59514
+        ]
+      },
+      "loader_checkpoint_paths": [
+        "/data/machine-translation/models/opus-mt-fr-en/model.safetensors"
+      ],
+      "loading_info": {
+        "error_msgs": [],
+        "mismatched_keys": [],
+        "missing_keys": [],
+        "unexpected_keys": []
+      },
+      "model_class": "transformers.models.marian.modeling_marian.MarianMTModel",
+      "model_dir": "/data/machine-translation/models/opus-mt-fr-en",
+      "parameter_numel": 75133952,
+      "parameter_plus_final_logits_bias_numel": 75193466,
+      "parameter_tensor_count": 255,
+      "repository": "Helsinki-NLP/opus-mt-fr-en",
+      "revision": "c4aed37b318c763fd177aa449b44e3b783cc6c02",
+      "selected_checkpoint": "model.safetensors",
+      "selected_checkpoint_sha256": "6e3837f34b903802c3d0d670362b997cee6e87584a1108eb3fa89e4625e4424a",
+      "state_dict_numel_with_aliases": 166606970,
+      "state_dict_tensor_count": 259,
+      "tied_aliases": {
+        "decoder_embedding_is_shared": true,
+        "encoder_embedding_is_shared": true,
+        "lm_head_is_shared": true
+      },
+      "tokenizer_class": "transformers.models.marian.tokenization_marian.MarianTokenizer",
+      "tokenizer_length": 59514,
+      "top_level_inventory": [
+        {
+          "kind": "file",
+          "path": "config.json",
+          "sha256": "b3be13d046d9899d7aab8cf4ed624d9a79f5776038ba793f6b4d2ce3e02192f7",
+          "size": 1416,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "generation_config.json",
+          "sha256": "4956fb9a7caaad7579cf8bb789c1e578b8a1cf48a0a8b779fda2f95dd10bbaa5",
+          "size": 293,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "model.safetensors",
+          "sha256": "6e3837f34b903802c3d0d670362b997cee6e87584a1108eb3fa89e4625e4424a",
+          "size": 300803608,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "model_manifest.json",
+          "sha256": "ec5530ddd718e210e3877a7a7c170b32088aa5b354e98a174102141a88ee0b0d",
+          "size": 1646,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "source.spm",
+          "sha256": "78d0e717c77053f1c4b856d8661d9cb87c64f083a35418c087b9146300e4f585",
+          "size": 802397,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "target.spm",
+          "sha256": "173e9f493a668fe396d599e28d414a201193094e6ffd7a4678e5aab0f6d3d838",
+          "size": 778395,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "tokenizer_config.json",
+          "sha256": "47de9ce87378593016432f8dc657202c03913ab3ce0c15d7f78d51edfc3ff9a3",
+          "size": 42,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "vocab.json",
+          "sha256": "945c604346ce15ce4aff9001001e7f925e336d942c4087017f191871162cbdc4",
+          "size": 1339166,
+          "symlink": false
+        }
+      ],
+      "vocab_size": 59514
+    },
+    "ru_en": {
+      "checkpoint_candidates": [
+        "pytorch_model.bin"
+      ],
+      "config_class": "transformers.models.marian.configuration_marian.MarianConfig",
+      "direction": "ru_en",
+      "expected_parameter_numel": 76672000,
+      "expected_parameter_plus_bias_numel": 76734518,
+      "expected_runtime_files_match": true,
+      "final_logits_bias": {
+        "dtype": "torch.float32",
+        "numel": 62518,
+        "shape": [
+          1,
+          62518
+        ]
+      },
+      "loader_checkpoint_paths": [
+        "/data/machine-translation/models/opus-mt-ru-en/pytorch_model.bin"
+      ],
+      "loading_info": {
+        "error_msgs": [],
+        "mismatched_keys": [],
+        "missing_keys": [],
+        "unexpected_keys": []
+      },
+      "model_class": "transformers.models.marian.modeling_marian.MarianMTModel",
+      "model_dir": "/data/machine-translation/models/opus-mt-ru-en",
+      "parameter_numel": 76672000,
+      "parameter_plus_final_logits_bias_numel": 76734518,
+      "parameter_tensor_count": 255,
+      "repository": "Helsinki-NLP/opus-mt-ru-en",
+      "revision": "fbd6dc73284f95536648512cc21d57f19191961a",
+      "selected_checkpoint": "pytorch_model.bin",
+      "selected_checkpoint_sha256": "535450eb5613f3cc912f9ca3e54cfef6c14d201b319c24a88faf776a65538b5d",
+      "state_dict_numel_with_aliases": 172762166,
+      "state_dict_tensor_count": 259,
+      "tied_aliases": {
+        "decoder_embedding_is_shared": true,
+        "encoder_embedding_is_shared": true,
+        "lm_head_is_shared": true
+      },
+      "tokenizer_class": "transformers.models.marian.tokenization_marian.MarianTokenizer",
+      "tokenizer_length": 62518,
+      "top_level_inventory": [
+        {
+          "kind": "file",
+          "path": "config.json",
+          "sha256": "5ea76c78596bce8fe005ef89e00de0924bf83e5f532ce08784ff1fcefb699f5f",
+          "size": 1381,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "generation_config.json",
+          "sha256": "31cff5e74efc263ff53efac09e3e350cd462d5c8198b1136b455d63a02d8cad5",
+          "size": 293,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "model_manifest.json",
+          "sha256": "7d1af2e235e44ec595ded0977933ec103384184efb83a410769295e26315a0c9",
+          "size": 1643,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "pytorch_model.bin",
+          "sha256": "535450eb5613f3cc912f9ca3e54cfef6c14d201b319c24a88faf776a65538b5d",
+          "size": 306991893,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "source.spm",
+          "sha256": "745998e51ba5b058e38b7ac7765c25c43ed5c1c39cc92b27163b9b2e323c9d7c",
+          "size": 1080169,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "target.spm",
+          "sha256": "16bebef1389a0b8ab452772c4e35b9e605e5713f8ac7baa71ca701394eaa086d",
+          "size": 802781,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "tokenizer_config.json",
+          "sha256": "8d826099b8c67179c83ab4ff94aff7ca7bf24ca14319cb0287b9a0b4c40b2a96",
+          "size": 42,
+          "symlink": false
+        },
+        {
+          "kind": "file",
+          "path": "vocab.json",
+          "sha256": "33e95da3be3fa3b50169c4c46693ba2f29fbf4cb29d99044bd07d72d181fa1e9",
+          "size": 2601758,
+          "symlink": false
+        }
+      ],
+      "vocab_size": 62518
+    }
+  },
+  "schema_version": 1,
+  "worker": {
+    "cuda_available": true,
+    "cuda_device_count": 1,
+    "cuda_device_names": [
+      "NVIDIA H20-3e"
+    ],
+    "hostname": "dev-qghqc-53440-worker-0",
+    "python": "3.11.10",
+    "torch": "2.5.1+cu124",
+    "transformers": "4.49.0"
+  }
+}

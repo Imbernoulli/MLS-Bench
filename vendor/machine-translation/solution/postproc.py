@@ -1,6 +1,6 @@
 """Translation output post-processing surface.
 
-Return one of: "identity", "normalize", "lowercase", or "strip_punct".
+Return one of: "normalize", "lowercase", or "strip_punct".
 The verifier parses the string literal statically.
 """
 from __future__ import annotations

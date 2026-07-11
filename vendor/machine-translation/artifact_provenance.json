@@ -1,9 +1,54 @@
 {
   "captured_at": "2026-07-11",
-  "count_definition": "parameter_count is a checkpoint-derived candidate: unique stored tensor elements excluding the final_logits_bias buffer and de-duplicating tied encoder/decoder/shared embeddings; checkpoint_tensor_elements includes that buffer",
-  "count_status": "unconfirmed until a fresh worker reports sum(p.numel()) from the selected checkpoint under the pinned image; any mismatch must fail verification and be corrected in source before render",
+  "count_definition": "parameter_count is the worker-confirmed sum(p.numel()) after loading the selected checkpoint; tied encoder/decoder/shared embeddings are counted once by model.parameters(), final_logits_bias is a buffer, and checkpoint_tensor_elements is parameter_count plus that buffer",
+  "count_status": "confirmed by strict actual-load probe rc=0 on the immutable repository image; runtime_probe.json is the complete machine-readable record",
+  "runtime_probe": {
+    "evidence_file": "runtime_probe.json",
+    "image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+    "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/output-final-strict-v4",
+    "rc": 0,
+    "worker": "dev-qghqc-53440-worker-0",
+    "worker_gpu": "NVIDIA H20-3e",
+    "worker_zone": "m4h20"
+  },
+  "representative_run": {
+    "evidence_file": "representative_probe.json",
+    "image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+    "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/representative-v4-r3",
+    "rc": 0,
+    "settings": 3,
+    "task": "mt-decoding-beam",
+    "worker": "dev-lvbwg-55246-worker-0",
+    "worker_gpu_count": 1,
+    "worker_zone": "m4h20"
+  },
+  "surface_discriminativeness": {
+    "direction": "de_en",
+    "image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+    "rows": 2000,
+    "runs": {
+      "early_stopping": {
+        "evidence_file": "surface_probe_early_stopping.json",
+        "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/surface-early-stopping-v4",
+        "rc": 0,
+        "worker": "dev-vw5l8-53734-worker-0"
+      },
+      "maxlen": {
+        "evidence_file": "surface_probe_maxlen.json",
+        "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/surface-maxlen-v4",
+        "rc": 0,
+        "worker": "dev-n62tm-53641-worker-0"
+      },
+      "postprocess": {
+        "evidence_file": "surface_probe_postprocess.json",
+        "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/surface-postprocess-v4",
+        "rc": 0,
+        "worker": "dev-q8r9f-53688-worker-0"
+      }
+    }
+  },
   "formula_crosscheck": {
-    "candidate_explanation": "The independent formula is exactly 2048 higher in every direction. That delta equals four 512-element tensors: encoder/decoder embedding LayerNorm weight+bias. Generic BART-style formulas include those tensors, but the pinned Marian checkpoint metadata has no layernorm_embedding keys. This explains the formula delta, but only the worker runtime probe is authoritative.",
+    "candidate_explanation": "The independent formula is exactly 2048 higher in every direction. That delta equals four 512-element tensors: encoder/decoder embedding LayerNorm weight+bias. Generic BART-style formulas include those tensors, but the pinned Marian checkpoints have no layernorm_embedding parameters. The strict worker actual-load probe confirms the checkpoint-derived counts.",
     "checkpoint_derived": {
       "de_en": 74410496,
       "fr_en": 75133952,

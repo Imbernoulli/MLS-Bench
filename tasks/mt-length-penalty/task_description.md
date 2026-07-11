@@ -7,10 +7,9 @@ and therefore interacts with corpus brevity and precision.
 
 ## Implementation Contract
 Modify `machine-translation/solution/length.py` so
-`build_length_config() -> dict` returns exactly `length_penalty`, `min_length`,
-and `max_new_tokens`. The penalty must be finite in `[0, 5]`; lengths must be
-integers with `0 <= min_length <= max_new_tokens <= 160`. The beam width, model,
-corpus, references, and evaluator are fixed.
+`build_length_config() -> dict` returns exactly `length_penalty`, which must be
+finite in `[0, 5]`. Beam width, minimum length, output budget, model, corpus,
+references, and evaluator are fixed.
 
 ## Fixed Evaluation
 - Three pinned frozen OPUS-MT MarianMT checkpoints (~75M parameters each).

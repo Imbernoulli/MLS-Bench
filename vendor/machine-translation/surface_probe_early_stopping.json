@@ -1,0 +1,55 @@
+{
+  "data_proof": {
+    "dataset": "Helsinki-NLP/opus-100",
+    "direction": "de_en",
+    "manifest_sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+    "revision": "805090dc28bf78897da9641cdf08b61287580df9",
+    "rows": 2000,
+    "split_sha256": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc"
+  },
+  "direction": "de_en",
+  "image_ref": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+  "model_proof": {
+    "checkpoint_sha256": "e743c3070f61f477cb62fe95ef2c9be2e77f3e488cb6b8030ff8a19e8295c87d",
+    "direction": "de_en",
+    "manifest_sha256": "008cc43d43dbab7913e920a9681f6939bca3fd4718df0bbd4b9b7cbf5712e430",
+    "parameter_count": 74410496,
+    "repository": "Helsinki-NLP/opus-mt-de-en",
+    "revision": "1a922f3b32a8e809e17a47d4b32142d8105924e5",
+    "tokenizer_manifest_sha256": "db30174fffd23d5ab12dcadfd4e88ec87ddf97147680faa50969405933b3cb07"
+  },
+  "pairwise_output_differences": {
+    "false_vs_never": 124,
+    "true_vs_false": 113,
+    "true_vs_never": 236
+  },
+  "records": {
+    "false": {
+      "bleu": 24.63754519226567,
+      "chrf": 48.71300995782716,
+      "elapsed_seconds": 83.24755404889584,
+      "mean_words": 16.681,
+      "prediction_sha256": "802c3fdb3ae7bae2e71f8c8016cccf4d9f166bf71e9c75fd6ea8fb4c7edda512",
+      "rows": 2000
+    },
+    "never": {
+      "bleu": 18.127729516178178,
+      "chrf": 47.18093326200011,
+      "elapsed_seconds": 136.0733202472329,
+      "mean_words": 23.1705,
+      "prediction_sha256": "3068d3039003759b45fe0e3340046c83b84b839114eae711a3df9de266a71dd9",
+      "rows": 2000
+    },
+    "true": {
+      "bleu": 28.381073772045884,
+      "chrf": 49.63720549847206,
+      "elapsed_seconds": 67.23156796395779,
+      "mean_words": 14.604,
+      "prediction_sha256": "9652c527bf2fdef6c083bc065a0f0232d20e52bae1a310123cdf9256cc0a2222",
+      "rows": 2000
+    }
+  },
+  "rows": 2000,
+  "schema_version": 1,
+  "surface": "early_stopping"
+}

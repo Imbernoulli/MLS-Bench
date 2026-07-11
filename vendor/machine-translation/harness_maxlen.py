@@ -6,11 +6,10 @@ beam-5 length-1.0 decode; the agent controls ONLY the output-length budget
 `max_new_tokens` (solution/maxlen.py -> build_max_new_tokens -> int). Scores
 corpus sacreBLEU / chrF.
 
-A too-tight generation budget (e.g. 8-16 new tokens) TRUNCATES the translation ->
-the tail of the English sentence is cut off -> the brevity penalty and lost
-n-grams tank BLEU. A budget >= the natural target length (~64-128) lets the model
-finish the sentence. This is the "did you give the decoder enough room to finish?"
-lever. (Batch size is a throughput-only knob and is held fixed.)
+The budget is a hard upper bound: a small value can truncate a translation,
+while a larger value allows more continuation and increases worst-case decoding
+work. Corpus BLEU determines the quality trade-off under the fixed beam policy.
+(Batch size is a throughput-only knob and is held fixed.)
 
 Emits:  MT_METRICS bleu=<B> chrf=<C> n_pairs=<N> plen=<W> elapsed=<T>
 """

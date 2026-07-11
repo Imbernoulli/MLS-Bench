@@ -7,13 +7,12 @@ Scored on corpus sacreBLEU (higher is better).
 Implement:
 
     def build_max_new_tokens() -> int:
-        return 128
+        return 10
 
-  Returns the maximum number of NEW tokens the decoder may emit (capped at 160).
-  Too tight a budget (8-16) TRUNCATES the translation -> the tail of the English
-  sentence is cut off -> the brevity penalty and lost n-grams tank BLEU. A budget
-  >= the natural target length (~64-128) lets the model finish. This is the "did
-  you give the decoder enough room to finish?" lever.
+  Return the maximum number of new tokens the decoder may emit, capped at 160.
+  Small values can truncate translations; larger values allow more continuation
+  and increase worst-case decoding work. Select the budget using the fixed corpus
+  metric.
 
 Notes:
   * Inference-only. Deterministic. Aggregated over three directions. Minute-scale.
@@ -25,7 +24,7 @@ from __future__ import annotations
 # EDITABLE REGION — return your max_new_tokens budget below
 # ================================================================
 def build_max_new_tokens() -> int:
-    # Default (weak): a 10-token budget -> translations get cut off.
+    # Initial budget; select the value justified by the fixed metric.
     return 10
 # ================================================================
 # END EDITABLE REGION

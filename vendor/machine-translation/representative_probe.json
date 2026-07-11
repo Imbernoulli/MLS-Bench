@@ -1,0 +1,64 @@
+{
+  "accepted": true,
+  "code_base_commit": "c58e4a9e7bcbe8dcda8edfda0ed317e8ffb3cf82",
+  "discarded_predecessor": {
+    "accepted": false,
+    "overall_rc": 0,
+    "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/representative-v4-r2",
+    "reason": "The runner exported MT_DIRECTION instead of MT_DIR, so all three logs declared and evaluated de_en despite process rc=0.",
+    "worker": "dev-s9sk7-54721-worker-0"
+  },
+  "execution": {
+    "gpu_count": 1,
+    "mode": "serial",
+    "overall_rc": 0,
+    "persistent_worker_path": "/home/lvbohan/mt-proof-probe-c58e4a9e7/representative-v4-r3",
+    "requested_zone": "m4h20",
+    "runner_script": "scripts/run_mt_representative_probe.sh",
+    "runner_script_sha256": "cf00d9058485aeba85c94a1812105376efbd6d86400251998a86c46d44c15aff",
+    "scheduler_zone": "m4",
+    "started_at": "2026-07-11T16:23:47+00:00",
+    "success_at": "2026-07-11T16:25:54+00:00",
+    "worker": "dev-lvbwg-55246-worker-0"
+  },
+  "image_ref": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+  "parser": "tasks/mt-decoding-beam/parser.py",
+  "schema_version": 1,
+  "settings": {
+    "de_en": {
+      "log_path": "representative_logs/de_en.log",
+      "log_sha256": "d2fb1d10f051d513cadd05ffd1c95aab0c38b8183b2504843ab5ed5990fe313a",
+      "metrics": {
+        "bleu_de_en": 16.413356,
+        "chrf_de_en": 42.25624
+      },
+      "protocol_lines": 5,
+      "rc": 0,
+      "wall_seconds": 44
+    },
+    "fr_en": {
+      "log_path": "representative_logs/fr_en.log",
+      "log_sha256": "42d6dd9496691468d58676e22e3c5cd88d54b8a10e00c92994f6022d1e8d2912",
+      "metrics": {
+        "bleu_fr_en": 21.941788,
+        "chrf_fr_en": 45.602852
+      },
+      "protocol_lines": 5,
+      "rc": 0,
+      "wall_seconds": 43
+    },
+    "ru_en": {
+      "log_path": "representative_logs/ru_en.log",
+      "log_sha256": "df66cfc27cec68da75e298d51c3fc14d0406ee2bb089049f8baddc2fcafb4632",
+      "metrics": {
+        "bleu_ru_en": 19.417474,
+        "chrf_ru_en": 46.498811
+      },
+      "protocol_lines": 5,
+      "rc": 0,
+      "wall_seconds": 40
+    }
+  },
+  "surface": "build_beam_config",
+  "task": "mt-decoding-beam"
+}

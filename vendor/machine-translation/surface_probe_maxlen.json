@@ -1,0 +1,64 @@
+{
+  "data_proof": {
+    "dataset": "Helsinki-NLP/opus-100",
+    "direction": "de_en",
+    "manifest_sha256": "05d87a9da44f2bb3dcf514cdddd595639667105091247744fbc7e818f9f9e924",
+    "revision": "805090dc28bf78897da9641cdf08b61287580df9",
+    "rows": 2000,
+    "split_sha256": "2e7a80586d269952371ff5e71f8840e26926416c399051e2371a3b14a1b0b6dc"
+  },
+  "direction": "de_en",
+  "image_ref": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-machine-translation@sha256:9290a9de78e9b39ec20518b75788d6207880c134c78d05b931870d18eb4fc97e",
+  "model_proof": {
+    "checkpoint_sha256": "e743c3070f61f477cb62fe95ef2c9be2e77f3e488cb6b8030ff8a19e8295c87d",
+    "direction": "de_en",
+    "manifest_sha256": "008cc43d43dbab7913e920a9681f6939bca3fd4718df0bbd4b9b7cbf5712e430",
+    "parameter_count": 74410496,
+    "repository": "Helsinki-NLP/opus-mt-de-en",
+    "revision": "1a922f3b32a8e809e17a47d4b32142d8105924e5",
+    "tokenizer_manifest_sha256": "db30174fffd23d5ab12dcadfd4e88ec87ddf97147680faa50969405933b3cb07"
+  },
+  "pairwise_output_differences": {
+    "m10_vs_m128": 1423,
+    "m10_vs_m32": 1423,
+    "m128_vs_length_norm1_m128": 0,
+    "m32_vs_m128": 367
+  },
+  "records": {
+    "length_norm1_m128": {
+      "bleu": 25.1980793312378,
+      "chrf": 49.24887352593359,
+      "elapsed_seconds": 64.58869628794491,
+      "mean_words": 16.28,
+      "prediction_sha256": "91503fe564081133efeed1e4d1ab296840a0895c6974bbe70d05f0fe9d69bfc5",
+      "rows": 2000
+    },
+    "m10": {
+      "bleu": 9.212300923357208,
+      "chrf": 23.646911261021152,
+      "elapsed_seconds": 14.24300454929471,
+      "mean_words": 6.0145,
+      "prediction_sha256": "2a44717f6e4363f8dfbb73d3d9263cfa3d76375713bf3e7d9f3673d2985b6e22",
+      "rows": 2000
+    },
+    "m128": {
+      "bleu": 25.1980793312378,
+      "chrf": 49.24887352593359,
+      "elapsed_seconds": 64.49446741491556,
+      "mean_words": 16.28,
+      "prediction_sha256": "91503fe564081133efeed1e4d1ab296840a0895c6974bbe70d05f0fe9d69bfc5",
+      "rows": 2000
+    },
+    "m32": {
+      "bleu": 26.336984225054994,
+      "chrf": 43.25541920090876,
+      "elapsed_seconds": 31.76169619895518,
+      "mean_words": 11.4575,
+      "prediction_sha256": "7f40d4ba319c363c9497d3b7b99e8825c45e3ebf58b092e1834bd3c87723dfda",
+      "rows": 2000
+    }
+  },
+  "rows": 2000,
+  "schema_version": 1,
+  "surface": "maxlen"
+}
