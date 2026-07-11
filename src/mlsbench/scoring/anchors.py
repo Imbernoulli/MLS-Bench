@@ -141,7 +141,7 @@ class BaselineAnchors:
             if not isinstance(model, str):
                 continue
             if model.startswith("baseline:"):
-                name = model.removeprefix("baseline:")
+                name = model[len("baseline:"):]
             elif model in bl_keys:
                 name = model
             else:
