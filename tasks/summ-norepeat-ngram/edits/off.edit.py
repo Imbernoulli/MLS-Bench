@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/norepeat.py"
 
 _CONTENT = '''def build_norepeat_size() -> int:
-    # No n-gram block (weak).
+    # No n-gram block.
     return 0'''
 
 OPS = [

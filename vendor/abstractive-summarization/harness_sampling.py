@@ -1,13 +1,11 @@
 #!/usr/bin/env python3
 """summ-sampling-vs-beam harness (3-setting).
 
-Decoding STRATEGY: sampling vs beam. Per-domain length window FIXED; the agent
-returns a strategy config (solution/sampling.py -> build_decode_strategy -> dict):
-  {"strategy": "beam", "num_beams": 4}                    -> deterministic beam
-  {"strategy": "sample", "top_p": 0.95, "top_k": 0,
-   "temperature": 1.0}                                    -> nucleus sampling
-For summarization ROUGE, beam reliably BEATS sampling (sampling injects lexical
-variation that reduces single-reference overlap). Scores corpus ROUGE-L F1.
+Decoding STRATEGY: sampling vs beam. Per-domain length windows are fixed; the
+agent returns a complete strategy mapping from solution/sampling.py via
+build_decode_strategy. Beam mappings require num_beams, while sampling mappings
+require top_p, top_k, and temperature. The harness validates the selected schema
+and measures its multi-domain corpus ROUGE-L F1 without publishing an ordering.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>

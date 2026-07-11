@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/norepeat.py"
 
 _CONTENT = '''def build_norepeat_size() -> int:
-    # Classic no-repeat-3gram block (strong).
+    # No-repeat-3gram block.
     return 3'''
 
 OPS = [

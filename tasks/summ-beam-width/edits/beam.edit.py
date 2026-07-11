@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/beamwidth.py"
 
 _CONTENT = '''def build_beam_width() -> int:
-    # Beam search (strong).
+    # Four-beam decoding.
     return 4'''
 
 OPS = [

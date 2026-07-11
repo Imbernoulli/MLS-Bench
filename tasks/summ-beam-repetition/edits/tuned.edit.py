@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/beam.py"
 
 _CONTENT = '''def build_beam_config() -> dict:
-    # Beam search + classic no-repeat-3gram block (strong).
+    # Four-beam decoding with a no-repeat-3gram block.
     return {"num_beams": 4, "no_repeat_ngram_size": 3, "repetition_penalty": 1.0}'''
 
 OPS = [

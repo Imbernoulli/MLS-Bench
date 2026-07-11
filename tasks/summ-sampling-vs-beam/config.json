@@ -1,5 +1,18 @@
 {
   "allow_create": false,
+  "verifier_only_package_files": [
+    "abstractive-summarization/common.py",
+    "abstractive-summarization/harness_beam.py",
+    "abstractive-summarization/harness_beamwidth.py",
+    "abstractive-summarization/harness_diverse.py",
+    "abstractive-summarization/harness_length.py",
+    "abstractive-summarization/harness_norepeat.py",
+    "abstractive-summarization/harness_posttrunc.py",
+    "abstractive-summarization/harness_sampling.py",
+    "abstractive-summarization/harness_source.py",
+    "abstractive-summarization/harness_temperature.py",
+    "abstractive-summarization/harness_topp.py"
+  ],
   "pristine_manifest_mode": "scaffold",
   "rigorous_codebase": true,
   "seeds": [

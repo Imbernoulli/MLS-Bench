@@ -6,11 +6,10 @@ Post-processing sentence selection is applied after one fixed model decode
 chooses only how many leading SENTENCES of the decoded summary to KEEP
 (solution/posttrunc.py -> build_keep_sentences -> int; a large value keeps all).
 
-On XSum the reference is ONE sentence, so keeping only the first sentence of an
-over-generating decode raises precision (ROUGE-L F1); keeping 0 destroys it, and
-keeping "all" leaves trailing sentences that cost precision. This is a pure
-post-process — the model output is byte-identical across configs, only the kept
-prefix differs. Scores corpus ROUGE-L F1.
+This is a pure post-process: the model output is identical across configurations,
+and only the retained sentence prefix differs. The three domains have different
+reference sentence distributions, so the benchmark measures the shared policy
+without publishing a preferred retention count. Scores corpus ROUGE-L F1.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>

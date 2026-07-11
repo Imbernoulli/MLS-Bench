@@ -3,9 +3,10 @@
 
 Sampling temperature is editable while nucleus, length, and repetition controls
 remain fixed; the agent chooses only the temperature
-(solution/temperature.py -> build_temperature -> float). For single-reference
-ROUGE, a LOW temperature (near-greedy sampling) preserves overlap; a HIGH
-temperature injects lexical noise and drops ROUGE. Scores corpus ROUGE-L F1.
+(solution/temperature.py -> build_temperature -> float). Temperature changes the
+sampling distribution while all other decode controls remain constant. The
+harness measures the complete multi-domain corpus ROUGE-L F1 without publishing
+a preferred value or measured ordering.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>

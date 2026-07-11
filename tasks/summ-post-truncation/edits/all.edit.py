@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/posttrunc.py"
 
 _CONTENT = '''def build_keep_sentences() -> int:
-    # Keep the full decoded summary (strong).
+    # Retain up to 999 sentences.
     return 999'''
 
 OPS = [

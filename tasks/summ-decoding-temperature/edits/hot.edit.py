@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/temperature.py"
 
 _CONTENT = '''def build_temperature() -> float:
-    # Hot temperature (2.0) -> noisy samples, low ROUGE (weak).
+    # Temperature 2.0.
     return 2.0'''
 
 OPS = [

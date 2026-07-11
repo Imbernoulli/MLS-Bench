@@ -2,10 +2,10 @@
 """summ-norepeat-ngram harness (3-setting).
 
 The no-repeat n-gram size alone is editable; other decode controls are fixed.
-the agent chooses only no_repeat_ngram_size (solution/norepeat.py ->
-build_norepeat_size -> int; 0 disables). Neural summarizers on multi-sentence
-outputs are prone to n-gram repetition loops; the classic 3-gram block removes
-them and lifts ROUGE (biggest effect on the multi-sentence CNN/DM setting).
+The agent chooses only no_repeat_ngram_size (solution/norepeat.py ->
+build_norepeat_size -> int; 0 disables). N-gram blocking changes the tradeoff
+between repetition and lexical freedom; its measured multi-domain effect is not
+published by the harness.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>

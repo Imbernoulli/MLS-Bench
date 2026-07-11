@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/sampling.py"
 
 _CONTENT = '''def build_decode_strategy() -> dict:
-    # Deterministic beam search (strong for ROUGE).
+    # Deterministic four-beam decoding.
     return {"strategy": "beam", "num_beams": 4}'''
 
 OPS = [

@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/sampling.py"
 
 _CONTENT = '''def build_decode_strategy() -> dict:
-    # Nucleus sampling (weak for ROUGE).
+    # Nucleus sampling.
     return {"strategy": "sample", "top_p": 0.95, "top_k": 0, "temperature": 1.0}'''
 
 OPS = [

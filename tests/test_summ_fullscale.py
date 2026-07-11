@@ -34,6 +34,19 @@ EXPECTED = {
         "params": 406290432,
     },
 }
+VERIFIER_RUNTIME = {
+    "abstractive-summarization/common.py",
+    "abstractive-summarization/harness_beam.py",
+    "abstractive-summarization/harness_beamwidth.py",
+    "abstractive-summarization/harness_diverse.py",
+    "abstractive-summarization/harness_length.py",
+    "abstractive-summarization/harness_norepeat.py",
+    "abstractive-summarization/harness_posttrunc.py",
+    "abstractive-summarization/harness_sampling.py",
+    "abstractive-summarization/harness_source.py",
+    "abstractive-summarization/harness_temperature.py",
+    "abstractive-summarization/harness_topp.py",
+}
 
 
 def _parser():
@@ -140,6 +153,7 @@ def test_ten_siblings_share_fail_closed_parser_and_fullscale_config():
             "cnndm": 11490,
             "samsum": 819,
         }
+        assert set(config["verifier_only_package_files"]) == VERIFIER_RUNTIME
         assert len(config["test_cmds"]) == 1
         assert config["test_cmds"][0]["compute"] == 1
         assert config["test_cmds"][0]["time"] == "4:00:00"
@@ -172,6 +186,24 @@ def test_agent_scaffolds_do_not_publish_baseline_answers():
         scaffold = (task / "edits" / "custom_template.py").read_text().lower()
         for phrase in disallowed:
             assert phrase not in scaffold, f"{task.name} leaks {phrase!r}"
+
+
+def test_verifier_harnesses_do_not_publish_directional_answers():
+    disallowed = (
+        "lifts rouge",
+        "raises precision",
+        "reliably beats",
+        "drops rouge",
+        "preserves overlap",
+        "keeping 0 destroys",
+    )
+    package = ROOT / "vendor" / "abstractive-summarization"
+    searchable = "\n".join(
+        path.read_text(errors="replace").lower()
+        for path in sorted(package.glob("harness_*.py"))
+    )
+    for phrase in disallowed:
+        assert phrase not in searchable, f"verifier harness leaks {phrase!r}"
 
 
 def test_every_baseline_edit_materializes_valid_python_on_the_native_scaffold():

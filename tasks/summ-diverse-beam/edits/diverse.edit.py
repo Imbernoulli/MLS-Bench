@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/diverse.py"
 
 _CONTENT = '''def build_diverse_config() -> dict:
-    # Diverse beam search (4 groups) -> lower single-best ROUGE (weak).
+    # Four-group diverse beam decoding.
     return {"num_beams": 4, "num_beam_groups": 4, "diversity_penalty": 1.0}'''
 
 OPS = [

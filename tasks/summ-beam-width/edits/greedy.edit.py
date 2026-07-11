@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/beamwidth.py"
 
 _CONTENT = '''def build_beam_width() -> int:
-    # Greedy decoding (weak).
+    # Greedy decoding.
     return 1'''
 
 OPS = [

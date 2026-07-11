@@ -5,7 +5,7 @@ Reference: vendor/abstractive-summarization/baselines/
 _FILE = "abstractive-summarization/solution/temperature.py"
 
 _CONTENT = '''def build_temperature() -> float:
-    # Cold temperature (0.3, near-greedy) -> preserves overlap (strong).
+    # Temperature 0.3.
     return 0.3'''
 
 OPS = [

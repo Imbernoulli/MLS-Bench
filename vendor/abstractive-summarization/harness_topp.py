@@ -3,10 +3,10 @@
 
 Nucleus (top-p) CUTOFF under sampling: sampling is ON (do_sample) with a FIXED
 temperature, repetition, and per-domain length controls are fixed; the agent chooses
-only top_p (solution/topp.py -> build_top_p -> float). A WIDE nucleus (top_p ~1.0)
-samples from the full distribution and injects lexical noise that drops ROUGE; a
-TIGHT nucleus (top_p ~0.6) keeps only the high-probability core (near-greedy) and
-preserves overlap with the reference. Scores corpus ROUGE-L F1.
+only top_p (solution/topp.py -> build_top_p -> float). The cutoff changes the
+candidate probability mass while all other controls remain constant. The harness
+measures complete multi-domain corpus ROUGE-L F1 without publishing a preferred
+value or measured ordering.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>
