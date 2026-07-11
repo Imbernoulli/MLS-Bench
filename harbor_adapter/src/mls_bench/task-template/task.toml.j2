@@ -16,7 +16,7 @@ timeout_sec = {{ agent_timeout_sec }}
 timeout_sec = {{ verifier_timeout_sec }}
 
 [environment]
-allow_internet = true
+allow_internet = {{ allow_internet | lower }}
 build_timeout_sec = {{ build_timeout_sec }}
 cpus = {{ cpus }}
 memory_mb = {{ memory_mb }}
@@ -58,5 +58,5 @@ cpus = {{ cpus }}
 memory_mb = {{ memory_mb }}
 storage_mb = {{ storage_mb }}
 gpus = {{ gpus }}
-allow_internet = true
+allow_internet = {{ allow_internet | lower }}
 {% endif -%}

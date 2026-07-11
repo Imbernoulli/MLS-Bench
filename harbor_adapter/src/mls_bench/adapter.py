@@ -8,13 +8,16 @@ import json
 import math
 import os
 import re
+import shlex
 import shutil
 import stat
 import statistics
 import sys
+import tempfile
 import warnings
+from copy import deepcopy
 from dataclasses import dataclass, field
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 import tomli_w
@@ -154,7 +157,7 @@ class MlsBenchAdapter:
         mls_bench_root: Path | None = None,
         continue_on_error: bool = False,
         mangrove: bool = False,
-        gpu_backend: str = "b200",
+        gpu_backend: str = "h20",
     ):
         self.output_dir = output_dir
         self.limit = limit
@@ -306,6 +309,270 @@ def _safe_join(base: Path, rel: str, *, field: str = "path") -> Path:
 
 def _safe_rel_str(rel: str, *, field: str = "path") -> str:
     return _safe_rel_path(rel, field=field).as_posix()
+
+
+def _adapter_data_root(mb: MlsBenchRoot) -> Path:
+    configured = os.environ.get("MLSBENCH_DATA_ROOT")
+    return Path(configured).expanduser() if configured else mb.vendor_dir / "data"
+
+
+def _expand_adapter_path_template(
+    mb: MlsBenchRoot,
+    task_dir: Path,
+    value: str,
+) -> Path:
+    expanded = (
+        str(value)
+        .replace("{project_root}", str(mb.root))
+        .replace("{data_root}", str(_adapter_data_root(mb)))
+        .replace("{task_dir}", str(task_dir))
+    )
+    path = Path(expanded).expanduser()
+    return path if path.is_absolute() else mb.root / path
+
+
+def _absolute_prune_paths(config: dict, *, key: str, root: str) -> list[str]:
+    raw_paths = config.get(key) or []
+    if not isinstance(raw_paths, list):
+        raise ValueError(f"{key} must be a list of absolute paths under {root}/")
+
+    out: list[str] = []
+    for idx, raw in enumerate(raw_paths):
+        value = str(raw).strip()
+        if any(char in value for char in "\r\n\0"):
+            raise ValueError(f"{key}[{idx}] contains a control character")
+        path = PurePosixPath(value)
+        if (
+            not path.is_absolute()
+            or not value.startswith(f"{root}/")
+            or any(part in {"", ".", ".."} for part in path.parts[1:])
+        ):
+            raise ValueError(
+                f"{key}[{idx}] must be a normal absolute path below {root}/: {raw!r}"
+            )
+        out.append(shlex.quote(value))
+    return out
+
+
+def _agent_data_prune_paths(config: dict) -> list[str]:
+    return _absolute_prune_paths(config, key="agent_data_prune", root="/data")
+
+
+def _agent_image_prune_paths(config: dict) -> list[str]:
+    return _absolute_prune_paths(config, key="agent_image_prune", root="/opt")
+
+
+def _configured_package_paths(config: dict, *, key: str) -> set[str]:
+    raw_paths = config.get(key) or []
+    if not isinstance(raw_paths, list):
+        raise ValueError(f"{key} must be a list of workspace-relative package paths")
+
+    packages = _task_packages(config)
+    out: set[str] = set()
+    for idx, raw in enumerate(raw_paths):
+        rel = _safe_rel_str(str(raw).strip(), field=f"{key}[{idx}]")
+        parts = PurePosixPath(rel).parts
+        if len(parts) < 2 or not any(_same_package_name(parts[0], pkg) for pkg in packages):
+            raise ValueError(
+                f"{key}[{idx}] must name a path below a configured test package: {raw!r}"
+            )
+        out.add(rel)
+    return out
+
+
+def _verifier_only_package_paths(config: dict) -> set[str]:
+    return _configured_package_paths(config, key="verifier_only_package_files")
+
+
+def _agent_pruned_package_paths(config: dict) -> set[str]:
+    return _configured_package_paths(config, key="agent_pruned_package_files")
+
+
+def _path_is_private(rel: str, private_paths: set[str]) -> bool:
+    rel_path = PurePosixPath(rel)
+    for private in private_paths:
+        private_path = PurePosixPath(private)
+        if rel_path == private_path or private_path in rel_path.parents:
+            return True
+    return False
+
+
+def _privacy_opted_in(ctx: TaskContext, config: dict) -> bool:
+    return bool(
+        config.get("verifier_only_package_files")
+        or config.get("agent_pruned_package_files")
+        or ctx.pkg_config.get("agent_pruned_files")
+    )
+
+
+def _config_with_private_package_paths(
+    mb: MlsBenchRoot,
+    ctx: TaskContext,
+    config: dict,
+) -> dict:
+    """Return a config whose private package paths are explicit and complete.
+
+    Privacy filtering is opt-in. Once a task requests it, package-level prune
+    entries, reference directories, and unrelated sibling solution files are
+    removed from the agent scaffold. Verifier-only files are restored from the
+    private tests mount immediately before evaluation; agent-pruned files are
+    never restored.
+    """
+    out = deepcopy(config)
+    if not _privacy_opted_in(ctx, out):
+        return out
+
+    configured = list(out.get("agent_pruned_package_files") or [])
+    package_pruned = ctx.pkg_config.get("agent_pruned_files") or []
+    if not isinstance(package_pruned, list):
+        raise ValueError(
+            f"package {ctx.package!r} agent_pruned_files must be a list"
+        )
+    for idx, raw in enumerate(package_pruned):
+        subpath = _safe_rel_str(
+            str(raw).strip(), field=f"package agent_pruned_files[{idx}]"
+        )
+        configured.append(f"{ctx.package}/{subpath}")
+
+    out["agent_pruned_package_files"] = configured
+    pruned = _agent_pruned_package_paths(out)
+    public = {
+        _safe_rel_str(str(entry["filename"]), field="files[].filename")
+        for entry in out.get("files", [])
+        if entry.get("filename")
+    }
+    for idx, raw in enumerate(out.get("agent_public_package_files") or []):
+        public.add(
+            _safe_rel_str(str(raw), field=f"agent_public_package_files[{idx}]")
+        )
+
+    for package in _task_packages(out):
+        package_src = _materialized_package_source(mb, package)
+        if package_src is None:
+            raise FileNotFoundError(
+                f"privacy-filtered package source {package!r} is unavailable"
+            )
+        root = package_src.resolve()
+        for path in package_src.rglob("*"):
+            try:
+                file_stat = path.lstat()
+            except OSError:
+                continue
+            if not stat.S_ISREG(file_stat.st_mode):
+                continue
+            try:
+                path.resolve().relative_to(root)
+            except ValueError:
+                continue
+            subpath = path.relative_to(package_src)
+            if any(part in {".git", "__pycache__"} for part in subpath.parts):
+                continue
+            if path.suffix in {".pyc", ".pyo"}:
+                continue
+
+            rel = f"{package}/{subpath.as_posix()}"
+            is_reference = any(part in {"anchors", "baselines"} for part in subpath.parts)
+            is_sibling_solution = (
+                bool(subpath.parts)
+                and subpath.parts[0] == "solution"
+                and rel not in public
+            )
+            if is_reference or is_sibling_solution:
+                pruned.add(rel)
+
+    out["agent_pruned_package_files"] = sorted(pruned)
+    return out
+
+
+def _stage_verifier_data_deps(
+    mb: MlsBenchRoot,
+    task_dir: Path,
+    meta: Path,
+    config: dict,
+) -> None:
+    deps = config.get("verifier_data_deps") or []
+    if not isinstance(deps, list):
+        raise ValueError("verifier_data_deps must be a list")
+
+    for idx, dep in enumerate(deps):
+        if not isinstance(dep, dict):
+            raise ValueError(f"verifier_data_deps[{idx}] must be an object")
+        host_path = dep.get("host_path")
+        destination = dep.get("dest")
+        if not host_path or not destination:
+            raise ValueError(
+                f"verifier_data_deps[{idx}] must define host_path and dest"
+            )
+        source = _expand_adapter_path_template(mb, task_dir, str(host_path))
+        dest = _safe_join(
+            meta, str(destination), field=f"verifier_data_deps[{idx}].dest"
+        )
+        if not source.exists():
+            message = (
+                f"verifier data dependency {dep.get('name', idx)!r} is missing at "
+                f"{source}; prepare it in the pinned image before rendering"
+            )
+            if bool(dep.get("required", True)):
+                raise FileNotFoundError(message)
+            _warn(message)
+            continue
+        if source.is_dir():
+            shutil.copytree(
+                source,
+                dest,
+                dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+            )
+        else:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source, dest)
+
+
+def _stage_verifier_only_package_files(
+    mb: MlsBenchRoot,
+    ctx: TaskContext,
+    meta: Path,
+    config: dict,
+) -> None:
+    verifier_paths = _verifier_only_package_paths(config)
+    if not verifier_paths:
+        return
+
+    # Re-materialize the post-mid-edit workspace without removing the files
+    # that must be private. This preserves task-specific harness edits instead
+    # of silently restoring a stale copy from the package source.
+    staging_config = deepcopy(config)
+    staging_config["verifier_only_package_files"] = []
+    with tempfile.TemporaryDirectory(prefix="mlsbench-verifier-package-") as temp:
+        staged_root = Path(temp)
+        _stage_task_scaffold(
+            mb,
+            ctx,
+            staged_root,
+            config=staging_config,
+            force_clean_scaffold=True,
+        )
+        destination_root = meta / "verifier_package_files"
+        for rel in sorted(verifier_paths):
+            source = _safe_join(staged_root, rel, field="verifier_only_package_files")
+            if not source.exists():
+                raise FileNotFoundError(
+                    f"verifier-only package path {rel!r} is absent from the "
+                    "task-materialized workspace"
+                )
+            destination = _safe_join(
+                destination_root, rel, field="verifier_only_package_files"
+            )
+            if source.is_dir():
+                shutil.copytree(
+                    source,
+                    destination,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+                )
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(source, destination)
 
 
 def _op_file_matches(op: dict, target_file: str) -> bool:
@@ -715,16 +982,49 @@ PREBUILT_DOCKER = "bohanlyu2022/mlsbench-{pkg}:latest"
 # pristine package source, mlsbench src, and any data deps. See
 # harbor_adapter/scripts/build_base_image.py.
 HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
-# Internal registry for Mangrove (K8s can't reach Docker Hub directly).
-# Volces has ALL images and K8s build pods already use it for built images.
-HARBOR_BASE_DOCKER_INTERNAL = "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-{pkg}:latest"
+MANGROVE_CPU_ONLY_MIN_CPUS = 8
+MANGROVE_CPU_ONLY_MEMORY_MB = 64 * 1024
+MANGROVE_GPU_MIN_MEMORY_MB = 128 * 1024
+MANGROVE_GPU_MEMORY_PER_GPU_MB = 96 * 1024
+MANGROVE_CPUS_PER_GPU = 8
+MANGROVE_CPU_STORAGE_MB = 40 * 1024
+MANGROVE_GPU_STORAGE_MB = 80 * 1024
+MANGROVE_MAX_GPUS_PER_TASK = 4
+MANGROVE_AGENT_TIMEOUT_SEC = 1800
+_PINNED_IMAGE_RE = re.compile(r"^[^\s]+@sha256:[0-9a-f]{64}$")
 
 
-def _base_image(pkg: str, mangrove: bool) -> str:
+def _base_image(pkg: str, mangrove: bool, pkg_config: dict | None = None) -> str:
     """Return the FROM image for the per-task Dockerfile."""
     if not mangrove:
         return HARBOR_BASE_DOCKER.format(pkg=pkg)
-    return HARBOR_BASE_DOCKER_INTERNAL.format(pkg=pkg)
+
+    config = pkg_config or {}
+    configured = {
+        str(value).strip()
+        for value in (
+            config.get("mangrove_base_image"),
+            config.get("pinned_harbor_image"),
+        )
+        if value
+    }
+    if not configured:
+        raise ValueError(
+            f"package {pkg!r} must define mangrove_base_image or "
+            "pinned_harbor_image with an immutable @sha256 digest; refusing "
+            "the mutable :latest fallback"
+        )
+    if len(configured) != 1:
+        raise ValueError(
+            f"package {pkg!r} defines conflicting pinned Mangrove images: "
+            f"{sorted(configured)}"
+        )
+    image = configured.pop()
+    if not _PINNED_IMAGE_RE.fullmatch(image):
+        raise ValueError(
+            f"package {pkg!r} Mangrove image must be pinned by @sha256: {image!r}"
+        )
+    return image
 
 
 def _harbor_safe_name(task_id: str) -> str:
@@ -733,15 +1033,14 @@ def _harbor_safe_name(task_id: str) -> str:
 
 
 def _agent_timeout_sec(config: dict) -> int:
-    # The agent only edits; eval runs in the verifier. Use a flat cap proportional
-    # to the visible eval time so harder tasks get longer to think, bounded
-    # to keep cloud bills sane.
-    visible_total = sum(
+    # Every configured setting participates in assessment. Legacy disclosure
+    # metadata must not alter the agent budget.
+    eval_total = sum(
         _parse_time(tc.get("time", "0:30:00"))
-        for tc in config.get("test_cmds", []) if not tc.get("hidden")
+        for tc in config.get("test_cmds", [])
     )
     # 30 min minimum, 0.5× of eval time as the heuristic, 4h hard cap.
-    return max(30 * 60, min(4 * 3600, visible_total // 2 or 30 * 60))
+    return max(30 * 60, min(4 * 3600, eval_total // 2 or 30 * 60))
 
 
 def _group_test_cmds(test_cmds: list[dict]) -> dict[int, list[dict]]:
@@ -773,17 +1072,16 @@ def _seed_count(config: dict) -> int:
         return 1
 
 
-def _verifier_timeout_sec(config: dict) -> int:
-    # Groups run sequentially, while all (test_cmd, seed) jobs inside a group
-    # run in parallel subject to bin-packing. Charge wall time by each group's
-    # slowest member; budget-check headroom still scales per test_cmd and seed.
+def _verifier_timeout_sec(config: dict, *, serial: bool = False) -> int:
     test_cmds = list(config.get("test_cmds", []) or [])
-    grouped = _group_test_cmds(test_cmds)
-    total = sum(
-        max(_parse_time(tc.get("time", "0:30:00")) for tc in entries)
-        for entries in grouped.values()
-    )
     n_seeds = _seed_count(config)
+    if serial:
+        total = sum(_parse_time(tc.get("time", "0:30:00")) for tc in test_cmds) * n_seeds
+    else:
+        total = sum(
+            max(_parse_time(tc.get("time", "0:30:00")) for tc in entries)
+            for entries in _group_test_cmds(test_cmds).values()
+        )
     return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
 
 
@@ -815,24 +1113,51 @@ def _resources(pkg_config: dict, config: dict) -> dict:
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
-def _mangrove_resources(pkg_config: dict, config: dict,
-                        gpu_backend: str = "b200") -> dict:
+def _mangrove_cpus(gpus: int) -> int:
+    if gpus <= 0:
+        return MANGROVE_CPU_ONLY_MIN_CPUS
+    return max(MANGROVE_CPU_ONLY_MIN_CPUS, MANGROVE_CPUS_PER_GPU * gpus)
+
+
+def _mangrove_memory_mb(gpus: int, requested_mem_mb: int) -> int:
+    if gpus <= 0:
+        return max(MANGROVE_CPU_ONLY_MEMORY_MB, requested_mem_mb)
+    return max(
+        MANGROVE_GPU_MIN_MEMORY_MB,
+        MANGROVE_GPU_MEMORY_PER_GPU_MB * gpus,
+        requested_mem_mb,
+    )
+
+
+def _mangrove_resources(
+    pkg_config: dict,
+    config: dict,
+    gpu_backend: str = "h20",
+) -> dict:
     """Compute GPU-targeted resource allocation for Mangrove.
 
     gpu_backend controls which hardware pool to target:
-      - "b200" (default): B200-MIG-1g.23gb slices for compute ≤ 1, full B200
+      - "b200": B200-MIG-1g.23gb slices for compute <= 1, full B200
         cards for compute ≥ 2. Requires torch 2.7.0 upgrade for sm_100.
-      - "h20": H20 whole cards (96 GB, SM 90). No torch upgrade needed;
-        existing base-image torch works as-is. Each GPU task gets 1 H20;
-        multi-GPU tasks get ceil(compute) H20s.
+      - "h20" (default): H20 whole cards (96 GB, SM 90). The pinned image
+        must already contain the runtime; per-task verification never installs
+        a replacement torch build.
     """
+    if gpu_backend not in {"h20", "b200"}:
+        raise ValueError(f"unsupported Mangrove GPU backend: {gpu_backend!r}")
     test_cmds = list(config.get("test_cmds", []) or [])
     max_compute = max((_test_cmd_compute(tc) for tc in test_cmds), default=0.0)
+    requested_mem_mb = max(
+        (int(math.ceil(float(tc.get("mem", 0) or 0))) * 1024 for tc in test_cmds),
+        default=0,
+    )
 
     # Explicit use_cuda=False → no GPU regardless of compute values.
     if config.get("use_cuda") is False or pkg_config.get("use_cuda") is False:
         return dict(
-            cpus=4, memory_mb=8 * 1024, storage_mb=30 * 1024,
+            cpus=_mangrove_cpus(0),
+            memory_mb=_mangrove_memory_mb(0, requested_mem_mb),
+            storage_mb=MANGROVE_CPU_STORAGE_MB,
             gpus=0, gpu_types=[], batch_size_multiplier=1,
         )
 
@@ -845,34 +1170,45 @@ def _mangrove_resources(pkg_config: dict, config: dict,
 
     if all_zero and not use_cuda:
         return dict(
-            cpus=4, memory_mb=8 * 1024, storage_mb=30 * 1024,
+            cpus=_mangrove_cpus(0),
+            memory_mb=_mangrove_memory_mb(0, requested_mem_mb),
+            storage_mb=MANGROVE_CPU_STORAGE_MB,
             gpus=0, gpu_types=[], batch_size_multiplier=1,
         )
 
     # ---- H20 backend ----
     if gpu_backend == "h20":
-        # H20 ≈ H100 performance, 96 GB VRAM, SM 90.
-        # GPU count = peak parallel demand across groups (same as _resources).
-        n_seeds = _seed_count(config)
-        peak_gpus = 0
-        for entries in _group_test_cmds(test_cmds).values():
-            whole_per_seed = 0
-            fractional_per_seed = 0.0
-            for tc in entries:
-                compute = _test_cmd_compute(tc)
-                if compute >= 1.0:
-                    whole_per_seed += max(1, math.ceil(compute))
-                elif compute > 0.0:
-                    fractional_per_seed += compute
-            total_whole = n_seeds * whole_per_seed
-            total_fractional = n_seeds * fractional_per_seed
-            peak_gpus = max(
-                peak_gpus,
-                total_whole + max(0, math.ceil(total_fractional)),
-            )
+        serial = config.get("_verifier_serial") is True
+        if serial:
+            peak_gpus = max(1, math.ceil(max_compute)) if (use_cuda or not all_zero) else 0
+        else:
+            n_seeds = _seed_count(config)
+            peak_gpus = 0
+            for entries in _group_test_cmds(test_cmds).values():
+                whole_per_seed = 0
+                fractional_per_seed = 0.0
+                for tc in entries:
+                    compute = _test_cmd_compute(tc)
+                    if compute >= 1.0:
+                        whole_per_seed += max(1, math.ceil(compute))
+                    elif compute > 0.0:
+                        fractional_per_seed += compute
+                peak_gpus = max(
+                    peak_gpus,
+                    n_seeds * whole_per_seed
+                    + max(0, math.ceil(n_seeds * fractional_per_seed)),
+                )
         gpus = max(1, peak_gpus) if (use_cuda or not all_zero) else 0
+        if gpus > MANGROVE_MAX_GPUS_PER_TASK:
+            raise ValueError(
+                f"Mangrove task requires {gpus} H20 GPUs, above the "
+                f"{MANGROVE_MAX_GPUS_PER_TASK}-GPU task cap; set "
+                "_verifier_serial=true when settings can run in waves"
+            )
         return dict(
-            cpus=4, memory_mb=32 * 1024, storage_mb=60 * 1024,
+            cpus=_mangrove_cpus(gpus),
+            memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
+            storage_mb=MANGROVE_GPU_STORAGE_MB,
             gpus=gpus, gpu_types=["H20"], batch_size_multiplier=1,
         )
 
@@ -891,7 +1227,9 @@ def _mangrove_resources(pkg_config: dict, config: dict,
             peak_h100_equiv = max(peak_h100_equiv, n_seeds * group_h100_equiv)
         gpus = max(1, math.ceil(peak_h100_equiv / gpu_cap))
         return dict(
-            cpus=4, memory_mb=32 * 1024, storage_mb=60 * 1024,
+            cpus=_mangrove_cpus(gpus),
+            memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
+            storage_mb=MANGROVE_GPU_STORAGE_MB,
             gpus=gpus, gpu_types=["B200"], batch_size_multiplier=2,
             gpu_compute_cap=gpu_cap,
         )
@@ -908,7 +1246,9 @@ def _mangrove_resources(pkg_config: dict, config: dict,
     gpus = max(1, peak_experiments) if (peak_experiments or use_cuda) else 0
 
     return dict(
-        cpus=4, memory_mb=32 * 1024, storage_mb=40 * 1024,
+        cpus=_mangrove_cpus(gpus),
+        memory_mb=_mangrove_memory_mb(gpus, requested_mem_mb),
+        storage_mb=MANGROVE_GPU_STORAGE_MB,
         gpus=gpus, gpu_types=["B200-MIG-1g.23gb"], batch_size_multiplier=1,
     )
 
@@ -956,7 +1296,7 @@ def render_task(
     out_root: Path,
     overwrite: bool = False,
     mangrove: bool = False,
-    gpu_backend: str = "b200",
+    gpu_backend: str = "h20",
 ) -> Path:
     if mangrove:
         out_dir = out_root / ctx.task_id
@@ -976,13 +1316,27 @@ def render_task(
     else:
         res = _resources(ctx.pkg_config, ctx.config)
     effective_config = _config_with_shifted_edit_ranges(mb, ctx)
+    effective_config = _config_with_private_package_paths(mb, ctx, effective_config)
+    private_paths = (
+        _verifier_only_package_paths(effective_config)
+        | _agent_pruned_package_paths(effective_config)
+    )
+    clean_scaffold_packages = (
+        sorted(
+            set(
+                _task_packages(effective_config)
+                + ([ctx.package] if ctx.package else [])
+            )
+        )
+        if private_paths
+        else []
+    )
 
-    visible_test_cmds = list(effective_config.get("test_cmds", []))
     baseline_sections, baseline_warnings = _baseline_sections(mb, ctx, config=effective_config)
     read_sections, read_warnings = _read_sections(mb, ctx, config=effective_config)
 
-    # Mangrove overrides: 10-min agent timeout, no internet, GPU types.
-    agent_timeout = 1800 if mangrove else _agent_timeout_sec(ctx.config)
+    # Mangrove overrides: bounded agent timeout, no internet, H20 resources.
+    agent_timeout = MANGROVE_AGENT_TIMEOUT_SEC if mangrove else _agent_timeout_sec(ctx.config)
     allow_internet = False if mangrove else True
     gpu_types = res.get("gpu_types", []) if mangrove else []
     batch_size_multiplier = res.get("batch_size_multiplier", 1) if mangrove else 1
@@ -996,11 +1350,17 @@ def render_task(
         "task_description": ctx.task_description,
         "package": ctx.package,
         "workdir": pkg_workdir,
-        "base_image": _base_image(ctx.package.lower(), mangrove),
+        "base_image": _base_image(ctx.package.lower(), mangrove, ctx.pkg_config),
         "pkg_base_image": ctx.pkg_config.get("base_image", "python:3.11"),
         "pkg_install_cmds": ctx.pkg_config.get("install_cmds") or [],
+        "agent_image_prune_paths": _agent_image_prune_paths(effective_config),
+        "agent_data_prune_paths": _agent_data_prune_paths(effective_config),
+        "clean_scaffold_packages": clean_scaffold_packages,
         "agent_timeout_sec": agent_timeout,
-        "verifier_timeout_sec": _verifier_timeout_sec(ctx.config) * (3 if mangrove else 1),
+        "verifier_timeout_sec": _verifier_timeout_sec(
+            ctx.config,
+            serial=ctx.config.get("_verifier_serial") is True,
+        ) * (3 if mangrove and gpu_backend != "h20" else 1),
         "build_timeout_sec": 3600,
         "cpus": res["cpus"],
         "memory_mb": res["memory_mb"],
@@ -1016,7 +1376,6 @@ def render_task(
         "tags": _domain_tags(ctx.task_id),
         "editable_files": _editable_files_view(effective_config),
         "extra_readable_files": _readable_only_files(effective_config),
-        "visible_test_cmds": visible_test_cmds,
         "has_budget_check": _has_budget_check(task_dir),
         "budget_multiplier": _budget_multiplier(task_dir),
         "baseline_name": ctx.chosen_baseline or "noop",
@@ -1044,7 +1403,12 @@ def render_task(
     # mid_edit `create` scaffolding files the agent needs at workspace start.
     env_dir = out_dir / "environment"
     env_dir.mkdir()
-    scaffold_files = _stage_task_scaffold(mb, ctx, env_dir / "_scaffold")
+    scaffold_files = _stage_task_scaffold(
+        mb,
+        ctx,
+        env_dir / "_scaffold",
+        config=effective_config,
+    )
     (env_dir / "Dockerfile").write_text(
         env.get_template("environment/Dockerfile.j2").render(
             **template_ctx,
@@ -1060,7 +1424,7 @@ def render_task(
     # comes from `_resources()` which honors both task config's `use_cuda`
     # and the package config's `use_cuda` flag.
     gpus_int = int(res.get("gpus") or 0)
-    if gpus_int > 0:
+    if gpus_int > 0 and not mangrove:
         (env_dir / "docker-compose.yaml").write_text(
             "services:\n"
             "  main:\n"
@@ -1097,7 +1461,7 @@ def render_task(
         mb, ctx, tests_dir, task_dir,
         scaffold_dir=env_dir / "_scaffold",
         config=effective_config,
-        skip_pristine=mangrove,
+        mangrove=mangrove,
         gpu_backend=gpu_backend,
     )
 
@@ -1187,6 +1551,8 @@ def _stage_task_scaffold(
     mb: MlsBenchRoot,
     ctx: TaskContext,
     scaffold_dst: Path,
+    config: dict | None = None,
+    force_clean_scaffold: bool = False,
 ) -> list[str]:
     """Stage the task's mid_edit ops as a tree of final files under
     `scaffold_dst/<workdir-relative-path>`.
@@ -1206,6 +1572,23 @@ def _stage_task_scaffold(
     task_dir = mb.tasks_dir / ctx.task_id
     mid_edit = task_dir / "edits" / "mid_edit.py"
     ops = _load_ops_file(mid_edit) if mid_edit.exists() else []
+    config = config or ctx.config
+    private_paths = (
+        _verifier_only_package_paths(config)
+        | _agent_pruned_package_paths(config)
+    )
+    clean_scaffold = bool(private_paths) or force_clean_scaffold
+
+    def _remove_private_paths(package: str, destination: Path) -> None:
+        for rel in sorted(private_paths):
+            rel_path = PurePosixPath(rel)
+            if not rel_path.parts or not _same_package_name(rel_path.parts[0], package):
+                continue
+            private_destination = destination / Path(*rel_path.parts[1:])
+            if private_destination.is_dir() and not private_destination.is_symlink():
+                shutil.rmtree(private_destination)
+            elif private_destination.exists() or private_destination.is_symlink():
+                private_destination.unlink()
 
     # Cache target-file text per rel path so multiple ops on the same file
     # apply in sequence (matches native BaseAgent.apply_mid_edit semantics).
@@ -1214,7 +1597,7 @@ def _stage_task_scaffold(
     def _load_target(rel: str) -> list[str] | None:
         if rel in file_texts:
             return file_texts[rel]
-        pkg = _package_from_rel(ctx.config, ctx.package, rel)
+        pkg = _package_from_rel(config, ctx.package, rel)
         pkg_src_path = _materialized_package_source(mb, pkg)
         if pkg_src_path is None:
             return None
@@ -1226,6 +1609,35 @@ def _stage_task_scaffold(
         return file_texts[rel]
 
     created: list[str] = []
+
+    packages = list(_task_packages(config))
+    if ctx.package and not any(_same_package_name(ctx.package, pkg) for pkg in packages):
+        packages.append(ctx.package)
+
+    if clean_scaffold:
+        # A privacy-filtered task cannot inherit an opaque package tree from a
+        # lower image layer. Materialize the full reviewed package, remove all
+        # private paths, and let the Dockerfile replace the old tree atomically.
+        for package in packages:
+            package_source = _materialized_package_source(mb, package)
+            if package_source is None:
+                raise FileNotFoundError(
+                    f"privacy-filtered package source {package!r} is unavailable"
+                )
+            destination = scaffold_dst / package
+            if destination.exists():
+                shutil.rmtree(destination)
+            shutil.copytree(
+                package_source,
+                destination,
+                ignore=shutil.ignore_patterns(
+                    ".git", "__pycache__", "*.pyc", "*.pyo"
+                ),
+                symlinks=False,
+                ignore_dangling_symlinks=True,
+            )
+            _remove_private_paths(package, destination)
+            created.append(package)
 
     for op in ops:
         kind = op.get("op")
@@ -1282,37 +1694,43 @@ def _stage_task_scaffold(
         else:
             _warn(f"{ctx.task_id}: unknown mid_edit op kind {kind!r} on {rel!r}; skipping")
 
-    for pkg in _task_packages(ctx.config):
-        if _same_package_name(pkg, ctx.package):
-            continue
-        pkg_src = _materialized_package_source(mb, pkg)
-        if pkg_src is None:
-            _warn(
-                f"{ctx.task_id}: secondary package {pkg!r} not found in vendor source; "
-                "multi-package workspace fidelity reduced"
-            )
-            continue
-        dst = scaffold_dst / pkg
-        if dst.exists():
-            shutil.rmtree(dst)
-        try:
-            shutil.copytree(
-                pkg_src,
-                dst,
-                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
-                symlinks=False,
-                ignore_dangling_symlinks=True,
-            )
-        except shutil.Error as exc:
-            _warn(
-                f"{ctx.task_id}: secondary package {pkg!r} copytree had "
-                f"{len(exc.args[0])} non-fatal error(s); continuing"
-            )
-        created.append(pkg)
+    if not clean_scaffold:
+        for pkg in _task_packages(config):
+            if _same_package_name(pkg, ctx.package):
+                continue
+            pkg_src = _materialized_package_source(mb, pkg)
+            if pkg_src is None:
+                _warn(
+                    f"{ctx.task_id}: secondary package {pkg!r} not found in vendor source; "
+                    "multi-package workspace fidelity reduced"
+                )
+                continue
+            dst = scaffold_dst / pkg
+            if dst.exists():
+                shutil.rmtree(dst)
+            try:
+                shutil.copytree(
+                    pkg_src,
+                    dst,
+                    ignore=shutil.ignore_patterns(
+                        ".git", "__pycache__", "*.pyc", "*.pyo"
+                    ),
+                    symlinks=False,
+                    ignore_dangling_symlinks=True,
+                )
+            except shutil.Error as exc:
+                _warn(
+                    f"{ctx.task_id}: secondary package {pkg!r} copytree had "
+                    f"{len(exc.args[0])} non-fatal error(s); continuing"
+                )
+            created.append(pkg)
 
     # Materialize everything we touched into scaffold_dst.
     for rel, lines in file_texts.items():
         try:
+            rel = _safe_rel_str(rel, field="mid_edit file")
+            if _path_is_private(rel, private_paths):
+                continue
             dst = _safe_join(scaffold_dst, rel, field="mid_edit file")
         except ValueError as exc:
             _warn(f"{ctx.task_id}: skipping unsafe scaffold path {rel!r}: {exc}")
@@ -1326,7 +1744,13 @@ def _stage_task_scaffold(
             task_id=ctx.task_id,
         )
         dst.write_text(text)
-        created.append(_safe_rel_str(rel, field="mid_edit file"))
+        created.append(rel)
+
+    if clean_scaffold:
+        for package in packages:
+            destination = scaffold_dst / package
+            if destination.exists():
+                _remove_private_paths(package, destination)
     return created
 
 
@@ -1462,7 +1886,8 @@ def _stage_verifier_assets(
     scaffold_dir: Path,
     config: dict | None = None,
     skip_pristine: bool = False,
-    gpu_backend: str = "b200",
+    mangrove: bool = False,
+    gpu_backend: str = "h20",
 ) -> None:
     """Stage the per-task verifier-only files under tests/.
 
@@ -1489,10 +1914,11 @@ def _stage_verifier_assets(
         src = task_dir / fname
         if src.exists():
             shutil.copy2(src, meta / fname)
-    cfg_to_write = config if config is not None else ctx.config
-    if skip_pristine:  # mangrove mode: 3x per-cmd time (MIG slower than H100)
-        import copy as _copy
-        cfg_to_write = _copy.deepcopy(cfg_to_write)
+    cfg_to_write = deepcopy(config if config is not None else ctx.config)
+    for test_cmd in cfg_to_write.get("test_cmds", []):
+        test_cmd.pop("hidden", None)
+    mangrove_mode = mangrove or skip_pristine
+    if mangrove_mode and gpu_backend != "h20":
         for tc in cfg_to_write.get("test_cmds", []):
             raw = tc.get("time")
             if raw:
@@ -1503,11 +1929,13 @@ def _stage_verifier_assets(
     )
     if (task_dir / "budget_check.py").exists():
         shutil.copy2(task_dir / "budget_check.py", meta / "budget_check.py")
+    _stage_verifier_data_deps(mb, task_dir, meta, cfg_to_write)
+    _stage_verifier_only_package_files(mb, ctx, meta, cfg_to_write)
     (meta / "task_id").write_text(ctx.task_id + "\n")
     (meta / "package").write_text(ctx.package + "\n")
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
     cfg = config if config is not None else ctx.config
-    if skip_pristine:
+    if mangrove_mode:
         res_for_gpu = _mangrove_resources(ctx.pkg_config, cfg, gpu_backend=gpu_backend)
     else:
         res_for_gpu = _resources(ctx.pkg_config, cfg)
@@ -1527,20 +1955,35 @@ def _stage_verifier_assets(
 
     edits_src = task_dir / "edits"
     if edits_src.exists():
-        shutil.copytree(edits_src, meta / "edits", dirs_exist_ok=True)
+        shutil.copytree(
+            edits_src,
+            meta / "edits",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
 
     scripts_src = task_dir / "scripts"
     if scripts_src.exists():
-        shutil.copytree(scripts_src, meta / "scripts", dirs_exist_ok=True)
+        shutil.copytree(
+            scripts_src,
+            meta / "scripts",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
 
     # Eval scripts.
     if scripts_src.exists():
-        shutil.copytree(scripts_src, tests_dir / "eval" / "scripts", dirs_exist_ok=True)
+        shutil.copytree(
+            scripts_src,
+            tests_dir / "eval" / "scripts",
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+        )
 
     # Mangrove B200 adaptation: halve GPU counts and double batch sizes in
     # eval scripts.  B200 ≈ 2× H100, so we run with half the physical GPUs.
     # Skip for H20 — it's ≈ H100 so original scripts work as-is.
-    if skip_pristine and gpu_backend != "h20":  # mangrove B200 mode
+    if mangrove_mode and gpu_backend != "h20":  # Mangrove B200 mode
         _adapt_scripts_for_b200(tests_dir / "eval" / "scripts")
         _adapt_scripts_for_b200(meta / "scripts")
 
@@ -1617,6 +2060,17 @@ def _stage_pristine_assets(
             rel = fp.relative_to(scaffold_dir).as_posix()
             scaffold_index[rel] = fp
 
+    manifest_mode = str(config.get("pristine_manifest_mode", "package")).lower()
+    if manifest_mode not in {"package", "scaffold"}:
+        raise ValueError(
+            f"unsupported pristine_manifest_mode={manifest_mode!r} for "
+            f"{ctx.task_id!r}; expected 'package' or 'scaffold'"
+        )
+    private_paths = (
+        _verifier_only_package_paths(config)
+        | _agent_pruned_package_paths(config)
+    )
+
     declared_files = {
         _safe_rel_str(str(f["filename"]), field="files[].filename")
         for f in config.get("files", [])
@@ -1629,7 +2083,7 @@ def _stage_pristine_assets(
         return hashlib.sha256(b).hexdigest()
 
     def _emit(rel: str, content_bytes: bytes) -> None:
-        if rel in seen_rel:
+        if rel in seen_rel or _path_is_private(rel, private_paths):
             return
         seen_rel.add(rel)
         manifest[rel] = _hash_bytes(content_bytes)
@@ -1641,51 +2095,38 @@ def _stage_pristine_assets(
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_bytes(content_bytes)
 
-    for pkg in packages:
-        pkg_src = _materialized_package_source(mb, pkg)
-        if pkg_src is None:
-            # Fail loudly: a missing pkg src means the manifest under-covers
-            # that package; agent edits to non-declared files inside it
-            # would not trigger a guard violation. Caller can decide whether
-            # to abort. We raise so render fails fast.
-            raise FileNotFoundError(
-                f"_stage_pristine_assets: package source for {pkg!r} not found "
-                f"under vendor/ or vendor/external_packages/; cannot produce a "
-                f"complete pristine_manifest.json for task {ctx.task_id!r}. "
-                f"Either fetch the package or remove it from this task's "
-                f"test_cmds[].package list."
-            )
-        pkg_src_resolved = pkg_src.resolve()
-        for fp in pkg_src.rglob("*"):
-            # Use lstat to NOT follow symlinks — a vendored package might
-            # contain a symlink pointing into /etc, /proc, or a giant data
-            # blob; hashing the target would either leak or OOM render.
-            try:
-                st = fp.lstat()
-            except OSError:
-                continue
-            import stat as _stat
-            if not _stat.S_ISREG(st.st_mode):
-                continue  # skip symlinks, sockets, FIFOs, block devices, etc.
-            # Defensive: confirm the resolved path is still inside pkg_src.
-            try:
-                fp.resolve().relative_to(pkg_src_resolved)
-            except ValueError:
-                continue
-            # Skip metadata noise that's never part of agent-visible workspace.
-            if any(part in (".git", "__pycache__") for part in fp.relative_to(pkg_src).parts):
-                continue
-            if fp.suffix in (".pyc", ".pyo"):
-                continue
-            sub = fp.relative_to(pkg_src).as_posix()
-            rel = f"{pkg}/{sub}" if sub else pkg
-            # Scaffold overrides source on a per-file basis.
-            scaffold_fp = scaffold_index.get(rel)
-            if scaffold_fp is not None:
-                _emit(rel, scaffold_fp.read_bytes())
-            else:
+    if manifest_mode == "package":
+        for pkg in packages:
+            pkg_src = _materialized_package_source(mb, pkg)
+            if pkg_src is None:
+                raise FileNotFoundError(
+                    f"_stage_pristine_assets: package source for {pkg!r} not found; "
+                    f"cannot guard task {ctx.task_id!r}"
+                )
+            pkg_src_resolved = pkg_src.resolve()
+            for fp in pkg_src.rglob("*"):
                 try:
-                    _emit(rel, fp.read_bytes())
+                    st = fp.lstat()
+                except OSError:
+                    continue
+                if not stat.S_ISREG(st.st_mode):
+                    continue
+                try:
+                    fp.resolve().relative_to(pkg_src_resolved)
+                except ValueError:
+                    continue
+                subpath = fp.relative_to(pkg_src)
+                if any(part in {".git", "__pycache__"} for part in subpath.parts):
+                    continue
+                if fp.suffix in {".pyc", ".pyo"}:
+                    continue
+                rel = f"{pkg}/{subpath.as_posix()}"
+                scaffold_fp = scaffold_index.get(rel)
+                try:
+                    _emit(
+                        rel,
+                        scaffold_fp.read_bytes() if scaffold_fp is not None else fp.read_bytes(),
+                    )
                 except OSError:
                     continue
 
@@ -1698,6 +2139,13 @@ def _stage_pristine_assets(
             _emit(rel, fp.read_bytes())
         except OSError:
             continue
+
+    missing_declared = declared_files - seen_rel
+    if missing_declared:
+        raise FileNotFoundError(
+            f"{ctx.task_id}: pristine baseline is missing declared file(s): "
+            f"{sorted(missing_declared)}"
+        )
 
     if not manifest:
         return  # nothing to guard (e.g. tasks with no guarded files)

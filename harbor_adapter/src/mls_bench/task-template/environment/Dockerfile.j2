@@ -24,7 +24,18 @@ RUN pip install --no-cache-dir torch==2.7.0 torchvision --index-url https://down
 ENV BATCH_SIZE_MULTIPLIER={{ batch_size_multiplier }}
 {%- endif %}
 
-{% if scaffold_files -%}
+{% if agent_image_prune_paths -%}
+RUN rm -rf{% for path in agent_image_prune_paths %} {{ path }}{% endfor %}
+{%- endif %}
+
+{% if agent_data_prune_paths -%}
+RUN rm -rf{% for path in agent_data_prune_paths %} {{ path }}{% endfor %}
+{%- endif %}
+
+{% for pkg in clean_scaffold_packages -%}
+RUN rm -rf {{ workdir }}/{{ pkg }}
+{% endfor -%}
+{% if scaffold_files or clean_scaffold_packages -%}
 COPY _scaffold/ {{ workdir }}/
 {%- endif %}
 

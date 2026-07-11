@@ -46,8 +46,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--continue-on-error", action="store_true",
                    help="Skip tasks that fail to render instead of aborting.")
     p.add_argument("--mangrove", action="store_true",
-                   help="Render for the Mangrove platform with B300 GPU types, "
-                        "10-min agent timeout, and no internet.")
+                   help="Render for Mangrove with a digest-pinned image, "
+                        "no internet, and the selected GPU backend.")
+    p.add_argument(
+        "--gpu-backend",
+        choices=["h20", "b200"],
+        default="h20",
+        help="Mangrove GPU backend. Defaults to h20; b200 is explicit opt-in.",
+    )
     args = p.parse_args(argv)
 
     adapter = MlsBenchAdapter(
@@ -58,6 +64,7 @@ def main(argv: list[str] | None = None) -> int:
         mls_bench_root=args.mls_bench_root,
         continue_on_error=args.continue_on_error,
         mangrove=args.mangrove,
+        gpu_backend=args.gpu_backend,
     )
     try:
         result = adapter.run()
