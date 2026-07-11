@@ -4,10 +4,10 @@
 # num_beams=1, temperature=1.0 FIXED) restricted to the agent's NUCLEUS (top-p)
 # (solution/nucleus.py -> build_top_p), then score corpus SARI per setting (higher
 # is better).
-set -e
-export CUDA_VISIBLE_DEVICES=0
+set -euo pipefail
+trap 'rc=$?; if [[ ${rc} -ne 0 ]]; then printf "VERIFICATION_FAILED text-simplification rc=%s\\n" "${rc}" >&2; fi' EXIT
 cd /workspace/text-simplification
 
 python harness_nucleus.py \
     --solution solution/nucleus.py \
-    --seed ${SEED:-42}
+    --seed "${SEED:-42}"

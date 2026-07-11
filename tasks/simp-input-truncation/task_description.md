@@ -1,49 +1,33 @@
-# Text Simplification: Encoder-Side Input-Truncation Budget
+# Simplification Input Budget
 
 ## Research Question
-Given a FROZEN small pretrained sentence-simplification model
-(`mrm8488/t5-base-finetuned-turk-text-simplification`) decoded under a FIXED strong
-beam-search config (`num_beams=5`, `no_repeat_ngram_size=3`,
-`length_penalty=1.0`, `max_length=128` all FIXED), how should the **encoder-side
-input-truncation budget** (the tokenizer's `max_length` / `truncation=True` applied
-to the SOURCE before encoding — NOT the decoder-side generation length) be set to
-maximize simplification quality (corpus **SARI**) across three distinct test sets?
+Evaluate the encoder-side input token budget for a frozen text-simplification pipeline. The same implementation
+is evaluated on complete official test partitions; human references are
+available only to the verifier.
 
-## Background
-Sentence simplification rewrites a complex sentence into a simpler,
-meaning-preserving one, scored by **SARI** (Xu et al. 2016):
-`SARI = (F1_add + F1_keep + P_del)/3` over n=1..4. Text-simplification sources are
-short sentences (mean ~15-25 words for asset/turk; WikiAuto sources run longer, up
-to 80 words = 100+ subword tokens): an AGGRESSIVELY SHORT input budget silently
-drops the tail of longer sources before the model ever sees it, and the model then
-has no way to recover the deleted content's ADD/KEEP credit — SARI drops noticeably,
-especially on the longer `wiki` setting. A moderate budget lets the model read
-enough of each source to simplify it faithfully. This isolates the ENCODER-side
-truncation lever from the (FIXED) decode config used by every other simp-* task —
-a distinct failure mode from `length_penalty` / `max_length` (those govern the
-OUTPUT; this governs how much of the INPUT the model ever sees).
+## Data and Model Visibility
+The action workspace contains the complete source-only ASSET (359), TurkCorpus
+(359), and WikiAuto (720) partitions so implementations can inspect the sentences
+they must simplify. Human reference simplifications are never present in the
+action workspace; they are mounted only for verifier scoring. Revision-pinned
+frozen checkpoint files are staged offline and are readable because they are the
+inference targets, not scoring labels. The verifier checks their file and
+architecture manifests before accepting a completion proof.
+The shared runtime, SARI implementation, and this task's active harness are also
+agent-readable so the execution path can be inspected. Other sibling harnesses,
+human references, parser, calibration evidence, and scores are not action inputs.
 
 ## Implementation Contract
-Modify `text-simplification/solution/truncation.py`:
+Edit `text-simplification/solution/truncation.py` and implement:
 
 ```python
 def build_max_input_tokens() -> int:
-    return 48
+    ...
 ```
 
-Hard-capped to `[8, 160]` (the harness's `MAX_INPUT_TOKENS`). The model, the
-`simplify: ` prefix, the FIXED beam/repetition/length-penalty decode config, the
-three corpora, the references, the tokenizer, and the SARI evaluator are all frozen
-in the harness.
+Return an integer within the documented input bound. Invalid values, missing keys, non-finite metrics, generation errors,
+or incomplete outputs fail verification. The harness does not clamp or repair an
+editable configuration and does not substitute another policy.
 
-## Fixed Pipeline & Evaluation
-- Model: `mrm8488/t5-base-finetuned-turk-text-simplification` (T5-base, ~220M),
-  FROZEN, eval mode.
-- THREE FIXED test settings (from the ungated parquet `GEM/wiki_auto_asset_turk`,
-  staged offline as JSONL `{source, references}`): `asset` (10 refs, multi-op),
-  `turk` (7-8 refs, lexical), `wiki` (1 ref, real Wikipedia, longer sources).
-- Metric (higher is better): `sari_{setting}` = corpus **SARI** (0-100); the task
-  score is the geometric mean over the three settings. `bleu_{setting}` secondary.
-- Deterministic; runs on one small GPU in a few minutes.
-- Scoring is a per-setting logistic anchored between the weak aggressively-short
-  input budget and the strong moderate input budget.
+## Evaluation
+The verifier reports corpus SARI from complete predictions and verifier-only references. Every configured evaluation must complete with finite metrics.

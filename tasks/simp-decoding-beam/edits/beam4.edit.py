@@ -7,5 +7,5 @@ _FILE = "text-simplification/solution/beam.py"
 _CONTENT = '''    return {"num_beams": 4, "no_repeat_ngram_size": 3, "repetition_penalty": 1.0}'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 39, "end_line": 39, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 41, "end_line": 41, "content": _CONTENT},
 ]

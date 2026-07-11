@@ -7,5 +7,5 @@ _FILE = "text-simplification/solution/truncation.py"
 _CONTENT = '''    return 48'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 42, "end_line": 42, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 44, "end_line": 44, "content": _CONTENT},
 ]

@@ -1,5 +1,22 @@
 {
   "allow_create": false,
+  "verifier_only_package_files": [
+    "text-simplification/harness_beam.py",
+    "text-simplification/harness_beamwidth.py",
+    "text-simplification/harness_capacity.py",
+    "text-simplification/harness_diverse_beam.py",
+    "text-simplification/harness_earlystop.py",
+    "text-simplification/harness_length.py",
+    "text-simplification/harness_lenpenalty.py",
+    "text-simplification/harness_minlen.py",
+    "text-simplification/harness_norepeat.py",
+    "text-simplification/harness_nucleus.py",
+    "text-simplification/harness_reppen.py",
+    "text-simplification/harness_strategy.py",
+    "text-simplification/harness_temperature.py",
+    "text-simplification/harness_truncation.py"
+  ],
+  "pristine_manifest_mode": "scaffold",
   "rigorous_codebase": true,
   "seeds": [
     42
@@ -9,8 +26,8 @@
       "cmd": "scripts/simplify.sh",
       "label": "simplify",
       "group": 1,
-      "compute": 1.0,
-      "time": "0:25:00",
+      "compute": 1,
+      "time": "1:00:00",
       "mem": 24,
       "package": "text-simplification"
     }
@@ -43,10 +60,19 @@
       ],
       "edit": [
         {
-          "start": 39,
-          "end": 39
+          "start": 34,
+          "end": 35
         }
       ]
     }
-  ]
+  ],
+  "calibration_status": "pending_fresh_strict_full_official_split_anchors",
+  "calibration_protocol": "gem-full-test-v2",
+  "calibration_anchor_seed": 42,
+  "calibration_anchor_counts": {
+    "asset": 359,
+    "turk": 359,
+    "wiki": 720
+  },
+  "calibration_pending_marker": "PENDING_FULL_OFFICIAL_ANCHORS"
 }

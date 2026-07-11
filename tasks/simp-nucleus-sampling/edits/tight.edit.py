@@ -7,5 +7,5 @@ _FILE = "text-simplification/solution/nucleus.py"
 _CONTENT = '''    return 0.6'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 39, "end_line": 39, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 40, "end_line": 40, "content": _CONTENT},
 ]

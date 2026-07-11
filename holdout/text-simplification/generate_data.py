@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-"""One-off HOST-SIDE script: builds the frozen text-simplification test slices
-(asset / turk / wiki, 300-sentence head-slice each -- the only slice any
-shipped simp-* task ever requests) from the single ungated, no-remote-code
+"""One-off HOST-SIDE script: builds the complete frozen text-simplification
+test settings (ASSET 359 / Turk 359 / Wiki 720) from the single ungated
 GEM/wiki_auto_asset_turk dataset, and splits each row into a SOURCE half and a
 REFERENCES half before they ever touch an agent-visible or image-baked path.
 
@@ -55,6 +54,7 @@ VENDOR_DATA_DIR = REPO_ROOT / "vendor" / "text-simplification" / "_simp_data"
 TASKS_DIR = REPO_ROOT / "tasks"
 
 GEM_REPO = "GEM/wiki_auto_asset_turk"
+GEM_REVISION = "ac2b97468b38cb35fcebe327ac8e1cb6b55b6b99"
 SPLIT_MAP = {           # our setting name -> GEM split name
     "asset": "test_asset",
     "turk": "test_turk",
@@ -90,10 +90,6 @@ def _ok(src: str, refs: list[str]) -> bool:
     refs = _clean_refs(refs)
     if not src or not refs:
         return False
-    if len(src.split()) < 3:            # too short to be a real sentence
-        return False
-    if len(src.split()) > 80:           # keep it minute-scale
-        return False
     return True
 
 
@@ -110,15 +106,16 @@ def _write_refs_copy(task: str, setting: str, refs_rows: list[dict]) -> None:
 def build_setting(setting: str, gem_split: str) -> None:
     from datasets import load_dataset
 
-    ds = load_dataset(GEM_REPO, split=gem_split)
+    ds = load_dataset(GEM_REPO, split=gem_split, revision=GEM_REVISION)
     src_rows = []
     refs_rows = []
     for r in ds:
         src = r["source"]
         refs = _clean_refs(list(r["references"]))
-        if _ok(src, refs):
-            src_rows.append({"source": src.strip()})
-            refs_rows.append({"references": refs})
+        if not _ok(src, refs):
+            raise ValueError(f"malformed official row in {gem_split}")
+        src_rows.append({"source": src.strip()})
+        refs_rows.append({"references": refs})
 
     VENDOR_DATA_DIR.mkdir(parents=True, exist_ok=True)
     src_path = VENDOR_DATA_DIR / f"simp_{setting}_src.jsonl"

@@ -6,15 +6,12 @@ FROZEN pretrained t5-base simplifier, using SAMPLING (do_sample=True, num_beams=
 temperature=1.0 all FIXED) restricted to the agent's NUCLEUS (top-p)
 (solution/nucleus.py -> build_top_p -> float). Scores corpus SARI per setting.
 
-Nucleus (top-p) sampling truncates the sampling distribution to the smallest set of
-tokens whose cumulative probability >= p, then samples from that renormalized set.
-A WIDE nucleus (p close to 1.0) samples from (almost) the full vocabulary -> noisy,
-off-distribution tokens -> lower SARI; a TIGHT nucleus (p small) restricts sampling
-to the model's most probable tokens -> closer to the model's mode -> higher SARI.
-Isolated from temperature/beam (both FIXED) so only top-p is visible.
+Nucleus (top-p) sampling truncates the sampling distribution to the smallest set
+of tokens whose cumulative probability is at least p, then samples from that
+renormalized set. This harness fixes the remaining generation settings so only
+top-p is visible.
 
-Emits one metric line PER SETTING:
-    SIMP_METRICS setting=<S> sari=<V> bleu=<B> n_sents=<N> plen=<W> lenratio=<R>
+Emits three task-bound v2 metric records and one unique terminal SIMP_DONE proof.
 """
 from __future__ import annotations
 
@@ -22,6 +19,9 @@ import argparse
 import time
 
 import common
+
+TASK_ID = "simp-nucleus-sampling"
+SURFACE = "nucleus"
 
 
 def main() -> None:
@@ -31,10 +31,13 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = common.setup(args.seed)
-    t0 = time.time()
+    t0 = time.perf_counter()
 
     build_top_p = common.load_surface(args.solution, "build_top_p")
-    top_p = float(build_top_p())
+    top_p = common.require_surface_number(
+        build_top_p(), "top_p", 0.0, 1.0,
+        surface="build_top_p", low_open=True,
+    )
     gen_kwargs = {
         "do_sample": True,           # FIXED (sampling, not beam search)
         "num_beams": 1,              # FIXED
@@ -46,6 +49,7 @@ def main() -> None:
     print(f"SIMP_NUCLEUS top_p={gen_kwargs['top_p']}", flush=True)
 
     model, tok = common.load_model_and_tokenizer(dev)
+    metric_lines = []
     for setting in common.SETTINGS:
         srcs, refs = common.load_dataset(setting)
         preds = common.simplify(model, tok, srcs, dict(gen_kwargs), dev)
@@ -53,11 +57,16 @@ def main() -> None:
         bleu = common.bleu_corpus(preds, refs)
         plen = common.mean_pred_len_words(preds)
         lr = common.length_ratio(srcs, preds)
-        print(f"SIMP_METRICS setting={setting} sari={sari:.6f} bleu={bleu:.4f} "
-              f"n_sents={len(srcs)} plen={plen:.1f} lenratio={lr:.3f}", flush=True)
+        metric_lines.append(common.emit_metrics(
+            task=TASK_ID, surface=SURFACE, setting=setting, sari=sari,
+            bleu=bleu, n_sents=len(srcs), plen=plen, lenratio=lr,
+        ))
 
-    dt = time.time() - t0
-    print(f"SIMP_DONE elapsed={dt:.1f}", flush=True)
+    common.emit_done(
+        task=TASK_ID, surface=SURFACE, seed=args.seed,
+        model_choice="base_turk", metric_lines=metric_lines,
+        elapsed=time.perf_counter() - t0,
+    )
 
 
 if __name__ == "__main__":

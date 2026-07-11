@@ -7,5 +7,5 @@ _FILE = "text-simplification/solution/temperature.py"
 _CONTENT = '''    return 1.0'''
 
 OPS = [
-    {"op": "replace", "file": _FILE, "start_line": 40, "end_line": 40, "content": _CONTENT},
+    {"op": "replace", "file": _FILE, "start_line": 41, "end_line": 41, "content": _CONTENT},
 ]

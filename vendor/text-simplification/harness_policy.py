@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""simp-source-policy harness (fixed pipeline; the monotonicity / anti-gaming task).
+"""simp-source-policy harness (fixed pipeline).
 
 For EACH of the THREE FIXED simplification test settings (asset / turk / wiki),
 produces a rewrite for every source sentence by the agent's REWRITE POLICY
@@ -7,29 +7,17 @@ produces a rewrite for every source sentence by the agent's REWRITE POLICY
 setting's FIXED multi-reference set.
 
 The policy chooses HOW the rewrite is produced:
-  "beam"        : simplify the FROZEN t5-base with a fixed tuned config (beam 5,
-                  no-repeat-3gram). The strong, real simplification (SOTA-style).
-  "greedy"      : simplify the FROZEN model greedily (beam 1). Real but weaker.
-  "truncate"    : TRUNCATION baseline — keep the first 75% of the words (delete the
-                  tail). A naive deletion heuristic (reported diagnostic).
-  "first_token" : DEGENERATE FLOOR — return only the first source word. Low SARI.
-  "empty"       : DEGENERATE FLOOR — return an empty string. Low SARI.
+  "beam"        : simplify the FROZEN t5-base with a fixed multi-beam config and
+                  no-repeat n-gram blocking.
+  "greedy"      : simplify the FROZEN model greedily.
+  "truncate"    : keep the first 75% of the words.
+  "first_token" : return only the first source word.
+  "empty"       : return an empty string.
 
-Proves the metric is monotone and un-gameable across ALL THREE settings: a
-meaning-destroying output scores a genuinely LOW SARI on every setting, and only a
-real T5 simplifier reaches the SOTA-scale top:
-    empty/first_token (~11-20)  <  greedy (~33-35)  <  beam (~43-45 = SOTA scale)
+The pure identity policy is not selectable in this task; only the five
+strings accepted by build_policy() are evaluated.
 
-NOTE on `copy_input`: the pure identity baseline scores HIGH SARI (~52-60) on the
-conservative ASSET/Turk references — a well-documented SARI-KEEP artifact (the human
-references keep most source n-grams, so copying earns large KEEP credit). SARI's
-ADD/DELETE terms, not KEEP, are what a real simplifier must win. To keep this
-monotonicity task un-gameable, `copy_input` is NOT a selectable policy here (the
-anchor sits between the meaning-destroying FLOOR and the real model); the length /
-DELETE-balance lever is exercised by the sibling simp-length-control task instead.
-
-Emits one metric line PER SETTING:
-    SIMP_METRICS setting=<S> sari=<V> bleu=<B> n_sents=<N> plen=<W> lenratio=<R>
+Emits three task-bound v2 metric records and one unique terminal SIMP_DONE proof.
 """
 from __future__ import annotations
 
@@ -38,9 +26,12 @@ import time
 
 import common
 
+TASK_ID = "simp-source-policy"
+SURFACE = "policy"
+
 _VALID = {"beam", "greedy", "truncate", "first_token", "empty"}
 
-# Fixed tuned decode config for the "beam" policy (agent cannot change it).
+# Fixed decode config for the "beam" policy (agent cannot change it).
 _BEAM_GEN = {
     "num_beams": 5,
     "no_repeat_ngram_size": 3,
@@ -72,18 +63,19 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = common.setup(args.seed)
-    t0 = time.time()
+    t0 = time.perf_counter()
 
     build_policy = common.load_surface(args.solution, "build_policy")
-    policy = str(build_policy()).strip()
-    if policy not in _VALID:
-        raise SystemExit(f"policy must be one of {sorted(_VALID)} (got {policy!r})")
+    policy = common.require_surface_choice(
+        build_policy(), "policy", _VALID, surface="build_policy"
+    )
     print(f"SIMP_POLICY policy={policy}", flush=True)
 
     model_tok = None
     if policy in ("beam", "greedy"):
         model_tok = common.load_model_and_tokenizer(dev)
 
+    metric_lines = []
     for setting in common.SETTINGS:
         srcs, refs = common.load_dataset(setting)
         preds = _predict(policy, srcs, dev, model_tok)
@@ -91,11 +83,16 @@ def main() -> None:
         bleu = common.bleu_corpus(preds, refs)
         plen = common.mean_pred_len_words(preds)
         lr = common.length_ratio(srcs, preds)
-        print(f"SIMP_METRICS setting={setting} sari={sari:.6f} bleu={bleu:.4f} "
-              f"n_sents={len(srcs)} plen={plen:.1f} lenratio={lr:.3f}", flush=True)
+        metric_lines.append(common.emit_metrics(
+            task=TASK_ID, surface=SURFACE, setting=setting, sari=sari,
+            bleu=bleu, n_sents=len(srcs), plen=plen, lenratio=lr,
+        ))
 
-    dt = time.time() - t0
-    print(f"SIMP_DONE policy={policy} elapsed={dt:.1f}", flush=True)
+    common.emit_done(
+        task=TASK_ID, surface=SURFACE, seed=args.seed,
+        model_choice="base_turk", metric_lines=metric_lines,
+        elapsed=time.perf_counter() - t0,
+    )
 
 
 if __name__ == "__main__":

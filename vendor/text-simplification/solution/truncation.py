@@ -1,8 +1,9 @@
 """Text-simplification INPUT-TRUNCATION (encoder-side) surface (agent-editable).
 
-A FROZEN pretrained t5-base simplifier rewrites a FIXED small ASSET/TURK/WikiAuto
-test slice under a FIXED strong beam decode config (num_beams=5,
-no_repeat_ngram_size=3, length_penalty=1.0, max_length=128, all FIXED); you control
+A FROZEN pretrained t5-base simplifier rewrites the complete pinned official
+ASSET, TurkCorpus, and WikiAuto test partitions under one fixed decode
+configuration shared by every candidate;
+you control
 ONLY the ENCODER-SIDE input truncation budget (the tokenizer's `max_length` /
 `truncation=True` applied to the SOURCE before encoding — NOT the decoder-side
 generation length). The rewrites are scored on corpus SARI (higher is better)
@@ -11,16 +12,16 @@ against the FIXED multi-reference set.
 Implement:
 
     def build_max_input_tokens() -> int:
-        return 160
+        return ...
 
-Hard-capped to [8, 160] (the harness's `MAX_INPUT_TOKENS`) by the harness.
-Text-simplification sources are short sentences (mean ~15-25 words for asset/turk;
-WikiAuto sources run longer, up to 80 words = 100+ subword tokens): an
-AGGRESSIVELY SHORT input budget silently drops the tail of longer sources before
-the model ever sees it, and the model then has no way to recover the deleted
-content's ADD/KEEP credit — SARI drops, especially on the longer `wiki` setting. A
-generous budget (the model's real max, 160 tokens) lets every source be read in
-full. The DEFAULT here is a WEAK aggressively-short budget (16 tokens).
+The value must be an integer inside the documented encoder bound; invalid values
+fail instead of being clamped. Input truncation changes how much source content
+reaches the frozen model while the decoder remains fixed.
+All candidate budgets are evaluated on the same three official source partitions
+and verifier-mounted references. No candidate ordering is prescribed.
+No fallback budget is substituted after a failure.
+The native value remains runnable for no-edit verification.
+Use submitted verifier results to compare alternatives.
 
 Background:
   This isolates the ENCODER-side truncation lever from the (FIXED) decode config
@@ -29,7 +30,8 @@ Background:
   ever sees).
 
 Notes:
-  * Inference-only. Deterministic. Runs on a single GPU in well under a minute.
+  * Inference-only and deterministic. Verification must generate a complete
+    prediction for every official test example; no reduced path is valid.
 """
 from __future__ import annotations
 
@@ -38,7 +40,7 @@ from __future__ import annotations
 # EDITABLE REGION — return your encoder-side input-truncation budget below
 # ================================================================
 def build_max_input_tokens() -> int:
-    # Default (weak): aggressively short input budget -> silently drops tail content.
+    # Native no-edit value; replace it to test another input budget.
     return 16
 # ================================================================
 # END EDITABLE REGION

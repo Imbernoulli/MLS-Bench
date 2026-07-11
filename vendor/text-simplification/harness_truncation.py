@@ -2,24 +2,17 @@
 """simp-input-truncation harness (fixed pipeline).
 
 Simplifies EACH of the THREE FIXED test settings (asset / turk / wiki) with a
-FROZEN pretrained t5-base simplifier under a FIXED strong beam decode
+FROZEN pretrained t5-base simplifier under a FIXED beam decode
 (num_beams=5, no_repeat_ngram_size=3, length_penalty=1.0, max_length=128), varying
 ONLY the agent's SOURCE-SIDE INPUT TRUNCATION budget (solution/truncation.py ->
 build_max_input_tokens -> int; the tokenizer's `max_length` / `truncation=True` on
 the ENCODER side). Scores corpus SARI per setting.
 
-The encoder input is truncated to `max_input_tokens` tokens (hard-capped in
-[8, 160]). Text-simplification sources are short sentences (mean ~15-25 words for
-asset/turk; WikiAuto sources run longer, up to 80 words = 100+ subword tokens): an
-AGGRESSIVELY SHORT input budget silently drops the tail of longer sources before
-the model ever sees it, and the model then has no way to recover the deleted
-content's ADD/KEEP credit — SARI drops, especially on the longer `wiki` setting. A
-generous budget (the model's real max, ~160 tokens) lets every source be read in
-full. This isolates the ENCODER-side truncation lever from the (FIXED) decode
-config used by every other simp-* task.
+The encoder input is truncated to `max_input_tokens` tokens, hard-capped by the
+harness. This isolates the encoder-side truncation lever from the fixed decoder
+configuration.
 
-Emits one metric line PER SETTING:
-    SIMP_METRICS setting=<S> sari=<V> bleu=<B> n_sents=<N> plen=<W> lenratio=<R>
+Emits three task-bound v2 metric records and one unique terminal SIMP_DONE proof.
 """
 from __future__ import annotations
 
@@ -27,6 +20,9 @@ import argparse
 import time
 
 import common
+
+TASK_ID = "simp-input-truncation"
+SURFACE = "truncation"
 
 _GEN = {
     "num_beams": 5,                 # FIXED
@@ -40,7 +36,13 @@ _GEN = {
 def _simplify_with_input_budget(model, tok, sources, max_input_tokens, gen_kwargs, device):
     import torch
 
-    max_input_tokens = int(min(max(int(max_input_tokens), 8), common.MAX_INPUT_TOKENS))
+    if isinstance(max_input_tokens, bool) or not isinstance(max_input_tokens, int):
+        print("SURFACE_ERROR build_max_input_tokens must return an integer", flush=True)
+        raise TypeError("max input tokens must be an integer")
+    if not 8 <= max_input_tokens <= common.MAX_INPUT_TOKENS:
+        print(f"SURFACE_ERROR max_input_tokens outside [8, "
+              f"{common.MAX_INPUT_TOKENS}]: {max_input_tokens}", flush=True)
+        raise ValueError("max input tokens outside allowed range")
     gk = common._sanitize_gen_kwargs(gen_kwargs)
     preds = []
     for i in range(0, len(sources), common.GEN_BATCH_SIZE):
@@ -69,12 +71,13 @@ def main() -> None:
     args = ap.parse_args()
 
     dev = common.setup(args.seed)
-    t0 = time.time()
+    t0 = time.perf_counter()
 
     build_mit = common.load_surface(args.solution, "build_max_input_tokens")
-    mit = int(build_mit())
+    mit = build_mit()
 
     model, tok = common.load_model_and_tokenizer(dev)
+    metric_lines = []
     for setting in common.SETTINGS:
         srcs, refs = common.load_dataset(setting)
         preds, used_mit = _simplify_with_input_budget(model, tok, srcs, mit, dict(_GEN), dev)
@@ -84,11 +87,16 @@ def main() -> None:
         bleu = common.bleu_corpus(preds, refs)
         plen = common.mean_pred_len_words(preds)
         lr = common.length_ratio(srcs, preds)
-        print(f"SIMP_METRICS setting={setting} sari={sari:.6f} bleu={bleu:.4f} "
-              f"n_sents={len(srcs)} plen={plen:.1f} lenratio={lr:.3f}", flush=True)
+        metric_lines.append(common.emit_metrics(
+            task=TASK_ID, surface=SURFACE, setting=setting, sari=sari,
+            bleu=bleu, n_sents=len(srcs), plen=plen, lenratio=lr,
+        ))
 
-    dt = time.time() - t0
-    print(f"SIMP_DONE elapsed={dt:.1f}", flush=True)
+    common.emit_done(
+        task=TASK_ID, surface=SURFACE, seed=args.seed,
+        model_choice="base_turk", metric_lines=metric_lines,
+        elapsed=time.perf_counter() - t0,
+    )
 
 
 if __name__ == "__main__":
