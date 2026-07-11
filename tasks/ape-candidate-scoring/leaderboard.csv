@@ -1,0 +1,3 @@
+timestamp,model,is_final,seed,test_acc_agnews,test_acc_sst2
+2026-07-11T12:03:00+00:00,baseline:weak,true,42,0.628421053,0.816513761
+2026-07-11T12:03:00+00:00,baseline:strong,true,42,0.783157895,0.887614679

@@ -1,0 +1,37 @@
+{
+  "base_image": "msai-cn-beijing.cr.volces.com/public/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime",
+  "mangrove_base_image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-prompt-optimization-lab@sha256:5fbfa7eaea88e32a0a0320dac2e897258ceab75eaa413d4f06233a1803206f5f",
+  "install_cmds": [
+    "pip install --no-cache-dir 'transformers>=4.44,<4.49' 'tokenizers>=0.20,<0.22' 'huggingface_hub<1.0' 'datasets>=2.19,<3' 'accelerate>=0.30' 'numpy<2' scikit-learn scipy sentencepiece protobuf",
+    "python -c \"import transformers, torch; print('ape-lab', torch.__version__, transformers.__version__)\""
+  ],
+  "env": {
+    "APE_MODEL": "/data/prompt-optimization/models/Qwen2.5-0.5B-Instruct",
+    "APE_DATA": "/data/prompt-optimization/data",
+    "HF_HOME": "/data/prompt-optimization/hf_home",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_DATASETS_OFFLINE": "1",
+    "TOKENIZERS_PARALLELISM": "false",
+    "APE_BATCH_SIZE": "16",
+    "PYTHONPATH": "/workspace/prompt-optimization-lab:${PYTHONPATH}"
+  },
+  "data_deps": [
+    {
+      "name": "prompt-optimization",
+      "host_path": "{data_root}/prompt-optimization",
+      "container_path": "/data/prompt-optimization",
+      "prepare": "vendor/data_scripts/prompt-optimization-lab/prepare_data.py",
+      "ready_files": [
+        "{data_root}/prompt-optimization/models/Qwen2.5-0.5B-Instruct/config.json",
+        "{data_root}/prompt-optimization/data/manifest.json",
+        "{data_root}/prompt-optimization/data/agnews/test.json",
+        "{data_root}/prompt-optimization/data/sst2/test.json"
+      ],
+      "description": "FROZEN Qwen2.5-0.5B-Instruct LM (inference-only) plus canonical automatic-prompt-optimization data. AG News uses 128 proposal and 200 selection rows from train, then all 7,600 official test rows. SST-2 uses 128 proposal and 200 selection rows from train, then all 872 labeled official validation rows. The three text inventories are pairwise disjoint. Candidates are ranked only on train/dev; exactly one selected instruction is evaluated on the complete official evaluation split. Both settings participate in scoring."
+    }
+  ],
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "workdir": "/workspace"
+}
