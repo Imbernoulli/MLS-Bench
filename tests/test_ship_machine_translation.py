@@ -293,3 +293,28 @@ def test_representative_fullscale_anchors_calibrate_without_fallback() -> None:
     incomplete = dict(rows[0])
     incomplete.pop("bleu_ru_en")
     assert score_record(spec, incomplete, anchors) == 0.0
+
+
+def test_every_sibling_uses_the_complete_repo_scale_and_fails_closed() -> None:
+    from mlsbench.scoring.anchors import BaselineAnchors
+    from mlsbench.scoring.evaluate import load_expanded_spec, score_record
+
+    complete = {
+        "model": "synthetic-complete",
+        "bleu_de_en": 20.0,
+        "bleu_fr_en": 20.0,
+        "bleu_ru_en": 20.0,
+    }
+    for task_name in SURFACES:
+        task_dir = TASKS / task_name
+        anchors = BaselineAnchors(task_dir)
+        spec = load_expanded_spec(task_dir, anchors)
+        score = score_record(spec, complete, anchors)
+        assert 0.0 < score < 1.0, (task_name, score)
+
+        incomplete = dict(complete)
+        incomplete.pop("bleu_ru_en")
+        assert score_record(spec, incomplete, anchors) == 0.0
+
+        nonfinite = dict(complete, bleu_ru_en=float("nan"))
+        assert score_record(spec, nonfinite, anchors) == 0.0

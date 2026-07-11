@@ -1,10 +1,11 @@
-"""Full-split OPUS-100 score for the representative beam-search task.
+"""Repository-wide full-split OPUS-100 translation-quality score.
 
 All three baseline rows were measured at seed 42 on one H20 against every row of
 the pinned 2,000-pair official test split.  Per direction, native greedy maps to
 0.1 and beam-5 with no-repeat-3 maps to 0.5 through a smooth sigmoid.  Missing
 metrics and failed commands are handled by the fail-closed evaluator, never by a
-fallback score.
+fallback score.  Every mt-* sibling uses the same frozen checkpoints, splits,
+metric, and shared calibration so a given translation quality has one score.
 """
 from mlsbench.scoring.dsl import *
 
