@@ -1,0 +1,71 @@
+{
+  "allow_create": false,
+  "agent_data_prune": [
+    "/data/constrained-decoding/data"
+  ],
+  "verifier_data_deps": [
+    {
+      "host_path": "{data_root}/constrained-decoding/data",
+      "dest": "data/constrained-decoding",
+      "required": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/agnews.sh",
+      "label": "agnews",
+      "group": 1,
+      "compute": 1,
+      "time": "8:00:00",
+      "mem": 24,
+      "package": "constrained-decoding-lab"
+    }
+  ],
+  "baselines": {
+    "verb_synonym": {
+      "edit_ops": "edits/verb_synonym.edit.py"
+    },
+    "verb_partial": {
+      "edit_ops": "edits/verb_partial.edit.py"
+    },
+    "verb_canonical": {
+      "edit_ops": "edits/verb_canonical.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "constrained-decoding-lab/solution/decoder_choice_verbalizer.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 19,
+          "end": 29
+        }
+      ]
+    }
+  ],
+  "verifier_only_package_files": [
+    "constrained-decoding-lab/common.py",
+    "constrained-decoding-lab/harness_choice.py",
+    "constrained-decoding-lab/harness_numeric.py"
+  ],
+  "calibration_protocol": "full-official-literal-ast-v2",
+  "calibration_status": "baseline_free_official_accuracy_terminal_native",
+  "calibration_evidence": {
+    "terminal_task_id": 96042,
+    "terminal_container_id": 4891933,
+    "baseline": "verb_synonym",
+    "accuracy_agnews": 0.420132,
+    "n": 7600,
+    "seed": 42
+  }
+}
