@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,f1_part0,f1_part1,f1_part2
+2026-07-11T01:54:18+00:00,baseline:threshold_neg30,true,mean,49.823143,50.581102,49.886277
+2026-07-11T01:54:18+00:00,baseline:threshold_0,true,mean,82.973053,82.861592,82.904341
+2026-07-11T01:54:18+00:00,baseline:threshold_30,true,mean,46.048585,45.051846,45.761413

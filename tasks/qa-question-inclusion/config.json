@@ -1,0 +1,180 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "_verifier_serial": true,
+  "protocol": "qa-official-full-v2",
+  "integration_requires": [
+    "d3ad006b",
+    "f714d7d5",
+    "c6fa7456",
+    "830403af",
+    "dd0c8df5"
+  ],
+  "calibration_status": "official_f1_baseline_free_representative_runtime_static_validated_20260711",
+  "scoring_status": {
+    "mode": "baseline_free_direct_official_f1",
+    "integration_requires": [
+      "f714d7d5",
+      "c6fa7456"
+    ],
+    "reason": "explicit zero floor and true geometric mean"
+  },
+  "agent_data_prune": [
+    "/data/extractive-qa/data"
+  ],
+  "verifier_data_deps": [
+    {
+      "name": "extractive_qa_gold_squad",
+      "host_path": "{data_root}/extractive-qa/data/mrqa_squad_validation.jsonl",
+      "dest": "data/extractive-qa/data/mrqa_squad_validation.jsonl"
+    },
+    {
+      "name": "extractive_qa_gold_newsqa",
+      "host_path": "{data_root}/extractive-qa/data/mrqa_newsqa_validation.jsonl",
+      "dest": "data/extractive-qa/data/mrqa_newsqa_validation.jsonl"
+    },
+    {
+      "name": "extractive_qa_gold_hotpotqa",
+      "host_path": "{data_root}/extractive-qa/data/mrqa_hotpotqa_validation.jsonl",
+      "dest": "data/extractive-qa/data/mrqa_hotpotqa_validation.jsonl"
+    },
+    {
+      "name": "extractive_qa_gold_naturalq",
+      "host_path": "{data_root}/extractive-qa/data/mrqa_naturalquestions_validation.jsonl",
+      "dest": "data/extractive-qa/data/mrqa_naturalquestions_validation.jsonl"
+    }
+  ],
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/squad.sh",
+      "label": "squad",
+      "group": 1,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "mem": 32,
+      "package": "extractive-qa"
+    },
+    {
+      "cmd": "scripts/newsqa.sh",
+      "label": "newsqa",
+      "group": 2,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "mem": 32,
+      "package": "extractive-qa"
+    },
+    {
+      "cmd": "scripts/hotpotqa.sh",
+      "label": "hotpotqa",
+      "group": 3,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "mem": 32,
+      "package": "extractive-qa"
+    },
+    {
+      "cmd": "scripts/naturalq.sh",
+      "label": "naturalq",
+      "group": 4,
+      "compute": 1.0,
+      "time": "2:00:00",
+      "mem": 32,
+      "package": "extractive-qa"
+    }
+  ],
+  "baselines": {
+    "real": {
+      "edit_ops": "edits/real.edit.py"
+    },
+    "drop": {
+      "edit_ops": "edits/drop.edit.py"
+    }
+  },
+  "verifier_only_package_files": [
+    "extractive-qa/common.py",
+    "extractive-qa/harness_question_inclusion.py"
+  ],
+  "agent_pruned_package_files": [
+    "extractive-qa/baselines/casing__lowercase.py",
+    "extractive-qa/baselines/casing__preserve.py",
+    "extractive-qa/baselines/doc_stride__stride_0.py",
+    "extractive-qa/baselines/doc_stride__stride_128.py",
+    "extractive-qa/baselines/doc_stride__stride_64.py",
+    "extractive-qa/baselines/encoding_order__context_first.py",
+    "extractive-qa/baselines/encoding_order__question_first.py",
+    "extractive-qa/baselines/max_answer_length__length_1.py",
+    "extractive-qa/baselines/max_answer_length__length_200.py",
+    "extractive-qa/baselines/max_answer_length__length_30.py",
+    "extractive-qa/baselines/max_seq_len__length_128.py",
+    "extractive-qa/baselines/max_seq_len__length_384.py",
+    "extractive-qa/baselines/max_seq_len__length_512.py",
+    "extractive-qa/baselines/n_best__depth_1.py",
+    "extractive-qa/baselines/n_best__depth_20.py",
+    "extractive-qa/baselines/n_best__depth_50.py",
+    "extractive-qa/baselines/null_threshold__threshold_0.py",
+    "extractive-qa/baselines/null_threshold__threshold_30.py",
+    "extractive-qa/baselines/null_threshold__threshold_neg30.py",
+    "extractive-qa/baselines/question_inclusion__drop.py",
+    "extractive-qa/baselines/question_inclusion__real.py",
+    "extractive-qa/baselines/span_aggregation__first_feature.py",
+    "extractive-qa/baselines/span_aggregation__max_score.py",
+    "extractive-qa/baselines/span_decoding__argmax.py",
+    "extractive-qa/baselines/span_decoding__constrained.py",
+    "extractive-qa/dropped_tasks/README.md",
+    "extractive-qa/gen_tasks.py",
+    "extractive-qa/harness_casing.py",
+    "extractive-qa/harness_doc_stride.py",
+    "extractive-qa/harness_encoding_order.py",
+    "extractive-qa/harness_max_answer_length.py",
+    "extractive-qa/harness_max_seq_len.py",
+    "extractive-qa/harness_n_best.py",
+    "extractive-qa/harness_null_threshold.py",
+    "extractive-qa/harness_span_aggregation.py",
+    "extractive-qa/harness_span_decoding.py",
+    "extractive-qa/run_null_threshold_anchors.sh",
+    "extractive-qa/solution/casing.py",
+    "extractive-qa/solution/doc_stride.py",
+    "extractive-qa/solution/encoding_order.py",
+    "extractive-qa/solution/max_answer_length.py",
+    "extractive-qa/solution/max_seq_len.py",
+    "extractive-qa/solution/n_best.py",
+    "extractive-qa/solution/null_threshold.py",
+    "extractive-qa/solution/span_aggregation.py",
+    "extractive-qa/solution/span_decoding.py"
+  ],
+  "files": [
+    {
+      "filename": "extractive-qa/solution/question_inclusion.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 5,
+          "end": 6
+        }
+      ]
+    }
+  ],
+  "calibration_provenance": {
+    "protocol": "qa-official-full-v2",
+    "status": "baseline_free_official_f1_with_representative_runtime",
+    "measured_task": null,
+    "scoring_calibration": "not required for the fixed raw F1 [0,100] to [0,1] mapping",
+    "representative_model_runtime_evidence": {
+      "task": "qa-null-threshold",
+      "mangrove_task_id": 96029,
+      "dataset_family": "SQuAD2",
+      "image": "msai-cn-beijing.cr.volces.com/public/bohanlyu2022/mlsbench-harbor-extractive-qa@sha256:3bf1e39f4004791522670ee57d4aaa84ce040135bee896ff8dec16124f4a046e",
+      "model_revision": "adc3b06f79f797d1c575d5479d6f5efe54a9e3b4",
+      "model_weight_sha256": "ac5db66fdcfecb400345d09787b71009d60805ef9883451071669cf951b5e2c7"
+    },
+    "limitation": "The representative SQuAD2 run validates only the shared frozen model and runtime path. MRQA task surfaces and proof bindings are validated statically; their per-surface feature counts and runtimes are not measured anchors."
+  }
+}
