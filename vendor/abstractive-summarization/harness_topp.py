@@ -5,7 +5,7 @@ Nucleus (top-p) CUTOFF under sampling: sampling is ON (do_sample) with a FIXED
 temperature, repetition, and per-domain length controls are fixed; the agent chooses
 only top_p (solution/topp.py -> build_top_p -> float). The cutoff changes the
 candidate probability mass while all other controls remain constant. The harness
-measures complete multi-domain corpus ROUGE-L F1 without publishing a preferred
+measures mean per-example ROUGE-L F1 without publishing a preferred
 value or measured ordering.
 
 Emits one line per setting:

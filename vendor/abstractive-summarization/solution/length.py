@@ -2,8 +2,8 @@
 
 FROZEN domain-matched summarizers decode THREE FIXED domain settings (xsum / cnndm
 / samsum) with beam search + no-repeat-3gram FIXED; you control ONLY the LENGTH
-window of the decode, applied to all three settings. The summaries are scored on
-corpus ROUGE-L F1 (higher is better, gmean over the 3 settings) against FIXED
+window of the decode, applied to all three settings. The summaries use mean
+per-example ROUGE-L F1 (higher is better, gmean over 3 settings) against FIXED
 references.
 
 Implement:
@@ -12,11 +12,11 @@ Implement:
         return {"min_length": ..., "max_length": ..., "length_penalty": ...}
 
 The three knobs (transformers `model.generate`):
-  min_length     : minimum number of generated tokens. It must be a bounded
-                   non-negative integer no larger than max_length.
+  min_length     : integer in [0, 200], no larger than max_length.
+                   It is the minimum number of generated tokens.
                    Its measured effect is left to the benchmark.
-  max_length     : maximum number of generated tokens (hard-capped at 200).
-  length_penalty : beam-search length penalty. >1.0 favours longer sequences,
+  max_length     : integer in [1, 200], no smaller than min_length.
+  length_penalty : finite in (0, 10]; >1.0 favours longer sequences,
                    <1.0 favours shorter.
 
 Background:

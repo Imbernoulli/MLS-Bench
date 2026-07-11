@@ -1,7 +1,7 @@
 #!/bin/bash
 # summ-post-truncation: decode the THREE FIXED domain settings (xsum / cnndm / samsum) with the
 # FROZEN domain-matched summarizers, using the agent's config
-# (solution/posttrunc.py -> build_keep_sentences), then score corpus ROUGE-L F1 per setting (higher is
+# (solution/posttrunc.py -> build_keep_sentences), then score mean per-example ROUGE-L F1 per setting (higher is
 # better; the task score gmean's the 3 settings).
 set -euo pipefail
 TASK_ID="summ-post-truncation"

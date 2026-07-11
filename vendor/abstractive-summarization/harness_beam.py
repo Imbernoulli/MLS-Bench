@@ -4,7 +4,7 @@
 Decodes EACH of the THREE FIXED domain settings (xsum / cnndm / samsum) with the
 FROZEN domain-matched summarizer, per-domain length window FIXED, using the agent's
 BEAM / REPETITION config (solution/beam.py -> build_beam_config -> {num_beams,
-no_repeat_ngram_size, repetition_penalty}). Scores corpus ROUGE-L F1.
+no_repeat_ngram_size, repetition_penalty}). Scores mean per-example ROUGE-L F1.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>
@@ -32,16 +32,26 @@ def main() -> None:
         {"num_beams", "no_repeat_ngram_size", "repetition_penalty"},
         surface="build_beam_config",
     )
-    print(f"SUMM_BEAM num_beams={cfg['num_beams']} "
-          f"no_repeat_ngram_size={cfg['no_repeat_ngram_size']} "
-          f"repetition_penalty={cfg['repetition_penalty']}", flush=True)
+    beams = common.require_surface_int(
+        cfg["num_beams"], "num_beams", 1, 12, surface="build_beam_config"
+    )
+    ngram = common.require_surface_int(
+        cfg["no_repeat_ngram_size"], "no_repeat_ngram_size", 0, 20,
+        surface="build_beam_config",
+    )
+    penalty = common.require_surface_number(
+        cfg["repetition_penalty"], "repetition_penalty", 0.0, 10.0,
+        low_open=True, surface="build_beam_config",
+    )
+    print(f"SUMM_BEAM num_beams={beams} no_repeat_ngram_size={ngram} "
+          f"repetition_penalty={penalty}", flush=True)
 
     def build_gen(setting):
         win = common.LEN_WINDOW[setting]
         gk = {
-            "num_beams": cfg["num_beams"],
-            "no_repeat_ngram_size": cfg["no_repeat_ngram_size"],
-            "repetition_penalty": cfg["repetition_penalty"],
+            "num_beams": beams,
+            "no_repeat_ngram_size": ngram,
+            "repetition_penalty": penalty,
             **win,
         }
         if gk["num_beams"] > 1:

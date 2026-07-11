@@ -15,7 +15,10 @@ def build_beam_config() -> dict:
     ...
 ```
 
-Return exactly `num_beams`, `no_repeat_ngram_size`, and `repetition_penalty` with valid numeric types. Missing keys, extra keys, invalid values, non-finite results, or
+Return exactly `num_beams`, `no_repeat_ngram_size`, and
+`repetition_penalty`. The first two must be integers in `[1, 12]` and
+`[0, 20]`, respectively; the penalty must be finite in `(0, 10]`. Missing
+keys, extra keys, invalid values, non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

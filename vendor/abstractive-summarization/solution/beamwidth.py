@@ -2,7 +2,7 @@
 
 FROZEN domain-matched summarizers decode THREE FIXED domain settings (xsum / cnndm
 / samsum) with a FIXED per-domain length window and a FIXED no-repeat-3gram block;
-you control ONLY the beam WIDTH. Scored on corpus ROUGE-L F1 (gmean over the 3
+you control ONLY the beam WIDTH. Uses mean per-example ROUGE-L F1 (gmean over 3
 settings).
 
 Implement:
@@ -10,7 +10,7 @@ Implement:
     def build_beam_width() -> int:
         return ...
 
-  num_beams : bounded positive integer controlling search width. Different
+  num_beams : integer in [1, 12] controlling search width. Different
               values change both decoding behavior and compute. Their measured
               ordering is intentionally omitted from the agent-visible
               interface.

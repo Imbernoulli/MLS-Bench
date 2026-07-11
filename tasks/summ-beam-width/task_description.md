@@ -11,7 +11,8 @@ def build_beam_width() -> int:
     ...
 ```
 
-Return an integer within the runtime's documented compute bound. Missing keys, extra keys, invalid values, non-finite results, or
+Return an integer in `[1, 12]`. Missing keys, extra keys, invalid values,
+non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

@@ -5,7 +5,7 @@ Sampling temperature is editable while nucleus, length, and repetition controls
 remain fixed; the agent chooses only the temperature
 (solution/temperature.py -> build_temperature -> float). Temperature changes the
 sampling distribution while all other decode controls remain constant. The
-harness measures the complete multi-domain corpus ROUGE-L F1 without publishing
+harness measures mean per-example ROUGE-L F1 without publishing
 a preferred value or measured ordering.
 
 Emits one line per setting:
@@ -19,6 +19,13 @@ import time
 import common
 
 
+def _validate_temperature(value) -> float:
+    """Validate the standalone temperature task's task-specific closed interval."""
+    return common.require_surface_number(
+        value, "temperature", 0.05, 5.0, surface="build_temperature"
+    )
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--solution", required=True)
@@ -29,10 +36,7 @@ def main() -> None:
     t0 = time.perf_counter()
 
     build_temperature = common.load_surface(args.solution, "build_temperature")
-    temp = common.require_surface_number(
-        build_temperature(), "temperature", 0.05, 5.0,
-        surface="build_temperature",
-    )
+    temp = _validate_temperature(build_temperature())
     print(f"SUMM_TEMPERATURE temperature={temp}", flush=True)
 
     def build_gen(setting):

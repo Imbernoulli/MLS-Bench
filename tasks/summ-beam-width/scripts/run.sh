@@ -1,7 +1,7 @@
 #!/bin/bash
 # summ-beam-width: decode the THREE FIXED domain settings (xsum / cnndm / samsum) with the
 # FROZEN domain-matched summarizers, using the agent's config
-# (solution/beamwidth.py -> build_beam_width), then score corpus ROUGE-L F1 per setting (higher is
+# (solution/beamwidth.py -> build_beam_width), then score mean per-example ROUGE-L F1 per setting (higher is
 # better; the task score gmean's the 3 settings).
 set -euo pipefail
 TASK_ID="summ-beam-width"

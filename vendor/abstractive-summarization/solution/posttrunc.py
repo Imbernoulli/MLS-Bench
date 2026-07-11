@@ -3,14 +3,14 @@
 FROZEN domain-matched summarizers decode THREE FIXED domain settings (xsum / cnndm
 / samsum) with one fixed decode config identical for every candidate;
 you control ONLY a pure POST-PROCESS: how many leading SENTENCES of the decoded
-summary to KEEP. Scored on corpus ROUGE-L F1 (gmean over the 3 settings).
+summary to KEEP. Uses mean per-example ROUGE-L F1 (gmean over 3 settings).
 
 Implement:
 
     def build_keep_sentences() -> int:
         return ...
 
-  keep_sentences : non-negative number of leading decoded sentences to retain.
+  keep_sentences : integer in [0, 10000] selecting leading sentences to retain.
                    A sufficiently large value retains every decoded sentence.
                    The benchmark measures the precision/recall tradeoff across
                    all three fixed domains.

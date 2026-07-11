@@ -11,7 +11,11 @@ def build_decode_strategy() -> dict:
     ...
 ```
 
-Return `strategy` plus exactly the fields required for that strategy. Supported modes and field names are defined by the solution interface. Missing keys, extra keys, invalid values, non-finite results, or
+Return `strategy` plus exactly the fields required for that strategy. Beam
+mode requires integer `num_beams` in `[1, 12]`. Sample mode requires finite
+`top_p` in `(0, 1]`, integer `top_k` in `[0, 1000]`, and finite
+`temperature` in `(0, 5]`. Missing keys, extra keys, invalid values,
+non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

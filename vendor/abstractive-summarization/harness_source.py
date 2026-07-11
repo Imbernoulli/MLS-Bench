@@ -3,7 +3,7 @@
 
 For EACH of the THREE FIXED domain settings (xsum / cnndm / samsum), produces a
 summary for every document by the agent's SOURCE POLICY (solution/source.py ->
-build_source_policy -> a string), then scores corpus ROUGE-L F1 (and ROUGE-1/2 F1)
+build_source_policy -> a string), then scores mean per-example ROUGE-L/1/2 F1
 against fixed official references.
 
 The policy chooses how each candidate summary is produced:

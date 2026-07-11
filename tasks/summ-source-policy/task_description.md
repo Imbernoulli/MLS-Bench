@@ -14,7 +14,9 @@ def build_source_policy() -> str:
     ...
 ```
 
-Return one supported policy string from the solution interface. No policy is substituted for an invalid value. Missing keys, extra keys, invalid values, non-finite results, or
+Return exactly one of `abstractive`, `lead3`, `copy_document`,
+`first_token`, or `empty`. No policy is substituted for an invalid value.
+Missing keys, extra keys, invalid values, non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

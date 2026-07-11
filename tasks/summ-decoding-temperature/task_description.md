@@ -11,7 +11,8 @@ def build_temperature() -> float:
     ...
 ```
 
-Return a finite numeric value within the runtime's accepted range. Missing keys, extra keys, invalid values, non-finite results, or
+Return a finite numeric value in `[0.05, 5.0]`. Missing keys, extra keys,
+invalid values, non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

@@ -11,7 +11,8 @@ def build_norepeat_size() -> int:
     ...
 ```
 
-Return a non-negative integer within the runtime's compute bound. Missing keys, extra keys, invalid values, non-finite results, or
+Return an integer in `[0, 20]`. Missing keys, extra keys, invalid values,
+non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

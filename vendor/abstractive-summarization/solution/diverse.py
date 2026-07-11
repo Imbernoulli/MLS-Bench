@@ -2,17 +2,17 @@
 
 FROZEN domain-matched summarizers decode THREE FIXED domain settings (xsum / cnndm
 / samsum) with no-repeat-3gram + the per-domain length window FIXED; you control
-ONLY the beam grouping. Scored on corpus ROUGE-L F1 (gmean over the 3 settings).
+ONLY beam grouping. Uses mean per-example ROUGE-L F1 (gmean over 3 settings).
 
 Implement:
 
     def build_diverse_config() -> dict:
         return {"num_beams": ..., "num_beam_groups": ..., "diversity_penalty": ...}
 
-  num_beams          : total beam width.
-  num_beam_groups    : split the beams into this many diverse groups (1 == plain
-                       beam search; >1 == diverse beam search, Vijayakumar 2016).
-  diversity_penalty  : penalty applied between groups (only used when groups > 1).
+  num_beams          : integer total beam width in [1, 12].
+  num_beam_groups    : integer in [1, num_beams] that divides num_beams exactly;
+                       1 is plain beam, >1 is diverse beam (Vijayakumar 2016).
+  diversity_penalty  : exactly 0 when groups == 1; otherwise finite in (0, 10].
 
 Background:
   Grouping changes interactions among candidate hypotheses while the verifier

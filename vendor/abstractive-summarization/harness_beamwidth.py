@@ -3,7 +3,7 @@
 
 Beam width alone: the per-domain length and repetition controls are fixed; the
 agent chooses only num_beams (solution/beamwidth.py -> build_beam_width -> int).
-returned width is validated and scored with corpus ROUGE-L F1 on all settings.
+returned width is validated with mean per-example ROUGE-L F1 on all settings.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>

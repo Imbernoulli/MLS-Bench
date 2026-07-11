@@ -11,7 +11,8 @@ def build_keep_sentences() -> int:
     ...
 ```
 
-Return a non-negative integer within the runtime bound. Missing keys, extra keys, invalid values, non-finite results, or
+Return an integer in `[0, 10000]`. Missing keys, extra keys, invalid values,
+non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # summ-nucleus-topp: decode the THREE FIXED domain settings (xsum / cnndm / samsum) with the
 # FROZEN domain-matched summarizers, using the agent's config
-# (solution/topp.py -> build_top_p), then score corpus ROUGE-L F1 per setting (higher is
+# (solution/topp.py -> build_top_p), then score mean per-example ROUGE-L F1 per setting (higher is
 # better; the task score gmean's the 3 settings).
 set -euo pipefail
 TASK_ID="summ-nucleus-topp"

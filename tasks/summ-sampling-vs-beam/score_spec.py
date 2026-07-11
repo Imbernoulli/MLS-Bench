@@ -1,7 +1,7 @@
 """Baseline-free scoring for complete official summarization test splits.
 
-ROUGE-L F1 has a fixed [0, 1] range. Zero overlap maps to zero, a corpus
-ROUGE-L F1 of 0.30 maps to 0.5, and perfect overlap maps to 1. This mapping is
+Mean per-example ROUGE-L F1 has a fixed [0, 1] range. Zero overlap maps to zero,
+a mean F1 of 0.30 maps to 0.5, and perfect overlap maps to 1. This mapping is
 shared by all ten repo siblings and does not read a fabricated or fallback
 leaderboard value. The verifier separately requires every setting, inventory,
 model-or-source, metric, and completion proof; any failed verification receives

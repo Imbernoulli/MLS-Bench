@@ -26,6 +26,22 @@ IMAGE = (
     "mlsbench-harbor-abstractive-summarization@"
     "sha256:06b0678dc84d47be4a304a150f9f171e1e37f73fc0788c1fbb5651c0b406497a"
 )
+VISIBLE_DOMAINS = {
+    "summ-beam-repetition": ("[1, 12]", "[0, 20]", "(0, 10]"),
+    "summ-beam-width": ("[1, 12]",),
+    "summ-decoding-length": ("[0, 200]", "[1, 200]", "(0, 10]"),
+    "summ-decoding-temperature": ("[0.05, 5.0]",),
+    "summ-diverse-beam": (
+        "[1, 12]",
+        "[1, num_beams]",
+        "exactly 0 when groups == 1",
+        "(0, 10]",
+    ),
+    "summ-norepeat-ngram": ("[0, 20]",),
+    "summ-nucleus-topp": ("[0.05, 1.0]",),
+    "summ-post-truncation": ("[0, 10000]",),
+    "summ-sampling-vs-beam": ("[1, 12]", "(0, 1]", "[0, 1000]", "(0, 5]"),
+}
 
 
 def digest(path: Path) -> str:
@@ -120,6 +136,24 @@ def main() -> None:
 
         scaffold = task / "environment" / "_scaffold" / "abstractive-summarization"
         require(scaffold.is_dir(), f"{task_name}: missing agent scaffold")
+        agent_visible = instruction + "\n" + "\n".join(
+            path.read_text().lower()
+            for path in scaffold.rglob("*.py")
+            if path.is_file()
+        )
+        require(
+            "mean per-example rouge-l f1" in agent_visible,
+            f"{task_name}: exact metric aggregation is not agent-visible",
+        )
+        require(
+            "corpus rouge-l f1" not in agent_visible,
+            f"{task_name}: inaccurate corpus-ROUGE wording remains",
+        )
+        for fragment in VISIBLE_DOMAINS.get(task_name, ()):
+            require(
+                fragment.lower() in agent_visible,
+                f"{task_name}: agent-visible contract omits {fragment!r}",
+            )
         leaked = [
             path.relative_to(scaffold).as_posix()
             for path in scaffold.rglob("*")

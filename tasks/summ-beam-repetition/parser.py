@@ -157,7 +157,7 @@ def _validate_surface(cmd_label: str, line: str) -> tuple[list[str], bool]:
         if not _finite(penalty, 0.0, 10.0, low_open=True):
             errors.append("invalid length penalty")
     elif cmd_label == "summ-decoding-temperature":
-        if not _finite(values[0], 0.0, 5.0, low_open=True):
+        if not _finite(values[0], 0.05, 5.0):
             errors.append("invalid temperature")
     elif cmd_label == "summ-diverse-beam":
         beams, groups, penalty = int(values[0]), int(values[1]), values[2]
@@ -168,6 +168,8 @@ def _validate_surface(cmd_label: str, line: str) -> tuple[list[str], bool]:
             errors.append("invalid diversity penalty")
         elif groups == 1 and float(penalty) != 0.0:
             errors.append("plain beam must not claim a diversity penalty")
+        elif groups > 1 and float(penalty) <= 0.0:
+            errors.append("grouped beam requires a positive diversity penalty")
     elif cmd_label == "summ-norepeat-ngram":
         if not 0 <= int(values[0]) <= 20:
             errors.append("no-repeat ngram size outside bounds")

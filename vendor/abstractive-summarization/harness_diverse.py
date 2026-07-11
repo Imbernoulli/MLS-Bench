@@ -6,7 +6,7 @@ The agent returns a complete mapping from solution/diverse.py via
 `build_diverse_config`. The mapping must contain beam width, beam-group count,
 and diversity penalty, with groups dividing the beam count.
 The harness does not publish a measured ordering between valid mappings.
-It scores the committed summary with corpus ROUGE-L F1.
+It scores committed summaries with mean per-example ROUGE-L F1.
 Invalid configurations fail before generation.
 
 Emits one line per setting:
@@ -20,6 +20,38 @@ import time
 import common
 
 
+def _validate_diverse_config(value) -> tuple[int, int, float]:
+    """Validate the editable mapping before emitting proof or loading a model."""
+    cfg = common.require_surface_config(
+        value,
+        {"num_beams", "num_beam_groups", "diversity_penalty"},
+        surface="build_diverse_config",
+    )
+    nb = common.require_surface_int(
+        cfg["num_beams"], "num_beams", 1, 12, surface="build_diverse_config"
+    )
+    ng = common.require_surface_int(
+        cfg["num_beam_groups"], "num_beam_groups", 1, 12,
+        surface="build_diverse_config",
+    )
+    dp = common.require_surface_number(
+        cfg["diversity_penalty"], "diversity_penalty", 0.0, 10.0,
+        surface="build_diverse_config",
+    )
+    if ng > nb or nb % ng:
+        print("SURFACE_ERROR build_diverse_config: beam groups must divide num_beams",
+              flush=True)
+        raise ValueError("invalid beam grouping")
+    if (ng == 1 and dp != 0.0) or (ng > 1 and dp <= 0.0):
+        print(
+            "SURFACE_ERROR build_diverse_config: diversity_penalty must be 0 "
+            "for one group and >0 for grouped beams",
+            flush=True,
+        )
+        raise ValueError("invalid diversity penalty for beam grouping")
+    return nb, ng, dp
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--solution", required=True)
@@ -30,14 +62,7 @@ def main() -> None:
     t0 = time.perf_counter()
 
     build_diverse_config = common.load_surface(args.solution, "build_diverse_config")
-    cfg = common.require_surface_config(
-        build_diverse_config(),
-        {"num_beams", "num_beam_groups", "diversity_penalty"},
-        surface="build_diverse_config",
-    )
-    nb = cfg["num_beams"]
-    ng = cfg["num_beam_groups"]
-    dp = cfg["diversity_penalty"]
+    nb, ng, dp = _validate_diverse_config(build_diverse_config())
     print(f"SUMM_DIVERSE num_beams={nb} num_beam_groups={ng} "
           f"diversity_penalty={dp}", flush=True)
 

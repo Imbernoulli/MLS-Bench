@@ -5,7 +5,7 @@ Decoding STRATEGY: sampling vs beam. Per-domain length windows are fixed; the
 agent returns a complete strategy mapping from solution/sampling.py via
 build_decode_strategy. Beam mappings require num_beams, while sampling mappings
 require top_p, top_k, and temperature. The harness validates the selected schema
-and measures its multi-domain corpus ROUGE-L F1 without publishing an ordering.
+and measures mean per-example ROUGE-L F1 without publishing an ordering.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>
@@ -43,10 +43,24 @@ def main() -> None:
             allowed={"strategy", "top_p", "top_k", "temperature"},
             surface="sample strategy",
         )
+        cfg["top_p"] = common.require_surface_number(
+            cfg["top_p"], "top_p", 0.0, 1.0, low_open=True,
+            surface="sample strategy",
+        )
+        cfg["top_k"] = common.require_surface_int(
+            cfg["top_k"], "top_k", 0, 1000, surface="sample strategy"
+        )
+        cfg["temperature"] = common.require_surface_number(
+            cfg["temperature"], "temperature", 0.0, 5.0, low_open=True,
+            surface="sample strategy",
+        )
     elif strat == "beam":
         common.require_surface_config(
             cfg, {"strategy", "num_beams"},
             allowed={"strategy", "num_beams"}, surface="beam strategy",
+        )
+        cfg["num_beams"] = common.require_surface_int(
+            cfg["num_beams"], "num_beams", 1, 12, surface="beam strategy"
         )
     print(f"SUMM_STRATEGY strategy={strat} "
           f"num_beams={cfg.get('num_beams')} top_p={cfg.get('top_p')} "

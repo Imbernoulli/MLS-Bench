@@ -1,7 +1,7 @@
 """Summarization source-policy surface (agent-editable).
 
 Across THREE FIXED summarization settings (xsum / cnndm / samsum), choose how
-each candidate summary is produced. The harness scores corpus ROUGE-L F1
+each candidate summary is produced. The harness scores mean per-example ROUGE-L F1
 (higher is better) against fixed official references and combines the three
 settings geometrically.
 

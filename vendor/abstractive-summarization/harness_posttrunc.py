@@ -9,7 +9,7 @@ chooses only how many leading SENTENCES of the decoded summary to KEEP
 This is a pure post-process: the model output is identical across configurations,
 and only the retained sentence prefix differs. The three domains have different
 reference sentence distributions, so the benchmark measures the shared policy
-without publishing a preferred retention count. Scores corpus ROUGE-L F1.
+without publishing a preferred retention count. Uses mean per-example ROUGE-L F1.
 
 Emits one line per setting:
     SUMM_METRICS setting=<S> rougeL=<F> rouge1=<F> rouge2=<F> plen=<W>

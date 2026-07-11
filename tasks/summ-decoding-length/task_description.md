@@ -14,7 +14,11 @@ def build_length_config() -> dict:
     ...
 ```
 
-Return exactly `min_length`, `max_length`, and `length_penalty`; the minimum may not exceed the maximum. Missing keys, extra keys, invalid values, non-finite results, or
+Return exactly `min_length`, `max_length`, and `length_penalty`.
+`min_length` must be an integer in `[0, 200]`; `max_length` must be an
+integer in `[1, 200]`; the minimum may not exceed the maximum; and the penalty
+must be finite in `(0, 10]`. Missing keys, extra keys, invalid values,
+non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

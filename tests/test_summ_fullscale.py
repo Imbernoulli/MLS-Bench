@@ -6,6 +6,7 @@ import importlib.util
 import json
 import math
 from pathlib import Path
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -80,6 +81,32 @@ def _parser(task_name: str):
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module.Parser()
+
+
+def _vendor_module(filename: str):
+    vendor = ROOT / "vendor" / "abstractive-summarization"
+    common_spec = importlib.util.spec_from_file_location(
+        "summ_contract_common", vendor / "common.py"
+    )
+    common_module = importlib.util.module_from_spec(common_spec)
+    assert common_spec.loader is not None
+    common_spec.loader.exec_module(common_module)
+
+    prior_common = sys.modules.get("common")
+    sys.modules["common"] = common_module
+    try:
+        spec = importlib.util.spec_from_file_location(
+            f"summ_contract_{Path(filename).stem}", vendor / filename
+        )
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(module)
+    finally:
+        if prior_common is None:
+            del sys.modules["common"]
+        else:
+            sys.modules["common"] = prior_common
+    return module
 
 
 def _valid_log(task_name: str, *, source_policy: str = "abstractive") -> str:
@@ -257,6 +284,68 @@ def test_all_ten_task_specific_protocols_are_accepted():
         assert len(result.metrics) == 9, (task_name, result.feedback)
 
 
+def test_diverse_harness_and_parser_accept_exactly_the_same_grouping_boundaries():
+    harness = _vendor_module("harness_diverse.py")
+    parser = _parser("summ-diverse-beam")
+    cases = (
+        ({"num_beams": 1, "num_beam_groups": 1, "diversity_penalty": 0.0}, True),
+        ({"num_beams": 12, "num_beam_groups": 1, "diversity_penalty": 0.0}, True),
+        ({"num_beams": 4, "num_beam_groups": 2, "diversity_penalty": 0.0001}, True),
+        ({"num_beams": 12, "num_beam_groups": 12, "diversity_penalty": 10.0}, True),
+        ({"num_beams": 4, "num_beam_groups": 1, "diversity_penalty": 1.0}, False),
+        ({"num_beams": 4, "num_beam_groups": 2, "diversity_penalty": 0.0}, False),
+        ({"num_beams": 5, "num_beam_groups": 2, "diversity_penalty": 1.0}, False),
+        ({"num_beams": 13, "num_beam_groups": 1, "diversity_penalty": 0.0}, False),
+        ({"num_beams": 4, "num_beam_groups": 4, "diversity_penalty": 10.0001}, False),
+    )
+    for config, expected in cases:
+        try:
+            harness._validate_diverse_config(config)
+            harness_accepted = True
+        except (TypeError, ValueError):
+            harness_accepted = False
+        surface = (
+            f"SUMM_DIVERSE num_beams={config['num_beams']} "
+            f"num_beam_groups={config['num_beam_groups']} "
+            f"diversity_penalty={config['diversity_penalty']}"
+        )
+        log = _valid_log("summ-diverse-beam").replace(
+            SURFACES["summ-diverse-beam"], surface, 1
+        )
+        parser_accepted = len(
+            parser.parse("summ-diverse-beam", log).metrics
+        ) == 9
+        assert harness_accepted is expected, config
+        assert parser_accepted is expected, config
+
+
+def test_standalone_temperature_harness_and_parser_share_closed_interval():
+    harness = _vendor_module("harness_temperature.py")
+    parser = _parser("summ-decoding-temperature")
+    for value, expected in (
+        (0.0, False),
+        (0.01, False),
+        (0.049999, False),
+        (0.05, True),
+        (5.0, True),
+        (5.0001, False),
+    ):
+        try:
+            harness._validate_temperature(value)
+            harness_accepted = True
+        except (TypeError, ValueError):
+            harness_accepted = False
+        surface = f"SUMM_TEMPERATURE temperature={value}"
+        log = _valid_log("summ-decoding-temperature").replace(
+            SURFACES["summ-decoding-temperature"], surface, 1
+        )
+        parser_accepted = len(
+            parser.parse("summ-decoding-temperature", log).metrics
+        ) == 9
+        assert harness_accepted is expected, value
+        assert parser_accepted is expected, value
+
+
 def test_non_model_source_policies_are_explicit_and_do_not_claim_model_proofs():
     parser = _parser("summ-source-policy")
     for policy in ("lead3", "copy_document", "first_token", "empty"):
@@ -424,6 +513,35 @@ def test_no_legacy_slice_assets_public_hidden_labels_or_answer_leaks_remain():
         )
         for phrase in disallowed:
             assert phrase not in searchable, f"{task.name} contains {phrase!r}"
+
+
+def test_agent_visible_contracts_publish_numeric_domains_and_metric_definition():
+    expected_fragments = {
+        "summ-beam-repetition": ("[1, 12]", "[0, 20]", "(0, 10]"),
+        "summ-beam-width": ("[1, 12]",),
+        "summ-decoding-length": ("[0, 200]", "[1, 200]", "(0, 10]"),
+        "summ-decoding-temperature": ("[0.05, 5.0]",),
+        "summ-diverse-beam": (
+            "[1, 12]",
+            "[1, num_beams]",
+            "exactly 0 when groups == 1",
+            "(0, 10]",
+        ),
+        "summ-norepeat-ngram": ("[0, 20]",),
+        "summ-nucleus-topp": ("[0.05, 1.0]",),
+        "summ-post-truncation": ("[0, 10000]",),
+        "summ-sampling-vs-beam": ("[1, 12]", "(0, 1]", "[0, 1000]", "(0, 5]"),
+    }
+    for task in TASKS:
+        visible = (
+            (task / "task_description.md").read_text()
+            + "\n"
+            + (task / "edits" / "custom_template.py").read_text()
+        )
+        for fragment in expected_fragments.get(task.name, ()):
+            assert fragment in visible, (task.name, fragment)
+        assert "mean per-example ROUGE-L F1" in visible
+        assert "corpus ROUGE-L F1" not in visible
 
 
 def test_every_baseline_edit_materializes_valid_python_on_native_scaffold():

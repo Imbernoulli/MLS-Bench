@@ -2,15 +2,15 @@
 
 FROZEN domain-matched summarizers decode THREE FIXED domain settings (xsum / cnndm
 / samsum) with nucleus sampling (top_p=0.95) + no-repeat-3gram + the per-domain
-length window FIXED; you control ONLY the sampling TEMPERATURE. Scored on corpus
-ROUGE-L F1 (gmean over the 3 settings).
+length window FIXED; you control ONLY the sampling TEMPERATURE. Uses mean
+per-example ROUGE-L F1 (gmean over the 3 settings).
 
 Implement:
 
     def build_temperature() -> float:
         return ...
 
-  temperature : finite softmax temperature inside the documented runtime bound.
+  temperature : finite softmax temperature in the closed interval [0.05, 5.0].
                 It changes the sampling distribution while every other decode
                 control stays fixed. Invalid values fail rather than being
                 clamped.

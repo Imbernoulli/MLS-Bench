@@ -380,10 +380,12 @@ def _sanitize_gen_kwargs(gen_kwargs: dict) -> dict:
     if groups > beams or beams % groups:
         print("SURFACE_ERROR summarization beam groups must divide num_beams", flush=True)
         raise ValueError("invalid beam grouping")
-    if "diversity_penalty" in out and groups <= 1:
-        print("SURFACE_ERROR summarization diversity_penalty requires grouped beams",
+    if "diversity_penalty" in out and (
+        groups <= 1 or out["diversity_penalty"] <= 0.0
+    ):
+        print("SURFACE_ERROR summarization positive diversity_penalty requires grouped beams",
               flush=True)
-        raise ValueError("diversity_penalty requires num_beam_groups > 1")
+        raise ValueError("positive diversity_penalty requires num_beam_groups > 1")
     return out
 
 
@@ -433,7 +435,7 @@ def generate_summaries(model, tok, docs: List[str], gen_kwargs: dict,
 
 
 def score_rouge(preds: List[str], refs: List[str]) -> dict:
-    """Mean ROUGE-1/2/L **F1** over the corpus via the `rouge_score` library
+    """Mean per-example ROUGE-1/2/L **F1** via the `rouge_score` library
     (Google's implementation; the standard, non-gameable F-measure)."""
     from rouge_score import rouge_scorer
 

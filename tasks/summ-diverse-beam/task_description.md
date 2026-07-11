@@ -11,7 +11,11 @@ def build_diverse_config() -> dict:
     ...
 ```
 
-Return exactly `num_beams`, `num_beam_groups`, and `diversity_penalty`; groups must divide the beam count. Missing keys, extra keys, invalid values, non-finite results, or
+Return exactly `num_beams`, `num_beam_groups`, and `diversity_penalty`.
+Beam count must be an integer in `[1, 12]`; group count must be an integer in
+`[1, num_beams]` that divides the beam count. The penalty must be exactly
+`0` for one group and finite in `(0, 10]` for grouped beams. Missing keys,
+extra keys, invalid values, non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 

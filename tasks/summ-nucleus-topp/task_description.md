@@ -11,7 +11,8 @@ def build_top_p() -> float:
     ...
 ```
 
-Return a finite probability in the accepted interval. Missing keys, extra keys, invalid values, non-finite results, or
+Return a finite probability in `[0.05, 1.0]`. Missing keys, extra keys,
+invalid values, non-finite results, or
 generation failures abort verification. The harness never repairs the editable
 configuration or replaces it with another decode policy.
 
