@@ -125,8 +125,15 @@ class ColExpr:
         bound: float | AnchorRef,
         ref: float | AnchorRef | None = None,
         ref_score: float = DEFAULT_REF_SCORE,
+        floor: float | AnchorRef | None = None,
     ) -> TermSpec:
-        """Create a bounded_power term spec."""
+        """Create a bounded_power term spec.
+
+        ``floor`` is the generic / baseline-free anchor: the raw value that maps
+        to score 0 (e.g. ``const(0.1)`` for a 10-class random-guess accuracy, or
+        ``const(2.302)`` for the ln(10) trivial cross-entropy). When omitted the
+        worst baseline from leaderboard.csv is used (legacy behaviour).
+        """
         bound_val = bound.value if isinstance(bound, AnchorRef) and bound.kind == "const" else bound
         return TermSpec(
             name="",  # filled by term()
@@ -136,6 +143,7 @@ class ColExpr:
             transform=self._transform,
             norm_type="bounded_power",
             bound=float(bound_val) if isinstance(bound_val, (int, float)) else None,
+            floor=floor,
             ref=ref,
             ref_score=ref_score,
         )
@@ -145,8 +153,17 @@ class ColExpr:
         ref: float | AnchorRef | None = None,
         ref_score: float = DEFAULT_REF_SCORE,
         scale: float | None = None,
+        floor: float | AnchorRef | None = None,
     ) -> TermSpec:
-        """Create a sigmoid term spec."""
+        """Create a sigmoid term spec.
+
+        ``floor`` is the generic / baseline-free anchor (raw value mapping to
+        score 0). When omitted the worst baseline is used (legacy behaviour).
+
+        For baseline-free smooth scoring, pass ``ref=const(<midpoint>)`` and
+        ``scale=<width>`` without ``floor``. That path treats ``ref`` as the
+        logistic midpoint and does not hard-clip values below it to zero.
+        """
         return TermSpec(
             name="",  # filled by term()
             metric=self._metric,
@@ -154,6 +171,7 @@ class ColExpr:
             direction=self._direction,
             transform=self._transform,
             norm_type="sigmoid",
+            floor=floor,
             ref=ref,
             ref_score=ref_score,
             scale=scale,
