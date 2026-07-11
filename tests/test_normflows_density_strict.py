@@ -628,6 +628,10 @@ def test_one_pinned_repository_image_and_host_only_dgp() -> None:
     assert "tests/test_workspace_tools_fail_closed.py" in worker
     assert "tests/test_scoring_fail_closed.py" not in worker
     assert "tests/test_scoring_no_implicit_fallback.py" not in worker
+    assert 'run_logged "${RUN}/pytest.log"' in worker
+    assert 'run_logged "${RUN}/render.log"' in worker
+    assert 'audit_status=("${PIPESTATUS[@]}")' in worker
+    assert 'finish "${audit_rc}"' in worker
     assert 'date -Iseconds > FINISHED' in worker
     assert "printf '%s\\n' \"${rc}\" > rc" in worker
     assert 'date -Iseconds > SUCCESS' in worker
