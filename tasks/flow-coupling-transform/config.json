@@ -75,5 +75,44 @@
   "calibration_representative_steps": 20000,
   "calibration_representative_train_count": 30000,
   "calibration_representative_test_count": 30000,
-  "calibration_representative_evidence_sha256": "ff9d55ea1e732d3d9f3997b750b86acf9dd7e5ab9ef49ae521a4d9c82cd06446"
+  "calibration_representative_evidence_file": "calibration_evidence.json",
+  "calibration_representative_evidence_sha256": "73429c480ad6dc0e8f3fb147668e6195fb3d0fcc173079814f9868b8c18d41ef",
+  "calibration_representative_mangrove_runs": [
+    {
+      "role": "strong_anchor",
+      "task_db_id": 96207,
+      "container_db_id": 4909807,
+      "dataset_version_id": 18721,
+      "agent": "oracle",
+      "source_commit": "cf0202decf342200005fa40dbc00726c23ed45db",
+      "task_checksum": "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546",
+      "runner_id": "virt-v6h20",
+      "has_exception": false,
+      "artifact_archive_sha256": "59c084d1424dbda122e4ca5983fb186a1410ffd48cb25500c73d7c25bbe217b1"
+    },
+    {
+      "role": "weak_anchor",
+      "task_db_id": 96208,
+      "container_db_id": 4909808,
+      "dataset_version_id": 18721,
+      "agent": "nop",
+      "source_commit": "cf0202decf342200005fa40dbc00726c23ed45db",
+      "task_checksum": "9c02337322ec5ce4299a06ee4409265834bac453a08b9f2680ebfd7927059546",
+      "runner_id": "virt-v6h20",
+      "has_exception": false,
+      "artifact_archive_sha256": "5ca4212163ff5108205d940fe9cf18557c74ee5652735700e484c29e35accabd"
+    }
+  ],
+  "calibration_runtime_reproduction": {
+    "scope": "runtime_only_not_leaderboard",
+    "task_db_id": 96410,
+    "container_db_id": 4930273,
+    "dataset_version_id": 18738,
+    "agent": "nop",
+    "source_commit": "809b5ca1c659f2ceb3ff2632ff67ecaeeb3f8514",
+    "task_checksum": "b37d6416fc3155f43b180934b8037e173eb54c41afea0da8e96ed4f1dd6e0f5b",
+    "runner_id": "virt-v6h20",
+    "has_exception": false,
+    "artifact_archive_sha256": "8aa5ae30af3eb35b9e8e72760421ae23ba2eef588b68ddb7b86bab2b5177c3f4"
+  }
 }
