@@ -49,10 +49,10 @@ printf 'allocated=%s visible=1\n' "${allocated_gpu_count}" > gpu-usage.log
 cd "${REPO}" || exit 111
 export PYTHONDONTWRITEBYTECODE=1
 export PYTHONPATH="${REPO}/src"
+# The canonical shared core consolidates the former split scoring tests here.
 python -m pytest -q -p no:cacheprovider \
     tests/test_normflows_density_strict.py \
-    tests/test_scoring_fail_closed.py \
-    tests/test_scoring_no_implicit_fallback.py \
+    tests/test_scoring_shared_contract.py \
     tests/test_workspace_tools_fail_closed.py \
     2>&1 | tee "${RUN}/pytest.log"
 

@@ -624,6 +624,10 @@ def test_one_pinned_repository_image_and_host_only_dgp() -> None:
     assert "generate_data.py" not in vendor_files
 
     worker = ROOT.joinpath("scripts/run_normflows_density_static_worker.sh").read_text()
+    assert "tests/test_scoring_shared_contract.py" in worker
+    assert "tests/test_workspace_tools_fail_closed.py" in worker
+    assert "tests/test_scoring_fail_closed.py" not in worker
+    assert "tests/test_scoring_no_implicit_fallback.py" not in worker
     assert 'date -Iseconds > FINISHED' in worker
     assert "printf '%s\\n' \"${rc}\" > rc" in worker
     assert 'date -Iseconds > SUCCESS' in worker
