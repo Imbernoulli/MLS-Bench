@@ -17,11 +17,16 @@ class Parser(OutputParser):
         # "[\d.]+" matched the integer "0" from that progress bar instead of the
         # real "FID: 5.55" result line, zeroing best_fid_Imagenet. tqdm
         # percentages are integers; the real FID is always fractional, so
-        # \d+\.\d+ skips the bar and matches the result line.
-        _fid_vals = re.findall(r"FID(?:\s*score)?:\s*(\d+\.\d+)", raw_output, re.IGNORECASE)
+        # \d+\.\d+ skips the bar and matches the result line (an optional
+        # exponent tolerates scientific notation).
+        _fid_vals = re.findall(
+            r"FID(?:\s*score)?:\s*(\d+\.\d+(?:[eE][+-]?\d+)?)", raw_output, re.IGNORECASE
+        )
         # Also match dict format: {'fid': np.float64(<number>), ...}
         if not _fid_vals:
-            _fid_vals = re.findall(r"'fid':\s*(?:np\.float64\()?(\d+\.\d+)", raw_output)
+            _fid_vals = re.findall(
+                r"'fid':\s*(?:np\.float64\()?(\d+\.\d+(?:[eE][+-]?\d+)?)", raw_output
+            )
         fid_str = _fid_vals[-1] if _fid_vals else None
         
         # NFE budget enforcement: reject if the karras_sample wrapper reports

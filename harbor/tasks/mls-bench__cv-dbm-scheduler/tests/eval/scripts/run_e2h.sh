@@ -21,8 +21,15 @@ bash scripts/sample.sh $ds $nfe $sampler $eta
 # have equal N and core-dumps when they differ (it does here). FID is the only
 # scored metric, so tolerate the LPIPS crash and surface FID from wherever
 # get_fid wrote fid.json.
+# Scope fid.json to THIS dataset's trees ("*${ds}*" matches the model-prefix
+# dirs e2h_*/diode_* and $sample_dir): all three settings share workdir/ and
+# run concurrently in the same group, so an unscoped `find | head -1` could
+# surface another dataset's fid.json (DIODE echoing edges2handbags' FID).
+# Pre-delete this dataset's stale fid.json so a crashed eval behind `|| true`
+# can't re-echo a previous iteration's value.
+find workdir "$sample_dir" "${OUTPUT_DIR:-output}" -ipath "*${ds}*" -name fid.json -delete 2>/dev/null || true
 bash scripts/evaluate.sh $ds $nfe $sampler $eta || true
-FID_JSON=$(find workdir "$sample_dir" "${OUTPUT_DIR:-output}" -name fid.json 2>/dev/null | head -1)
+FID_JSON=$(find workdir "$sample_dir" "${OUTPUT_DIR:-output}" -ipath "*${ds}*" -name fid.json 2>/dev/null | head -1)
 if [ -n "$FID_JSON" ]; then
     echo "FID: $(python3 -c "import json; print(json.load(open('$FID_JSON'))['fid'])")"
 fi
