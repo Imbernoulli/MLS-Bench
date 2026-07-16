@@ -10,9 +10,22 @@ class Parser(OutputParser):
     def parse(self, cmd_label: str, raw_output: str) -> ParseResult:
         metrics = {}
         feedback = ""
-        fid_match = re.search(r"FID(?:\s*score)?:\s*([\d.]+)", raw_output, re.IGNORECASE)
-        if fid_match:
-            fid_val = float(fid_match.group(1))
+        # Require a decimal point and take the LAST match: when FID reference
+        # statistics are generated on the fly, the inception feature loop prints a
+        # tqdm bar "FID:   0%|..." whose integer "0" a greedy "[\d.]+" would match
+        # instead of the real "FID: 5.55" result line (zeroing best_fid). tqdm
+        # percentages are integers; the real FID is fractional, so \d+\.\d+ skips
+        # the bar (an optional exponent tolerates scientific notation). Mirrors
+        # the fix in tasks/cv-dbm-sampler/parser.py.
+        _fid_vals = re.findall(
+            r"FID(?:\s*score)?:\s*(\d+\.\d+(?:[eE][+-]?\d+)?)", raw_output, re.IGNORECASE
+        )
+        if not _fid_vals:
+            _fid_vals = re.findall(
+                r"'fid':\s*(?:np\.float64\()?(\d+\.\d+(?:[eE][+-]?\d+)?)", raw_output
+            )
+        if _fid_vals:
+            fid_val = float(_fid_vals[-1])
             label = cmd_label.replace("-", "_")
             metrics["fid"] = fid_val
             metrics["best_fid"] = fid_val
