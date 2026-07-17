@@ -317,14 +317,47 @@ def cmd_guard(args: argparse.Namespace) -> int:
     guarded_prefixes = {Path(f).parts[0] for f in editable if f}
     guarded_prefixes |= {Path(f).parts[0] for f in manifest if f}
 
-    # Disallowed creation: anything in workspace that is NOT in the manifest
-    # (= agent created it post-start).
+    # Newly-created files (present in the workspace, absent from the render-time
+    # manifest) are NOT tampering. The anti-cheat surface this guard protects is
+    # *modification* or *deletion* of the fixed baseline (scorer/tests/data/model
+    # source) — handled below. A brand-new file is, at worst, agent scratch
+    # (an experiment script, a `*.bak`, a `test_*.py`); hard-failing the whole
+    # run for it (reward 0, eval never runs) zeroes otherwise-correct solutions.
+    # Instead, REMOVE such files before the eval so they cannot influence it
+    # (e.g. shadow-import a package module), then continue. A task that
+    # legitimately needs the agent to author new files sets allow_create=true.
+    #
+    # Only files under a guarded package prefix are cleaned — those are the only
+    # ones that can shadow-import a protected module; created files elsewhere are
+    # harmless and left untouched. Unlink uses the LITERAL workspace path, never
+    # _safe_join (which resolve()s symlinks): we must remove the created entry
+    # itself — never a symlink's *target* (which could be a manifest file) — and
+    # must not raise on a symlink that points outside the workspace.
+    cleaned_created: list[str] = []
+    failed_clean: list[str] = []
     if not allow_create:
         for rel in sorted(workspace_files):
             rel_str = rel.as_posix()
             if rel_str in manifest:
                 continue
-            violations.append(f"created new file (allow_create=false): {rel_str}")
+            if not rel.parts or rel.parts[0] not in guarded_prefixes:
+                continue
+            try:
+                (workspace_root / rel_str).unlink()
+                cleaned_created.append(rel_str)
+            except (OSError, ValueError):
+                failed_clean.append(rel_str)
+        if cleaned_created:
+            removed = set(cleaned_created)
+            workspace_files = {p for p in workspace_files
+                               if p.as_posix() not in removed}
+            workspace_rel_strs = {p.as_posix() for p in workspace_files}
+        if cleaned_created or failed_clean:
+            # Debug breadcrumb only — NOT a violation.
+            lines = cleaned_created + [f"{p}  [unlink-failed]" for p in failed_clean]
+            (violation_out.parent / "cleaned_created.txt").write_text(
+                "\n".join(lines) + "\n"
+            )
 
     # Disallowed deletion: anything in manifest under a guarded prefix that
     # is gone from workspace.
@@ -795,13 +828,13 @@ def _remove_budget_legacy_links(links: list[Path]) -> None:
 
 def _build_eval_task_dir(task_meta: Path) -> Path:
     """Throwaway dir exposing ONLY the eval-time resources (scripts/ data/
-    third_party/) that some eval wrappers reach via /workspace/_task. It
-    deliberately EXCLUDES the scoring metadata (parser.py / score_spec.py /
-    config.json / leaderboard.csv) that cmd_score imports: eval runs agent-
-    authored package code as root, so any path it can reach is writable (chmod
-    a-w doesn't stop root), and exposing the real task_meta would let a
-    submission overwrite the parser/spec before the score phase. The real
-    task_meta stays at its unexposed random /tmp path."""
+    third_party/) that some eval wrappers reach via /workspace/_task or
+    $MLSBENCH_TASK_DIR. It deliberately EXCLUDES the scoring metadata
+    (parser.py / score_spec.py / config.json / leaderboard.csv) that cmd_score
+    imports: eval runs agent-authored package code as root, so any path it can
+    reach is writable (chmod a-w doesn't stop root), and exposing the real
+    task_meta would let a submission overwrite the parser/spec before the score
+    phase. The real task_meta stays at its unexposed random /tmp path."""
     d = Path(tempfile.mkdtemp(prefix="mlsbench-evaltask-"))
     for sub in ("scripts", "data", "third_party"):
         src = task_meta / sub
@@ -1210,8 +1243,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
             # task_meta, so eval-time agent code (running as root) cannot reach and
             # overwrite the scoring metadata (parser.py/score_spec.py/config.json)
             # before the score phase. The guard exempts the _task top-level dir and
-            # runs as a separate pre-eval invocation, so this never affects the
-            # diff. (issue #25.4, #25.5; Codex P1 on #29)
+            # runs as a separate pre-eval invocation, so this never affects the diff.
             eval_task_dir = _build_eval_task_dir(task_meta)
             eval_task_links = _install_budget_legacy_links(eval_task_dir, workspace_root)
             try:
