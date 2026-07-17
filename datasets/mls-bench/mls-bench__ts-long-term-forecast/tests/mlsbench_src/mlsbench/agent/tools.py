@@ -1,5 +1,11 @@
 """WorkspaceTools: file editing and test execution tools for the MLS-Bench agent."""
 
+# Defer annotation evaluation: imported (via mlsbench.agent's __init__) by the
+# Harbor verifier's score_task.py, which several task images run under Python
+# 3.8 — without this, PEP 585 builtin generics in signatures crash at import
+# with "'type' object is not subscriptable".
+from __future__ import annotations
+
 import copy
 import fcntl
 import fnmatch
@@ -8,13 +14,12 @@ import math
 import os
 import re
 import shutil
-import signal
 import subprocess
-import tempfile
+import sys
 import threading
 import time as _time
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -227,6 +232,79 @@ WEB_EXTRACT_SCHEMA = {
 
 
 # ---------------------------------------------------------------------------
+# compute_scale
+# ---------------------------------------------------------------------------
+
+def scale_test_cmd_entries(
+    entries: list[dict], scale: float, task_name: str = ""
+) -> list[dict]:
+    """Apply the host GPU `compute_scale` to a list of test_cmd entries.
+
+    `scale` is the perf factor vs the H100 baseline the tasks are tuned on
+    (1.0 = H100; 0.5 = H200 ~= 2x H100). Returns deep-copied entries with the
+    `h200` helper key stripped, so the result is always safe to hand to the
+    container builders / GPU packers. Per entry:
+
+    - `h200` override block present (llm-pretrain / llm-rl): apply its `cmd` and
+      `compute`, and merge its `env` over the entry's (the task's H200 config).
+      The fewer-GPUs change is paired with a larger per-GPU batch / TP=1 so the
+      macro-batch — and thus the result — stays constant.
+    - no override, `compute <= 1` (fractional / single-GPU): multiply `compute`
+      by `scale` for denser packing (the original behaviour; never changes a
+      single job's result). Offered for all such tasks but only really needed
+      for the two families above.
+    - no override, `compute > 1`: left untouched and warned. Cutting a multi-GPU
+      data-parallel job's GPU count alone would change its global batch / result,
+      so we don't do it silently.
+
+    The standalone scheduler (scheduler.py) mirrors the compute-number transform
+    independently to keep its GPU inference dependency-free.
+    """
+    scale = float(scale or 1.0)
+    scaled: list[dict] = []
+    for entry in entries:
+        entry = copy.deepcopy(entry)
+        override = entry.pop("h200", None)
+        if scale == 1.0:
+            scaled.append(entry)
+            continue
+        if override:
+            if "cmd" in override:
+                entry["cmd"] = override["cmd"]
+            entry["compute"] = override.get(
+                "compute", float(entry.get("compute", 1) or 1) * scale
+            )
+            if override.get("env"):
+                merged = dict(entry.get("env", {}))
+                merged.update(override["env"])
+                entry["env"] = merged
+        else:
+            # Sub-1 (fractional / single-GPU) jobs scale for denser packing —
+            # the original compute_scale behaviour, which never changes a single
+            # job's result. A multi-GPU data-parallel job (compute > 1) without
+            # an h200 block is left untouched + warned, since cutting its GPU
+            # count alone would change its global batch / result.
+            compute = float(entry.get("compute", 1) or 1)
+            if compute <= 1.0:
+                # Write even when `compute` was implicit (default 1.0) so this
+                # matches scheduler._scaled_compute, which scales the default.
+                entry["compute"] = compute * scale
+            else:
+                print(
+                    f"[compute_scale] WARNING: {task_name or 'task'} test_cmd "
+                    f"'{entry.get('label', entry.get('cmd', ''))}' has compute="
+                    f"{compute} but no 'h200' override; left at {compute} GPUs "
+                    f"(not scaled by {scale}). Cutting a data-parallel job's GPU "
+                    f"count alone changes its global batch/result; compute_scale "
+                    f"is only really needed for llm-pretrain / llm-rl. Add an "
+                    f"'h200' block to adapt it.",
+                    file=sys.stderr,
+                )
+        scaled.append(entry)
+    return scaled
+
+
+# ---------------------------------------------------------------------------
 # WorkspaceTools
 # ---------------------------------------------------------------------------
 
@@ -257,6 +335,7 @@ class WorkspaceTools:
         use_cuda: bool | None = None,
         platform: str = "",
         gpu_devices: str = "",
+        compute_scale: float = 1.0,
         global_config: dict | None = None,
         allow_web_search: bool = False,
         tavily_api_key: str = "",
@@ -279,6 +358,11 @@ class WorkspaceTools:
         self._use_cuda_override = use_cuda   # None = defer to pkg config
         self._platform = platform             # e.g. "linux/amd64" for Rosetta
         self.gpu_devices = gpu_devices
+        # GPU perf/packing scaler vs the H100 baseline the tasks are tuned on.
+        # <1 means each GPU is faster/bigger (e.g. 0.5 for H200 ~= 2x H100).
+        # Only retunes llm-pretrain / llm-rl tasks (which declare an `h200`
+        # block); see scale_test_cmd_entries.
+        self.compute_scale = float(compute_scale or 1.0)
         self.global_config = dict(global_config or {})
         self.allow_web_search = bool(allow_web_search)
         self.tavily_api_key = tavily_api_key or ""
@@ -323,11 +407,7 @@ class WorkspaceTools:
             # Skip if we're already inside a scheduler-managed job (baseline via scheduler).
             try:
                 from mlsbench.scheduler import is_scheduler_running
-                is_docker_baseline = (
-                    self.container_runtime == "docker"
-                    and str(self.model_name).startswith("baseline:")
-                )
-                if not is_docker_baseline and is_scheduler_running():
+                if is_scheduler_running():
                     from mlsbench.agent.local_executor import LocalSchedulerExecutor
                     self.slurm_executor = LocalSchedulerExecutor(self.project_root, self.global_config)
                     print("[info] Local GPU scheduler detected — test jobs will be submitted for GPU allocation")
@@ -488,19 +568,25 @@ class WorkspaceTools:
     # ------------------------------------------------------------------
 
     def _build_test_cmd_entries(self) -> list[dict]:
-        """Build normalised list of test_cmd entries from config."""
+        """Build normalised list of test_cmd entries from config.
+
+        Applies the host `compute_scale` via scale_test_cmd_entries: the
+        llm-pretrain / llm-rl tasks (which carry an `h200` block) switch to their
+        original H200 config; everything else keeps its baseline GPU count except
+        fractional jobs, which pack denser.
+        """
         entries = self.config_task.get("test_cmds", [])
-        if entries:
-            return entries
-        # Backward compat: old single-string test_cmd
-        cmd = self.config_task.get("test_cmd", "train.sh")
-        return [{
-            "cmd": cmd,
-            "label": "test",
-            "package": self.config_task.get("package", ""),
-            "use_cuda": self.config_task.get("use_cuda", False),
-            "workdir": self.config_task.get("workdir", "/app"),
-        }]
+        if not entries:
+            # Backward compat: old single-string test_cmd
+            cmd = self.config_task.get("test_cmd", "train.sh")
+            entries = [{
+                "cmd": cmd,
+                "label": "test",
+                "package": self.config_task.get("package", ""),
+                "use_cuda": self.config_task.get("use_cuda", False),
+                "workdir": self.config_task.get("workdir", "/app"),
+            }]
+        return scale_test_cmd_entries(entries, self.compute_scale, task_name=self.task_name)
 
     # ------------------------------------------------------------------
     # Path resolution
@@ -528,6 +614,41 @@ class WorkspaceTools:
         raise FileNotFoundError(
             f"Package '{pkg_name}' not found in workspace: {wtd}"
         )
+
+    def _canonicalize_filename(self, filename: str) -> str:
+        """Map a model-supplied path onto a declared file when the package
+        prefix is missing or wrong.
+
+        The task description and the diff headers refer to the target file by
+        its package-*relative* path (e.g. ``bench/custom_algorithm.py``), while
+        the edit whitelist keys on the package-*prefixed* path declared in
+        ``config.json`` (e.g. ``causal-learn/bench/custom_algorithm.py``). A
+        model that follows the prompt body would otherwise have every edit
+        rejected with "Package 'bench' is not in allowed packages" and score 0
+        without ever editing. Accept the package-less / basename form whenever it
+        unambiguously identifies one declared file; otherwise leave it unchanged
+        so the normal validation (and its error message) still applies.
+        """
+        if not filename:
+            return filename
+        first = filename.split("/")[0]
+        known = {self._normalize_pkg_name(p) for p in self.all_external_packages}
+        # Already a valid package-prefixed path → nothing to do.
+        if self._normalize_pkg_name(first) in known:
+            return filename
+        declared = [e["filename"] for e in self.config_edit]
+        norm = filename.strip("/")
+        # 1) Unique suffix match (most specific): declared endswith "/<supplied>".
+        suffix = [d for d in declared if d == norm or d.endswith("/" + norm)]
+        if len(suffix) == 1:
+            return suffix[0]
+        # 2) Unique basename match (e.g. just "custom_algorithm.py").
+        base = norm.rsplit("/", 1)[-1]
+        bmatch = [d for d in declared if d.rsplit("/", 1)[-1] == base]
+        if len(bmatch) == 1:
+            return bmatch[0]
+        return filename
+
 
     def _resolve_workspace_path(self, filename: str) -> Path:
         """Resolve a filename to an absolute path.
@@ -808,6 +929,11 @@ class WorkspaceTools:
         end_line: int | None = None,
     ) -> str:
         """Unified file editing tool."""
+        # Accept package-relative / basename paths (as written in the task body
+        # and diff headers) by mapping them onto the declared package-prefixed
+        # file before validation, so a correct edit isn't rejected on a prefix
+        # mismatch.
+        filename = self._canonicalize_filename(filename)
         result = self._edit_impl(op, filename, content, after_line, start_line, end_line)
 
         # Always append the current file snapshot so the model sees the live state
@@ -944,14 +1070,7 @@ class WorkspaceTools:
         workdir = pkg_config.get("workdir", "/app")
         install_cmds = pkg_config.get("install_cmds", [])
 
-        files_section = f"    {pkg_dir.resolve()} {workdir}/{pkg_dir.name}\n"
-        for extra_pkg in pkg_config.get("extra_packages", []):
-            extra_src = self._find_ext_pkg_dir(extra_pkg).resolve()
-            files_section += f"    {extra_src} {workdir}/{extra_pkg}\n"
-        for ef in pkg_config.get("extra_files", []):
-            src = Path(str(ef["src"]).replace("{project_root}", str(self.project_root))).expanduser().resolve()
-            if src.exists():
-                files_section += f"    {src} {ef['dst']}\n"
+        files_section = f"    {pkg_dir.resolve()} {workdir}"
         post_section = "\n".join(f"    {line}" for line in install_cmds)
         env_section = "\n".join(
             f"    export {k}={v}" for k, v in pkg_config.get("env", {}).items()
@@ -993,8 +1112,6 @@ class WorkspaceTools:
 
         lines = ["# syntax=docker/dockerfile:1.4", f"FROM {base_image}"]
         lines.append(f"COPY {pkg_dir.name} {pkg_workdir}")
-        for extra_pkg in pkg_config.get("extra_packages", []):
-            lines.append(f"COPY --from=mls_pkg_{self._normalize_pkg_name(extra_pkg)} {extra_pkg} /workspace/{extra_pkg}")
         for ef in docker_extra_files:
             lines.append(f"COPY --from={ef['context_name']} {ef['copy_src']} {ef['dst']}")
         lines.append(f"WORKDIR {pkg_workdir}")
@@ -1123,14 +1240,6 @@ class WorkspaceTools:
             global_config=global_cfg,
         )
 
-    def _ensure_local_runtime_ready(self, pkg_name: str, pkg_config: dict) -> None:
-        """Ensure local runtime dependencies are prepared for a package."""
-        from mlsbench.cli import build_local_package
-        global_cfg = self._effective_global_config()
-        pkg_dir = self._find_ext_pkg_dir(pkg_name)
-        # Reuses local build fingerprint; no-op when already prepared.
-        build_local_package(pkg_name, pkg_config, pkg_dir, global_cfg, force=False)
-
     def _effective_global_config(self) -> dict:
         """Return the active run config, falling back to configs/config.yaml."""
         if self.global_config:
@@ -1160,7 +1269,6 @@ class WorkspaceTools:
         if self.container_runtime == "local":
             with self._build_lock:
                 self._ensure_data(pkg_dir.name, pkg_config)
-                self._ensure_local_runtime_ready(pkg_dir.name, pkg_config)
             return pkg_dir, pkg_config
 
         if self.container_runtime == "docker":
@@ -1272,7 +1380,7 @@ class WorkspaceTools:
             # `python pkg/script.py` work correctly in local mode.
             path_map.setdefault(workdir.rstrip("/"), str(pkg_host_dir.parent.resolve()))
 
-        from mlsbench.cli import expand_path_template, find_ext_pkg_dir, resolve_data_binds
+        from mlsbench.cli import resolve_data_binds
         global_cfg = self._effective_global_config()
         data_root = global_cfg.get("data_root", str(self.project_root / "vendor" / "data"))
         resolved_data_root = str(Path(data_root).expanduser().resolve())
@@ -1283,26 +1391,6 @@ class WorkspaceTools:
         for bind in resolve_data_binds(pkg_config, data_root):
             host_path, container_path = bind.split(":", 1)
             path_map[container_path] = str(Path(host_path).expanduser())
-        # Package-level extra mounts (extra_packages / extra_files). These are
-        # present in container runtimes but not automatically copied into local
-        # workspaces, so map them explicitly to host sources.
-        for extra_pkg in pkg_config.get("extra_packages", []):
-            try:
-                extra_src = find_ext_pkg_dir(extra_pkg).resolve()
-            except FileNotFoundError:
-                print(f"[local] warning: extra_packages source not found: {extra_pkg}")
-                continue
-            path_map[f"{workdir.rstrip('/')}/{extra_pkg}"] = str(extra_src)
-        for ef in pkg_config.get("extra_files", []):
-            dst = str(ef.get("dst", "")).strip()
-            if not dst:
-                continue
-            src_str = expand_path_template(str(ef.get("src", "")), data_root)
-            src = Path(src_str).expanduser().resolve()
-            if not src.exists():
-                print(f"[local] warning: extra_files source not found: {src}")
-                continue
-            path_map[dst] = str(src)
         # Task-level data_deps (same format as pkg config data_deps)
         if self.config_task.get("data_deps"):
             task_data_cfg = {"data_deps": self.config_task["data_deps"]}
@@ -1336,6 +1424,9 @@ class WorkspaceTools:
         label = cmd_entry.get("label", "")
         if label:
             run_env["ENV"] = label
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (cmd_entry.get("env") or {}).items():
+            run_env[k] = str(v)
         if gpu_devices:
             run_env["CUDA_VISIBLE_DEVICES"] = gpu_devices
             run_env["NVIDIA_VISIBLE_DEVICES"] = gpu_devices
@@ -1460,6 +1551,9 @@ class WorkspaceTools:
         label = cmd_entry.get("label", "")
         if label:
             env_vars.append(f"ENV={label}")
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (cmd_entry.get("env") or {}).items():
+            env_vars.append(f"{k}={v}")
         for ev in env_vars:
             apptainer_cmd.extend(["--env", ev])
 
@@ -1567,6 +1661,9 @@ class WorkspaceTools:
         label = cmd_entry.get("label", "")
         if label:
             docker_cmd.extend(["-e", f"ENV={label}"])
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (cmd_entry.get("env") or {}).items():
+            docker_cmd.extend(["-e", f"{k}={v}"])
 
         # Bind mounts
         wtd = self.workspace_task_dir
@@ -1710,154 +1807,6 @@ class WorkspaceTools:
         status, _ = self._docker_container_state(container_name, run_env)
         return status is not None
 
-    def _configured_timeout_seconds(self, cmd_entry: dict) -> int:
-        """Return the hard timeout for one test command."""
-        for key in ("test_timeout_seconds", "hard_timeout_seconds", "container_timeout_seconds"):
-            value = self.global_config.get(key)
-            if value not in (None, ""):
-                return max(1, self._parse_time_to_seconds(str(value)))
-
-        if "time" in cmd_entry:
-            return max(1, self._parse_time_to_seconds(str(cmd_entry["time"])))
-
-        return max(1, min(int(self.global_config.get("default_test_timeout_seconds", 1800)), 1800))
-
-    @staticmethod
-    def _timeout_feedback(timeout_secs: int | float) -> str:
-        return (
-            f"[TIMEOUT] Command timed out after {int(timeout_secs)} seconds. "
-            f"This result is INVALID and will not count. "
-            f"Your algorithm is too slow — reduce model size or computational complexity."
-        )
-
-    @staticmethod
-    def _read_output_file(output_path: str | Path) -> str:
-        try:
-            return Path(output_path).read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            return ""
-
-    @staticmethod
-    def _unlink_output_file(output_path: str | Path) -> None:
-        try:
-            Path(output_path).unlink(missing_ok=True)
-        except Exception:
-            pass
-
-    def _start_subprocess_to_file(
-        self,
-        cmd: list[str],
-        *,
-        cwd: str | None = None,
-        env: dict[str, str] | None = None,
-    ) -> tuple[subprocess.Popen, object, str]:
-        """Start a subprocess with stdout/stderr redirected to a temp file."""
-        output_file = tempfile.NamedTemporaryFile(
-            mode="w+b",
-            prefix="mlsbench-subprocess-",
-            suffix=".log",
-            delete=False,
-        )
-        try:
-            proc = subprocess.Popen(
-                cmd,
-                stdin=subprocess.DEVNULL,
-                stdout=output_file,
-                stderr=subprocess.STDOUT,
-                cwd=cwd,
-                env=env,
-                start_new_session=True,
-                close_fds=True,
-            )
-        except Exception:
-            output_path = output_file.name
-            output_file.close()
-            self._unlink_output_file(output_path)
-            raise
-        return proc, output_file, output_file.name
-
-    def _collect_subprocess_output(self, output_file, output_path: str) -> str:
-        try:
-            output_file.flush()
-        except Exception:
-            pass
-        try:
-            output_file.close()
-        except Exception:
-            pass
-        raw_output = self._read_output_file(output_path)
-        self._unlink_output_file(output_path)
-        return raw_output
-
-    @staticmethod
-    def _terminate_process_group(proc: subprocess.Popen, grace_secs: float = 5.0) -> None:
-        """Best-effort process-group termination for timed-out subprocesses."""
-        if proc.poll() is not None:
-            return
-        try:
-            os.killpg(proc.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
-        except Exception:
-            try:
-                proc.terminate()
-            except Exception:
-                pass
-        try:
-            proc.wait(timeout=grace_secs)
-            return
-        except subprocess.TimeoutExpired:
-            pass
-        except Exception:
-            return
-
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            return
-        except Exception:
-            try:
-                proc.kill()
-            except Exception:
-                pass
-        try:
-            proc.wait(timeout=grace_secs)
-        except Exception:
-            pass
-
-    def _run_subprocess_to_file(
-        self,
-        cmd: list[str],
-        *,
-        cwd: str | None = None,
-        env: dict[str, str] | None = None,
-        timeout_secs: int | float | None = None,
-    ) -> tuple[subprocess.CompletedProcess[str], str, bool]:
-        """Run a subprocess without PIPEs and return captured combined output."""
-        proc, output_file, output_path = self._start_subprocess_to_file(
-            cmd,
-            cwd=cwd,
-            env=env,
-        )
-        timed_out = False
-        deadline = None if timeout_secs is None else _time.time() + float(timeout_secs)
-        try:
-            while True:
-                if proc.poll() is not None:
-                    break
-                if deadline is not None and _time.time() >= deadline:
-                    timed_out = True
-                    self._terminate_process_group(proc)
-                    break
-                _time.sleep(0.2)
-        except Exception:
-            self._terminate_process_group(proc)
-            raise
-
-        raw_output = self._collect_subprocess_output(output_file, output_path)
-        returncode = proc.returncode if proc.returncode is not None else 124
-        return subprocess.CompletedProcess(cmd, returncode, stdout=raw_output, stderr=""), raw_output, timed_out
-
     def _wait_for_docker_create(
         self,
         create_cmd: list[str],
@@ -1867,35 +1816,43 @@ class WorkspaceTools:
     ) -> tuple[subprocess.CompletedProcess[str], str] | None:
         """Wait for a ``docker create`` client or the container object to materialize."""
         create_deadline = min(deadline, _time.time() + 60)
-        proc, output_file, output_path = self._start_subprocess_to_file(
+        proc = subprocess.Popen(
             create_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        try:
-            while _time.time() < create_deadline:
-                ret = proc.poll()
-                if ret is not None:
-                    raw_output = self._collect_subprocess_output(output_file, output_path)
-                    result = subprocess.CompletedProcess(create_cmd, ret, stdout=raw_output, stderr="")
-                    if ret == 0 or self._docker_container_exists(container_name, run_env):
-                        return result, raw_output
+        while _time.time() < create_deadline:
+            ret = proc.poll()
+            if ret is not None:
+                stdout, stderr = proc.communicate()
+                raw_output = (stdout or "") + (stderr or "")
+                result = subprocess.CompletedProcess(create_cmd, ret, stdout=stdout, stderr=stderr)
+                if ret == 0 or self._docker_container_exists(container_name, run_env):
                     return result, raw_output
-                if self._docker_container_exists(container_name, run_env):
-                    self._terminate_process_group(proc)
-                    raw_output = self._collect_subprocess_output(output_file, output_path)
-                    return subprocess.CompletedProcess(create_cmd, 0, stdout=raw_output, stderr=""), raw_output
-                _time.sleep(0.2)
-
-            self._terminate_process_group(proc)
-            raw_output = self._collect_subprocess_output(output_file, output_path)
+                return result, raw_output
             if self._docker_container_exists(container_name, run_env):
-                return subprocess.CompletedProcess(create_cmd, 0, stdout=raw_output, stderr=""), raw_output
-            return None
+                try:
+                    proc.terminate()
+                    stdout, stderr = proc.communicate(timeout=5)
+                except Exception:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                raw_output = (stdout or "") + (stderr or "")
+                return subprocess.CompletedProcess(create_cmd, 0, stdout=stdout, stderr=stderr), raw_output
+            _time.sleep(0.2)
+
+        try:
+            proc.kill()
         except Exception:
-            self._terminate_process_group(proc)
-            self._collect_subprocess_output(output_file, output_path)
-            raise
+            pass
+        stdout, stderr = proc.communicate()
+        raw_output = (stdout or "") + (stderr or "")
+        if self._docker_container_exists(container_name, run_env):
+            return subprocess.CompletedProcess(create_cmd, 0, stdout=stdout, stderr=stderr), raw_output
+        return None
 
     def _wait_for_docker_start_attempt(
         self,
@@ -1905,40 +1862,47 @@ class WorkspaceTools:
         attempt_deadline: float,
     ) -> tuple[subprocess.CompletedProcess[str], str] | None:
         """Wait for one ``docker start`` attempt to move the container beyond ``Created``."""
-        proc, output_file, output_path = self._start_subprocess_to_file(
+        proc = subprocess.Popen(
             start_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        try:
-            while _time.time() < attempt_deadline:
-                ret = proc.poll()
-                if ret is not None:
-                    raw_output = self._collect_subprocess_output(output_file, output_path)
-                    result = subprocess.CompletedProcess(start_cmd, ret, stdout=raw_output, stderr="")
-                    status, _ = self._docker_container_state(container_name, run_env)
-                    if ret == 0 or status in ("running", "exited", "dead"):
-                        return result, raw_output
-                    return result, raw_output
+        while _time.time() < attempt_deadline:
+            ret = proc.poll()
+            if ret is not None:
+                stdout, stderr = proc.communicate()
+                raw_output = (stdout or "") + (stderr or "")
+                result = subprocess.CompletedProcess(start_cmd, ret, stdout=stdout, stderr=stderr)
                 status, _ = self._docker_container_state(container_name, run_env)
-                if status in ("running", "exited", "dead"):
-                    self._terminate_process_group(proc)
-                    raw_output = self._collect_subprocess_output(output_file, output_path)
-                    return subprocess.CompletedProcess(start_cmd, 0, stdout=raw_output, stderr=""), raw_output
-                _time.sleep(0.2)
-
+                if ret == 0 or status in ("running", "exited", "dead"):
+                    return result, raw_output
+                return result, raw_output
             status, _ = self._docker_container_state(container_name, run_env)
             if status in ("running", "exited", "dead"):
-                self._terminate_process_group(proc)
-                raw_output = self._collect_subprocess_output(output_file, output_path)
-                return subprocess.CompletedProcess(start_cmd, 0, stdout=raw_output, stderr=""), raw_output
-            self._terminate_process_group(proc)
-            self._collect_subprocess_output(output_file, output_path)
-            return None
-        except Exception:
-            self._terminate_process_group(proc)
-            self._collect_subprocess_output(output_file, output_path)
-            raise
+                try:
+                    proc.terminate()
+                    stdout, stderr = proc.communicate(timeout=5)
+                except Exception:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                raw_output = (stdout or "") + (stderr or "")
+                return subprocess.CompletedProcess(start_cmd, 0, stdout=stdout, stderr=stderr), raw_output
+            _time.sleep(0.2)
+
+        status, _ = self._docker_container_state(container_name, run_env)
+        if status in ("running", "exited", "dead"):
+            try:
+                proc.terminate()
+                stdout, stderr = proc.communicate(timeout=5)
+            except Exception:
+                proc.kill()
+                stdout, stderr = proc.communicate()
+            raw_output = (stdout or "") + (stderr or "")
+            return subprocess.CompletedProcess(start_cmd, 0, stdout=stdout, stderr=stderr), raw_output
+        return None
 
     def _start_docker_container(
         self,
@@ -1986,13 +1950,22 @@ class WorkspaceTools:
 
             started = self._start_docker_container(container_name, run_env, deadline)
             if started is None:
-                self._run_subprocess_to_file(
+                subprocess.run(
                     ["docker", "stop", container_name],
-                    cwd=str(self.project_root),
-                    env=run_env,
-                    timeout_secs=30,
+                    capture_output=True,
+                    timeout=30,
                 )
-                raw_output = self._docker_logs(container_name, run_env)
+                raw_output = ""
+                try:
+                    logs_result = subprocess.run(
+                        ["docker", "logs", container_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
+                except Exception:
+                    pass
                 raw_output = (
                     f"[TIMEOUT] docker start did not move '{container_name}' out of Created before timeout.\n"
                     f"{raw_output}"
@@ -2011,41 +1984,33 @@ class WorkspaceTools:
         """Best-effort removal that tolerates hanging rootless Docker clients."""
         remove_cmd = ["docker", "rm", "-f", container_name]
         remove_deadline = _time.time() + 30
-        proc, output_file, output_path = self._start_subprocess_to_file(
+        proc = subprocess.Popen(
             remove_cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
+        while _time.time() < remove_deadline:
+            ret = proc.poll()
+            if ret is not None:
+                proc.communicate()
+                return
+            if not self._docker_container_exists(container_name, run_env):
+                try:
+                    proc.terminate()
+                    proc.communicate(timeout=5)
+                except Exception:
+                    proc.kill()
+                    proc.communicate()
+                return
+            _time.sleep(0.2)
         try:
-            while _time.time() < remove_deadline:
-                ret = proc.poll()
-                if ret is not None:
-                    self._collect_subprocess_output(output_file, output_path)
-                    return
-                if not self._docker_container_exists(container_name, run_env):
-                    self._terminate_process_group(proc)
-                    self._collect_subprocess_output(output_file, output_path)
-                    return
-                _time.sleep(0.2)
-            self._terminate_process_group(proc)
-            self._collect_subprocess_output(output_file, output_path)
+            proc.kill()
         except Exception:
-            self._terminate_process_group(proc)
-            self._collect_subprocess_output(output_file, output_path)
-            raise
-
-    def _docker_logs(self, container_name: str, run_env: dict[str, str], timeout_secs: int = 30) -> str:
-        """Read Docker logs without routing large output through a PIPE."""
-        try:
-            _result, raw_output, _timed_out = self._run_subprocess_to_file(
-                ["docker", "logs", container_name],
-                cwd=str(self.project_root),
-                env=run_env,
-                timeout_secs=timeout_secs,
-            )
-            return raw_output
-        except Exception:
-            return ""
+            pass
+        proc.communicate()
 
     def _run_docker_container(
         self,
@@ -2075,25 +2040,54 @@ class WorkspaceTools:
                 return launch_result, start_output, False
             created = True
 
-            wait_result, wait_output, wait_timed_out = self._run_subprocess_to_file(
-                ["docker", "wait", container_name],
-                cwd=str(self.project_root),
-                env=run_env,
-                timeout_secs=max(1.0, deadline - _time.time()),
-            )
-            if wait_timed_out:
-                raw_output = self._docker_logs(container_name, run_env)
+            try:
+                wait_result = subprocess.run(
+                    ["docker", "wait", container_name],
+                    capture_output=True,
+                    text=True,
+                    cwd=str(self.project_root),
+                    timeout=max(1.0, deadline - _time.time()),
+                    env=run_env,
+                )
+            except subprocess.TimeoutExpired:
+                subprocess.run(
+                    ["docker", "stop", container_name],
+                    capture_output=True,
+                    timeout=30,
+                )
+                raw_output = ""
                 try:
-                    self._remove_docker_container(container_name, run_env)
+                    logs_result = subprocess.run(
+                        ["docker", "logs", container_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
                 except Exception:
                     pass
-                raw_output = f"{self._timeout_feedback(timeout_secs)}\n{raw_output}"
+                raw_output = (
+                    f"[TIMEOUT] Command timed out after {timeout_secs}s. "
+                    f"This result is INVALID and will not count. "
+                    f"Your algorithm is too slow — reduce model size or computational complexity.\n{raw_output}"
+                )
                 return None, raw_output, True
 
-            raw_output = self._docker_logs(container_name, run_env)
+            raw_output = ""
+            if not raw_output:
+                try:
+                    logs_result = subprocess.run(
+                        ["docker", "logs", container_name],
+                        capture_output=True,
+                        text=True,
+                        timeout=30,
+                    )
+                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
+                except Exception:
+                    pass
             if not raw_output:
                 raw_output = start_output
-            exit_code_str = (wait_output or wait_result.stdout or "").strip().splitlines()
+            exit_code_str = (wait_result.stdout or "").strip().splitlines()
             try:
                 exit_code = int(exit_code_str[-1]) if exit_code_str else wait_result.returncode
             except ValueError:
@@ -2103,7 +2097,7 @@ class WorkspaceTools:
                     ["docker", "wait", container_name],
                     exit_code,
                     stdout=raw_output,
-                    stderr="",
+                    stderr=wait_result.stderr or "",
                 ),
                 raw_output,
                 False,
@@ -2339,18 +2333,21 @@ class WorkspaceTools:
                 if timed_out:
                     return _finalize(output, None, output)
             else:
-                result, output, timed_out = self._run_subprocess_to_file(
+                result = subprocess.run(
                     container_cmd,
+                    capture_output=True,
+                    text=True,
                     cwd=str(self.project_root),
+                    timeout=120,
                     env=run_env,
-                    timeout_secs=120,
                 )
-                if timed_out:
-                    return _finalize(output, None, "[BUDGET CHECK TIMEOUT] budget_check.py took >120s")
+                output = (result.stdout or "") + (result.stderr or "")
             if result is None or result.returncode != 0:
                 return _finalize(output, getattr(result, "returncode", None),
                                  f"[BUDGET CHECK FAILED]\n{output}")
             return _finalize(output, result.returncode, None)
+        except subprocess.TimeoutExpired:
+            return _finalize("", None, "[BUDGET CHECK TIMEOUT] budget_check.py took >120s")
         except Exception as e:
             return _finalize("", None, f"[BUDGET CHECK ERROR] {e}")
 
@@ -2481,7 +2478,7 @@ class WorkspaceTools:
         seed: int,
         label: str,
         gpu_devices: str | None = None,
-        session_gpu_devices: str | None = None,
+        env: dict | None = None,
     ) -> list[str]:
         """Build ``docker exec`` environment arguments for one command."""
         args: list[str] = []
@@ -2493,32 +2490,12 @@ class WorkspaceTools:
         if label:
             args.extend(["-e", f"ENV={label}"])
         if gpu_devices:
-            args.extend([
-                "-e",
-                f"CUDA_VISIBLE_DEVICES={self._docker_exec_cuda_visible_devices(gpu_devices, session_gpu_devices)}",
-            ])
+            args.extend(["-e", f"CUDA_VISIBLE_DEVICES={gpu_devices}"])
+            args.extend(["-e", f"NVIDIA_VISIBLE_DEVICES={gpu_devices}"])
+        # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
+        for k, v in (env or {}).items():
+            args.extend(["-e", f"{k}={v}"])
         return args
-
-    @staticmethod
-    def _docker_exec_cuda_visible_devices(
-        gpu_devices: str,
-        session_gpu_devices: str | None,
-    ) -> str:
-        """Map host GPU ids to logical ids visible inside a restricted Docker container."""
-        if not session_gpu_devices:
-            return gpu_devices
-
-        session = [d.strip() for d in session_gpu_devices.split(",") if d.strip()]
-        if not session:
-            return gpu_devices
-
-        logical: list[str] = []
-        for device in [d.strip() for d in gpu_devices.split(",") if d.strip()]:
-            if device in session:
-                logical.append(str(session.index(device)))
-            else:
-                logical.append(device)
-        return ",".join(logical)
 
     def _run_docker_exec(
         self,
@@ -2531,22 +2508,23 @@ class WorkspaceTools:
     ) -> tuple[subprocess.CompletedProcess[str] | None, str, bool]:
         """Run one command inside an existing Docker container."""
         cmd = ["docker", "exec", *exec_env_args, "-w", pkg_workdir, container_name, *exec_cmd]
-        result, raw_output, timed_out = self._run_subprocess_to_file(
-            cmd,
-            cwd=str(self.project_root),
-            env=run_env,
-            timeout_secs=timeout_secs,
-        )
-        if timed_out:
-            try:
-                self._remove_docker_container(container_name, run_env)
-            except Exception:
-                pass
-            timeout_output = self._timeout_feedback(timeout_secs)
-            if raw_output:
-                timeout_output = f"{timeout_output}\n{raw_output}"
-            return None, timeout_output, True
-        return result, raw_output, False
+        try:
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                cwd=str(self.project_root),
+                timeout=timeout_secs,
+                env=run_env,
+            )
+            raw_output = (result.stdout or "") + (result.stderr or "")
+            return result, raw_output, False
+        except subprocess.TimeoutExpired:
+            return None, (
+                f"[TIMEOUT] Command timed out after {timeout_secs}s. "
+                f"This result is INVALID and will not count. "
+                f"Your algorithm is too slow — reduce model size or computational complexity."
+            ), True
 
     def _run_docker_entries_in_session(
         self,
@@ -2617,12 +2595,7 @@ class WorkspaceTools:
                 label = entry.get("label", "test")
                 cmd = entry["cmd"]
                 entry_gpu = session_devices[idx] if idx < len(session_devices) else None
-                exec_env_args = self._docker_exec_env_args(
-                    seed,
-                    label,
-                    gpu_devices=entry_gpu,
-                    session_gpu_devices=session_gpu_devices,
-                )
+                exec_env_args = self._docker_exec_env_args(seed, label, gpu_devices=entry_gpu, env=entry.get("env"))
 
                 budget_script = self.project_root / "tasks" / self.task_name / "budget_check.py"
                 if budget_script.exists():
@@ -2645,7 +2618,8 @@ class WorkspaceTools:
                         results[idx] = (f"### {label} ({cmd})\n[BUDGET CHECK FAILED]\n{output}", {}, _time.time() - budget_start)
                         continue
 
-                timeout_secs = self._configured_timeout_seconds(entry)
+                time_str = entry.get("time", "1:00:00")
+                timeout_secs = self._parse_time_to_seconds(time_str) + 300
                 runnable.append((idx, entry, exec_env_args, timeout_secs))
 
             def _run_one_session_entry(
@@ -2666,7 +2640,6 @@ class WorkspaceTools:
                 elapsed = _time.time() - t_start
 
                 if cmd_timed_out:
-                    self._current_test_had_failures = True
                     parse_result = self.parser.parse(label, raw_output)
                     return idx, (f"### {label} ({cmd})\n{raw_output}", parse_result.metrics or {}, elapsed)
 
@@ -2692,15 +2665,12 @@ class WorkspaceTools:
                 idx, result = _run_one_session_entry(runnable[0])
                 results[idx] = result
             elif runnable:
-                timeout_by_idx = {item[0]: item[3] for item in runnable}
-                max_wait = max(timeout_by_idx.values()) + 30
-                executor = ThreadPoolExecutor(max_workers=len(runnable))
-                future_to_idx = {
-                    executor.submit(_run_one_session_entry, item): item[0]
-                    for item in runnable
-                }
-                try:
-                    for future in as_completed(future_to_idx, timeout=max_wait):
+                with ThreadPoolExecutor(max_workers=len(runnable)) as executor:
+                    future_to_idx = {
+                        executor.submit(_run_one_session_entry, item): item[0]
+                        for item in runnable
+                    }
+                    for future in as_completed(future_to_idx):
                         idx = future_to_idx[future]
                         try:
                             result_idx, result_tuple = future.result()
@@ -2715,29 +2685,6 @@ class WorkspaceTools:
                                 0.0,
                             )
                         results[result_idx] = result_tuple
-                except FuturesTimeoutError:
-                    self._current_test_had_failures = True
-                    try:
-                        self._remove_docker_container(container_name, run_env)
-                    except Exception:
-                        pass
-                    for future, idx in future_to_idx.items():
-                        if future.done():
-                            continue
-                        future.cancel()
-                        entry = cmd_entries[idx]
-                        label = entry.get("label", "test")
-                        cmd = entry.get("cmd", "unknown")
-                        timeout_secs = timeout_by_idx.get(idx, max_wait)
-                        timeout_output = self._timeout_feedback(timeout_secs)
-                        parse_result = self.parser.parse(label, timeout_output)
-                        results[idx] = (
-                            f"### {label} ({cmd})\n{timeout_output}",
-                            parse_result.metrics or {},
-                            float(timeout_secs),
-                        )
-                finally:
-                    executor.shutdown(wait=False, cancel_futures=True)
         finally:
             try:
                 self._remove_docker_container(container_name, run_env)
@@ -2873,7 +2820,8 @@ class WorkspaceTools:
 
         if self.container_runtime == "local":
             local_cmd, cwd, run_env = self._build_local_exec_spec(cmd_entry, seed, gpu_devices=gpu_devices)
-            timeout_secs = self._configured_timeout_seconds(cmd_entry)
+            time_str = cmd_entry.get("time", "1:00:00")
+            timeout_secs = self._parse_time_to_seconds(time_str) + 300
             t_start = _time.time()
             result, raw_output, timed_out = self._run_local_command(
                 local_cmd,
@@ -2883,7 +2831,11 @@ class WorkspaceTools:
             )
             if timed_out:
                 self._current_test_had_failures = True
-                raw_output = self._timeout_feedback(timeout_secs)
+                raw_output = (
+                    f"[TIMEOUT] Command timed out after {timeout_secs} seconds. "
+                    f"This result is INVALID and will not count. "
+                    f"Your algorithm is too slow — reduce model size or computational complexity."
+                )
                 elapsed = _time.time() - t_start
                 parse_result = self.parser.parse(label, raw_output)
                 feedback_str = f"### {label} ({cmd})\n{raw_output}"
@@ -2919,7 +2871,9 @@ class WorkspaceTools:
         else:
             container_cmd, container_name = container_result, None
 
-        timeout_secs = self._configured_timeout_seconds(cmd_entry)
+        # Use config time field for timeout (+ 5min buffer), default 1hr
+        time_str = cmd_entry.get("time", "1:00:00")
+        timeout_secs = self._parse_time_to_seconds(time_str) + 300
 
         t_start = _time.time()
         run_env = os.environ.copy()
@@ -2941,23 +2895,21 @@ class WorkspaceTools:
                     feedback_str = f"### {label} ({cmd})\n{raw_output}"
                     return feedback_str, parse_result.metrics or {}, elapsed
             else:
-                result, raw_output, timed_out = self._run_subprocess_to_file(
+                result = subprocess.run(
                     container_cmd,
+                    capture_output=True,
+                    text=True,
                     cwd=str(self.project_root),
+                    timeout=timeout_secs,
                     env=run_env,
-                    timeout_secs=timeout_secs,
                 )
-                if timed_out:
-                    self._current_test_had_failures = True
-                    elapsed = _time.time() - t_start
-                    timeout_output = self._timeout_feedback(timeout_secs)
-                    if raw_output:
-                        timeout_output = f"{timeout_output}\n{raw_output}"
-                    parse_result = self.parser.parse(label, timeout_output)
-                    feedback_str = f"### {label} ({cmd})\n{timeout_output}"
-                    return feedback_str, parse_result.metrics or {}, elapsed
+                raw_output = (result.stdout or "") + (result.stderr or "")
         except subprocess.TimeoutExpired:
-            raw_output = self._timeout_feedback(timeout_secs)
+            raw_output = (
+                f"[TIMEOUT] Command timed out after {timeout_secs} seconds. "
+                f"This result is INVALID and will not count. "
+                f"Your algorithm is too slow — reduce model size or computational complexity."
+            )
             self._current_test_had_failures = True
             elapsed = _time.time() - t_start
             parse_result = self.parser.parse(label, raw_output)

@@ -1,5 +1,11 @@
 """BaseAgent: abstract base class for MLS-Bench agents."""
 
+# Defer annotation evaluation: this module is imported (via mlsbench.agent's
+# __init__) by the Harbor verifier's score_task.py, which several task images
+# run under Python 3.8 — without this, PEP 585 builtin generics in signatures
+# (e.g. ``-> list[dict]``) crash at import with "'type' object is not subscriptable".
+from __future__ import annotations
+
 import copy
 import importlib.util
 import json
@@ -70,6 +76,7 @@ class BaseAgent(ABC):
             use_cuda=use_cuda_override,
             platform=global_config.get("platform", ""),
             gpu_devices=global_config.get("gpu_devices", ""),
+            compute_scale=global_config.get("compute_scale", 1.0),
             global_config=global_config,
             allow_web_search=global_config.get("allow_web_search", False),
             tavily_api_key=(global_config.get("providers", {}).get("tavily", {}) or {}).get("api_key", ""),
@@ -785,6 +792,12 @@ class BaseAgent(ABC):
         """Show edit operations as a git-style diff."""
         op = tool_input.get("op", "?")
         fname = tool_input.get("filename", "?")
+        # Mirror the edit tool: show the canonical (package-prefixed) path so the
+        # diff header matches the file actually edited.
+        try:
+            fname = self.tools._canonicalize_filename(fname)
+        except Exception:
+            pass
         content = tool_input.get("content", "")
         new_lines = content.splitlines()
         limit = None if self.verbose else 40

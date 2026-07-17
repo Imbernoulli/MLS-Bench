@@ -4,6 +4,12 @@ Each task defines its own Parser subclass in tasks/<task>/parser.py.
 The base OutputParser provides pass-through behavior (raw output, no metrics).
 """
 
+# Defer annotation evaluation so PEP 585 builtin generics (e.g. ``tuple[str,
+# float]``) in function signatures don't crash at import under Python 3.8 —
+# several task images (cleanrl/CORL Py3.8.10, humanoid-gym Py3.8.13) run the
+# verifier under their own 3.8 interpreter.
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 from pathlib import Path
 

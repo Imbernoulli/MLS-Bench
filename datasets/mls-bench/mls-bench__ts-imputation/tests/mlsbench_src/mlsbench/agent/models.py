@@ -17,6 +17,11 @@ Thinking/reasoning support:
   OpenAI o-models:  Built-in reasoning; pass reasoning_effort via extra_body if desired.
 """
 
+# Defer annotation evaluation: imported (via interactive.py) by the Harbor
+# verifier's score_task.py, which several task images run under Python 3.8 —
+# without this, PEP 585 builtin generics in signatures crash at import.
+from __future__ import annotations
+
 import json
 import os
 from abc import ABC, abstractmethod

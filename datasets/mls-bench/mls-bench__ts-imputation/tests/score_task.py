@@ -194,9 +194,9 @@ def _check_editable_only(
         line_no
         for r in ranges
         for line_no in (
-            range(r.start, r.end + 1)
-            if r.start != -1 and r.end != -1
-            else range(1, len(pristine_lines) + 1)
+            range(1, total_lines + 1)
+            if r.start == -1
+            else range(r.start, _end_eff(r) + 1)
         )
     }
     for tag, i1, i2, _j1, _j2 in SequenceMatcher(
@@ -221,9 +221,30 @@ def _check_editable_only(
 
 _SKIP_DIR_PARTS = {".git", "__pycache__", "node_modules", ".pytest_cache", ".mypy_cache"}
 _SKIP_SUFFIXES = {".pyc", ".pyo", ".so", ".o", ".egg-info"}
+_EXEMPT_TOP_LEVEL_DIRS = {"_task"}
 
 
-def _walk_workspace(workspace_root: Path) -> set[Path]:
+def _is_workspace_guard_exempt(rel: Path) -> bool:
+    return bool(rel.parts and rel.parts[0] in _EXEMPT_TOP_LEVEL_DIRS)
+
+
+def _is_path_excluded(rel: Path, excludes: tuple) -> bool:
+    """True if *rel* (workdir-relative) is under a config ``guard_exclude`` prefix.
+
+    Lets a task drop image-baked data dirs (datasets / weights / caches that the
+    package install bakes INSIDE the package dir, e.g. ``dbim-codebase/assets``)
+    out of the guard: they are not the agent's editable source surface, the
+    render-time manifest never captured them, and walking them would otherwise
+    flag every baked file as a spurious ``created``/``modified`` violation
+    (issue #25.2 Error-1/Error-3). POSIX path-prefix match.
+    """
+    if not excludes:
+        return False
+    rp = rel.as_posix()
+    return any(rp == e or rp.startswith(e + "/") for e in excludes)
+
+
+def _walk_workspace(workspace_root: Path, excludes: tuple = ()) -> set[Path]:
     out: set[Path] = set()
     if not workspace_root.exists():
         return out
@@ -234,7 +255,12 @@ def _walk_workspace(workspace_root: Path) -> set[Path]:
             continue
         if any(part.endswith(suf) for part in p.parts for suf in _SKIP_SUFFIXES):
             continue
-        out.add(p.relative_to(workspace_root))
+        rel = p.relative_to(workspace_root)
+        if _is_workspace_guard_exempt(rel):
+            continue
+        if _is_path_excluded(rel, excludes):
+            continue
+        out.add(rel)
     return out
 
 
@@ -277,8 +303,13 @@ def cmd_guard(args: argparse.Namespace) -> int:
 
     editable = _editable_files(config)
     allow_create = bool(config.get("allow_create", False))
+    # Optional per-task allowlist of workdir-relative prefixes dropped from the
+    # guard — for image-baked data/build dirs inside the package dir that aren't
+    # the agent's editable surface and were never in the render-time manifest
+    # (issue #25.2 Error-1/Error-3).
+    guard_exclude = tuple(config.get("guard_exclude", []) or [])
 
-    workspace_files = _walk_workspace(workspace_root)
+    workspace_files = _walk_workspace(workspace_root, guard_exclude)
     workspace_rel_strs = {p.as_posix() for p in workspace_files}
 
     # Guarded prefixes: every top-level dir referenced by editable list AND
@@ -286,22 +317,55 @@ def cmd_guard(args: argparse.Namespace) -> int:
     guarded_prefixes = {Path(f).parts[0] for f in editable if f}
     guarded_prefixes |= {Path(f).parts[0] for f in manifest if f}
 
-    # Disallowed creation: anything in workspace under a guarded prefix that
-    # is NOT in the manifest (= agent created it post-start).
+    # Newly-created files (present in the workspace, absent from the render-time
+    # manifest) are NOT tampering. The anti-cheat surface this guard protects is
+    # *modification* or *deletion* of the fixed baseline (scorer/tests/data/model
+    # source) — handled below. A brand-new file is, at worst, agent scratch
+    # (an experiment script, a `*.bak`, a `test_*.py`); hard-failing the whole
+    # run for it (reward 0, eval never runs) zeroes otherwise-correct solutions.
+    # Instead, REMOVE such files before the eval so they cannot influence it
+    # (e.g. shadow-import a package module), then continue. A task that
+    # legitimately needs the agent to author new files sets allow_create=true.
+    #
+    # Only files under a guarded package prefix are cleaned — those are the only
+    # ones that can shadow-import a protected module; created files elsewhere are
+    # harmless and left untouched. Unlink uses the LITERAL workspace path, never
+    # _safe_join (which resolve()s symlinks): we must remove the created entry
+    # itself — never a symlink's *target* (which could be a manifest file) — and
+    # must not raise on a symlink that points outside the workspace.
+    cleaned_created: list[str] = []
+    failed_clean: list[str] = []
     if not allow_create:
         for rel in sorted(workspace_files):
-            if not rel.parts or rel.parts[0] not in guarded_prefixes:
-                continue
             rel_str = rel.as_posix()
             if rel_str in manifest:
                 continue
-            violations.append(f"created new file (allow_create=false): {rel_str}")
+            if not rel.parts or rel.parts[0] not in guarded_prefixes:
+                continue
+            try:
+                (workspace_root / rel_str).unlink()
+                cleaned_created.append(rel_str)
+            except (OSError, ValueError):
+                failed_clean.append(rel_str)
+        if cleaned_created:
+            removed = set(cleaned_created)
+            workspace_files = {p for p in workspace_files
+                               if p.as_posix() not in removed}
+            workspace_rel_strs = {p.as_posix() for p in workspace_files}
+        if cleaned_created or failed_clean:
+            # Debug breadcrumb only — NOT a violation.
+            lines = cleaned_created + [f"{p}  [unlink-failed]" for p in failed_clean]
+            (violation_out.parent / "cleaned_created.txt").write_text(
+                "\n".join(lines) + "\n"
+            )
 
     # Disallowed deletion: anything in manifest under a guarded prefix that
     # is gone from workspace.
     for rel_str in sorted(manifest):
         rel = Path(rel_str)
         if not rel.parts or rel.parts[0] not in guarded_prefixes:
+            continue
+        if _is_path_excluded(rel, guard_exclude):
             continue
         if rel_str in workspace_rel_strs:
             continue
@@ -707,7 +771,10 @@ def _kill_process_group(pgid: int, timeout: float = 30.0) -> None:
         pass
 
 
-def _copy_task_meta_for_budget(task_meta: Path, scratch_dir: Path) -> None:
+def _copy_task_meta_for_budget(
+    task_meta: Path, scratch_dir: Path,
+    effective_test_cmds: list[dict] | None = None,
+) -> None:
     scratch_dir.mkdir(parents=True, exist_ok=True)
     for name in ("config.json", "budget_check.py"):
         src = task_meta / name
@@ -717,6 +784,20 @@ def _copy_task_meta_for_budget(task_meta: Path, scratch_dir: Path) -> None:
         src = task_meta / name
         if src.exists():
             shutil.copytree(src, scratch_dir / name, dirs_exist_ok=True)
+    # budget_check.py derives the agent model's hyperparameters from this
+    # config.json's test_cmds (active_test_cmd -> cmd -> expand_script_argv). For
+    # an oracle run the eval cmd is replaced by the strongest baseline's cmd, and
+    # that substitution MUST be reflected here too — otherwise the budget check
+    # counts the agent model under the ORIGINAL (large) eval-script
+    # hyperparameters and wrongly rejects the oracle baseline (all-zero TS
+    # oracle). Native MLSBench runs the budget check against the
+    # baseline-substituted task config; mirror that.
+    if effective_test_cmds is not None:
+        cfg_path = scratch_dir / "config.json"
+        if cfg_path.exists():
+            cfg = json.loads(cfg_path.read_text())
+            cfg["test_cmds"] = effective_test_cmds
+            cfg_path.write_text(json.dumps(cfg, indent=2))
 
 
 def _install_budget_legacy_links(scratch_dir: Path, workspace_root: Path) -> list[Path]:
@@ -745,6 +826,23 @@ def _remove_budget_legacy_links(links: list[Path]) -> None:
             pass
 
 
+def _build_eval_task_dir(task_meta: Path) -> Path:
+    """Throwaway dir exposing ONLY the eval-time resources (scripts/ data/
+    third_party/) that some eval wrappers reach via /workspace/_task or
+    $MLSBENCH_TASK_DIR. It deliberately EXCLUDES the scoring metadata
+    (parser.py / score_spec.py / config.json / leaderboard.csv) that cmd_score
+    imports: eval runs agent-authored package code as root, so any path it can
+    reach is writable (chmod a-w doesn't stop root), and exposing the real
+    task_meta would let a submission overwrite the parser/spec before the score
+    phase. The real task_meta stays at its unexposed random /tmp path."""
+    d = Path(tempfile.mkdtemp(prefix="mlsbench-evaltask-"))
+    for sub in ("scripts", "data", "third_party"):
+        src = task_meta / sub
+        if src.exists():
+            shutil.copytree(src, d / sub, dirs_exist_ok=True)
+    return d
+
+
 def _run_budget_check(
     *,
     task_meta: Path,
@@ -754,6 +852,7 @@ def _run_budget_check(
     label: str,
     seed: int,
     env: dict[str, str],
+    effective_test_cmds: list[dict] | None = None,
 ) -> dict | None:
     if not (task_meta / "budget_check.py").exists():
         return None
@@ -771,7 +870,7 @@ def _run_budget_check(
     legacy_links: list[Path] = []
     with log_path.open("w") as fh:
         try:
-            _copy_task_meta_for_budget(task_meta, scratch_dir)
+            _copy_task_meta_for_budget(task_meta, scratch_dir, effective_test_cmds)
             legacy_links = _install_budget_legacy_links(scratch_dir, workspace_root)
             budget_env = env.copy()
             budget_env["TMPDIR"] = str(scratch_dir)
@@ -1114,6 +1213,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     label=entry["label"],
                     seed=seed,
                     env=env,
+                    effective_test_cmds=test_cmds,
                 )
                 if budget and budget["rc"] != 0:
                     records[(entry["idx"], seed)] = _write_error_record(
@@ -1135,14 +1235,29 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
             if not runnable_tasks:
                 continue
 
-            wave_results = _run_eval_wave(
-                tasks=runnable_tasks,
-                assignments=runnable_assignments,
-                task_meta=task_meta,
-                workspace_root=workspace_root,
-                default_pkg=default_pkg,
-                out_dir=out_dir,
-            )
+            # Expose the legacy /workspace/_task path that some eval wrappers
+            # reference (humanoid: `python _task/scripts/...`; dllm:
+            # `--data-path /workspace/_task/data/...`). Native MLSBench bind-mounts
+            # the task dir there, but Harbor has no bind mounts. We point _task at
+            # a MINIMAL throwaway copy (scripts/data/third_party only) rather than
+            # task_meta, so eval-time agent code (running as root) cannot reach and
+            # overwrite the scoring metadata (parser.py/score_spec.py/config.json)
+            # before the score phase. The guard exempts the _task top-level dir and
+            # runs as a separate pre-eval invocation, so this never affects the diff.
+            eval_task_dir = _build_eval_task_dir(task_meta)
+            eval_task_links = _install_budget_legacy_links(eval_task_dir, workspace_root)
+            try:
+                wave_results = _run_eval_wave(
+                    tasks=runnable_tasks,
+                    assignments=runnable_assignments,
+                    task_meta=task_meta,
+                    workspace_root=workspace_root,
+                    default_pkg=default_pkg,
+                    out_dir=out_dir,
+                )
+            finally:
+                _remove_budget_legacy_links(eval_task_links)
+                shutil.rmtree(eval_task_dir, ignore_errors=True)
             records.update(wave_results)
             for task in runnable_tasks:
                 entry = task["entry"]

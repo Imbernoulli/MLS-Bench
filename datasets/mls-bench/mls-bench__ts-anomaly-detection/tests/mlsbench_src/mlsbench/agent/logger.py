@@ -1,5 +1,10 @@
 """RunLogger: persist agent conversation and file snapshots to disk."""
 
+# Defer annotation evaluation: imported (via base.py) by the Harbor verifier's
+# score_task.py, which several task images run under Python 3.8 — without this,
+# PEP 585 builtin generics in signatures crash at import.
+from __future__ import annotations
+
 import json
 import re
 from pathlib import Path

@@ -141,7 +141,10 @@ class BaselineAnchors:
             if not isinstance(model, str):
                 continue
             if model.startswith("baseline:"):
-                name = model.removeprefix("baseline:")
+                # str.removeprefix is Python 3.9+; slice instead so the scorer
+                # runs under the task images' own 3.8 interpreter (the prefix is
+                # guaranteed present by the startswith guard above).
+                name = model[len("baseline:"):]
             elif model in bl_keys:
                 name = model
             else:

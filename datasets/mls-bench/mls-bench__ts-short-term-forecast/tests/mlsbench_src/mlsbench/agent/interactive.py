@@ -1,5 +1,11 @@
 """InteractiveAgent: LLM-powered agent using the tool_use API."""
 
+# Defer annotation evaluation: imported (via mlsbench.agent's __init__) by the
+# Harbor verifier's score_task.py, which several task images run under Python
+# 3.8 — without this, PEP 604 unions in signatures (e.g. ``-> float | None``)
+# are evaluated at def time and crash with "unsupported operand type(s) for |".
+from __future__ import annotations
+
 from mlsbench.agent.base import BaseAgent
 from mlsbench.agent.models import build_client
 from mlsbench.agent.tools import TOOL_SCHEMAS, WEB_SEARCH_SCHEMA, WEB_EXTRACT_SCHEMA

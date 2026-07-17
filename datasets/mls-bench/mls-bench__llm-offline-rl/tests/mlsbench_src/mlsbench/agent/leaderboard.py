@@ -6,6 +6,12 @@ Includes a write-ahead log (WAL) to protect against data loss when
 external processes (e.g. git checkout) replace the CSV file.
 """
 
+# Defer annotation evaluation so PEP 585 builtin generics (e.g. ``tuple[list[str],
+# list[dict]]``) in method signatures don't crash at import under Python 3.8 —
+# several task images run the verifier under their own 3.8 interpreter, and the
+# scorer imports this module transitively via mlsbench.scoring.anchors.
+from __future__ import annotations
+
 import fcntl
 import csv
 import hashlib
