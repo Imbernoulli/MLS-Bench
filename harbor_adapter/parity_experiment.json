@@ -1,0 +1,26 @@
+[
+  {
+    "adapter_name": "mls-bench",
+    "agent": "oracle",
+    "model": null,
+    "date": null,
+    "adapted_benchmark_size": 140,
+    "parity_benchmark_size": null,
+    "number_of_runs": null,
+    "notes": "Populate after running a Harbor-vs-native parity sweep on the same MLS-Bench task subset, seeds, agent, and model.",
+    "original_parity_repo": "https://github.com/Bohan22/MLS-Bench",
+    "adapter_pr": [],
+    "dataset_pr": [],
+    "parity_pr": [],
+    "metrics": [
+      {
+        "benchmark_name": "MLS-Bench",
+        "metric": "combined_score",
+        "original": null,
+        "harbor": null,
+        "original_runs": [],
+        "harbor_runs": []
+      }
+    ]
+  }
+]

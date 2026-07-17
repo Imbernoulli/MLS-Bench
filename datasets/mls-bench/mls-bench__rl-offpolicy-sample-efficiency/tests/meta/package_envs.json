@@ -1,0 +1,7 @@
+{
+  "FastTD3": {
+    "MUJOCO_GL": "egl",
+    "OMP_NUM_THREADS": "1",
+    "TORCHDYNAMO_INLINE_INBUILT_NN_MODULES": "1"
+  }
+}

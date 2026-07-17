@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "h1hand-stand-v0",
+      "group": 1,
+      "compute": 0.5,
+      "time": "3:00:00",
+      "package": "FastTD3"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "label": "h1hand-walk-v0",
+      "group": 2,
+      "compute": 0.5,
+      "time": "3:00:00",
+      "package": "FastTD3"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "label": "h1hand-run-v0",
+      "hidden": true,
+      "group": 3,
+      "compute": 0.5,
+      "time": "3:00:00",
+      "package": "FastTD3"
+    }
+  ],
+  "baselines": {
+    "fasttd3": {
+      "cmd": "scripts/fasttd3.sh"
+    },
+    "fastsac": {
+      "cmd": "scripts/fastsac.sh"
+    },
+    "ppo": {
+      "cmd": "scripts/ppo.sh"
+    }
+  },
+  "files": [
+    {
+      "filename": "FastTD3/fast_td3/custom_algorithm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 50,
+          "end": 331
+        }
+      ]
+    }
+  ]
+}

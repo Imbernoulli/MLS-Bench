@@ -36,9 +36,12 @@
     {
       "name": "dlm-dkv-hf-datasets",
       "description": "HF datasets for dlm-dkv-policy: MATH-500, HumanEval, ARC-Challenge",
-      "host_path": "{data_root}/huggingface_cache/.dlm-dkv-datasets-ready",
-      "container_path": "/data/huggingface/.dlm-dkv-datasets-ready",
-      "prepare": "vendor/data_scripts/dLLM-cache/prepare_hf_datasets.py"
+      "host_path": "{data_root}/huggingface_cache/datasets",
+      "container_path": "/data/huggingface/datasets",
+      "prepare": "vendor/data_scripts/dLLM-cache/prepare_hf_datasets.py",
+      "ready_files": [
+        "{data_root}/huggingface_cache/.dlm-dkv-datasets-ready"
+      ]
     }
   ],
   "use_cuda": true,

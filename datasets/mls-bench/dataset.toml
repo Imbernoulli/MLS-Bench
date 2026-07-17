@@ -1,0 +1,46 @@
+# Dataset manifest for mls-bench/mls-bench
+# Regenerate with: python -m mls_bench.main --output-dir <dir>
+
+[dataset]
+name = "mls-bench/mls-bench"
+description = "MLS-Bench Harbor adapter dataset containing the 140 algorithmic machine-learning research tasks."
+authors = [
+    { name = "MLS-Bench authors", email = "bohan22@stanford.edu" },
+]
+keywords = [
+    "ml-research",
+    "algorithm-design",
+    "multi-seed",
+]
+
+[[tasks]]
+name = "mls-bench/llm-offline-rl"
+digest = "sha256:65f5195012aaf6d8b4684ae38e74f04d008abe066ed28ca3ade8c6e1b24c72d1"
+
+[[tasks]]
+name = "mls-bench/rl-offpolicy-sample-efficiency"
+digest = "sha256:502e6aafc422313a0c6fc8812ea194e881ac24494c95cd331d814832ac9c5b89"
+
+[[tasks]]
+name = "mls-bench/ts-anomaly-detection"
+digest = "sha256:f63b099c000ee6522630f8d718bae89ef43064934c1a19c6a8f8fc992b6ff9e8"
+
+[[tasks]]
+name = "mls-bench/ts-classification"
+digest = "sha256:f00b900c6cb165f381e427f41420138f3acaf0ddb69d1a0e5f8928bdb1077cdc"
+
+[[tasks]]
+name = "mls-bench/ts-exogenous-forecast"
+digest = "sha256:e3eef5e14f6ad8ad21b56a42f71da2d53c48a80c3dc4fd8e4878757dcbb53db7"
+
+[[tasks]]
+name = "mls-bench/ts-imputation"
+digest = "sha256:1c20e69a1ea7ade97f6222c882c6d427eca1c903f6ed7b3a901092a4a0f69bd7"
+
+[[tasks]]
+name = "mls-bench/ts-long-term-forecast"
+digest = "sha256:b6963258b700d34643cf6cb9098f56a1de649f964f08162325439f6932946f6e"
+
+[[tasks]]
+name = "mls-bench/ts-short-term-forecast"
+digest = "sha256:b16b3fad5e7d1446e6f1c23375979e5cd448cc0a2a021e96a1043b71705e4eef"

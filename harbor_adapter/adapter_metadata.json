@@ -1,0 +1,32 @@
+[
+  {
+    "adapter_name": "mls-bench",
+    "adapter_builders": [
+      "Bohan Lyu"
+    ],
+    "original_benchmark": [
+      {
+        "split": "test",
+        "size": 140,
+        "harness": "MLS-Bench native agent/evaluation harness",
+        "supported_agents": null,
+        "adaptable": true,
+        "notes": "MLS-Bench contains 140 machine-learning science tasks across multiple domains. The native harness stages package workspaces, applies task edit scaffolds, runs visible and hidden evaluation scripts across seeds, and scores with the MLS-Bench combined_score DSL."
+      }
+    ],
+    "harbor_adapter": [
+      {
+        "split": "test",
+        "adapted_benchmark_size": 140,
+        "parity_benchmark_size": null,
+        "parity_sampling_rate": null,
+        "registry_benchmark_size": null,
+        "added_agents": [],
+        "parity_matching_agents": [],
+        "parity_unmatching_agents": null,
+        "parity_costs": null,
+        "notes": "The adapter renders one Harbor task per MLS-Bench task, with verifier-only scoring assets under tests/ and oracle solutions generated from the strongest native baseline edit_ops."
+      }
+    ]
+  }
+]

@@ -41,11 +41,20 @@ def bounded_power(x: float, floor: float, bound: float, gamma: float) -> float:
       ``floor`` (best-baseline reference) still maps to 1 and ``bound``
       (random floor) maps to 0. Values worse than ``bound`` clip to 0
       instead of being silently inverted to 1.
+
+    * Degenerate case ``bound == floor``: the baseline set is saturated at
+      the theoretical bound (worst baseline == best baseline == bound), so
+      the normalization interval has vanished. This is the limit of the
+      standard formula as ``floor -> bound``: a step at the saturated point.
+      Submissions that reach the bound score 1, anything strictly below
+      scores 0 — NOT a free 1.0 for failing submissions (which the previous
+      unconditional ``return 1.0`` granted, e.g. a 0% success rate on a
+      saturated success-rate term).
     """
     if math.isnan(x):
         return 0.0
     if bound == floor:
-        return 1.0
+        return 1.0 if x >= bound else 0.0
     if bound > floor:
         # Standard orientation: floor=worst, bound=best.
         r = (x - floor) / (bound - floor)

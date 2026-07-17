@@ -1,0 +1,33 @@
+schema_version = "1.1"
+
+[task]
+name = "mls-bench/{{ task_id }}"
+description = "MLS-Bench: {{ task_id }}"
+authors = [{ name = "MLS-Bench authors", email = "bohan22@stanford.edu" }]
+keywords = [{% for t in tags %}"{{ t }}"{% if not loop.last %}, {% endif %}{% endfor %}]
+
+[metadata]
+difficulty = "{{ difficulty }}"
+category = "{{ category }}"
+difficulty_explanation = "MLS-Bench algorithmic-research task. See instruction.md for editable surface, eval scripts, and scoring contract."
+mls_bench_task_id = "{{ task_id }}"
+mls_bench_package = "{{ package }}"
+
+[agent]
+timeout_sec = {{ agent_timeout_sec }}
+
+[verifier]
+timeout_sec = {{ verifier_timeout_sec }}
+
+[environment]
+# Build the per-task image from environment/Dockerfile (which FROMs the
+# per-package harbor base). Setting docker_image here would make Harbor skip
+# the Dockerfile (see harbor/environments/docker/docker.py:466), which would
+# also skip the per-task mid_edit scaffolding the Dockerfile applies.
+os = "linux"
+build_timeout_sec = {{ build_timeout_sec }}
+cpus = {{ cpus }}
+memory_mb = {{ memory_mb }}
+storage_mb = {{ storage_mb }}
+gpus = {{ gpus }}
+allow_internet = true
