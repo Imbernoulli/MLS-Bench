@@ -1,0 +1,23 @@
+[project]
+name = "mls-bench-harbor-adapter"
+version = "0.1.0"
+description = "Harbor adapter for MLS-Bench — turns the 140 MLS-Bench tasks into Harbor tasks."
+requires-python = ">=3.10"
+dependencies = [
+    "pyyaml>=6.0",
+    "jinja2>=3.1",
+    "tomli-w>=1.0",
+]
+
+[project.scripts]
+mls-bench-adapter = "mls_bench.main:main"
+
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+mls_bench = ["task-template/**/*"]

@@ -47,6 +47,11 @@ vendor/data_cache/
 output/
 *.out
 
+# Harbor runtime artifacts (created by `harbor run`)
+jobs/
+harbor_adapter/scripts/__pycache__/
+harbor_adapter/**/__pycache__/
+
 # Leaderboard lockfiles from older runtime behavior
 .mlsbench-slurm-query*.lock
 tasks/**/leaderboard.csv.lock

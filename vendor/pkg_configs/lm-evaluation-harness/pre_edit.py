@@ -167,6 +167,46 @@ class NanoGPTLM(LM):
         return results
 
 
+def _bridge_dataset_name_aliases():
+    """Make the offline HF datasets cache resilient to lm-eval's bare<->namespaced
+    dataset-repo renames (winogrande<->allenai/winogrande, hellaswag<->Rowan/hellaswag,
+    piqa<->baber/piqa, ai2_arc<->allenai/ai2_arc).
+
+    The cache may have been baked under either name depending on which lm-eval
+    version built it; the installed lm-eval may request the other. Same data,
+    just an upstream repo rename. Create reciprocal symlinks so load_dataset()
+    resolves the dir regardless of which name is requested -- this self-heals an
+    already-baked cache offline, without rebuilding the image. Idempotent and
+    best-effort: it never raises into the eval.
+    """
+    aliases = [
+        ("winogrande", "allenai___winogrande"),
+        ("hellaswag", "Rowan___hellaswag"),
+        ("piqa", "baber___piqa"),
+        ("ai2_arc", "allenai___ai2_arc"),
+    ]
+    cache_dirs = []
+    if os.environ.get("HF_DATASETS_CACHE"):
+        cache_dirs.append(os.environ["HF_DATASETS_CACHE"])
+    cache_dirs.append(os.path.expanduser("~/.cache/huggingface/datasets"))
+    seen = set()
+    for cache_dir in cache_dirs:
+        if cache_dir in seen or not os.path.isdir(cache_dir):
+            continue
+        seen.add(cache_dir)
+        for bare, namespaced in aliases:
+            pa = os.path.join(cache_dir, bare)
+            pb = os.path.join(cache_dir, namespaced)
+            for src, dst in ((pa, pb), (pb, pa)):
+                if os.path.exists(src) and not os.path.lexists(dst):
+                    try:
+                        os.symlink(os.path.basename(src), dst)
+                        print(f"[cache-alias] {os.path.basename(dst)} -> "
+                              f"{os.path.basename(src)} in {cache_dir}", flush=True)
+                    except OSError:
+                        pass
+
+
 def main():
     parser = argparse.ArgumentParser(description="nanoGPT lm-eval benchmark")
     parser.add_argument("--checkpoint", required=True, help="Path to ckpt_{label}.pt")
@@ -176,6 +216,10 @@ def main():
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--device", default="cuda")
     args = parser.parse_args()
+
+    # Bridge bare<->namespaced dataset cache dir names before any dataset loads,
+    # so offline eval survives lm-eval's upstream dataset-repo renames.
+    _bridge_dataset_name_aliases()
 
     print(f"Loading model from {args.checkpoint}")
     print(f"Model source: {args.source}")

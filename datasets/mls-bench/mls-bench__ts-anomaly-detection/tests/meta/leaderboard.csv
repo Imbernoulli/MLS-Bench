@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,f_score_PSM,precision_PSM,recall_PSM,f_score_MSL,precision_MSL,recall_MSL,f_score_SMAP,precision_SMAP,recall_SMAP,elapsed_PSM,elapsed_MSL,elapsed_SMAP,f_score_PSM_std,precision_PSM_std,recall_PSM_std,elapsed_PSM_std,f_score_MSL_std,precision_MSL_std,recall_MSL_std,elapsed_MSL_std,f_score_SMAP_std,precision_SMAP_std,recall_SMAP_std,elapsed_SMAP_std
+2026-03-02T16:51:44.801834+00:00,baseline:dlinear,true,42,0.9663,0.9865,0.9469,0.8187,0.8969,0.753,0.6733,0.8987,0.5383,,,,,,,,,,,,,,,
+2026-03-02T16:52:43.165448+00:00,baseline:patchtst,true,42,0.9617,0.9888,0.9361,0.7904,0.8867,0.713,0.6883,0.904,0.5557,,,,,,,,,,,,,,,
+2026-03-02T16:56:52.353812+00:00,baseline:timesnet,true,42,0.9738,0.985,0.9629,0.818,0.8955,0.7529,0.6943,0.9011,0.5647,,,,,,,,,,,,,,,

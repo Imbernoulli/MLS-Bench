@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,accuracy_EthanolConcentration,accuracy_FaceDetection,accuracy_Handwriting,elapsed_EthanolConcentration,elapsed_FaceDetection,elapsed_Handwriting,accuracy_EthanolConcentration_std,elapsed_EthanolConcentration_std,accuracy_FaceDetection_std,elapsed_FaceDetection_std,accuracy_Handwriting_std,elapsed_Handwriting_std
+2026-03-02T17:02:20.616268+00:00,baseline:dlinear,true,42,0.2889733840304182,0.6821793416572077,0.23058823529411765,,,,,,,,,
+2026-03-02T17:03:05.620746+00:00,baseline:timesnet,true,42,0.3193916349809886,0.6745175936435869,0.3352941176470588,,,,,,,,,
+2026-03-02T17:04:47.692124+00:00,baseline:patchtst,true,42,0.28517110266159695,0.6853007945516458,0.2541176470588235,,,,,,,,,

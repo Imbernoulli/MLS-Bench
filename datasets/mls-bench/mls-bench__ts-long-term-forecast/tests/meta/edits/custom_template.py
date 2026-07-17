@@ -1,0 +1,43 @@
+import torch
+import torch.nn as nn
+
+
+class Model(nn.Module):
+    """
+    Custom model for long-term time series forecasting.
+
+    Forward signature: forward(x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None)
+    - x_enc: [batch, seq_len, enc_in] — input time series
+    - x_mark_enc: [batch, seq_len, time_features] — time feature encoding
+    - x_dec: [batch, label_len+pred_len, dec_in] — decoder input
+    - x_mark_dec: [batch, label_len+pred_len, time_features] — decoder time features
+    - mask: optional binary mask
+
+    Must return: [batch, pred_len, c_out] for forecasting
+    """
+
+    def __init__(self, configs):
+        super(Model, self).__init__()
+        self.task_name = configs.task_name
+        self.seq_len = configs.seq_len
+        self.pred_len = configs.pred_len
+        self.enc_in = configs.enc_in
+        self.c_out = configs.c_out
+        # TODO: Define your model architecture here
+
+    def forecast(self, x_enc, x_mark_enc, x_dec, x_mark_dec):
+        """
+        Forecasting: given input sequence, predict future values.
+        Input: x_enc [batch, seq_len, enc_in]
+        Output: [batch, pred_len, c_out]
+        """
+        # TODO: Implement your forecasting logic
+        # Placeholder: simple linear projection
+        batch_size = x_enc.shape[0]
+        return torch.zeros(batch_size, self.pred_len, self.c_out).to(x_enc.device)
+
+    def forward(self, x_enc, x_mark_enc, x_dec, x_mark_dec, mask=None):
+        if self.task_name == 'long_term_forecast' or self.task_name == 'short_term_forecast':
+            dec_out = self.forecast(x_enc, x_mark_enc, x_dec, x_mark_dec)
+            return dec_out[:, -self.pred_len:, :]
+        return None

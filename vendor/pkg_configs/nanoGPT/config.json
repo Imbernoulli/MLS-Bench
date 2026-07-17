@@ -5,7 +5,7 @@
     "pip install tiktoken numpy einops safetensors huggingface_hub transformers accelerate",
     "pip install flash-linear-attention",
     "pip install --no-cache-dir 'datasets<3.0'",
-    "pip install --no-cache-dir 'lm-eval>=0.4.0'",
+    "pip install --no-cache-dir 'lm-eval==0.4.11'",
     "pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124",
     "pip install --no-cache-dir --force-reinstall triton==3.2.0",
     "CUDA_HOME=/usr/local/cuda TORCH_CUDA_ARCH_LIST='8.0;9.0' CXXFLAGS='-D_GLIBCXX_USE_CXX11_ABI=0' pip install --no-build-isolation causal-conv1d==1.6.1",
@@ -23,7 +23,7 @@
     "pip install tiktoken numpy einops safetensors huggingface_hub transformers accelerate",
     "pip install --no-build-isolation --no-deps {project_root}/vendor/external_packages/flash-linear-attention",
     "pip install --no-cache-dir 'datasets<3.0'",
-    "pip install --no-cache-dir 'lm-eval>=0.4.0'",
+    "pip install --no-cache-dir 'lm-eval==0.4.11'",
     "pip install --no-cache-dir --force-reinstall triton==3.2.0",
     "pip install --no-cache-dir --force-reinstall nvidia-nccl-cu12==2.21.5",
     "python -c \"import ctypes; v=ctypes.c_int(); ctypes.CDLL('libnccl.so.2').ncclGetVersion(ctypes.byref(v)); assert v.value == 22105, f'Expected NCCL 2.21.5 but got {v.value}'\"",
@@ -34,7 +34,7 @@
   ],
   "host_data_prepare_requirements": [
     "datasets<3.0",
-    "lm-eval>=0.4.0",
+    "lm-eval==0.4.11",
     "tiktoken",
     "huggingface-hub<1.0",
     "numpy"

@@ -1,0 +1,106 @@
+# MLS-Bench: {{ task_id }}
+
+{{ task_description }}
+
+## Your Workspace
+
+You are working inside `{{ workdir }}`. The package source tree
+`{{ workdir }}/{{ package }}/` is the research scaffold for this task.
+
+## Files You May Edit
+
+You may **only** modify these files, and **only within the listed line ranges
+(inclusive, 1-indexed)**. Edits outside these ranges — or creating new files,
+or deleting existing ones — will cause your submission to score zero.
+
+{% for f in editable_files -%}
+- `{{ f.filename }}`
+{% if f.edit_full -%}
+    - editable: **entire file**
+{% else -%}
+{% for r in f.edit -%}
+    - editable lines **{{ r.start }}–{{ r.end }}**
+{% endfor -%}
+{% endif -%}
+{% endfor %}
+
+{% if extra_readable_files -%}
+Other files you may **read** for context (do not modify):
+{% for f in extra_readable_files -%}
+- `{{ f.filename }}`
+{% endfor %}
+{%- endif %}
+
+{% if read_sections -%}
+## Readable Context
+
+{% for sec in read_sections %}
+### `{{ sec.filename }}`  [{{ sec.edit_note }}]
+
+```{{ sec.language }}
+{{ sec.code }}
+```
+{% endfor %}
+{%- endif %}
+
+{% if prompt_warnings -%}
+## Adapter Warnings
+
+Some reference context could not be rendered completely:
+{% for warning in prompt_warnings %}
+- {{ warning }}
+{% endfor %}
+{%- endif %}
+
+## How You Will Be Evaluated
+
+After you finish, evaluation runs a fixed set of scripts and aggregates the
+metrics they emit. These scripts are **not** in your workspace — you cannot
+read or modify them. The labels below indicate what each evaluation tests:
+
+{% for e in visible_test_cmds -%}
+- **{{ e.label }}** — wall-clock budget `{{ e.time }}`, compute share `{{ e.compute }}`
+{% endfor %}
+
+Scoring uses the same `combined_score` aggregation as the MLS-Bench
+leaderboard. Multiple seeds are averaged.
+
+{% if has_budget_check -%}
+## Parameter Budget
+
+This task enforces a parameter-count cap. Your edits will be rejected if
+the resulting model exceeds **{{ budget_multiplier }}×** the strongest
+baseline's parameter count. The check runs automatically inside the eval
+scripts — you don't need to invoke it.
+{%- endif %}
+
+{% if baseline_sections -%}
+## Reference Baselines
+
+The following are **read-only** reference implementations. Each shows what
+the editable region of a strong baseline looks like, with a few lines of
+surrounding context for orientation. Study them, but write your own
+algorithm — repeating a baseline verbatim will be detected and scored as
+a baseline reproduction.
+
+{% for bl in baseline_sections %}
+### `{{ bl.name }}` baseline — editable region  [READ-ONLY — reference implementation]
+
+In `{{ bl.filename }}`:
+
+```python
+{{ bl.code }}
+```
+{% endfor %}
+{%- endif %}
+
+## Tips
+
+- Keep the function/class signatures of the editable regions identical;
+  evaluation imports them by name.
+- Determinism matters: seeds are fixed; don't introduce hidden randomness.
+- The baseline implementations above are deliberately strong. Aim for an
+  *algorithmic* improvement — many hyperparameters are locked outside the
+  editable surface anyway.
+
+Good luck.

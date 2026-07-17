@@ -26,7 +26,14 @@ DATASETS = [
     ("baber/piqa", None),
     ("allenai/ai2_arc", "ARC-Easy"),
     ("allenai/ai2_arc", "ARC-Challenge"),
+    # lm-eval renamed winogrande's dataset_path from the bare `winogrande`
+    # (old convention) to the namespaced `allenai/winogrande` (>=0.4.x).
+    # Cache both names so offline lookup matches regardless of which lm-eval
+    # version the eval image ends up resolving — same pattern as hellaswag /
+    # piqa above. Without the namespaced variant, an image built with a newer
+    # lm-eval looks for `allenai___winogrande/` and fails offline.
     ("winogrande", "winogrande_xl"),
+    ("allenai/winogrande", "winogrande_xl"),
 ]
 
 

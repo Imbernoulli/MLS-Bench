@@ -4,9 +4,12 @@
     "apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*",
     "pip install --no-cache-dir 'transformers>=4.46,<4.49' accelerate sentencepiece protobuf",
     "pip install --no-cache-dir sympy regex",
+    "pip install --no-cache-dir mauve-text nltk",
+    "python -c \"import nltk; nltk.download('punkt'); nltk.download('punkt_tab')\"",
     "mkdir -p /opt/huggingface /data/llada-instruct",
     "HF_HOME=/opt/huggingface python -c \"from transformers import AutoModel, AutoTokenizer; AutoTokenizer.from_pretrained('GSAI-ML/LLaDA-8B-Base', trust_remote_code=True); AutoModel.from_pretrained('GSAI-ML/LLaDA-8B-Base', trust_remote_code=True, torch_dtype='auto')\"",
-    "HF_HOME=/opt/huggingface python -c \"from transformers import AutoModel, AutoTokenizer; AutoTokenizer.from_pretrained('Dream-org/Dream-v0-Instruct-7B', trust_remote_code=True); AutoModel.from_pretrained('Dream-org/Dream-v0-Instruct-7B', trust_remote_code=True, torch_dtype='auto')\""
+    "HF_HOME=/opt/huggingface python -c \"from transformers import AutoModel, AutoTokenizer; AutoTokenizer.from_pretrained('Dream-org/Dream-v0-Instruct-7B', trust_remote_code=True); AutoModel.from_pretrained('Dream-org/Dream-v0-Instruct-7B', trust_remote_code=True, torch_dtype='auto')\"",
+    "HF_HOME=/opt/huggingface python -c \"from transformers import AutoModelForCausalLM, AutoTokenizer; AutoTokenizer.from_pretrained('openai-community/gpt2-large'); AutoModelForCausalLM.from_pretrained('openai-community/gpt2-large')\""
   ],
   "env": {
     "HF_HOME": "/opt/huggingface",

@@ -3,7 +3,7 @@
   "install_cmds": [
     "apt-get -o APT::Sandbox::User=root update -q && DEBIAN_FRONTEND=noninteractive apt-get -o APT::Sandbox::User=root install -y git && rm -rf /var/lib/apt/lists/*",
     "pip install --no-cache-dir 'datasets<3.0'",
-    "pip install --no-cache-dir 'lm-eval>=0.4.0' tiktoken",
+    "pip install --no-cache-dir 'lm-eval==0.4.11' tiktoken",
     "pip install flash-linear-attention",
     "pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124",
     "pip install --no-cache-dir --force-reinstall triton==3.2.0",
@@ -13,7 +13,7 @@
   ],
   "local_install_cmds": [
     "pip install --no-cache-dir 'datasets<3.0'",
-    "pip install --no-cache-dir 'lm-eval>=0.4.0' tiktoken",
+    "pip install --no-cache-dir 'lm-eval==0.4.11' tiktoken",
     "pip install flash-linear-attention",
     "pip install --no-cache-dir torch==2.6.0 --index-url https://download.pytorch.org/whl/cu124",
     "pip install --no-cache-dir --force-reinstall triton==3.2.0",

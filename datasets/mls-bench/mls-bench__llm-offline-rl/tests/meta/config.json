@@ -1,0 +1,91 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "train",
+      "group": 1,
+      "compute": 2,
+      "time": "4:00:00",
+      "package": "LLaMA-Factory"
+    },
+    {
+      "cmd": "scripts/math_eval.sh",
+      "label": "math_eval",
+      "group": 2,
+      "compute": 0.5,
+      "time": "1:30:00",
+      "package": "MathRuler"
+    }
+  ],
+  "baselines": {
+    "dpo": {
+      "cmd": "scripts/dpo.sh",
+      "labels": [
+        "train"
+      ]
+    },
+    "simpo": {
+      "cmd": "scripts/simpo.sh",
+      "labels": [
+        "train"
+      ]
+    },
+    "ipo": {
+      "cmd": "scripts/ipo.sh",
+      "labels": [
+        "train"
+      ]
+    },
+    "orpo": {
+      "cmd": "scripts/orpo.sh",
+      "labels": [
+        "train"
+      ]
+    }
+  },
+  "files": [
+    {
+      "filename": "LLaMA-Factory/src/llamafactory/train/dpo/trainer.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 187,
+          "end": 216
+        }
+      ]
+    },
+    {
+      "filename": "LLaMA-Factory/src/llamafactory/hparams/finetuning_args.py",
+      "read": [
+        {
+          "start": 443,
+          "end": 602
+        }
+      ],
+      "edit": [
+        {
+          "start": 556,
+          "end": 556
+        }
+      ]
+    },
+    {
+      "filename": "scripts/train.sh",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

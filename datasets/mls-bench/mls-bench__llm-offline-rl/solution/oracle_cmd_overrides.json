@@ -1,0 +1,6 @@
+[
+  {
+    "label": "train",
+    "cmd": "scripts/dpo.sh"
+  }
+]
