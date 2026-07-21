@@ -5,9 +5,6 @@ Converts the 140 [MLS-Bench](https://github.com/Bohan22/MLS-Bench) tasks into
 (`claude-code`, `openhands`, `codex`, `terminus-2`, …) can be evaluated against
 the MLS-Bench problem set.
 
-> See [`STATUS.md`](./STATUS.md) for the deep dive (architecture, security
-> posture, validation log, open questions).
-
 ## Quick start
 
 ```bash
@@ -29,8 +26,7 @@ Dockerfile each rendered task ships is a 5-line layer on top of those.
 
 ## Architecture
 
-Two-tier image build + verifier-side pristine baseline. Full description in
-[STATUS.md](./STATUS.md#architecture); summary:
+Two-tier image build + verifier-side pristine baseline:
 
 1. **Per-package harbor base** — `bohanlyu2022/mlsbench-harbor-<pkg>:latest`
    layers MLS-Bench's existing `bohanlyu2022/mlsbench-<pkg>:latest` (package
@@ -200,13 +196,9 @@ containing `tasks/` + `vendor/packages.yaml` → `~/MLS-Bench/`.
 - Multi-package tasks (e.g. `tasks/llm-pretrain-attention/`) pick one
   primary package for the image; secondary packages are staged into the
   scaffold but not their full source.
-- `parity_experiment.json` is a placeholder until the first real-agent
-  parity run completes.
 
 ## Files to read first
 
-- [`STATUS.md`](./STATUS.md) — full architecture, security posture,
-  validation log
 - `src/mls_bench/adapter.py::render_task` — per-task rendering entry point
 - `src/mls_bench/task-template/tests/score_task.py::cmd_run_evals` — the
   in-container mini-scheduler
