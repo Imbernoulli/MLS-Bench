@@ -29,5 +29,6 @@ build_timeout_sec = {{ build_timeout_sec }}
 cpus = {{ cpus }}
 memory_mb = {{ memory_mb }}
 storage_mb = {{ storage_mb }}
-gpus = {{ gpus }}
+{% for line in gpu_serialization_note %}# {{ line }}
+{% endfor %}gpus = {{ gpus }}
 allow_internet = true

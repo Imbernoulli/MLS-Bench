@@ -12,6 +12,7 @@ import shutil
 import stat
 import statistics
 import sys
+import textwrap
 import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -746,6 +747,17 @@ PREBUILT_DOCKER = "bohanlyu2022/mlsbench-{pkg}:latest"
 # harbor_adapter/scripts/build_base_image.py.
 HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 
+# Most GPU hosts running Harbor top out at 8 accelerators, and docker refuses to
+# start a container whose `deploy.resources.reservations.devices[].count` exceeds
+# what the host actually has — so a task rendered with `gpus = 12` is not "slow
+# on a small box", it is unrunnable there. Cap the reservation at 8: a group
+# whose (test_cmd, seed) jobs need more GPUs than this at once is executed as
+# sequential waves of at most this many GPUs by tests/score_task.py
+# (`_partition_group_gpu_batches`), and `_verifier_timeout_sec` charges wall
+# clock per wave so the serialized run still fits inside the verifier budget.
+# Keep in sync with `MAX_PARALLEL_GPUS` in task-template/tests/score_task.py.
+MAX_PARALLEL_GPUS = 8
+
 
 def _harbor_safe_name(task_id: str) -> str:
     safe = re.sub(r"[^a-z0-9_-]", "-", task_id.lower())
@@ -793,20 +805,6 @@ def _seed_count(config: dict) -> int:
         return 1
 
 
-def _verifier_timeout_sec(config: dict) -> int:
-    # Groups run sequentially, while all (test_cmd, seed) jobs inside a group
-    # run in parallel subject to bin-packing. Charge wall time by each group's
-    # slowest member; budget-check headroom still scales per test_cmd and seed.
-    test_cmds = list(config.get("test_cmds", []) or [])
-    grouped = _group_test_cmds(test_cmds)
-    total = sum(
-        max(_parse_time(tc.get("time", "0:30:00")) for tc in entries)
-        for entries in grouped.values()
-    )
-    n_seeds = _seed_count(config)
-    return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
-
-
 def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
     """Min 1.0-capacity bins needed to hold all fractional GPU jobs.
 
@@ -827,6 +825,123 @@ def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
     return len(bins)
 
 
+def _group_gpu_jobs(entries: list[dict], n_seeds: int) -> list[tuple[float, int]]:
+    """`(compute, seconds)` for every (test_cmd, seed) job of one group.
+
+    Ordered test_cmd-major / seed-minor — exactly how tests/score_task.py builds
+    its `group_tasks` list — so the wave split estimated here is the one the
+    verifier actually executes.
+    """
+    return [
+        (_test_cmd_compute(tc), _parse_time(tc.get("time", "0:30:00")))
+        for tc in entries
+        for _ in range(n_seeds)
+    ]
+
+
+def _peak_gpus(computes: list[float]) -> int:
+    """GPUs needed to run every job in *computes* concurrently."""
+    whole = sum(max(1, math.ceil(c)) for c in computes if c >= 1.0)
+    return whole + _bin_pack_fractional_gpus([c for c in computes if 0.0 < c < 1.0])
+
+
+def _fits_on_gpus(computes: list[float], devices: int) -> bool:
+    """Whether score_task.py can place all of *computes* on *devices* GPUs.
+
+    Mirrors `_allocate_group_gpu_assignments` there: whole-GPU jobs first, each
+    taking dedicated devices, then fractional jobs first-fit into the leftover
+    capacity in device order. Deliberately not `_peak_gpus(...) <= devices` —
+    that packs fractionals first-fit-*decreasing*, which can be optimistic
+    relative to the allocator and would under-count waves (i.e. under-budget
+    the verifier timeout).
+    """
+    if devices <= 0:
+        return True
+    remaining = [1.0] * devices
+    # Stable sort ⇒ whole-GPU jobs first, original order within each class.
+    for compute in sorted(computes, key=lambda c: 0 if c >= 1.0 else 1):
+        if compute <= 0.0:
+            continue
+        if compute >= 1.0:
+            need = max(1, math.ceil(compute))
+            free = [i for i, cap in enumerate(remaining) if cap >= 1.0]
+            if len(free) < need:
+                return False
+            for i in free[:need]:
+                remaining[i] = 0.0
+            continue
+        i = next((i for i, cap in enumerate(remaining) if cap >= compute), None)
+        if i is None:
+            return False
+        remaining[i] -= compute
+    return True
+
+
+def _gpu_waves(
+    jobs: list[tuple[float, int]],
+    devices: int,
+) -> list[list[tuple[float, int]]]:
+    """Split *jobs* into the sequential waves score_task.py will run them in.
+
+    Same greedy contiguous batching as `_partition_group_gpu_batches` there:
+    keep adding jobs to the current wave while they still fit on the reserved
+    GPUs, otherwise close the wave and start a new one.
+    """
+    waves: list[list[tuple[float, int]]] = []
+    current: list[tuple[float, int]] = []
+    for job in jobs:
+        if current and not _fits_on_gpus([c for c, _ in (*current, job)], devices):
+            waves.append(current)
+            current = [job]
+        else:
+            current.append(job)
+    if current:
+        waves.append(current)
+    return waves
+
+
+def _gpu_serialization_note(config: dict, gpus: int) -> list[str]:
+    """task.toml comment lines when MAX_PARALLEL_GPUS forced a group into waves."""
+    if gpus <= 0:
+        # No GPU reservation at all (CPU-only task): `compute` is not a GPU
+        # demand here and nothing gets serialized on GPU grounds.
+        return []
+    test_cmds = list(config.get("test_cmds", []) or [])
+    n_seeds = _seed_count(config)
+    peak = 0
+    waves = 0
+    for entries in _group_test_cmds(test_cmds).values():
+        jobs = _group_gpu_jobs(entries, n_seeds)
+        peak = max(peak, _peak_gpus([c for c, _ in jobs]))
+        waves += len(_gpu_waves(jobs, gpus))
+    if peak <= gpus:
+        return []
+    return textwrap.wrap(
+        f"Capped at {gpus} GPUs (MAX_PARALLEL_GPUS): running every "
+        f"(test_cmd, seed) eval job in parallel would occupy {peak} GPUs, more "
+        "than a typical Harbor GPU host has. The verifier instead runs them as "
+        f"{waves} sequential waves of at most {gpus} GPUs, and "
+        "[verifier].timeout_sec above budgets wall clock for every wave.",
+        width=74,
+    )
+
+
+def _verifier_timeout_sec(config: dict, gpus: int) -> int:
+    # Groups run sequentially. Inside a group the (test_cmd, seed) jobs run in
+    # parallel — but only as many as fit on the *reserved* GPUs (`gpus`); any
+    # overflow runs in later sequential waves, see MAX_PARALLEL_GPUS and
+    # score_task.py's `_partition_group_gpu_batches`. Charge wall time by each
+    # wave's slowest member; budget-check headroom still scales per test_cmd
+    # and seed.
+    test_cmds = list(config.get("test_cmds", []) or [])
+    n_seeds = _seed_count(config)
+    total = 0
+    for entries in _group_test_cmds(test_cmds).values():
+        for wave in _gpu_waves(_group_gpu_jobs(entries, n_seeds), gpus):
+            total += max(seconds for _, seconds in wave)
+    return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
+
+
 def _resources(pkg_config: dict, config: dict) -> dict:
     use_cuda = bool(config.get("use_cuda")) or bool(pkg_config.get("use_cuda"))
     cpus = 4
@@ -836,22 +951,23 @@ def _resources(pkg_config: dict, config: dict) -> dict:
     if use_cuda:
         n_seeds = _seed_count(config)
         peak_gpus = 0
+        largest_job = 0
         for entries in _group_test_cmds(list(config.get("test_cmds", []) or [])).values():
-            whole = 0
-            fractionals: list[float] = []
-            for tc in entries:
-                compute = _test_cmd_compute(tc)
-                if compute >= 1.0:
-                    # `seeds` parallel copies of a whole-GPU job each take its
-                    # own dedicated GPU(s).
-                    whole += n_seeds * max(1, math.ceil(compute))
-                elif compute > 0.0:
-                    # Each (entry, seed) is a separate concurrent job competing
-                    # for fractional GPU space — `n_seeds` copies of the same
-                    # entry. Bin-packed below.
-                    fractionals.extend([compute] * n_seeds)
-            peak_gpus = max(peak_gpus, whole + _bin_pack_fractional_gpus(fractionals))
-        gpus = max(1, peak_gpus)
+            # Every (test_cmd, seed) pair is its own concurrent job: `seeds`
+            # copies of a whole-GPU job each take dedicated GPU(s), `seeds`
+            # copies of a fractional job compete for fractional space and get
+            # bin-packed.
+            computes = [c for c, _ in _group_gpu_jobs(entries, n_seeds)]
+            peak_gpus = max(peak_gpus, _peak_gpus(computes))
+            for compute in computes:
+                if compute > 0.0:
+                    largest_job = max(largest_job, max(1, math.ceil(compute)))
+        # Cap the reservation instead of demanding a host with more GPUs than
+        # most Harbor runners have: score_task.py runs whatever does not fit
+        # concurrently as later sequential waves, and `_verifier_timeout_sec`
+        # pays for those extra waves. A single job that needs more than the cap
+        # on its own is exempt — it has no smaller schedule.
+        gpus = max(1, min(peak_gpus, MAX_PARALLEL_GPUS), largest_job)
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
@@ -931,12 +1047,13 @@ def render_task(
         "workdir": pkg_workdir,
         "base_image": HARBOR_BASE_DOCKER.format(pkg=ctx.package.lower()),
         "agent_timeout_sec": _agent_timeout_sec(ctx.config),
-        "verifier_timeout_sec": _verifier_timeout_sec(ctx.config),
+        "verifier_timeout_sec": _verifier_timeout_sec(ctx.config, res["gpus"]),
         "build_timeout_sec": 1800,
         "cpus": res["cpus"],
         "memory_mb": res["memory_mb"],
         "storage_mb": res["storage_mb"],
         "gpus": res["gpus"],
+        "gpu_serialization_note": _gpu_serialization_note(ctx.config, res["gpus"]),
         "difficulty": ctx.config.get("difficulty", "hard"),
         "category": "ml-research",
         "tags": _domain_tags(ctx.task_id),
