@@ -21,7 +21,17 @@ export NUM_CLASSES=10
 export DIFFUSION_STEPS=1000
 export SAMPLE_STEPS=50
 
-NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
+if [ -n "${CUDA_VISIBLE_DEVICES:-}" ] && [ "${CUDA_VISIBLE_DEVICES}" != "NoDevFiles" ]; then
+    IFS=',' read -ra _MLSBENCH_GPUS <<< "$CUDA_VISIBLE_DEVICES"
+    NGPU=0
+    for _gpu in "${_MLSBENCH_GPUS[@]}"; do
+        if [ -n "$_gpu" ]; then
+            NGPU=$((NGPU + 1))
+        fi
+    done
+else
+    NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
+fi
 if [ "$NGPU" -gt 1 ]; then
     torchrun --nproc_per_node="$NGPU" --master_port=29500 custom_train.py
 else
