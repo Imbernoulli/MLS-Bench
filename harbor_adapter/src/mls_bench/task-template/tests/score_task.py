@@ -190,6 +190,16 @@ def _check_editable_only(
         chosen[i] = (start, end)
         prev_end = end
 
+    # With one editable interval, the anchored pristine prefix and suffix are
+    # a complete proof that every fixed byte is unchanged.  SequenceMatcher
+    # can misalign a repeated boundary line (commonly a blank line) with an
+    # identical line inside a replacement, then falsely report the real fixed
+    # boundary as deleted.  Multiple disjoint intervals still need the
+    # line-level backstop below to reject deletion of an intermediate fixed
+    # segment when the editable text contains a duplicate.
+    if len(ranges) == 1:
+        return True, None
+
     editable_line_nos = {
         line_no
         for r in ranges
