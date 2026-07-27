@@ -140,6 +140,27 @@ def test_edit_guard_rejects_deleted_fixed_separator_with_duplicate_in_editable(t
     assert "only the declared editable range" in reason
 
 
+def test_edit_guard_allows_single_range_replacement_with_repeated_suffix_line(tmp_path: Path):
+    """SequenceMatcher must not steal a repeated fixed suffix line.
+
+    The pristine editable line and fixed suffix are intentionally identical.
+    Replacing the editable line leaves the suffix byte-for-byte intact, but a
+    global diff aligns the suffix with the editable occurrence and reports the
+    actual suffix as deleted.
+    """
+    score_task = _load_score_task()
+    pristine = tmp_path / "pristine.py"
+    current = tmp_path / "current.py"
+
+    pristine.write_text("header\nrepeated\nrepeated\n")
+    current.write_text("header\nreplacement\nrepeated\n")
+
+    ranges = [score_task.EditRange(2, 2)]
+    ok, reason = score_task._check_editable_only(pristine, current, ranges)
+
+    assert ok, reason
+
+
 def test_edit_guard_rejects_protected_line_with_open_ended_tail_range(tmp_path: Path):
     """Regression: a disjoint range list whose last range uses end=-1 (to-EOF)
     must NOT mark the whole file editable for the line-level backstop. Here the
