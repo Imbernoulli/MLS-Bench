@@ -85,6 +85,16 @@ mls-bench__<task-id>/
   and `test_cmds[].time` in `config.json`, matching native
   `mlsbench.scheduler.peak_gpus` semantics: per-group
   `whole + ceil(fractional)` GPUs × `n_seeds`, max across groups.
+- **GPU cap** — that peak is clamped to `MAX_PARALLEL_GPUS = 8`
+  (`adapter.py`), because docker refuses to start a container reserving more
+  devices than the host has. A group that wants more than 8 GPUs at once is
+  not rejected: the verifier runs it as sequential waves of ≤ 8 GPUs (see
+  below) and `[verifier].timeout_sec` charges wall clock per wave, so the
+  budget covers the serialized run. `task.toml` carries a comment saying so
+  whenever the cap bites. Only a single `(test_cmd, seed)` job whose own
+  `compute` exceeds 8 GPUs raises the reservation above the cap — it has no
+  smaller schedule. Native MLS-Bench runs are unaffected; SLURM and the
+  local GPU scheduler already queue whatever does not fit.
 
 ## In-container mini-scheduler
 
@@ -94,14 +104,14 @@ scheduling (`_run_all_seeds_slurm` / `_allocate_group_gpu_assignments` /
 env allocates one container with a static GPU reservation and doesn't itself
 schedule processes across GPUs. Behavior:
 
-- seeds run sequentially (outer loop);
-- groups within a seed run sequentially in ascending order;
-- within a group, `test_cmds` launch in parallel via
-  `subprocess.Popen(start_new_session=True, …)` with per-entry
-  `CUDA_VISIBLE_DEVICES` (whole-GPU jobs first, fractional jobs packed
-  into remaining per-GPU capacity);
-- if a group's peak demand exceeds the reservation, wave-partition into
-  feasible batches;
+- groups run sequentially in ascending order;
+- within a group every `(test_cmd, seed)` pair is its own job and they launch
+  in parallel via `subprocess.Popen(start_new_session=True, …)` with
+  per-entry `CUDA_VISIBLE_DEVICES` (whole-GPU jobs first, fractional jobs
+  packed into remaining per-GPU capacity);
+- if a group's peak demand exceeds the reservation — always the case once the
+  `MAX_PARALLEL_GPUS` cap bites — wave-partition into feasible batches and
+  run the waves back to back;
 - per-wave deadline = `max(time) + 300s`; on expiry,
   `os.killpg(pid, SIGTERM)` then `SIGKILL` after 30 s.
 

@@ -17,7 +17,7 @@ mls_bench_package = "dbim-codebase"
 timeout_sec = 14400
 
 [verifier]
-timeout_sec = 16560
+timeout_sec = 30960
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the
@@ -29,5 +29,9 @@ build_timeout_sec = 1800
 cpus = 4
 memory_mb = 16384
 storage_mb = 61440
-gpus = 12
+# Capped at 8 GPUs (MAX_PARALLEL_GPUS): running every (test_cmd, seed) eval
+# job in parallel would occupy 12 GPUs, more than a typical Harbor GPU host
+# has. The verifier instead runs them as 2 sequential waves of at most 8
+# GPUs, and [verifier].timeout_sec above budgets wall clock for every wave.
+gpus = 8
 allow_internet = true

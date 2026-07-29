@@ -566,6 +566,18 @@ def _group_entries(test_cmds: list[dict]) -> dict[int, list[tuple[int, dict]]]:
     return grouped
 
 
+# Peak GPUs a task may reserve; groups that want more at once are run as
+# sequential waves of at most this many GPUs. Only consulted when
+# tests/meta/gpu_count is missing — the rendered value is authoritative. Keep in
+# sync with `MAX_PARALLEL_GPUS` in harbor_adapter/src/mls_bench/adapter.py.
+MAX_PARALLEL_GPUS = 8
+
+# Grace added to every wave's deadline. adapter.py::_verifier_timeout_sec
+# charges the same amount per wave, so the outer verifier budget can never be
+# tighter than the deadlines this runner hands out.
+WAVE_GRACE_SEC = 300
+
+
 def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
     """Min 1.0-capacity bins needed for these fractional GPU jobs.
 
@@ -592,18 +604,27 @@ def _infer_reserved_gpu_count(config: dict) -> int:
         return 0
 
     peak_gpus = 0
+    largest_job = 0
     n_seeds = max(1, len(_config_seeds(config)))
     for entries in _group_entries(test_cmds).values():
         whole = 0
         fractionals: list[float] = []
         for _, tc in entries:
             compute = _test_cmd_compute(tc)
+            if compute > 0.0:
+                largest_job = max(largest_job, max(1, math.ceil(compute)))
             if compute >= 1.0:
                 whole += n_seeds * max(1, math.ceil(compute))
             elif compute > 0.0:
                 fractionals.extend([compute] * n_seeds)
         peak_gpus = max(peak_gpus, whole + _bin_pack_fractional_gpus(fractionals))
-    return max(1, peak_gpus) if peak_gpus else 0
+    if not peak_gpus:
+        return 0
+    # Same cap the adapter applies when rendering tests/meta/gpu_count: groups
+    # that want more GPUs at once than MAX_PARALLEL_GPUS run as sequential
+    # waves (see _partition_group_gpu_batches), except for a single job that
+    # needs more than the cap by itself.
+    return max(1, min(peak_gpus, MAX_PARALLEL_GPUS), largest_job)
 
 
 def _reserved_gpu_count(task_meta: Path, config: dict) -> int:
@@ -948,7 +969,7 @@ def _run_eval_wave(
     timeout_secs = max(
         _parse_time_to_seconds(task["entry"]["tc"].get("time", "1:00:00"))
         for task in tasks
-    ) + 300
+    ) + WAVE_GRACE_SEC
     deadline = time.time() + timeout_secs
     running: list[dict] = []
     results: dict[tuple[int, int], dict] = {}

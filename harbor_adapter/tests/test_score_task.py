@@ -381,3 +381,57 @@ def test_budget_scratch_config_reflects_oracle_override(tmp_path: Path):
     score_task._copy_task_meta_for_budget(task_meta, scratch2)
     cfg2 = json.loads((scratch2 / "config.json").read_text())
     assert cfg2["test_cmds"][0]["cmd"] == "scripts/psm.sh"
+
+
+def test_infer_reserved_gpu_count_caps_at_max_parallel_gpus():
+    st = _load_score_task()
+
+    # 3 whole-GPU test_cmds x 3 seeds in one group = 9 concurrent single-GPU jobs.
+    config = {
+        "use_cuda": True,
+        "seeds": [42, 123, 456],
+        "test_cmds": [
+            {"label": "a", "group": 1, "compute": 1.0},
+            {"label": "b", "group": 1, "compute": 1.0},
+            {"label": "c", "group": 1, "compute": 1.0},
+        ],
+    }
+    assert st._infer_reserved_gpu_count(config) == st.MAX_PARALLEL_GPUS
+
+    # Under the cap: untouched.
+    assert st._infer_reserved_gpu_count(
+        {"use_cuda": True, "test_cmds": [{"label": "a", "group": 1, "compute": 4.0}]}
+    ) == 4
+
+    # A single job larger than the cap cannot be split into waves.
+    assert st._infer_reserved_gpu_count(
+        {"use_cuda": True, "test_cmds": [{"label": "a", "group": 1, "compute": 16.0}]}
+    ) == 16
+
+    # CPU-only stays at zero.
+    assert st._infer_reserved_gpu_count({"use_cuda": False, "test_cmds": []}) == 0
+
+
+def test_partition_group_gpu_batches_serializes_group_overflow():
+    st = _load_score_task()
+
+    def task(label, compute):
+        return {"entry": {"tc": {"label": label, "compute": compute}}, "seed": 42}
+
+    devices = [str(i) for i in range(st.MAX_PARALLEL_GPUS)]
+
+    # cv-dbm-sampler shape: 3 x 4-GPU jobs in one group on 8 GPUs -> 2 waves.
+    batches = st._partition_group_gpu_batches(
+        [task("a", 4.0), task("b", 4.0), task("c", 4.0)], devices
+    )
+    assert [len(tasks) for tasks, _ in batches] == [2, 1]
+    assert [assignments for _, assignments in batches] == [
+        ["0,1,2,3", "4,5,6,7"],
+        ["0,1,2,3"],
+    ]
+
+    # rl-intrinsic-exploration shape: 9 single-GPU jobs on 8 GPUs -> 2 waves.
+    batches = st._partition_group_gpu_batches(
+        [task(f"j{i}", 1.0) for i in range(9)], devices
+    )
+    assert [len(tasks) for tasks, _ in batches] == [8, 1]

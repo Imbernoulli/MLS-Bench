@@ -11,14 +11,19 @@ if str(ADAPTER_SRC) not in sys.path:
     sys.path.insert(0, str(ADAPTER_SRC))
 
 from mls_bench.adapter import (  # noqa: E402
+    MAX_PARALLEL_GPUS,
     MlsBenchRoot,
     _apply_ops_to_text,
     _baseline_sections,
     _config_with_shifted_edit_ranges,
+    _gpu_serialization_note,
+    _gpu_waves,
     _load_ops_file,
     _read_sections,
+    _resources,
     _stage_task_scaffold,
     _starting_workspace_text,
+    _verifier_timeout_sec,
     build_task_context,
 )
 
@@ -423,3 +428,120 @@ def test_stage_task_scaffold_accepts_valid_line_replace(tmp_path: Path):
     ctx = build_task_context(mb, "ok")
     created = _stage_task_scaffold(mb, ctx, tmp_path / "scaffold")
     assert "pkg/main.py" in created
+
+
+# --------------------------------------------------------------------------- #
+# GPU reservation cap / serialized waves
+# --------------------------------------------------------------------------- #
+
+def _gpu_config(test_cmds: list[dict], seeds: list[int] | None = None) -> dict:
+    config: dict = {"test_cmds": test_cmds, "use_cuda": True}
+    if seeds is not None:
+        config["seeds"] = seeds
+    return config
+
+
+def test_resources_caps_group_parallelism_at_eight_gpus():
+    # cv-dbm-sampler: 3 whole-GPU jobs of 4 GPUs in one group = 12 concurrent.
+    config = _gpu_config([
+        {"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"},
+        {"label": "b", "group": 1, "compute": 4.0, "time": "4:00:00"},
+        {"label": "c", "group": 1, "compute": 4.0, "time": "4:00:00"},
+    ])
+
+    assert _resources({}, config)["gpus"] == MAX_PARALLEL_GPUS
+
+
+def test_resources_caps_seed_fanout_at_eight_gpus():
+    # rl-intrinsic-exploration: 3 single-GPU test_cmds x 3 seeds = 9 concurrent.
+    config = _gpu_config(
+        [
+            {"label": "a", "group": 1, "compute": 1.0, "time": "08:00:00"},
+            {"label": "b", "group": 1, "compute": 1.0, "time": "08:00:00"},
+            {"label": "c", "group": 1, "compute": 1.0, "time": "08:00:00"},
+        ],
+        seeds=[42, 123, 456],
+    )
+
+    assert _resources({}, config)["gpus"] == MAX_PARALLEL_GPUS
+
+
+def test_resources_keeps_reservation_under_the_cap_untouched():
+    config = _gpu_config([
+        {"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"},
+        {"label": "b", "group": 2, "compute": 4.0, "time": "4:00:00"},
+    ])
+
+    assert _resources({}, config)["gpus"] == 4
+
+
+def test_resources_never_caps_below_a_single_indivisible_job():
+    # A lone 16-GPU job cannot be split into smaller waves, so the cap must not
+    # render it unschedulable (score_task.py would error it out with rc=125).
+    config = _gpu_config([{"label": "a", "group": 1, "compute": 16.0, "time": "1:00:00"}])
+
+    assert _resources({}, config)["gpus"] == 16
+
+
+def test_gpu_waves_serializes_group_overflow():
+    jobs = [(4.0, 3600)] * 3
+    waves = _gpu_waves(jobs, 8)
+
+    assert [len(w) for w in waves] == [2, 1]
+
+
+def test_gpu_waves_single_wave_when_everything_fits():
+    jobs = [(1.0, 3600)] * 8
+    assert len(_gpu_waves(jobs, 8)) == 1
+
+
+def test_gpu_waves_respects_fractional_bin_capacity():
+    # 0.4-GPU jobs: only 2 fit per GPU, so 8 GPUs hold 16 of them, not 20.
+    jobs = [(0.4, 3600)] * 20
+    waves = _gpu_waves(jobs, 8)
+
+    assert [len(w) for w in waves] == [16, 4]
+
+
+def test_verifier_timeout_pays_for_each_serialized_wave():
+    config = _gpu_config([
+        {"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"},
+        {"label": "b", "group": 1, "compute": 4.0, "time": "4:00:00"},
+        {"label": "c", "group": 1, "compute": 4.0, "time": "4:00:00"},
+    ])
+    gpus = _resources({}, config)["gpus"]
+
+    # 2 waves x 4h + 30min slack + 120s per (test_cmd, seed).
+    assert _verifier_timeout_sec(config, gpus) == 2 * 4 * 3600 + 30 * 60 + 120 * 3
+
+    # With enough GPUs for the whole group, the old single-wave budget stands.
+    assert _verifier_timeout_sec(config, 12) == 4 * 3600 + 30 * 60 + 120 * 3
+
+
+def test_verifier_timeout_unchanged_for_cpu_only_tasks():
+    config = {"test_cmds": [
+        {"label": "a", "group": 1, "time": "0:30:00", "compute": 0},
+        {"label": "b", "group": 2, "time": "1:00:00", "compute": 0},
+    ]}
+
+    assert _verifier_timeout_sec(config, 0) == 90 * 60 + 30 * 60 + 120 * 2
+
+
+def test_gpu_serialization_note_only_for_capped_tasks():
+    capped = _gpu_config([
+        {"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"},
+        {"label": "b", "group": 1, "compute": 4.0, "time": "4:00:00"},
+        {"label": "c", "group": 1, "compute": 4.0, "time": "4:00:00"},
+    ])
+    note = _gpu_serialization_note(capped, _resources({}, capped)["gpus"])
+    assert note and "2 sequential waves" in " ".join(note)
+
+    fits = _gpu_config([{"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"}])
+    assert _gpu_serialization_note(fits, _resources({}, fits)["gpus"]) == []
+
+    # CPU-only task: `compute` is not a GPU demand, nothing is serialized.
+    cpu_only = {"test_cmds": [
+        {"label": "a", "group": 1, "compute": 1.0, "time": "0:30:00"},
+    ]}
+    assert _resources({}, cpu_only)["gpus"] == 0
+    assert _gpu_serialization_note(cpu_only, 0) == []
