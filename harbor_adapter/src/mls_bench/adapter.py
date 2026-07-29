@@ -1020,12 +1020,20 @@ def _has_budget_check(task_dir: Path) -> bool:
     return (task_dir / "budget_check.py").exists()
 
 
-def _budget_multiplier(task_dir: Path) -> float:
+def _budget_has_floor(task_dir: Path) -> bool:
+    """True when the check floors the budget at a fixed parameter count.
+
+    Those tasks (ml-calibration, optimization-nas, ...) have reference
+    baselines that carry no torch parameters at all, so the floor — not the
+    baseline — is the real budget, and it exists precisely to leave room for a
+    small learned component. Telling those agents to stay at or below the
+    baselines would read as "add no parameters" and remove design space the
+    task intends to offer.
+    """
     p = task_dir / "budget_check.py"
     if not p.exists():
-        return 1.05
-    m = re.search(r"BUDGET_MULTIPLIER\s*=\s*([0-9.]+)", p.read_text())
-    return float(m.group(1)) if m else 1.05
+        return False
+    return bool(re.search(r"max\(\s*int\([^\n]*\*[^\n]*\)\s*,\s*[\d_]+\s*\)", p.read_text()))
 
 
 def render_task(
@@ -1081,7 +1089,7 @@ def render_task(
         "extra_readable_files": _readable_only_files(effective_config),
         "visible_test_cmds": visible_test_cmds,
         "has_budget_check": _has_budget_check(task_dir),
-        "budget_multiplier": _budget_multiplier(task_dir),
+        "budget_has_floor": _budget_has_floor(task_dir),
         "baseline_name": ctx.chosen_baseline or "noop",
         "env_vars": ctx.pkg_config.get("env") or {},
         "data_deps": ctx.pkg_config.get("data_deps") or [],

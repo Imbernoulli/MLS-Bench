@@ -411,6 +411,10 @@ stay unchanged.
    342:     _main()
 ```
 
+## Parameter Budget
+
+The check counts trainable parameters in any torch module your optimizer attaches, and leaves room for a small neural predictor — roughly a two-layer MLP over a compact path encoding, as in BANANAS. A large surrogate network, the kind that could extrapolate around the query budget, is out of scope. The check runs automatically — you don't need to invoke it — and going materially beyond that makes the run invalid. The contribution must be algorithmic, not extra capacity.
+
 ## Reference Baselines
 
 The following are **read-only** reference implementations. Each shows what

@@ -500,7 +500,7 @@ Other files you may **read** for context (do not modify):
 
 ## Parameter Budget
 
-Your edits must not significantly increase the model's total parameter count relative to the standard attention baseline.
+Keep your model's total parameter count at or below the standard attention baseline's. A check runs automatically and a materially larger model makes the run invalid.
 
 ## Reference Baselines
 

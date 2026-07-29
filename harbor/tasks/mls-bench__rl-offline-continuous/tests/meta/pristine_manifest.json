@@ -18,7 +18,7 @@
   "CORL/algorithms/offline/any_percent_bc.py": "90efba33b3bff2a5546ec447d44079767e37244294fdd232fec14a7f783cf80d",
   "CORL/algorithms/offline/awac.py": "dd206452d53d5987250b548f7cf770307e9aa203bb43f8c92a8816b4e8b22ac6",
   "CORL/algorithms/offline/cql.py": "2790f9d492c45f6a07ba86fe43e3332b267a9db3309fd11dceae4d3b9dc60443",
-  "CORL/algorithms/offline/custom.py": "4aeade0a8fc0ed0eaf60b0b5c9e48062060816502e3e63e94853026898216bed",
+  "CORL/algorithms/offline/custom.py": "1accaf2e1ab38b14351cc52429f66c726e782e33c5f99bf49f387f38d55381a4",
   "CORL/algorithms/offline/dt.py": "9791ff887ea80e6d8c648eab26cbac9f0c580a5333298d4a4cfdc04e046f3dd6",
   "CORL/algorithms/offline/edac.py": "fc3471d661d2efd78d8035db9786c1f8f5c0d7250cf323195fd2fc0885e704d1",
   "CORL/algorithms/offline/iql.py": "55c7321f67863f2c10cc7f64033e3860a6f7e75351870ae247afa9efe12be0b1",

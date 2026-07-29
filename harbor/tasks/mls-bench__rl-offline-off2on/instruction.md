@@ -41,9 +41,9 @@ Reference baselines spanning the design space:
   use 256 units. A `_mlp()` factory function is provided in the FIXED
   section for convenience. You may define custom network classes but
   hidden widths must remain 256.
-- **Total parameter count is enforced.** The training loop checks that
-  total trainable parameters do not exceed 1.2x the largest baseline
-  architecture, so the contribution must be algorithmic (transition
+- **Total parameter count is enforced.** An automatic check rejects runs
+  whose total trainable parameters significantly exceed the largest
+  baseline architecture, so the contribution must be algorithmic (transition
   handling, value calibration, replay balancing, behavior-constraint
   annealing) rather than capacity.
 - Do **not** simply copy a reference implementation with minor changes.
@@ -296,7 +296,7 @@ stay unchanged.
    219: 
    220: 
    221: def _max_param_budget(state_dim: int, action_dim: int) -> int:
-   222:     """Compute max parameter budget (1.2x largest baseline: CQL/Cal-QL + VAE)."""
+   222:     """Compute max parameter budget (largest baseline: CQL/Cal-QL + VAE)."""
    223:     sa = state_dim + action_dim
    224:     # Two critics: 3 hidden layers of 256, output 1
    225:     critics = 2 * (sa * 256 + 256 + 256 * 256 + 256 + 256 * 256 + 256 + 256 + 1)
@@ -323,9 +323,9 @@ stay unchanged.
    246: #
    247: # CONSTRAINTS:
    248: # - Total trainable parameter count is soft-capped (see budget check below).
-   249: # - Total parameter count is checked at runtime and must not exceed
-   250: #   1.2x the largest baseline. Focus on algorithmic improvements, not
-   251: #   network capacity.
+   249: # - Total parameter count is checked automatically and must not
+   250: #   significantly exceed the largest baseline. Focus on algorithmic
+   251: #   improvements, not network capacity.
    252: #
    253: # CONFIG_OVERRIDES: override method-specific TrainConfig fields here.
    254: # Allowed keys: normalize, normalize_reward, actor_lr, critic_lr, tau,
@@ -578,6 +578,10 @@ stay unchanged.
 
 [truncated: showing at most 500 lines / 60000 bytes from CORL/algorithms/finetune/custom_finetune.py]
 ```
+
+## Parameter Budget
+
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
 
 ## Reference Baselines
 

@@ -219,7 +219,7 @@ def _mlp(input_dim: int, output_dim: int, hidden_dim: int = 256,
 
 
 def _max_param_budget(state_dim: int, action_dim: int) -> int:
-    """Compute max parameter budget (1.2x largest baseline: CQL/Cal-QL + VAE)."""
+    """Compute max parameter budget (largest baseline: CQL/Cal-QL + VAE)."""
     sa = state_dim + action_dim
     # Two critics: 3 hidden layers of 256, output 1
     critics = 2 * (sa * 256 + 256 + 256 * 256 + 256 + 256 * 256 + 256 + 256 + 1)
@@ -246,9 +246,9 @@ def _max_param_budget(state_dim: int, action_dim: int) -> int:
 #
 # CONSTRAINTS:
 # - Total trainable parameter count is soft-capped (see budget check below).
-# - Total parameter count is checked at runtime and must not exceed
-#   1.2x the largest baseline. Focus on algorithmic improvements, not
-#   network capacity.
+# - Total parameter count is checked automatically and must not
+#   significantly exceed the largest baseline. Focus on algorithmic
+#   improvements, not network capacity.
 #
 # CONFIG_OVERRIDES: override method-specific TrainConfig fields here.
 # Allowed keys: normalize, normalize_reward, actor_lr, critic_lr, tau,
