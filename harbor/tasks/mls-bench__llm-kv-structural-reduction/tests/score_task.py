@@ -572,6 +572,11 @@ def _group_entries(test_cmds: list[dict]) -> dict[int, list[tuple[int, dict]]]:
 # sync with `MAX_PARALLEL_GPUS` in harbor_adapter/src/mls_bench/adapter.py.
 MAX_PARALLEL_GPUS = 8
 
+# Grace added to every wave's deadline. adapter.py::_verifier_timeout_sec
+# charges the same amount per wave, so the outer verifier budget can never be
+# tighter than the deadlines this runner hands out.
+WAVE_GRACE_SEC = 300
+
 
 def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
     """Min 1.0-capacity bins needed for these fractional GPU jobs.
@@ -964,7 +969,7 @@ def _run_eval_wave(
     timeout_secs = max(
         _parse_time_to_seconds(task["entry"]["tc"].get("time", "1:00:00"))
         for task in tasks
-    ) + 300
+    ) + WAVE_GRACE_SEC
     deadline = time.time() + timeout_secs
     running: list[dict] = []
     results: dict[tuple[int, int], dict] = {}

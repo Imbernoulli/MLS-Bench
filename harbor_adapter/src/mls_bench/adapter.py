@@ -758,6 +758,10 @@ HARBOR_BASE_DOCKER = "bohanlyu2022/mlsbench-harbor-{pkg}:latest"
 # Keep in sync with `MAX_PARALLEL_GPUS` in task-template/tests/score_task.py.
 MAX_PARALLEL_GPUS = 8
 
+# Mirrors score_task.py::WAVE_GRACE_SEC — the grace the in-container runner
+# adds to each wave's deadline.
+WAVE_GRACE_SEC = 300
+
 
 def _harbor_safe_name(task_id: str) -> str:
     safe = re.sub(r"[^a-z0-9_-]", "-", task_id.lower())
@@ -938,7 +942,13 @@ def _verifier_timeout_sec(config: dict, gpus: int) -> int:
     total = 0
     for entries in _group_test_cmds(test_cmds).values():
         for wave in _gpu_waves(_group_gpu_jobs(entries, n_seeds), gpus):
-            total += max(seconds for _, seconds in wave)
+            # Charge the same deadline score_task.py::_run_eval_wave grants the
+            # wave, grace included. Charging only max(time) leaves the outer
+            # verifier free to kill a wave before that wave's own deadline; the
+            # flat headroom below hides it until a task needs more than ~10
+            # waves, at which point 300s/wave outgrows it and the run scores 0
+            # while still inside the limits the runner advertised.
+            total += max(seconds for _, seconds in wave) + WAVE_GRACE_SEC
     return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
 
 
@@ -968,6 +978,16 @@ def _resources(pkg_config: dict, config: dict) -> dict:
         # pays for those extra waves. A single job that needs more than the cap
         # on its own is exempt — it has no smaller schedule.
         gpus = max(1, min(peak_gpus, MAX_PARALLEL_GPUS), largest_job)
+        if largest_job > MAX_PARALLEL_GPUS:
+            # Waves cannot help here, so the reservation is raised above the cap
+            # and the task simply will not start on a host with fewer GPUs. Say
+            # so at render time rather than letting it surface as an opaque
+            # docker refusal on somebody else's runner.
+            _warn(
+                f"single job needs {largest_job} GPUs, above the "
+                f"MAX_PARALLEL_GPUS={MAX_PARALLEL_GPUS} cap; reserving "
+                f"{gpus} — this task needs a host with at least that many"
+            )
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
