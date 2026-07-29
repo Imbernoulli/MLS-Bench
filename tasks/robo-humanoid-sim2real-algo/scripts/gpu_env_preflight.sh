@@ -3,13 +3,14 @@
 #
 # Why this exists
 # ---------------
-# IsaacGym Preview 4 ships a `libPhysXGpu_64.so` whose newest native SASS is
-# sm_86, plus a compute_86 PTX payload. On a Hopper GPU (sm_90) there is no
+# IsaacGym Preview 4 ships a `libPhysXGpu_64.so` whose newest cubin is sm_80,
+# plus a PTX payload targeting sm_86. On a Hopper GPU (sm_90) there is no
 # matching cubin, so the CUDA driver has to JIT-compile that PTX when the sim is
 # created. That JIT lives in the *user-space* driver (libcuda +
 # libnvidia-ptxjitcompiler), and on 5xx user-space branches older than 570 it can
-# segfault instead of emitting sm_90 code — which is what MLS-Bench issue #47
-# reported, and what a second site independently confirmed. The kernel driver
+# segfault instead of emitting sm_90 code — MLS-Bench issue #59 has the gdb
+# backtrace landing inside libnvidia-ptxjitcompiler on driver 535.161.08, and a
+# second site independently confirmed the same. The kernel driver
 # does not have to be touched: a >= 570 user-space CUDA forward-compatibility
 # stack inside the container is enough, and a host on 535/550 keeps its driver.
 #
@@ -90,8 +91,8 @@ _mls_pf_driver_version() {
 
 # Which device code does this PhysX binary actually carry? On Hopper the answer
 # is the whole story: no sm_90 cubin and no PTX means nothing can rescue the run,
-# which is the second failure mode seen in #47 (community IsaacGym images ship a
-# stripped libPhysXGpu with its PTX payload pruned out).
+# which is the other failure mode, diagnosed in #47: community IsaacGym images
+# ship a stripped libPhysXGpu with its PTX payload pruned out.
 _mls_pf_physx_inventory() {
     local cc="$1" so="$_mls_pf_physx_so" sass ptx want
     [ -f "$so" ] || return 0
@@ -151,7 +152,7 @@ user-space CUDA driver of ${udrv:-unknown}, older than ${_mls_pf_min_driver}.x.
 IsaacGym Preview 4's libPhysXGpu_64.so carries no ${sm} cubin, so PhysX has
 to JIT-compile its compute_86 PTX at create_sim. User-space driver branches
 older than ${_mls_pf_min_driver} are known to segfault inside that JIT
-(MLS-Bench issue #47): it surfaces as a bare "Segmentation fault" with no
+(MLS-Bench issue #59): it surfaces as a bare "Segmentation fault" with no
 python traceback, and the run then scores 0.
 
 Any one of these fixes it:

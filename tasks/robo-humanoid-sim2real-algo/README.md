@@ -29,13 +29,14 @@ The task uses a sim2sim evaluation protocol:
 
 ## Runtime requirement: NVIDIA driver >= 570 on Hopper and newer
 
-IsaacGym Preview 4 ships a `libPhysXGpu_64.so` whose newest native SASS is
-`sm_86`, plus a `compute_86` PTX payload. On a Hopper GPU (`sm_90`) there is no
+IsaacGym Preview 4 ships a `libPhysXGpu_64.so` whose newest cubin is `sm_80`,
+plus a PTX payload targeting `sm_86`. On a Hopper GPU (`sm_90`) there is no
 matching cubin, so the CUDA driver has to JIT-compile that PTX when the sim is
 created. That JIT runs in the **user-space** driver, and 5xx user-space branches
 older than 570 are known to segfault in it: the run dies with a bare
 `Segmentation fault` inside `create_sim`, no python traceback, and scores 0
-([issue #47](https://github.com/Imbernoulli/MLS-Bench/issues/47)).
+([issue #59](https://github.com/Imbernoulli/MLS-Bench/issues/59), whose gdb
+backtrace lands inside `libnvidia-ptxjitcompiler` on driver 535.161.08).
 
 Only the *user-space* driver has to move — the host's kernel driver can stay on
 535/550. `scripts/gpu_env_preflight.sh`, sourced by every script in this task,
@@ -59,7 +60,8 @@ Overrides: `MLSBENCH_CUDA_COMPAT_DIR` (use your own compat directory),
 
 A separate failure with the same symptom is a **stripped** `libPhysXGpu_64.so`:
 several community IsaacGym images prune the PTX payload, which leaves nothing
-for any driver to JIT. The preflight detects that too and says so explicitly.
+for any driver to JIT ([issue #47](https://github.com/Imbernoulli/MLS-Bench/issues/47)).
+The preflight detects that too and says so explicitly.
 Use the stock Preview 4 binary that
 `vendor/data_scripts/humanoid-gym/prepare_isaacgym.py` downloads.
 

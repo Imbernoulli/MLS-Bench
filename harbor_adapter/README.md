@@ -147,10 +147,10 @@ this adapter as a package.
 ### IsaacGym on Hopper needs a >= 570 user-space driver
 
 `mls-bench__robo-humanoid-sim2real-algo` runs IsaacGym Preview 4, whose
-`libPhysXGpu_64.so` tops out at `sm_86` SASS plus a `compute_86` PTX payload.
+`libPhysXGpu_64.so` tops out at an `sm_80` cubin plus PTX targeting `sm_86`.
 On `sm_90` the driver has to JIT that PTX at `create_sim`, and user-space
 driver branches older than 570 segfault doing it — a bare `Segmentation fault`
-with no python traceback, scored 0 (issue #47).
+with no python traceback, scored 0 (issue #59).
 
 Only the *user-space* driver matters; the host kernel driver can stay on
 535/550. The task's `scripts/gpu_env_preflight.sh` (rendered into
