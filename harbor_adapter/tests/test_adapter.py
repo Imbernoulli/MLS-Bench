@@ -12,6 +12,7 @@ if str(ADAPTER_SRC) not in sys.path:
 
 from mls_bench.adapter import (  # noqa: E402
     MAX_PARALLEL_GPUS,
+    WAVE_GRACE_SEC,
     MlsBenchRoot,
     _apply_ops_to_text,
     _baseline_sections,
@@ -511,11 +512,16 @@ def test_verifier_timeout_pays_for_each_serialized_wave():
     ])
     gpus = _resources({}, config)["gpus"]
 
-    # 2 waves x 4h + 30min slack + 120s per (test_cmd, seed).
-    assert _verifier_timeout_sec(config, gpus) == 2 * 4 * 3600 + 30 * 60 + 120 * 3
+    # 2 waves x (4h + the grace score_task.py grants each wave), + 30min
+    # slack + 120s per (test_cmd, seed).
+    assert _verifier_timeout_sec(config, gpus) == (
+        2 * (4 * 3600 + WAVE_GRACE_SEC) + 30 * 60 + 120 * 3
+    )
 
-    # With enough GPUs for the whole group, the old single-wave budget stands.
-    assert _verifier_timeout_sec(config, 12) == 4 * 3600 + 30 * 60 + 120 * 3
+    # With enough GPUs for the whole group it collapses to a single wave.
+    assert _verifier_timeout_sec(config, 12) == (
+        4 * 3600 + WAVE_GRACE_SEC + 30 * 60 + 120 * 3
+    )
 
 
 def test_verifier_timeout_unchanged_for_cpu_only_tasks():
@@ -524,7 +530,10 @@ def test_verifier_timeout_unchanged_for_cpu_only_tasks():
         {"label": "b", "group": 2, "time": "1:00:00", "compute": 0},
     ]}
 
-    assert _verifier_timeout_sec(config, 0) == 90 * 60 + 30 * 60 + 120 * 2
+    # One wave per group, each charged its own deadline plus grace.
+    assert _verifier_timeout_sec(config, 0) == (
+        30 * 60 + WAVE_GRACE_SEC + 60 * 60 + WAVE_GRACE_SEC + 30 * 60 + 120 * 2
+    )
 
 
 def test_gpu_serialization_note_only_for_capped_tasks():
