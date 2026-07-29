@@ -4,6 +4,25 @@
 import os
 import sys
 
+# --- Thread-oversubscription guard (MUST run before numpy/scipy/torch/mujoco import) ---
+# This eval is CPU-bound (MuJoCo sim loop + small torch policy forward). Each numerical
+# backend (OpenMP, MKL, OpenBLAS, numexpr, torch) otherwise spins up ~ncores threads.
+# When several evals share a node — or even a single eval on a many-core box — these
+# pools oversubscribe the CPU, thrash caches, and slow the wall clock far beyond linear,
+# which is what caused the concurrent evals to time out. Cap thread pools to a small
+# number here. Every cap is idempotent and env-overridable: if the caller already set a
+# value (e.g. via the scheduler) we leave it untouched. BLAS env vars are honored only
+# at import time, so they MUST be set before importing numpy/torch below.
+_DEFAULT_EVAL_THREADS = os.getenv("MLSB_EVAL_THREADS", "8")
+for _var in (
+    "OMP_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+):
+    os.environ.setdefault(_var, _DEFAULT_EVAL_THREADS)
+
 # IMPORTANT: isaacgym MUST be imported before torch (Isaac Gym's gymdeps enforces this).
 # So we do the humanoid.envs import (which transitively imports isaacgym) up front,
 # before any module that pulls in torch.
@@ -19,6 +38,14 @@ import numpy as np
 import mujoco
 from scipy.spatial.transform import Rotation as R
 import torch
+
+# Cap torch's intra-op CPU thread pool to match the BLAS caps set above. torch reads
+# OMP_NUM_THREADS at init, but we set it explicitly so the cap holds regardless of how
+# torch was built or whether the env var propagated. Honors an explicit override.
+try:
+    torch.set_num_threads(int(os.environ.get("OMP_NUM_THREADS", _DEFAULT_EVAL_THREADS)))
+except Exception:
+    pass
 
 
 def quaternion_to_euler_array(quat):
