@@ -65,13 +65,27 @@ read or modify them. The labels below indicate what each evaluation tests:
 Scoring uses the same `combined_score` aggregation as the MLS-Bench
 leaderboard. Multiple seeds are averaged.
 
+{#
+  Eight shipped instruction.md carry a hand-tuned version of this section and
+  a re-render WILL overwrite them with the generic text below. Six floor tasks
+  (ml-anomaly-detection, ml-calibration, ml-continual-regularization,
+  ml-federated-aggregation, ml-missing-data-imputation, optimization-nas) name
+  the object their own check counts and the kind of model that is out of scope;
+  llm-pretrain-attention and llm-pretrain-mlp name their specific comparator
+  and sizing rule. Re-render those eight only if you intend to lose that.
+
+  Never state the multiplier or the floor. The native harness does not: the
+  InteractiveAgent system prompt says only "parameter count is capped
+  (enforced before each test)", and Harbor is held to the same level.
+-#}
 {% if has_budget_check -%}
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **{{ budget_multiplier }}×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+{% if budget_has_floor -%}
+The check counts trainable parameters in any torch module your method attaches, and leaves room for a small learned component even where the reference baselines attach none — a compact head or predictor, not a deep network. It runs automatically — you don't need to invoke it — and going materially beyond that makes the run invalid. The contribution must be algorithmic, not extra capacity.
+{%- else -%}
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
+{%- endif %}
 {%- endif %}
 
 {% if baseline_sections -%}
