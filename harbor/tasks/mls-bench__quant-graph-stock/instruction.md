@@ -312,8 +312,7 @@ Other files you may **read** for context (do not modify):
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. The check runs automatically inside
-the training script — you don't need to invoke it separately.
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
 
 ## Reference Baselines
 

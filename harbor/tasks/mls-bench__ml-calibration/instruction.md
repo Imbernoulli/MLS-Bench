@@ -410,10 +410,7 @@ stay unchanged.
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+The check counts trainable parameters in any torch module your method attaches, and leaves room for a small learned head — the reference calibrators attach none, so that headroom is yours. A deep calibration network is out of scope. The check runs automatically — you don't need to invoke it — and going materially beyond that makes the run invalid. The contribution must be algorithmic, not extra capacity.
 
 ## Reference Baselines
 

@@ -573,6 +573,10 @@ stay unchanged.
 [truncated: showing at most 500 lines / 60000 bytes from flower/custom_fl_aggregation.py]
 ```
 
+## Parameter Budget
+
+The check counts torch parameters your aggregator creates — server-side models, momentum buffers — and leaves room for a small amount of such state, which the reference aggregators do not use. A network-sized server model is out of scope. The check runs automatically — you don't need to invoke it — and going materially beyond that makes the run invalid. The contribution must be algorithmic, not extra capacity.
+
 ## Reference Baselines
 
 The following are **read-only** reference implementations. Each shows what

@@ -570,6 +570,10 @@ Other files you may **read** for context (do not modify):
 [truncated: showing at most 500 lines / 60000 bytes from nanoGPT/custom_pretrain.py]
 ```
 
+## Parameter Budget
+
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
+
 ## Reference Baselines
 
 The following are **read-only** reference implementations. Each shows what

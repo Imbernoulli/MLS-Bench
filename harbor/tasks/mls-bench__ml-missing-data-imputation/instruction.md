@@ -258,6 +258,10 @@ stay unchanged.
    189:     main()
 ```
 
+## Parameter Budget
+
+The check counts trainable parameters in any torch module your imputer attaches, and leaves room for a small learned head — the reference imputers attach none, so that headroom is yours. A heavy deep imputation network (VAE / DAE / MIWAE / diffusion) is out of scope. The check runs automatically — you don't need to invoke it — and going materially beyond that makes the run invalid. The contribution must be algorithmic, not extra capacity.
+
 ## Reference Baselines
 
 The following are **read-only** reference implementations. Each shows what

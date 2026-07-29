@@ -395,10 +395,7 @@ stay unchanged.
 
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **1.05×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
 
 ## Reference Baselines
 

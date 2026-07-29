@@ -38,6 +38,10 @@ Modify the `Custom` model class in `custom_emulator.py` to implement a better ne
 ## Fixed Pipeline
 The training and evaluation pipeline (data, normalization, splits, optimizer, schedule, loss, and metrics) is fixed by the harness and not editable. Only the `Custom` architecture is editable.
 
+## Parameter Budget
+
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
+
 ## Reference Baselines
 - **cnn**: 1D convolutional network with residual blocks operating on vertical atmospheric profiles. Multi-level variables are treated as spatial sequences over 60 vertical levels; single-level scalars are broadcast and concatenated. Inspired by the ClimSim CNN baseline (Yu et al., NeurIPS 2023 D&B).
 - **ed**: Encoder-decoder (ClimSim ED baseline). Wide 6-layer fully-connected encoder compresses the 556-dim atmospheric state to a 5-node latent bottleneck, then a symmetric 6-layer decoder expands back to the 368-dim tendency output. Layer widths follow the published ClimSim Table A (768/512/384/256/128/64).

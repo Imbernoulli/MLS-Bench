@@ -506,7 +506,7 @@ Other files you may **read** for context (do not modify):
 
 ## Parameter Budget
 
-Your MLP implementation must not significantly increase total model parameter count relative to the standard 4× GELU baseline. Keep hidden dimension sizing comparable; if you use a gating mechanism (e.g., GLU variants), reduce the hidden width accordingly (commonly to ⌊8d/3⌋).
+Keep total model parameter count at or below the standard 4× GELU baseline's — a check runs automatically and a materially larger model makes the run invalid. Keep hidden dimension sizing comparable; if you use a gating mechanism (e.g., GLU variants), reduce the hidden width accordingly (commonly to ⌊8d/3⌋).
 
 ## Reference Baselines
 
