@@ -68,10 +68,7 @@ leaderboard. Multiple seeds are averaged.
 {% if has_budget_check -%}
 ## Parameter Budget
 
-This task enforces a parameter-count cap. Your edits will be rejected if
-the resulting model exceeds **{{ budget_multiplier }}×** the strongest
-baseline's parameter count. The check runs automatically inside the eval
-scripts — you don't need to invoke it.
+Your edits must not significantly increase the model's total parameter count relative to the strongest baseline. The check runs automatically — you don't need to invoke it — and a model over the cap makes the run invalid. Aim for an algorithmic contribution rather than added capacity.
 {%- endif %}
 
 {% if baseline_sections -%}

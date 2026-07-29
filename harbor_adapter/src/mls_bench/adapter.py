@@ -884,14 +884,6 @@ def _has_budget_check(task_dir: Path) -> bool:
     return (task_dir / "budget_check.py").exists()
 
 
-def _budget_multiplier(task_dir: Path) -> float:
-    p = task_dir / "budget_check.py"
-    if not p.exists():
-        return 1.05
-    m = re.search(r"BUDGET_MULTIPLIER\s*=\s*([0-9.]+)", p.read_text())
-    return float(m.group(1)) if m else 1.05
-
-
 def render_task(
     mb: MlsBenchRoot,
     ctx: TaskContext,
@@ -944,7 +936,6 @@ def render_task(
         "extra_readable_files": _readable_only_files(effective_config),
         "visible_test_cmds": visible_test_cmds,
         "has_budget_check": _has_budget_check(task_dir),
-        "budget_multiplier": _budget_multiplier(task_dir),
         "baseline_name": ctx.chosen_baseline or "noop",
         "env_vars": ctx.pkg_config.get("env") or {},
         "data_deps": ctx.pkg_config.get("data_deps") or [],
