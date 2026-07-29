@@ -3,7 +3,7 @@
 ## Objective
 Design a single efficient diffusion sampler for a fixed DQL-style diffusion policy, maximizing D4RL MuJoCo return at low inference NFE (number of function evaluations).
 
-This task is deliberately about inference-time sampler choice, not policy learning, guidance, or trajectory planning. The trained actor / critic, dataset, environment list, seeds, and evaluation loop are fixed.
+This task is deliberately about the inference-time reverse process, not policy learning, guidance, or trajectory planning. The trained actor / critic, dataset, environment list, seeds, and evaluation loop are fixed.
 
 ## Background
 A diffusion policy's wall-clock inference cost is dominated by the number of reverse-process steps. Different ODE / SDE solvers reach a given sample quality at different NFE budgets:
@@ -14,15 +14,16 @@ A diffusion policy's wall-clock inference cost is dominated by the number of rev
 The setup builds on **CleanDiffuser** (Dong et al., NeurIPS 2024, arXiv:2406.09509) and the underlying actor is a DQL-style diffusion policy (Wang et al., ICLR 2023, arXiv:2208.06193) trained on **D4RL** (Fu et al., 2020, arXiv:2004.07219).
 
 ## What You Can Modify
-- `solver` in `CleanDiffuser/configs/custom/mujoco/mujoco.yaml`
-- `sampling_steps` in the same YAML file
+- The **sampling algorithm itself** — the `EDITABLE REGION: Sampling Algorithm` block in `CleanDiffuser/pipelines/custom_sampling_method.py`, which turns a prior and an observation into actions. The default delegates to CleanDiffuser's built-in solvers; you may instead write the reverse process yourself, calling the denoiser (`actor.model_ema["diffusion"]`) directly with whatever discretization, step schedule, order or correction you want.
+- `solver` and `sampling_steps` in `CleanDiffuser/configs/custom/mujoco/mujoco.yaml`, which drive the default implementation.
 
 ## What Is Fixed
-- The pipeline code, model architecture, critic, and training objective
+- The actor and critic architectures, the training objective and the training loop
 - `diffusion_steps`, training budgets, checkpoint selection, and EMA use
-- D4RL environment names, seeds, and vectorized evaluation
+- Candidate selection, D4RL environment names, seeds, and vectorized evaluation
 
-The score's NFE term is read from the same `sampling_steps` field passed to CleanDiffuser's sampler. Custom pipeline-code samplers are intentionally out of scope here because they would decouple true NFE from the reported score column.
+## How NFE Is Counted
+NFE is **measured, not declared**: a forward hook on the denoiser counts real network evaluations during evaluation and reports the average per action sample. Writing your own reverse process is therefore in scope — a sampler that spends 40 evaluations is scored as 40 no matter what any config field says, and one that reaches the same return in 10 is scored as 10.
 
 ## Evaluation
 Evaluated on three D4RL MuJoCo environments:

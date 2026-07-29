@@ -36,13 +36,12 @@ def pipeline(args):
     obs_dim, act_dim = dataset.o_dim, dataset.a_dim
 
     # ============================================================================
-    # EDITABLE REGION: Policy Algorithm (lines 40-205)
+    # FIXED: Policy, Critic and Training
     # ============================================================================
-    # Defines the actor (diffusion policy), optional critic(s), training loop,
-    # and inference action-selection. The template defaults to Diffusion
-    # Q-Learning (DQL): diffusion actor + twin Q critic with BC + Q loss.
-    # Baselines may swap in IQL Q+V (idql) or strip the critic entirely
-    # (diffusion_policy = pure BC).
+    # Diffusion Q-Learning (DQL): diffusion actor + twin Q critic with BC + Q
+    # loss. The trained actor/critic, dataset, environment list, seeds and
+    # evaluation loop are fixed — this task is about the sampler, so the thing
+    # you edit is the reverse process at inference time, further below.
 
     # --------------- Network Architecture -----------------
     nn_diffusion = DQLMlp(obs_dim, act_dim, emb_dim=64, timestep_emb_type="positional").to(args.device)
@@ -179,6 +178,24 @@ def pipeline(args):
         normalizer = dataset.get_normalizer()
         episode_rewards = []
 
+        # ============================================================================
+        # FIXED: NFE accounting — do not modify
+        # ============================================================================
+        # Counts real denoiser evaluations with a forward hook, so the reported
+        # NFE is what your sampler actually spends rather than a number declared
+        # in a config file. One hook call == one network evaluation, whatever
+        # batch it carries.
+        _nfe = {"calls": 0, "samples": 0}
+
+        def _count_nfe(_module, _inputs, _output):
+            _nfe["calls"] += 1
+
+        for _m in (actor.model, actor.model_ema):
+            try:
+                _m["diffusion"].register_forward_hook(_count_nfe)
+            except (KeyError, TypeError, AttributeError):
+                pass
+
         prior = torch.zeros((args.num_envs * args.num_candidates, act_dim), device=args.device)
         for i in range(args.num_episodes):
 
@@ -188,6 +205,27 @@ def pipeline(args):
                 obs = torch.tensor(normalizer.normalize(obs), device=args.device, dtype=torch.float32)
                 obs = obs.unsqueeze(1).repeat(1, args.num_candidates, 1).view(-1, obs_dim)
 
+                _nfe["samples"] += 1
+
+                # ====================================================================
+                # EDITABLE REGION: Sampling Algorithm
+                # ====================================================================
+                # Produce `act` of shape [num_envs * num_candidates, act_dim] by
+                # running a reverse diffusion process conditioned on `obs`.
+                #
+                # The default below delegates to CleanDiffuser's built-in solvers,
+                # driven by `solver` / `sampling_steps` in the YAML. You are not
+                # limited to that: implement the reverse process yourself and call
+                # the denoiser directly —
+                #
+                #   net = actor.model_ema["diffusion"] if args.use_ema else actor.model["diffusion"]
+                #   pred = net(x_t, t, cond)        # eps or x0, per actor.predict_noise
+                #
+                # with the schedule available from actor.alphas / actor.sigmas (see
+                # cleandiffuser/diffusion/diffusionsde.py). Fewer evaluations at the
+                # same return is the point: every call to the denoiser is counted and
+                # reported as the NFE the score penalizes, so the cost you pay is the
+                # cost you are scored on.
                 act, log = actor.sample(
                     prior,
                     solver=args.solver,
@@ -195,6 +233,9 @@ def pipeline(args):
                     sample_steps=args.sampling_steps,
                     condition_cfg=obs, w_cfg=1.0,
                     use_ema=args.use_ema, temperature=args.temperature)
+                # ====================================================================
+                # FIXED: Candidate Selection and Environment Step
+                # ====================================================================
 
                 with torch.no_grad():
                     q = critic_target.q_min(obs, act)
@@ -223,6 +264,13 @@ def pipeline(args):
         std_score = float(np.std(episode_rewards))
         mean_ep_reward = float(np.mean(raw_episode_rewards))
         print(f"EVAL_METRICS normalized_score={mean_score:.4f} normalized_score_std={std_score:.4f} episode_reward={mean_ep_reward:.2f}")
+
+        # Ceil, not round: an adaptive sampler averaging 10.5 evaluations must
+        # not report 10 and collect the full no-penalty credit reserved for a
+        # 10-step budget. Round-half-to-even would also floor an average of 0.5
+        # to zero. Constant-call samplers are unaffected.
+        measured_nfe = -(-_nfe["calls"] // max(_nfe["samples"], 1))
+        print(f"NFE_METRICS sampling_steps={measured_nfe}", flush=True)
 
     else:
         raise ValueError(f"Invalid mode: {args.mode}")
