@@ -191,9 +191,9 @@ def _mlp(input_dim: int, output_dim: int, hidden_dim: int = 256,
 #
 # CONSTRAINTS:
 # - Total trainable parameter count is soft-capped.
-# - Total parameter count is checked at runtime and must not exceed
-#   1.2x the largest baseline. Focus on algorithmic improvements, not
-#   network capacity.
+# - Total parameter count is checked automatically and must not
+#   significantly exceed the largest baseline. Focus on algorithmic
+#   improvements, not network capacity.
 #
 # CONFIG_OVERRIDES: override method-specific TrainConfig fields here.
 # Allowed keys: normalize, normalize_reward, actor_lr, critic_lr, tau, discount.

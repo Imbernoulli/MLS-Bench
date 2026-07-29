@@ -12,7 +12,7 @@
   "CORL/algorithms/finetune/awac.py": "306de939bb461b1931c55ffdd6bf89d129aa31ee5fbb69d21d2d768fc58087ad",
   "CORL/algorithms/finetune/cal_ql.py": "cc5359004e86a223e03e07d2a19742b1f6373f0f430602b15fc7bdc51753bb4b",
   "CORL/algorithms/finetune/cql.py": "f888bbc2ad4a73a0685e2312d56f90c75a53984344975de4bb97103fb2c4460a",
-  "CORL/algorithms/finetune/custom_finetune.py": "2dc26874ec19f4c3e22af5f1f42bbdca6c74403e2a10c80452b8aa6a7a242b60",
+  "CORL/algorithms/finetune/custom_finetune.py": "1f11e5233beabd834c1c64905a1d9ffbc3d5cd1c558cceb88be9f237ab9b347a",
   "CORL/algorithms/finetune/iql.py": "c96ddfa9cd9306822c6658c1aaf45198020f49657de9c7c8def927355df53e8d",
   "CORL/algorithms/finetune/rebrac.py": "b661a95731dd949ab46c76d88304f763a8645c1632a84b0bbea8981eb72ddd7b",
   "CORL/algorithms/finetune/spot.py": "e22668c67c070a2ef40e208b9dfd8be7fc8afc3e616162f0c0fa8c4813415d0c",

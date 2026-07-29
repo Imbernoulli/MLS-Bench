@@ -258,7 +258,7 @@ stay unchanged.
    187: 
    188: 
    189: def _max_param_budget(state_dim: int, action_dim: int) -> int:
-   190:     """Compute max parameter budget (1.3x largest baseline: EDAC/SAC-N with targets)."""
+   190:     """Compute max parameter budget (largest baseline: EDAC/SAC-N with targets)."""
    191:     sa = state_dim + action_dim
    192:     vc = 10 * (sa * 256 + 256 + 256 * 256 + 256 + 256 * 256 + 256 + 256 + 1)
    193:     vc_target = vc
@@ -273,9 +273,9 @@ stay unchanged.
    202: #
    203: # CONSTRAINTS:
    204: # - Total trainable parameter count is soft-capped (see budget check below).
-   205: # - Total parameter count is checked at runtime and must not exceed
-   206: #   1.2x the largest baseline. Focus on algorithmic improvements, not
-   207: #   network capacity.
+   205: # - Total parameter count is checked automatically and must not
+   206: #   significantly exceed the largest baseline. Focus on algorithmic
+   207: #   improvements, not network capacity.
    208: #
    209: # CONFIG_OVERRIDES: set any TrainConfig field here to override the fixed
    210: # defaults. Allowed keys: normalize, normalize_reward, actor_lr, critic_lr,
@@ -572,6 +572,10 @@ stay unchanged.
 
 [truncated: showing at most 500 lines / 60000 bytes from CORL/algorithms/offline/custom_adroit.py]
 ```
+
+## Parameter Budget
+
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
 
 ## Reference Baselines
 

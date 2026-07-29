@@ -35,9 +35,9 @@ Reference baselines spanning the design space:
   use 256 units. A `_mlp()` factory function is provided in the FIXED
   section for convenience. You may define custom network classes but
   hidden widths must remain 256.
-- **Total parameter count is enforced.** The training loop checks that
-  total trainable parameters do not exceed 1.2x the largest baseline
-  architecture, so the contribution must be algorithmic (losses,
+- **Total parameter count is enforced.** An automatic check rejects runs
+  whose total trainable parameters significantly exceed the largest
+  baseline architecture, so the contribution must be algorithmic (losses,
   regularization, target construction, policy extraction) rather than
   capacity.
 - Do **not** simply copy a reference implementation with minor changes.
@@ -262,9 +262,9 @@ stay unchanged.
    191: #
    192: # CONSTRAINTS:
    193: # - Total trainable parameter count is soft-capped.
-   194: # - Total parameter count is checked at runtime and must not exceed
-   195: #   1.2x the largest baseline. Focus on algorithmic improvements, not
-   196: #   network capacity.
+   194: # - Total parameter count is checked automatically and must not
+   195: #   significantly exceed the largest baseline. Focus on algorithmic
+   196: #   improvements, not network capacity.
    197: #
    198: # CONFIG_OVERRIDES: override method-specific TrainConfig fields here.
    199: # Allowed keys: normalize, normalize_reward, actor_lr, critic_lr, tau, discount.
@@ -555,6 +555,10 @@ stay unchanged.
    484:     train()
 ```
 
+## Parameter Budget
+
+Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
+
 ## Reference Baselines
 
 The following are **read-only** reference implementations. Each shows what
@@ -574,9 +578,9 @@ Lines 193–435:
    191: #
    192: # CONSTRAINTS:
    193: # - Total trainable parameter count is soft-capped.
-   194: # - Total parameter count is checked at runtime and must not exceed
-   195: #   1.2x the largest baseline. Focus on algorithmic improvements, not
-   196: #   network capacity.
+   194: # - Total parameter count is checked automatically and must not
+   195: #   significantly exceed the largest baseline. Focus on algorithmic
+   196: #   improvements, not network capacity.
    197: #
    198: # CONFIG_OVERRIDES: set any TrainConfig field here to override the fixed
    199: # defaults. Allowed keys: normalize, normalize_reward, actor_lr, critic_lr,
@@ -831,9 +835,9 @@ Lines 193–393:
    191: #
    192: # CONSTRAINTS:
    193: # - Total trainable parameter count is soft-capped.
-   194: # - Total parameter count is checked at runtime and must not exceed
-   195: #   1.2x the largest baseline. Focus on algorithmic improvements, not
-   196: #   network capacity.
+   194: # - Total parameter count is checked automatically and must not
+   195: #   significantly exceed the largest baseline. Focus on algorithmic
+   196: #   improvements, not network capacity.
    197: #
    198: # CONFIG_OVERRIDES: override method-specific TrainConfig fields here.
    199: # Allowed keys: normalize, normalize_reward, actor_lr, critic_lr, tau, discount.
@@ -1046,9 +1050,9 @@ Lines 193–395:
    191: #
    192: # CONSTRAINTS:
    193: # - Total trainable parameter count is soft-capped.
-   194: # - Total parameter count is checked at runtime and must not exceed
-   195: #   1.2x the largest baseline. Focus on algorithmic improvements, not
-   196: #   network capacity.
+   194: # - Total parameter count is checked automatically and must not
+   195: #   significantly exceed the largest baseline. Focus on algorithmic
+   196: #   improvements, not network capacity.
    197: #
    198: # CONFIG_OVERRIDES: override method-specific TrainConfig fields here.
    199: # Allowed keys: normalize, normalize_reward, actor_lr, critic_lr, tau, discount.
