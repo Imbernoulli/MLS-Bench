@@ -50,13 +50,21 @@ def _write_guard_fixture(tmp_path: Path, *, allow_create: bool) -> tuple[Path, P
     return task_meta, pristine, workspace, tmp_path / "violation.txt"
 
 
-def test_allow_create_false_outside_prefix(tmp_path: Path):
+def test_created_files_are_neither_flagged_nor_removed(tmp_path: Path):
+    """Creating files is not a violation, and the guard must not delete them.
+
+    Deleting them between guard and eval silently broke agents that split an
+    implementation into a helper module: the import died with no visible cause.
+    Both a workspace-root file and one inside the guarded package prefix must
+    survive.
+    """
     score_task = _load_score_task()
     task_meta, pristine, workspace, violation = _write_guard_fixture(
         tmp_path,
         allow_create=False,
     )
-    (workspace / "sitecustomize.py").write_text("print('bypass')\n")
+    (workspace / "sitecustomize.py").write_text("print('scratch')\n")
+    (workspace / "pkg" / "helper.py").write_text("VALUE = 1\n")
 
     rc = score_task.cmd_guard(argparse.Namespace(
         task_meta=str(task_meta),
@@ -65,8 +73,10 @@ def test_allow_create_false_outside_prefix(tmp_path: Path):
         violation_out=str(violation),
     ))
 
-    assert rc == 10
-    assert "created new file (allow_create=false): sitecustomize.py" in violation.read_text()
+    assert rc == 0, violation.read_text() if violation.exists() else ""
+    assert not violation.exists()
+    assert (workspace / "sitecustomize.py").exists()
+    assert (workspace / "pkg" / "helper.py").exists()
 
 
 def test_verifier_task_dir_exempt(tmp_path: Path):
@@ -138,6 +148,27 @@ def test_edit_guard_rejects_deleted_fixed_separator_with_duplicate_in_editable(t
     assert not ok
     assert reason is not None
     assert "only the declared editable range" in reason
+
+
+def test_edit_guard_allows_single_range_replacement_with_repeated_suffix_line(tmp_path: Path):
+    """SequenceMatcher must not steal a repeated fixed suffix line.
+
+    The pristine editable line and fixed suffix are intentionally identical.
+    Replacing the editable line leaves the suffix byte-for-byte intact, but a
+    global diff aligns the suffix with the editable occurrence and reports the
+    actual suffix as deleted.
+    """
+    score_task = _load_score_task()
+    pristine = tmp_path / "pristine.py"
+    current = tmp_path / "current.py"
+
+    pristine.write_text("header\nrepeated\nrepeated\n")
+    current.write_text("header\nreplacement\nrepeated\n")
+
+    ranges = [score_task.EditRange(2, 2)]
+    ok, reason = score_task._check_editable_only(pristine, current, ranges)
+
+    assert ok, reason
 
 
 def test_edit_guard_rejects_protected_line_with_open_ended_tail_range(tmp_path: Path):
@@ -435,3 +466,31 @@ def test_partition_group_gpu_batches_serializes_group_overflow():
         [task(f"j{i}", 1.0) for i in range(9)], devices
     )
     assert [len(tasks) for tasks, _ in batches] == [8, 1]
+def test_rendered_bundles_match_the_verifier_template():
+    """Every rendered task ships its own copy of the verifier.
+
+    `harbor/tasks/*/tests/{score_task.py,test.sh}` are plain copies of the
+    task-template files — no Jinja substitution happens on them. A fix landed
+    in the template therefore reaches exactly zero agents until the copies are
+    re-synced, which is silent and easy to miss (it is how the single-range
+    guard fix initially shipped as a no-op). Fail loudly on drift.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    tasks_root = repo_root / "harbor" / "tasks"
+    if not tasks_root.is_dir():
+        return  # adapter-only checkout: nothing rendered to compare against
+
+    template_dir = Path(__file__).resolve().parents[1] / "src" / "mls_bench" / "task-template" / "tests"
+    for name in ("score_task.py", "test.sh"):
+        expected = (template_dir / name).read_bytes()
+        drifted = [
+            p.parents[1].name
+            for p in sorted(tasks_root.glob(f"*/tests/{name}"))
+            if p.read_bytes() != expected
+        ]
+        assert not drifted, (
+            f"{len(drifted)} rendered bundle(s) have a {name} that differs from "
+            f"task-template/tests/{name}: {', '.join(drifted[:5])}"
+            f"{' …' if len(drifted) > 5 else ''}. Re-sync the copies — a template-only "
+            "change does not reach any shipped task."
+        )
