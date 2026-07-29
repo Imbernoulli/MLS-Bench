@@ -87,8 +87,8 @@ def _check_editable_only(
     replacements that change the line count (e.g. a 7-line baseline stub
     swapped for a 30-line implementation).
 
-    If `pristine` doesn't exist, the agent created the file — caller decides
-    whether to allow that based on `allow_create`.
+    If `pristine` doesn't exist, the agent created the file; the caller does
+    not treat that as a violation.
     """
     if not pristine.exists():
         return False, "new file (no pristine)"
@@ -312,7 +312,6 @@ def cmd_guard(args: argparse.Namespace) -> int:
     violations: list[str] = []
 
     editable = _editable_files(config)
-    allow_create = bool(config.get("allow_create", False))
     # Optional per-task allowlist of workdir-relative prefixes dropped from the
     # guard — for image-baked data/build dirs inside the package dir that aren't
     # the agent's editable surface and were never in the render-time manifest
@@ -327,47 +326,30 @@ def cmd_guard(args: argparse.Namespace) -> int:
     guarded_prefixes = {Path(f).parts[0] for f in editable if f}
     guarded_prefixes |= {Path(f).parts[0] for f in manifest if f}
 
-    # Newly-created files (present in the workspace, absent from the render-time
-    # manifest) are NOT tampering. The anti-cheat surface this guard protects is
-    # *modification* or *deletion* of the fixed baseline (scorer/tests/data/model
-    # source) — handled below. A brand-new file is, at worst, agent scratch
-    # (an experiment script, a `*.bak`, a `test_*.py`); hard-failing the whole
-    # run for it (reward 0, eval never runs) zeroes otherwise-correct solutions.
-    # Instead, REMOVE such files before the eval so they cannot influence it
-    # (e.g. shadow-import a package module), then continue. A task that
-    # legitimately needs the agent to author new files sets allow_create=true.
+    # Newly-created files are neither a violation nor removed. The surface this
+    # guard protects is *modification* and *deletion* of the fixed baseline
+    # (scorer/tests/data/model source) — both handled below. Creation is left
+    # alone on purpose:
     #
-    # Only files under a guarded package prefix are cleaned — those are the only
-    # ones that can shadow-import a protected module; created files elsewhere are
-    # harmless and left untouched. Unlink uses the LITERAL workspace path, never
-    # _safe_join (which resolve()s symlinks): we must remove the created entry
-    # itself — never a symlink's *target* (which could be a manifest file) — and
-    # must not raise on a symlink that points outside the workspace.
-    cleaned_created: list[str] = []
-    failed_clean: list[str] = []
-    if not allow_create:
-        for rel in sorted(workspace_files):
-            rel_str = rel.as_posix()
-            if rel_str in manifest:
-                continue
-            if not rel.parts or rel.parts[0] not in guarded_prefixes:
-                continue
-            try:
-                (workspace_root / rel_str).unlink()
-                cleaned_created.append(rel_str)
-            except (OSError, ValueError):
-                failed_clean.append(rel_str)
-        if cleaned_created:
-            removed = set(cleaned_created)
-            workspace_files = {p for p in workspace_files
-                               if p.as_posix() not in removed}
-            workspace_rel_strs = {p.as_posix() for p in workspace_files}
-        if cleaned_created or failed_clean:
-            # Debug breadcrumb only — NOT a violation.
-            lines = cleaned_created + [f"{p}  [unlink-failed]" for p in failed_clean]
-            (violation_out.parent / "cleaned_created.txt").write_text(
-                "\n".join(lines) + "\n"
-            )
+    #   * Deleting them silently broke legitimate work. An agent that split its
+    #     implementation into a helper module and imported it from the editable
+    #     file got the helper unlinked between guard and eval, and the run died
+    #     on ImportError with no way to see why.
+    #   * The shadow-import risk it was meant to cover is not a capability the
+    #     agent gains this way. The eval scripts import the agent's editable
+    #     file in the very process that prints the metrics the parser reads
+    #     (`python -u run.py` → `models/Custom.py` → `TEST_METRICS`), so
+    #     arbitrary in-process code is already granted by design. Created files
+    #     cannot reach the verifier either: /tests mounts only at verify time,
+    #     and test.sh resets PATH and unsets every PYTHON* variable first.
+    #   * The sweep needed a hand-maintained allowlist to stay correct. Every
+    #     image-baked path inside a package dir had to be added to
+    #     guard_exclude by hand (dbim-codebase/assets, badge/oml) because the
+    #     render-time manifest never covered them; a missing entry deleted real
+    #     data. Absence from the manifest never meant "the agent made this".
+    #
+    # `allow_create` therefore no longer changes guard behaviour; it is kept in
+    # the task configs as documentation of intent.
 
     # Disallowed deletion: anything in manifest under a guarded prefix that
     # is gone from workspace.
@@ -425,7 +407,7 @@ def cmd_guard(args: argparse.Namespace) -> int:
             continue
         expected_sha = manifest.get(rel_str)
         if expected_sha is None:
-            # Newly created file — handled by allow_create branch above.
+            # Newly created file — not tracked, not a violation.
             continue
         try:
             actual = hashlib.sha256(

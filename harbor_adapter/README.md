@@ -74,7 +74,12 @@ mls-bench__<task-id>/
   baseline edits that change line counts). Files under guarded prefixes but
   not declared are hash-checked against `pristine_manifest.json`. Violation
   → reward 0 + `/logs/verifier/violation.txt`.
-- **`allow_create: false`** — new files anywhere in workspace → reward 0.
+- **`allow_create`** — documents whether a task expects the agent to author new
+  files. The guard does not act on it: creating files is neither a violation nor
+  reverted. It protects the fixed baseline against *modification* and *deletion*,
+  which is what an agent cannot otherwise do. Note the asymmetry with the native
+  harness, where the agent has no shell and `edit(op="create")` is refused
+  outright when the flag is false.
 - **`budget_check.py`** (e.g. `llm-pretrain-normalization`) runs as part of
   the eval scripts; no extra wrapping needed.
 - **Hidden eval scripts** — all eval scripts (visible + hidden) live in

@@ -50,13 +50,21 @@ def _write_guard_fixture(tmp_path: Path, *, allow_create: bool) -> tuple[Path, P
     return task_meta, pristine, workspace, tmp_path / "violation.txt"
 
 
-def test_allow_create_false_outside_prefix(tmp_path: Path):
+def test_created_files_are_neither_flagged_nor_removed(tmp_path: Path):
+    """Creating files is not a violation, and the guard must not delete them.
+
+    Deleting them between guard and eval silently broke agents that split an
+    implementation into a helper module: the import died with no visible cause.
+    Both a workspace-root file and one inside the guarded package prefix must
+    survive.
+    """
     score_task = _load_score_task()
     task_meta, pristine, workspace, violation = _write_guard_fixture(
         tmp_path,
         allow_create=False,
     )
-    (workspace / "sitecustomize.py").write_text("print('bypass')\n")
+    (workspace / "sitecustomize.py").write_text("print('scratch')\n")
+    (workspace / "pkg" / "helper.py").write_text("VALUE = 1\n")
 
     rc = score_task.cmd_guard(argparse.Namespace(
         task_meta=str(task_meta),
@@ -65,8 +73,10 @@ def test_allow_create_false_outside_prefix(tmp_path: Path):
         violation_out=str(violation),
     ))
 
-    assert rc == 10
-    assert "created new file (allow_create=false): sitecustomize.py" in violation.read_text()
+    assert rc == 0, violation.read_text() if violation.exists() else ""
+    assert not violation.exists()
+    assert (workspace / "sitecustomize.py").exists()
+    assert (workspace / "pkg" / "helper.py").exists()
 
 
 def test_verifier_task_dir_exempt(tmp_path: Path):
