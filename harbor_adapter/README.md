@@ -144,6 +144,28 @@ environment:
 Switch to `type: docker` if you don't need GPU and don't want to install
 this adapter as a package.
 
+### IsaacGym on Hopper needs a >= 570 user-space driver
+
+`mls-bench__robo-humanoid-sim2real-algo` runs IsaacGym Preview 4, whose
+`libPhysXGpu_64.so` tops out at `sm_86` SASS plus a `compute_86` PTX payload.
+On `sm_90` the driver has to JIT that PTX at `create_sim`, and user-space
+driver branches older than 570 segfault doing it — a bare `Segmentation fault`
+with no python traceback, scored 0 (issue #47).
+
+Only the *user-space* driver matters; the host kernel driver can stay on
+535/550. The task's `scripts/gpu_env_preflight.sh` (rendered into
+`tests/eval/scripts/`) logs a `GPU_ENV_PREFLIGHT` line with the GPU compute
+capability, both driver versions and the PhysX device-code inventory, and on
+`sm_90`+ with a pre-570 user-space driver it activates a CUDA
+forward-compatibility stack from `/opt/mlsbench/cuda-compat` — baked into the
+`humanoid-gym` base image — rolling back if the swapped `libcuda` does not load
+or `cuInit` fails. Operators running an older base image can supply their own:
+
+```bash
+docker run -v /path/to/cuda-compat-12-8:/opt/mlsbench/cuda-compat ...
+# or point MLSBENCH_CUDA_COMPAT_DIR at it
+```
+
 ## Baseline picking & oracle solve
 
 `solution/solve.sh` is an oracle that replays the strongest declared

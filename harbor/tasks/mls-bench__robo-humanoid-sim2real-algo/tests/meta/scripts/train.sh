@@ -2,6 +2,12 @@
 # Train humanoid locomotion policy with custom algorithm and export JIT policy
 set -e
 
+# Diagnose — and where possible repair — the CUDA user-space driver before
+# IsaacGym touches the GPU. On Hopper, PhysX has to JIT its compute_86 PTX to
+# sm_90, and pre-570 user-space drivers segfault doing it (issue #47).
+# shellcheck source=gpu_env_preflight.sh
+source "$(dirname "${BASH_SOURCE[0]}")/gpu_env_preflight.sh"
+
 cd /workspace
 
 # Use SEED (injected by MLS-Bench framework) for reproducibility
