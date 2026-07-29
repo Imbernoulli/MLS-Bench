@@ -456,3 +456,31 @@ def test_partition_group_gpu_batches_serializes_group_overflow():
         [task(f"j{i}", 1.0) for i in range(9)], devices
     )
     assert [len(tasks) for tasks, _ in batches] == [8, 1]
+def test_rendered_bundles_match_the_verifier_template():
+    """Every rendered task ships its own copy of the verifier.
+
+    `harbor/tasks/*/tests/{score_task.py,test.sh}` are plain copies of the
+    task-template files — no Jinja substitution happens on them. A fix landed
+    in the template therefore reaches exactly zero agents until the copies are
+    re-synced, which is silent and easy to miss (it is how the single-range
+    guard fix initially shipped as a no-op). Fail loudly on drift.
+    """
+    repo_root = Path(__file__).resolve().parents[2]
+    tasks_root = repo_root / "harbor" / "tasks"
+    if not tasks_root.is_dir():
+        return  # adapter-only checkout: nothing rendered to compare against
+
+    template_dir = Path(__file__).resolve().parents[1] / "src" / "mls_bench" / "task-template" / "tests"
+    for name in ("score_task.py", "test.sh"):
+        expected = (template_dir / name).read_bytes()
+        drifted = [
+            p.parents[1].name
+            for p in sorted(tasks_root.glob(f"*/tests/{name}"))
+            if p.read_bytes() != expected
+        ]
+        assert not drifted, (
+            f"{len(drifted)} rendered bundle(s) have a {name} that differs from "
+            f"task-template/tests/{name}: {', '.join(drifted[:5])}"
+            f"{' …' if len(drifted) > 5 else ''}. Re-sync the copies — a template-only "
+            "change does not reach any shipped task."
+        )
