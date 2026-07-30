@@ -487,7 +487,7 @@ digest = "sha256:1134c5b087d55d1376210b2d1c1cae491b2e7743c449a33baadd185bc50ba8e
 
 [[tasks]]
 name = "mls-bench/robo-humanoid-sim2real-algo"
-digest = "sha256:a12917a3aa4707c1a42300f9ac949255c2c887388ef8ac32b78558610d13470c"
+digest = "sha256:9949c4a031ab3846f1554e076a1c336d093ac5b816c7327e9e9047ffdd2c3b55"
 
 [[tasks]]
 name = "mls-bench/robomimic-bc-loss"
