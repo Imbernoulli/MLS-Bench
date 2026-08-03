@@ -14,7 +14,7 @@ mls_bench_task_id = "mas-topology"
 mls_bench_package = "chatdev-macnet"
 
 [agent]
-timeout_sec = 14400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 59760

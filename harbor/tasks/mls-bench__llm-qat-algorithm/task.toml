@@ -14,7 +14,7 @@ mls_bench_task_id = "llm-qat-algorithm"
 mls_bench_package = "llm-qat-runtime"
 
 [agent]
-timeout_sec = 4500
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 15660

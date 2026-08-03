@@ -14,7 +14,7 @@ mls_bench_task_id = "quant-stock-prediction"
 mls_bench_package = "qlib"
 
 [agent]
-timeout_sec = 10800
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 12960

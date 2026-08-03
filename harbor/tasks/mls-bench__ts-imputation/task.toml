@@ -14,7 +14,7 @@ mls_bench_task_id = "ts-imputation"
 mls_bench_package = "Time-Series-Library"
 
 [agent]
-timeout_sec = 7140
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 9300

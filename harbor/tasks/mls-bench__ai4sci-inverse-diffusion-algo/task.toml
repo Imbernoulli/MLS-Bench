@@ -14,7 +14,7 @@ mls_bench_task_id = "ai4sci-inverse-diffusion-algo"
 mls_bench_package = "InverseBench"
 
 [agent]
-timeout_sec = 3540
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 5700

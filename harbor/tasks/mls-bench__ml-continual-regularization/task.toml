@@ -14,7 +14,7 @@ mls_bench_task_id = "ml-continual-regularization"
 mls_bench_package = "continual-learning"
 
 [agent]
-timeout_sec = 3600
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 16560

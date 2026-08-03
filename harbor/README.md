@@ -79,6 +79,24 @@ The agent has shell access in a container with the relevant package source
 pre-staged at its workdir. Harbor uploads the verifier scripts only at scoring
 time, so the eval scripts themselves stay out of the agent's view.
 
+## Time limits
+
+Each `task.toml` carries two independent budgets:
+
+- **`[agent] timeout_sec`** — how long the agent may explore. Every task in
+  this dataset ships **5 hours** (`18000`), the recommended budget and the one
+  behind every result on the
+  [MLS-Bench-Lite leaderboard](https://mls-bench.com/leaderboard). It is
+  deliberately uniform: the exploration budget is part of the protocol, not a
+  per-task property. To deviate, scale all tasks at once with
+  `timeout_multiplier` in `run.yaml`.
+- **`[verifier] timeout_sec`** — how long scoring may take. This one is
+  genuinely task-specific: it is sized to each task's own training and
+  evaluation cost and should be left alone.
+
+A run whose agent budget differs substantially from 5 hours is still valid,
+but its scores are not directly comparable to the published leaderboard.
+
 ## Scoring
 
 Each task uses MLS-Bench's native `score_spec.py` declaration to compute a

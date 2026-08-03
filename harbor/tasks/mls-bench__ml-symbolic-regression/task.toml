@@ -14,7 +14,7 @@ mls_bench_task_id = "ml-symbolic-regression"
 mls_bench_package = "gplearn"
 
 [agent]
-timeout_sec = 3600
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 6480

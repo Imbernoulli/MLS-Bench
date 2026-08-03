@@ -14,7 +14,7 @@ mls_bench_task_id = "ml-federated-aggregation"
 mls_bench_package = "flower"
 
 [agent]
-timeout_sec = 10800
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 23760

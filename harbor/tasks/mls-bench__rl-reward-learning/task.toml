@@ -14,7 +14,7 @@ mls_bench_task_id = "rl-reward-learning"
 mls_bench_package = "imitation"
 
 [agent]
-timeout_sec = 14400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 46080

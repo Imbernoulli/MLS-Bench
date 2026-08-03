@@ -14,7 +14,7 @@ mls_bench_task_id = "cv-3dgs-densification"
 mls_bench_package = "gsplat"
 
 [agent]
-timeout_sec = 5400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 16680

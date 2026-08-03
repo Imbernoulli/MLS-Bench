@@ -14,7 +14,7 @@ mls_bench_task_id = "security-adversarial-training"
 mls_bench_package = "torchattacks"
 
 [agent]
-timeout_sec = 12600
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 23880

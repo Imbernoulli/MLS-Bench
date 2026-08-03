@@ -14,7 +14,7 @@ mls_bench_task_id = "tdmpc2-planning"
 mls_bench_package = "tdmpc2"
 
 [agent]
-timeout_sec = 14400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 24480

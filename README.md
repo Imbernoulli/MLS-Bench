@@ -7,6 +7,7 @@
 </p>
 
 [![Website](https://img.shields.io/badge/Website-mls--bench.com-10A37F)](https://mls-bench.com)
+[![Leaderboard](https://img.shields.io/badge/Leaderboard-MLS--Bench--Lite-6B4FBB)](https://mls-bench.com/leaderboard)
 [![arXiv](https://img.shields.io/badge/arXiv-2605.08678-b31b1b)](https://arxiv.org/abs/2605.08678)
 [![Hugging Face Dataset](https://img.shields.io/badge/Hugging%20Face-Dataset%20%26%20SIFs-FFD21E)](https://huggingface.co/datasets/Bohan22/MLS-Bench-Tasks)
 [![Docker Hub](https://img.shields.io/badge/Docker%20Hub-bohanlyu2022-2496ED?logo=docker&logoColor=white)](https://hub.docker.com/u/bohanlyu2022)
@@ -248,6 +249,19 @@ The pre-rendered dataset, GPU-capable environment plugin, and reference
 Harbor config live under [`harbor/`](harbor/). See
 [`harbor/README.md`](harbor/README.md) for usage details and the
 self-contained per-task layout.
+
+### Recommended exploration budget
+
+We recommend giving the agent a **5-hour exploration time limit per task**.
+Every result on the public
+[MLS-Bench-Lite leaderboard](https://mls-bench.com/leaderboard) was produced
+under that budget, so a run with a substantially different limit is not
+directly comparable to the published numbers.
+
+This is the **agent** timeout only, and every rendered Harbor task ships it as
+`[agent] timeout_sec = 18000`. The separate **verifier** timeout — how long
+scoring itself may take — is task-specific, sized to each task's own training
+and evaluation cost, and is deliberately *not* flattened to a single value.
 
 ## Repository Map
 

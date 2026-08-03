@@ -14,7 +14,7 @@ mls_bench_task_id = "causal-discovery-discrete"
 mls_bench_package = "causal-bnlearn"
 
 [agent]
-timeout_sec = 7080
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 5940
