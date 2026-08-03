@@ -83,12 +83,13 @@ time, so the eval scripts themselves stay out of the agent's view.
 
 Each `task.toml` carries two independent budgets:
 
-- **`[agent] timeout_sec`** — how long the agent may explore. We recommend
-  **5 hours** (`18000`), which is the budget behind every result on the
-  [MLS-Bench-Lite leaderboard](https://mls-bench.com/leaderboard). The
-  per-task values shipped in this dataset are not 5 hours and vary across
-  tasks; `timeout_multiplier` in `run.yaml` scales all of them at once, or set
-  `timeout_sec` per task to pin an exact budget.
+- **`[agent] timeout_sec`** — how long the agent may explore. Every task in
+  this dataset ships **5 hours** (`18000`), the recommended budget and the one
+  behind every result on the
+  [MLS-Bench-Lite leaderboard](https://mls-bench.com/leaderboard). It is
+  deliberately uniform: the exploration budget is part of the protocol, not a
+  per-task property. To deviate, scale all tasks at once with
+  `timeout_multiplier` in `run.yaml`.
 - **`[verifier] timeout_sec`** — how long scoring may take. This one is
   genuinely task-specific: it is sized to each task's own training and
   evaluation cost and should be left alone.

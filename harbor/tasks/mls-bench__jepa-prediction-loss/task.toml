@@ -14,7 +14,7 @@ mls_bench_task_id = "jepa-prediction-loss"
 mls_bench_package = "eb_jepa"
 
 [agent]
-timeout_sec = 13500
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 30960

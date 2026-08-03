@@ -14,7 +14,7 @@ mls_bench_task_id = "dlm-dkv-policy"
 mls_bench_package = "dLLM-cache"
 
 [agent]
-timeout_sec = 9000
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 27360

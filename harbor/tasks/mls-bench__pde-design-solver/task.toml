@@ -14,7 +14,7 @@ mls_bench_task_id = "pde-design-solver"
 mls_bench_package = "Neural-Solver-Library"
 
 [agent]
-timeout_sec = 14400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 88559

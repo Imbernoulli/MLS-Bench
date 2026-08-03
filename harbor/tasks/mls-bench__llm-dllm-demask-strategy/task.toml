@@ -14,7 +14,7 @@ mls_bench_task_id = "llm-dllm-demask-strategy"
 mls_bench_package = "LLaDA"
 
 [agent]
-timeout_sec = 7140
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 16440

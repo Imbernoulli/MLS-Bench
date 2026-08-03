@@ -14,7 +14,7 @@ mls_bench_task_id = "cv-diffusion-prediction"
 mls_bench_package = "diffusers-main"
 
 [agent]
-timeout_sec = 9900
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 57960

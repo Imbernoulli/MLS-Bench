@@ -14,7 +14,7 @@ mls_bench_task_id = "optimization-nas"
 mls_bench_package = "naslib"
 
 [agent]
-timeout_sec = 1800
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 5400

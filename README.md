@@ -258,10 +258,10 @@ Every result on the public
 under that budget, so a run with a substantially different limit is not
 directly comparable to the published numbers.
 
-This is the **agent** timeout only. The separate **verifier** timeout — how
-long scoring itself may take — is task-specific, sized to each task's own
-training and evaluation cost, and should not be flattened to a single value.
-Both live in each task's `task.toml` under `[agent]` and `[verifier]`.
+This is the **agent** timeout only, and every rendered Harbor task ships it as
+`[agent] timeout_sec = 18000`. The separate **verifier** timeout — how long
+scoring itself may take — is task-specific, sized to each task's own training
+and evaluation cost, and is deliberately *not* flattened to a single value.
 
 ## Repository Map
 

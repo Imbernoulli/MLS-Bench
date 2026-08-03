@@ -14,7 +14,7 @@ mls_bench_task_id = "optimization-evolution-strategy"
 mls_bench_package = "deap"
 
 [agent]
-timeout_sec = 5400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 9480

@@ -14,7 +14,7 @@ mls_bench_task_id = "llm-pretrain-lr-schedule"
 mls_bench_package = "nanoGPT"
 
 [agent]
-timeout_sec = 14400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 48840

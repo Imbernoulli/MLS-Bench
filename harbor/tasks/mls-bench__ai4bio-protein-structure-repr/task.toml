@@ -14,7 +14,7 @@ mls_bench_task_id = "ai4bio-protein-structure-repr"
 mls_bench_package = "ProteinWorkshop"
 
 [agent]
-timeout_sec = 14400
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 38160

@@ -14,7 +14,7 @@ mls_bench_task_id = "ai4sci-climate-emulation"
 mls_bench_package = "ClimSim"
 
 [agent]
-timeout_sec = 60000
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 64800

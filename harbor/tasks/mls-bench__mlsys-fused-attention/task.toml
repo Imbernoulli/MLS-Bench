@@ -14,7 +14,7 @@ mls_bench_task_id = "mlsys-fused-attention"
 mls_bench_package = "flash-attention"
 
 [agent]
-timeout_sec = 1800
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 2220

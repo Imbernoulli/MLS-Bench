@@ -14,7 +14,7 @@ mls_bench_task_id = "llm-scaling-law-discovery"
 mls_bench_package = "scaling-law-lab"
 
 [agent]
-timeout_sec = 1800
+timeout_sec = 18000
 
 [verifier]
 timeout_sec = 3060
