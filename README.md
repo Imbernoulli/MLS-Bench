@@ -24,6 +24,8 @@ The benchmark contains **140 tasks across 12 ML research domains**. Each task fi
 
 ## News
 
+- **2026.8** — **MLS-Bench adopted by Alibaba (Qwen)** [Qwen3.8-Max](https://qwen.ai/blog?id=qwen3.8)!
+- **2026.7** — **MLS-Bench adopted by Moonshot (Kimi)** [Kimi K3](https://www.kimi.com/blog/kimi-k3)!
 - **2026.6** — **MLS-Bench adopted by Moonshot (Kimi)** [Kimi-K2.7-Code](https://huggingface.co/moonshotai/Kimi-K2.7-Code)!
 - **2026.6** — **More efficient on larger GPUs**: a new `compute_scale` option lets the LLM pretraining and reinforcement-learning tasks — and, optionally, the other tasks — run more efficiently on H200-class GPUs without changing results. See issue [#4](https://github.com/Imbernoulli/MLS-Bench/issues/4) and PR [#9](https://github.com/Imbernoulli/MLS-Bench/pull/9) for the design.
 - **2026.5** — **Harbor support**: official Harbor-compatible runtime and pre-rendered task images on Docker Hub under `bohanlyu2022/mlsbench-harbor-*`. See [`harbor/README.md`](harbor/README.md).
