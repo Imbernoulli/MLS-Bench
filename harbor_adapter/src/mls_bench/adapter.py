@@ -768,16 +768,17 @@ def _harbor_safe_name(task_id: str) -> str:
     return f"mls-bench__{safe}"
 
 
+# Recommended agent exploration budget, uniform across the suite. This is the
+# budget behind every published MLS-Bench-Lite leaderboard result, so it is part
+# of the evaluation protocol rather than a per-task property — deriving it from
+# each task's eval time (as this once did) makes runs silently incomparable.
+# The agent only edits; the eval itself runs in the verifier, whose timeout
+# stays task-specific (`_verifier_timeout_sec`).
+AGENT_TIMEOUT_SEC = 5 * 3600
+
+
 def _agent_timeout_sec(config: dict) -> int:
-    # The agent only edits; eval runs in the verifier. Use a flat cap proportional
-    # to the visible eval time so harder tasks get longer to think, bounded
-    # to keep cloud bills sane.
-    visible_total = sum(
-        _parse_time(tc.get("time", "0:30:00"))
-        for tc in config.get("test_cmds", []) if not tc.get("hidden")
-    )
-    # 30 min minimum, 0.5× of eval time as the heuristic, 4h hard cap.
-    return max(30 * 60, min(4 * 3600, visible_total // 2 or 30 * 60))
+    return AGENT_TIMEOUT_SEC
 
 
 def _group_test_cmds(test_cmds: list[dict]) -> dict[int, list[dict]]:
