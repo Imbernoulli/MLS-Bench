@@ -846,4 +846,10 @@ Lines 211–304:
   *algorithmic* improvement — many hyperparameters are locked outside the
   editable surface anyway.
 
+## Time Budget
+
+You have **5 hours** of wall-clock time before submission, covering
+everything you do here: reading the code, editing it, and any trial runs
+you launch.
+
 Good luck.
