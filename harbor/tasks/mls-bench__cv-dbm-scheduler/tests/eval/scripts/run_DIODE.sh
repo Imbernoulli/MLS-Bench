@@ -30,5 +30,8 @@ if [ -n "$FID_JSON" ]; then
     echo "FID: $(python3 -c "import json; print(json.load(open('$FID_JSON'))['fid'])")"
 fi
 
-find workdir/ -name "samples_*.npz" -delete 2>/dev/null || true
+# Scoped to the diode model dirs: all three settings share workdir/ and can
+# run concurrently, so an unscoped `find workdir/ -delete` races a concurrent
+# setting that is still reading its own samples and zeroes its FID (issue #79).
+find workdir/ -type f -path "*/diode_ema_*" -name "samples_*.npz" -print -delete 2>/dev/null || true
 rm -rf "$sample_dir"
