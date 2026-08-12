@@ -2331,6 +2331,18 @@ class WorkspaceTools:
         ]
         if dry_run:
             stager_cmd.append("--dry-run")
+        if self.container_runtime == "local":
+            # Local mode: agent-editable code runs directly on the host as the
+            # harness user and could traverse into the persistent .input_cache
+            # (which retains the withheld data even after the staged
+            # destinations are scrubbed). Disable the cache AND delete any
+            # pre-existing cache dir for this task (a docker/apptainer run of
+            # the same workspace may have populated it). Container modes keep
+            # the cache: it lives at <workspace_task_dir>/.input_cache, a
+            # sibling of the bind-mounted package dir, and the
+            # workspace_task_dir itself is never bind-mounted (verified: the
+            # three ephemeral tasks' pkg/task configs declare no data binds).
+            stager_cmd.append("--no-cache")
         staged: list[str] = []
         ok = False
         try:
@@ -3503,6 +3515,12 @@ class WorkspaceTools:
 
             # Submit all sub-jobs (or recover existing ones)
             submitted: list[tuple] = []
+            # Ephemeral jobs are waited to completion inline (serialization);
+            # their terminal status is preserved here so the collection loop
+            # below consumes it instead of re-polling (wait_for_job sleeps
+            # before its first query — re-waiting every finished job would add
+            # a guaranteed delay per job). Non-ephemeral jobs never enter it.
+            prewaited: dict[str, str] = {}
 
             def _build_group_cmds(sub_tasks: list[dict]) -> list[dict]:
                 group_cmds = []
@@ -3596,43 +3614,81 @@ class WorkspaceTools:
                         )
                         continue
 
-                if recovered_dir:
-                    out_dir = recovered_dir
-                    job_id = (recovered_dir / "job_id.txt").read_text().strip()
-                    print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
-                else:
-                    out_dir = (
-                        self.slurm_executor.logs_dir
-                        / self.task_name
-                        / self.exp_name
-                        / timestamp
-                        / f"group_{group_key}{suffix}"
-                    )
-                    job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
-                    job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
-
                 if ephemeral:
-                    # Serialize: block until THIS job finished before staging /
-                    # submitting the next one, then backstop-scrub its blobs
-                    # (no-op when the runner already scrubbed them in-container;
-                    # guarantees removal after a crash/timeout). While the job
-                    # queues, no sibling evaluation of this task is running.
-                    self.slurm_executor.wait_for_job(job_id)
-                    if recovered_dir is not None:
-                        # We did not stage this recovered job (its blobs came
-                        # from its original submission), so there is no
-                        # recorded list. Enumerate the entry's blob paths with
-                        # a dry-run of the stager (installs nothing) and
-                        # backstop-scrub them — covers a recovered job that
-                        # crashed before its in-container scrub, which would
-                        # otherwise leave its secrets on disk during the
-                        # remaining serialized entries' evaluations.
-                        _ok, _names = self._restage_task_inputs(
-                            _t0["entry"], _t0["seed"], dry_run=True
+                    # Serialized stage->submit->wait->scrub lifecycle. The
+                    # backstop scrub runs on EVERY exit path (finally):
+                    # a raising submit_group (controller outage, bad resource
+                    # request) or wait_for_job must not leave this entry's
+                    # freshly staged secrets in the shared workspace. Such
+                    # failures are contained per entry: recorded as a failure,
+                    # remaining entries proceed. The first wait's status is
+                    # preserved so the collection loop never re-polls a
+                    # finished job (SlurmExecutor.wait_for_job sleeps before
+                    # its first query).
+                    try:
+                        if recovered_dir:
+                            out_dir = recovered_dir
+                            job_id = (recovered_dir / "job_id.txt").read_text().strip()
+                            print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
+                        else:
+                            out_dir = (
+                                self.slurm_executor.logs_dir
+                                / self.task_name
+                                / self.exp_name
+                                / timestamp
+                                / f"group_{group_key}{suffix}"
+                            )
+                            job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
+                            job_id = self.slurm_executor.submit_group(
+                                group_cmds, job_name, out_dir
+                            )
+                        # Serialize: block until THIS job finished before
+                        # staging / submitting the next one. While the job
+                        # queues, no sibling evaluation of this task runs.
+                        prewaited[job_id] = self.slurm_executor.wait_for_job(job_id)
+                    except Exception as exc:
+                        _record_entry_failure(
+                            f"[SUBMIT/WAIT FAILED] {exc} — evaluation skipped"
                         )
-                        self._cleanup_staged_inputs(_names)
+                        continue
+                    finally:
+                        if recovered_dir is None:
+                            # No-op when the runner already scrubbed them
+                            # in-container; guarantees removal after a
+                            # crash/timeout or a raising submit/wait.
+                            self._cleanup_staged_inputs(staged_files)
+                        else:
+                            # We did not stage this recovered job (its blobs
+                            # came from its original submission), so there is
+                            # no recorded list. Enumerate the entry's blob
+                            # paths with a dry-run of the stager (installs
+                            # nothing) and backstop-scrub them — covers a
+                            # recovered job that crashed before its
+                            # in-container scrub.
+                            try:
+                                _ok, _names = self._restage_task_inputs(
+                                    _t0["entry"], _t0["seed"], dry_run=True
+                                )
+                                self._cleanup_staged_inputs(_names)
+                            except Exception:
+                                pass
+                else:
+                    if recovered_dir:
+                        out_dir = recovered_dir
+                        job_id = (recovered_dir / "job_id.txt").read_text().strip()
+                        print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
                     else:
-                        self._cleanup_staged_inputs(staged_files)
+                        out_dir = (
+                            self.slurm_executor.logs_dir
+                            / self.task_name
+                            / self.exp_name
+                            / timestamp
+                            / f"group_{group_key}{suffix}"
+                        )
+                        job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
+                        job_id = self.slurm_executor.submit_group(
+                            group_cmds, job_name, out_dir
+                        )
 
                 submitted.append((job_id, sub_tasks, group_cmds, out_dir))
 
@@ -3640,9 +3696,13 @@ class WorkspaceTools:
             # groups (e.g. group_2) may also have recoverable jobs from a
             # previous resume attempt.  The flag is cleared after ALL groups.
 
-            # Wait for all sub-jobs and collect results
+            # Wait for all sub-jobs and collect results (ephemeral jobs were
+            # already waited inline — consume the preserved status).
             for job_id, sub_tasks, group_cmds, out_dir in submitted:
-                status = self.slurm_executor.wait_for_job(job_id)
+                if job_id in prewaited:
+                    status = prewaited.pop(job_id)
+                else:
+                    status = self.slurm_executor.wait_for_job(job_id)
 
                 # Auto-resubmit if job was externally cancelled
                 max_resubmit = 3 if getattr(
@@ -3670,10 +3730,14 @@ class WorkspaceTools:
                         self._cleanup_staged_inputs(_staged_retry)
                         print("[slurm] resubmit aborted: input re-staging failed")
                         break
-                    job_name = f"mls-{self.task_name}-g{group_key}"
-                    job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
-                    status = self.slurm_executor.wait_for_job(job_id)
-                    self._cleanup_staged_inputs(_staged_retry)
+                    try:
+                        job_name = f"mls-{self.task_name}-g{group_key}"
+                        job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
+                        status = self.slurm_executor.wait_for_job(job_id)
+                    finally:
+                        # Scrub on every exit path — a raising resubmit/wait
+                        # must not leave the freshly staged blobs behind.
+                        self._cleanup_staged_inputs(_staged_retry)
 
                 labels = [cmd["label"] for cmd in group_cmds]
                 outputs = self.slurm_executor.read_outputs(out_dir, labels)

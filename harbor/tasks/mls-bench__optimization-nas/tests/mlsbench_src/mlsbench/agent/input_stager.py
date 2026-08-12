@@ -38,6 +38,17 @@ stager also unlinks everything it installed so far before exiting non-zero
 (belt and braces); the caller must still treat a non-zero exit as fatal for
 the entry and scrub whatever the list contains.
 
+``--no-cache`` (used by the harness for ``container_runtime: local``) goes
+further than MLSBENCH_INPUT_CACHE=0: it also DELETES any pre-existing
+``.input_cache/<task>`` directory before staging. In local mode the
+agent-editable code runs directly on the host as the harness user and could
+traverse from its package dir into the persistent cache — which would keep
+the withheld data readable even after the staged destinations are scrubbed
+(a cache left behind by an earlier docker/apptainer run of the same
+workspace included). Container modes keep the cache: it lives at
+``<workspace_task_dir>/.input_cache``, a SIBLING of the bind-mounted package
+dir, and the workspace_task_dir itself is never bind-mounted.
+
 Environment:
     ENV / SEED               selective materialization (read by mid_edit)
     MLSBENCH_INPUT_CACHE=0   disable the host-side content cache
@@ -210,6 +221,7 @@ def restage(
     workspace_task_dir: Path,
     list_out: Path | None = None,
     dry_run: bool = False,
+    no_cache: bool = False,
 ) -> int:
     """Re-materialize the active run's non-.py mid_edit create-ops.
 
@@ -222,17 +234,32 @@ def restage(
     workspace destinations the active run's blobs resolve to — the harness
     uses this to derive the backstop-scrub scope for recovered jobs whose
     blobs were staged by a previous process.
+
+    ``no_cache=True`` (local execution mode) disables the persistent cache
+    AND deletes any pre-existing ``.input_cache/<task>`` directory — in local
+    mode agent code runs on the host and could read it directly.
     """
     task_dir = tasks_dir / task_name
     mid_edit_file = task_dir / "edits" / "mid_edit.py"
     lw = _StagedList(list_out)
     installed: list[Path] = []
     try:
+        if no_cache:
+            stale_cache = workspace_task_dir / ".input_cache" / task_name
+            if stale_cache.exists():
+                shutil.rmtree(stale_cache, ignore_errors=True)
+                print(
+                    f"[input-stager] removed pre-existing cache for "
+                    f"{task_name} (local mode: cache disabled)"
+                )
         if not mid_edit_file.is_file():
             print(f"[input-stager] no mid_edit for {task_name}; nothing to do")
             return 0
 
-        use_cache = os.environ.get("MLSBENCH_INPUT_CACHE", "1") != "0"
+        use_cache = (
+            not no_cache
+            and os.environ.get("MLSBENCH_INPUT_CACHE", "1") != "0"
+        )
         cache_dir = (
             workspace_task_dir / ".input_cache" / task_name / _cache_key(task_dir)
         )
@@ -335,17 +362,21 @@ def main(argv: list[str] | None = None) -> int:
     if "--dry-run" in argv:
         dry_run = True
         argv.remove("--dry-run")
+    no_cache = False
+    if "--no-cache" in argv:
+        no_cache = True
+        argv.remove("--no-cache")
     if len(argv) != 3:
         print(
             "usage: python -m mlsbench.agent.input_stager "
             "<task_name> <tasks_dir> <workspace_task_dir> "
-            "[--list-out FILE] [--dry-run]",
+            "[--list-out FILE] [--dry-run] [--no-cache]",
             file=sys.stderr,
         )
         return 2
     return restage(
         argv[0], Path(argv[1]).resolve(), Path(argv[2]).resolve(), list_out,
-        dry_run,
+        dry_run, no_cache,
     )
 
 
