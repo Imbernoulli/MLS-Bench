@@ -207,20 +207,25 @@ if evaluate_sh.exists():
         "fi\n",
         1,
     )
-    text = text.replace(
-        "    python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n",
-        '    if [[ "${DBIM_SKIP_LPIPS:-0}" != "1" ]]; then\n'
-        "        python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n"
-        "    fi\n",
-        1,
-    )
-    text = text.replace(
-        '    python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n',
-        '    if [[ "${DBIM_SKIP_IS:-0}" != "1" ]]; then\n'
-        '        python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n'
-        "    fi\n",
-        1,
-    )
+    # The wrapped replacement still contains the searched line as a substring
+    # (deeper indent), so an unguarded replace re-wraps on every application
+    # and the file never converges. Only wrap when not already wrapped.
+    if "DBIM_SKIP_LPIPS" not in text:
+        text = text.replace(
+            "    python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n",
+            '    if [[ "${DBIM_SKIP_LPIPS:-0}" != "1" ]]; then\n'
+            "        python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n"
+            "    fi\n",
+            1,
+        )
+    if "DBIM_SKIP_IS" not in text:
+        text = text.replace(
+            '    python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n',
+            '    if [[ "${DBIM_SKIP_IS:-0}" != "1" ]]; then\n'
+            '        python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n'
+            "    fi\n",
+            1,
+        )
     write_if_changed(evaluate_sh, text)
 
 
@@ -402,12 +407,15 @@ if imagenet_dataset_py.exists():
     # (TypeError: 'float' object cannot be interpreted as an integer at
     # imagenet_inpaint.py:119). Cast it to int at the function entry. The
     # single-process warmup calls it with int 256 and is unaffected.
-    text = re.sub(
-        r"(\ndef build_lmdb_dataset_val10k\([^)]*\):\n)",
-        r"\1    image_size = int(image_size)\n",
-        text,
-        count=1,
-    )
+    # Guarded: an unguarded insert re-inserts the cast on every application
+    # and the file never converges (breaks the guard's patched-sha whitelist).
+    if "    image_size = int(image_size)\n" not in text:
+        text = re.sub(
+            r"(\ndef build_lmdb_dataset_val10k\([^)]*\):\n)",
+            r"\1    image_size = int(image_size)\n",
+            text,
+            count=1,
+        )
 
     # Root cause of the ImageNet 0-score: LMDB environments are NOT fork-safe.
     # Upstream opens ONE env in the main process, then DataLoader(num_workers=8)
@@ -563,17 +571,49 @@ if fid_util_py.exists():
     write_if_changed(fid_util_py, text)
 
 
+# ddbm/karras_diffusion.py is the task's DECLARED editable file: the guard
+# byte-segment-compares its protected regions against tests/meta/pristine on
+# every verifier pass, so the verifier must never mutate it. Older versions
+# of this patch gated the LPIPS construction in-place there — heal that back
+# to pristine if present (anchored on the old patched text; agent edits live
+# in the allowed ranges and are untouched).
 karras_py = Path("ddbm/karras_diffusion.py")
 if karras_py.exists():
     text = karras_py.read_text()
     text = text.replace(
-        'if loss_norm == "lpips":\n'
-        '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
         'if loss_norm == "lpips" and '
         '__import__("os").environ.get("DBIM_DISABLE_SAMPLE_LPIPS", "0") != "1":\n'
+        '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
+        'if loss_norm == "lpips":\n'
         '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
         1,
     )
     write_if_changed(karras_py, text)
+
+# The LPIPS gate lives in ddbm/script_util.py instead (NOT a declared file;
+# its verifier-patched sha is whitelisted via tests/meta/verifier_patched_shas.json):
+# sampling never computes training losses, so constructing the VGG-based LPIPS
+# in KarrasDenoiser.__init__ is pure RSS overhead under the verifier.
+script_util_py = Path("ddbm/script_util.py")
+if script_util_py.exists():
+    text = script_util_py.read_text()
+    text = text.replace(
+        "    diffusion = KarrasDenoiser(\n"
+        "        noise_schedule=ns,\n"
+        "        precond=precond,\n"
+        "        t_max=sigma_max,\n"
+        "        t_min=sigma_min,\n"
+        "    )",
+        "    diffusion = KarrasDenoiser(\n"
+        "        noise_schedule=ns,\n"
+        "        precond=precond,\n"
+        "        t_max=sigma_max,\n"
+        "        t_min=sigma_min,\n"
+        '        loss_norm=("l2" if __import__("os").environ.get(\n'
+        '            "DBIM_DISABLE_SAMPLE_LPIPS", "0") == "1" else "lpips"),\n'
+        "    )",
+        1,
+    )
+    write_if_changed(script_util_py, text)
 PY
 } 9>"${_dbim_patch_lock}"

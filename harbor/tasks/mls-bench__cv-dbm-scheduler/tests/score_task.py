@@ -397,6 +397,24 @@ def cmd_guard(args: argparse.Namespace) -> int:
         if not ok:
             violations.append(f"{rel_name}: {reason}")
 
+    # Files the eval-time runtime patch (tests/eval/scripts/_runtime_patch.sh)
+    # rewrites in place. The patch output is deterministic, so tests/meta ships
+    # the expected post-patch sha per rel path; a workspace file matching either
+    # the baked sha or the patched sha is untampered. The json lives in the
+    # verifier-owned tests/meta (uploaded fresh at verify time), so the agent
+    # cannot extend the whitelist.
+    patched_shas_path = task_meta / "verifier_patched_shas.json"
+    try:
+        verifier_patched = (
+            json.loads(patched_shas_path.read_text())
+            if patched_shas_path.exists()
+            else {}
+        )
+    except (OSError, json.JSONDecodeError, ValueError):
+        verifier_patched = {}
+    if not isinstance(verifier_patched, dict):
+        verifier_patched = {}
+
     # Modifications to files NOT declared in config.json::files[] but under a
     # guarded prefix: hash-compare against the manifest. Binary-safe.
     for rel in sorted(workspace_files):
@@ -415,7 +433,7 @@ def cmd_guard(args: argparse.Namespace) -> int:
             ).hexdigest()
         except OSError:
             continue
-        if actual != expected_sha:
+        if actual != expected_sha and actual != verifier_patched.get(rel_str):
             violations.append(f"{rel_str}: modified but not in editable file list")
 
     if violations:
