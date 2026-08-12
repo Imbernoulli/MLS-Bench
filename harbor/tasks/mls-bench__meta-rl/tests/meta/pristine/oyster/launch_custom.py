@@ -15,7 +15,7 @@ from rlkit.torch.sac.policies import TanhGaussianPolicy
 from rlkit.torch.networks import FlattenMlp
 from rlkit.torch.sac.sac import PEARLSoftActorCritic
 from rlkit.torch.sac.agent import PEARLAgent
-from rlkit.launchers.launcher_util import setup_logger
+from rlkit.launchers.launcher_util import setup_logger, create_simple_exp_name
 import rlkit.torch.pytorch_util as ptu
 from configs.default import default_config
 
@@ -98,7 +98,7 @@ ENV_CONFIGS = {
 }
 
 
-def experiment(variant):
+def experiment(variant, seed=42):
     env = NormalizedBoxEnv(ENVS[variant['env_name']](**variant['env_params']))
     tasks = env.get_all_task_idx()
     # Use actual obs shape (oyster envs may override _get_obs without updating obs space)
@@ -184,7 +184,14 @@ def experiment(variant):
         algorithm.to()
 
     os.environ['DEBUG'] = str(int(variant['util_params']['debug']))
-    exp_id = 'debug' if variant['util_params']['debug'] else None
+    # Seed-qualify the run directory. rlkit's create_log_dir() names the run
+    # dir with a second-resolution timestamp only (output/<env>/<timestamp>),
+    # so concurrent seeds launched within the same second would share one
+    # directory — truncating each other's progress.csv (the logger opens it
+    # in 'w' mode) and racing the params.pkl torch.save. setup_logger uses
+    # exp_id verbatim as the directory name, so qualify it with the seed.
+    run_name = '%s_seed%d' % (create_simple_exp_name(), seed)
+    exp_id = ('debug_seed%d' % seed) if variant['util_params']['debug'] else run_name
     experiment_log_dir = setup_logger(
         variant['env_name'],
         variant=variant,
@@ -221,7 +228,7 @@ def main(env, gpu, seed):
     np.random.seed(seed)
     torch.manual_seed(seed)
 
-    experiment(variant)
+    experiment(variant, seed)
 
 
 if __name__ == "__main__":
