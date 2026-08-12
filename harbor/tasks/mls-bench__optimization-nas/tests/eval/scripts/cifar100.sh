@@ -24,5 +24,5 @@ set -euo pipefail
 cd naslib
 NAS_EPOCHS=30 python "$_EVAL_SCRIPTS_DIR/fixed_entry.py" \
   --module custom_nas_search.py \
-  --inputs-glob "naslib/data/nb201_tables_*.json" \
+  --inputs-glob "naslib/data/nb201_tables_cifar100_s${SEED:-42}.json" \
   --entry _main --

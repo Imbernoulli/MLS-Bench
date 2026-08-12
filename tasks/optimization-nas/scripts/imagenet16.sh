@@ -9,5 +9,5 @@ export MLSBENCH_EPHEMERAL_INPUTS=1
 FIXED_ENTRY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixed_entry.py"
 ENV=imagenet16 NAS_EPOCHS=30 python "$FIXED_ENTRY" \
   --module custom_nas_search.py \
-  --inputs-glob "naslib/data/nb201_tables_*.json" \
+  --inputs-glob "naslib/data/nb201_tables_imagenet16_s${SEED:-42}.json" \
   --entry _main --

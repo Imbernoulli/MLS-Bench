@@ -19,6 +19,6 @@ OUT_DIR="${OUTPUT_DIR:-${SAVE_PATH:-/tmp/mlsbench_optimization_parity}}"
 # range never see them on disk.
 python "$FIXED_ENTRY" \
   --module pytorch-examples/optimization_parity/custom_strategy.py \
-  --inputs-glob "pytorch-examples/optimization_parity/_parity_inputs/*.labels.b64" \
+  --inputs-glob "pytorch-examples/optimization_parity/_parity_inputs/n32_k8_seed${SEED:-42}_s*.labels.b64" \
   --entry main \
   -- --seed "${SEED:-42}"   --label "${ENV:-eval}"   --output-dir "$OUT_DIR"

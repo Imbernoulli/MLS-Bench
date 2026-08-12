@@ -33,7 +33,7 @@ python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace -
 # range never see them on disk.
 python "$_EVAL_SCRIPTS_DIR/fixed_entry.py" \
   --module RAIN/opt_diagonal_net/custom_optimizer.py \
-  --inputs-glob "RAIN/opt_diagonal_net/_inputs/*.npz.b64" \
+  --inputs-glob "RAIN/opt_diagonal_net/_inputs/d500_k10_sig0p1_*.npz.b64" \
   --inject-module fixed_benchmark \
   --entry main \
   -- \

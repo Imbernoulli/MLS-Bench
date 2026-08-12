@@ -25,7 +25,7 @@ fi
 # range never see them on disk.
 python "$FIXED_ENTRY" \
   --module RAIN/opt_diagonal_net/custom_optimizer.py \
-  --inputs-glob "RAIN/opt_diagonal_net/_inputs/*.npz.b64" \
+  --inputs-glob "RAIN/opt_diagonal_net/_inputs/d200_k5_sig0p1_*.npz.b64" \
   --inject-module fixed_benchmark \
   --entry main \
   -- \

@@ -456,7 +456,11 @@ class LocalSchedulerExecutor:
 
         state = _wait(int(job_id), poll_interval=poll_interval, timeout=effective_timeout)
 
-        # Map scheduler states to SLURM-like states for compatibility
+        # Map scheduler states to SLURM-like states for compatibility.
+        # NOTE: "timeout" here means the WAIT expired — the job itself may
+        # still be queued or running (unconfirmed liveness). Callers that
+        # serialize on job completion (ephemeral-input staging) must resolve
+        # it via cancel_job + confirm_job_terminal before proceeding.
         state_map = {
             "completed": "COMPLETED",
             "failed": "FAILED",
@@ -464,6 +468,56 @@ class LocalSchedulerExecutor:
             "timeout": "TIMEOUT",
         }
         return state_map.get(state, state.upper())
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Cancel a scheduler job (kills the whole process tree if running).
+
+        Reuses the scheduler CLI's cancel logic so the queue entry is marked
+        cancelled and orphaned descendants are killed.
+        """
+        try:
+            import argparse as _argparse
+
+            from mlsbench.scheduler import cmd_cancel
+            cmd_cancel(_argparse.Namespace(job_id=int(job_id)))
+            return True
+        except Exception as exc:
+            print(f"[local-scheduler] cancel of job {job_id} raised: {exc}")
+            return False
+
+    def confirm_job_terminal(
+        self, job_id: str, attempts: int = 6, poll_interval: int = 5
+    ) -> str | None:
+        """Fresh queue probes to CONFIRM a job is no longer alive.
+
+        Returns the SLURM-style terminal state when the scheduler queue shows
+        one, or None when termination could not be confirmed (job still
+        queued/running, or its queue entry unreadable). A job "unknown" to
+        the queue was cleared by the scheduler, which only clears terminal
+        jobs — reported as FAILED (stopped for sure; exact state unknown).
+        """
+        from mlsbench.scheduler import poll_job
+
+        state_map = {
+            "completed": "COMPLETED",
+            "failed": "FAILED",
+            "cancelled": "CANCELLED",
+        }
+        for attempt in range(attempts):
+            if attempt:
+                time.sleep(poll_interval)
+            try:
+                state, _rc, _log = poll_job(int(job_id))
+            except Exception:
+                continue  # queue unreadable — proves nothing, probe again
+            if state in state_map:
+                print(f"[local-scheduler] Job {job_id} confirmed terminal: {state}")
+                return state_map[state]
+            if state == "unknown":
+                print(f"[local-scheduler] Job {job_id} cleared from queue — treating as FAILED")
+                return "FAILED"
+        print(f"[local-scheduler] Job {job_id}: termination NOT confirmed after {attempts} probes")
+        return None
 
     # ------------------------------------------------------------------
     # Output reading (same as SlurmExecutor)

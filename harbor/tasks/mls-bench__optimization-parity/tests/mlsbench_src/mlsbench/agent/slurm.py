@@ -490,9 +490,15 @@ class SlurmExecutor:
                             if norm in terminal_states:
                                 print(f"[slurm] Job {job_id} finished (via sacct fallback): {state.strip()}")
                                 return norm
+                    # DISTINCT status: the queries kept failing, so we never
+                    # established that the job actually stopped — it may still
+                    # be PENDING or RUNNING. Callers that serialize on job
+                    # completion (ephemeral-input staging) MUST NOT treat this
+                    # like a confirmed-terminal FAILED; see cancel_job /
+                    # confirm_job_terminal below for how to resolve it.
                     print(f"[slurm] Job {job_id}: {consecutive_query_failures} consecutive query "
-                          f"failures, returning FAILED")
-                    return "FAILED"
+                          f"failures, returning FAILED_UNCONFIRMED (job may still be alive)")
+                    return "FAILED_UNCONFIRMED"
                 print(f"[slurm] squeue query failed for job {job_id} "
                       f"(attempt {consecutive_query_failures}/10), retrying in {poll_interval}s...")
                 time.sleep(poll_interval)
@@ -560,6 +566,81 @@ class SlurmExecutor:
                 return "TIMEOUT"
 
             time.sleep(poll_interval)
+
+    def cancel_job(self, job_id: str) -> bool:
+        """Best-effort scancel of a job. Returns True when scancel exited 0.
+
+        Used by the ephemeral-input serialization when a wait ended without
+        confirming the job stopped (FAILED_UNCONFIRMED / TIMEOUT): the caller
+        cancels the possibly-alive job, then re-verifies termination with
+        confirm_job_terminal() before it may stage anything else.
+        """
+        try:
+            result = subprocess.run(
+                [_resolve_slurm_command("scancel"), str(job_id)],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                print(
+                    f"[slurm] scancel {job_id} failed (rc={result.returncode}): "
+                    f"{(result.stderr or result.stdout).strip()}"
+                )
+            return result.returncode == 0
+        except Exception as exc:
+            print(f"[slurm] scancel {job_id} raised: {exc}")
+            return False
+
+    def confirm_job_terminal(
+        self, job_id: str, attempts: int = 6, poll_interval: int = 10
+    ) -> str | None:
+        """Fresh squeue/sacct probes to CONFIRM a job is no longer alive.
+
+        Unlike wait_for_job's last-resort branch, this never infers a state
+        from failing queries: it returns a terminal-state string only when a
+        SUCCESSFUL query establishes the job is out of the queue (or shows a
+        terminal state), and None when that could not be confirmed within
+        ``attempts`` probes. A job gone from squeue with no sacct data is
+        reported as "FAILED" (stopped for sure; exact state unknown; chosen
+        over CANCELLED/COMPLETED so no auto-resubmit or false success is
+        triggered — the eval outputs, if any, are still read normally).
+        """
+        terminal_states = {
+            "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL",
+            "OUT_OF_MEMORY",
+        }
+        for attempt in range(attempts):
+            if attempt:
+                time.sleep(poll_interval)
+            sq = _run_slurm_query(
+                ["squeue", "-j", job_id, "--noheader", "-o", "%T"],
+            )
+            if sq.returncode != 0:
+                continue  # query failed — proves nothing, probe again
+            out = sq.stdout.strip()
+            if out:
+                state = out.split("\n")[0].strip().split()[0].rstrip("+")
+                if state in terminal_states:
+                    print(f"[slurm] Job {job_id} confirmed terminal via squeue: {state}")
+                    return state
+                # Still PENDING/RUNNING (e.g. draining after scancel) — keep
+                # probing; it must leave the queue before we can proceed.
+                continue
+            # Job gone from the queue (query SUCCEEDED) — it is not running.
+            sacct = _run_slurm_query(
+                ["sacct", "-j", job_id, "--format=State", "--noheader", "-P"],
+            )
+            if sacct.returncode == 0 and sacct.stdout.strip():
+                for state in sacct.stdout.strip().split("\n"):
+                    norm = state.strip().split()[0].rstrip("+")
+                    if norm in terminal_states:
+                        print(f"[slurm] Job {job_id} confirmed terminal via sacct: {norm}")
+                        return norm
+            print(f"[slurm] Job {job_id} confirmed gone from squeue (no sacct state) — treating as FAILED")
+            return "FAILED"
+        print(f"[slurm] Job {job_id}: termination NOT confirmed after {attempts} probes")
+        return None
 
     # ------------------------------------------------------------------
     # Output reading

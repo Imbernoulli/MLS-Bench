@@ -17,6 +17,18 @@ read-only from outside the agent-editable workspace. It inverts the order:
      "inputs are re-staged before every evaluation" marker);
   3. only THEN import the editable module — a hostile top-level statement
      now finds an empty inputs dir;
+
+IMPORTANT — the glob must be scoped to the ACTIVE RUN's blobs only. The
+Harbor verifier starts a whole group wave of evaluations CONCURRENTLY
+(score_task.py _run_eval_wave), each staging its own (ENV, SEED) blobs into
+the shared workspace; a wildcard sweep here would unlink a sibling eval's
+just-staged files before that sibling could read them. Each eval script
+therefore passes a glob that interpolates its own setting constants and
+${SEED} — mirroring the blob naming of the task's mid_edit.py (parity:
+{tag}_seed{seed}_s*.labels.b64; diag: the sigma-keyed setting family of
+fixed_benchmark._input_key, the same scope as its in-module _scrub_inputs;
+nas: the exact nb201_tables_{env}_s{seed}.json). Native runs are strictly
+serialized, where exact scoping is simply a further tightening.
   4. inject the in-memory payloads into the FIXED loader module
      (``--inject-module``, default the editable module itself) as
      ``_PRELOADED_INPUTS = {basename: content}``;

@@ -3469,6 +3469,93 @@ class WorkspaceTools:
         # workspace.
         ephemeral = bool(self.config_task.get("ephemeral_inputs"))
 
+        # Wait results that do NOT establish the job actually stopped:
+        # FAILED_UNCONFIRMED = scheduler queries kept failing during the wait;
+        # TIMEOUT = the wait itself expired (local scheduler) — in both cases
+        # the job may still be pending or RUNNING agent code. For ephemeral
+        # tasks such a result must never unlock the next staging step.
+        unconfirmed_wait_states = {"FAILED_UNCONFIRMED", "TIMEOUT"}
+        # Once set, no further ephemeral staging happens for this task in this
+        # call — every remaining fresh entry is recorded as failed instead.
+        ephemeral_abort: str | None = None
+
+        def _settle_unconfirmed_wait(job_id: str, status: str) -> str | None:
+            """A wait ended without confirming the job stopped. Cancel it and
+            re-verify termination with fresh queries. Returns the confirmed
+            terminal status, or None when liveness is still unknown."""
+            print(
+                f"[slurm] ephemeral job {job_id}: wait returned '{status}' "
+                "without confirming termination — cancelling and re-verifying"
+            )
+            cancel = getattr(self.slurm_executor, "cancel_job", None)
+            if cancel is not None:
+                try:
+                    cancel(job_id)
+                except Exception as exc:
+                    print(f"[slurm] cancel of job {job_id} raised: {exc}")
+            confirm = getattr(self.slurm_executor, "confirm_job_terminal", None)
+            if confirm is None:
+                return None
+            try:
+                return confirm(job_id)
+            except Exception as exc:
+                print(f"[slurm] confirmation probe for job {job_id} raised: {exc}")
+                return None
+
+        # TASK-WIDE recovery drain BEFORE any staging. Groups run
+        # sequentially, so a recovered job of a LATER group (e.g.
+        # optimization-diagonal-net keeps ephemeral entries in groups 1 AND
+        # 2) may still be running agent code from a previous harness process
+        # while an earlier group stages fresh blobs — which that job could
+        # read. Discover every recoverable job across ALL groups first, wait
+        # them ALL to termination, backstop-scrub their blobs, and only then
+        # enter the normal per-group stage->submit->wait sequence. Draining a
+        # later group's job "early" is correct: it is ALREADY running from
+        # the original submission; group ordering only sequences NEW work.
+        # Maps (group_key, suffix) -> (job_id, status, out_dir); status None
+        # means termination could not be confirmed (entry is failed and all
+        # remaining ephemeral staging aborts).
+        drained_recovered: dict[tuple[int, str], tuple[str, str | None, Path]] = {}
+        if ephemeral and self._recover_pending_slurm:
+            for g_key in sorted(grouped.keys()):
+                # One (entry, seed) per sub-job in ephemeral mode; this
+                # enumeration MUST mirror the all_tasks construction below
+                # (entry-first, then seeds) so the suffix indices line up.
+                combos = [(e, s) for e in grouped[g_key] for s in seeds]
+                for sub_idx, (r_entry, r_seed) in enumerate(combos):
+                    suffix = f"_{sub_idx}" if len(combos) > 1 else ""
+                    rd = self._find_recoverable_group_dir(g_key, suffix)
+                    if rd is None:
+                        continue
+                    job_id = (rd / "job_id.txt").read_text().strip()
+                    print(
+                        f"[slurm-resume] Draining recovered job {job_id} "
+                        f"(group {g_key}{suffix}) task-wide before any staging"
+                    )
+                    status: str | None = self.slurm_executor.wait_for_job(job_id)
+                    if status in unconfirmed_wait_states:
+                        status = _settle_unconfirmed_wait(job_id, status)
+                        if status is None:
+                            ephemeral_abort = (
+                                f"recovered job {job_id} (group {g_key}{suffix}) "
+                                "may still be alive: wait unconfirmed and "
+                                "cancellation could not be verified"
+                            )
+                    # Backstop-scrub the recovered job's blobs (staged by the
+                    # previous, dead harness process — no recorded list
+                    # exists): dry-run the stager to enumerate the entry's
+                    # destinations, then unlink them. Also done when the
+                    # status is unconfirmed: denying the (possibly alive) job
+                    # its data is the safe direction.
+                    try:
+                        _ok, _names = self._restage_task_inputs(
+                            r_entry, r_seed, dry_run=True
+                        )
+                        self._cleanup_staged_inputs(_names)
+                    except Exception:
+                        pass
+                    drained_recovered[(g_key, suffix)] = (job_id, status, rd)
+
         for group_key in sorted(grouped.keys()):
             entries = grouped[group_key]
 
@@ -3565,30 +3652,29 @@ class WorkspaceTools:
                     group_cmds.append(cmd_dict)
                 return group_cmds
 
-            # Recovery is resolved up-front for every sub-job: a recovered
-            # ephemeral job may already be RUNNING agent-editable code from a
-            # previous harness process — its blobs were staged at its ORIGINAL
-            # submission and scrubbed by its runner on load, so staging
-            # anything while it runs would hand running agent code the
-            # withheld data. In ephemeral mode all recovered jobs are
-            # therefore DRAINED FIRST (waited + backstop-scrubbed) before any
-            # fresh job is staged or submitted.
+            # Recovery resolution: in ephemeral mode every recoverable job —
+            # across ALL groups — was already discovered, waited to
+            # termination and backstop-scrubbed by the TASK-WIDE drain
+            # prepass above (a recovered job of a later group may be running
+            # agent code while an earlier group would otherwise stage). Here
+            # we only look its result up; nothing is waited or scrubbed
+            # again. Non-ephemeral groups keep the per-group discovery.
             prepared = []
             for sub_idx, sub_tasks in enumerate(sub_jobs):
                 suffix = f"_{sub_idx}" if len(sub_jobs) > 1 else ""
                 recovered_dir = None
                 if self._recover_pending_slurm:
-                    recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
+                    if ephemeral:
+                        rec = drained_recovered.get((group_key, suffix))
+                        recovered_dir = rec[2] if rec else None
+                    else:
+                        recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
                 prepared.append(
                     (suffix, sub_tasks, _build_group_cmds(sub_tasks), recovered_dir)
                 )
-            if ephemeral:
-                ordered = (
-                    [p for p in prepared if p[3] is not None]
-                    + [p for p in prepared if p[3] is None]
-                )
-            else:
-                ordered = prepared
+            # Pre-drained recovered jobs are consumed instantly below, so the
+            # old recovered-first ordering no longer matters.
+            ordered = prepared
 
             for suffix, sub_tasks, group_cmds, recovered_dir in ordered:
                 # Ephemeral inputs (fresh submission only): budget check FIRST
@@ -3612,7 +3698,42 @@ class WorkspaceTools:
                             _t0["entry"].get("hidden", False)
                         )
 
-                if ephemeral and recovered_dir is None:
+                if ephemeral and recovered_dir is not None:
+                    # Consumed from the TASK-WIDE drain prepass: this job was
+                    # already waited to termination and its blobs backstop-
+                    # scrubbed BEFORE any group staged anything. Hand its
+                    # terminal status to the collection loop (prewaited) so
+                    # it is never re-polled, and slot it into THIS group's
+                    # submitted list so its results are collected in place.
+                    job_id, drained_status, out_dir = drained_recovered[
+                        (group_key, suffix)
+                    ]
+                    if drained_status is None:
+                        _record_entry_failure(
+                            f"[SUBMIT/WAIT FAILED] recovered job {job_id}: "
+                            "termination could not be confirmed (scheduler "
+                            "queries failing; cancellation unverified) — "
+                            "evaluation skipped"
+                        )
+                        continue
+                    print(
+                        f"[slurm-resume] Recovering job {job_id} from {out_dir} "
+                        "(drained task-wide before staging)"
+                    )
+                    prewaited[job_id] = drained_status
+                    submitted.append((job_id, sub_tasks, group_cmds, out_dir))
+                    continue
+
+                if ephemeral:
+                    # A previous job's liveness is unknown (wait unconfirmed,
+                    # cancellation unverified) — never stage while an
+                    # unaccounted-for agent process may still be running.
+                    if ephemeral_abort:
+                        _record_entry_failure(
+                            "[EPHEMERAL ABORT] staging suspended for the "
+                            f"remaining entries: {ephemeral_abort}"
+                        )
+                        continue
                     if budget_enabled:
                         budget_err = self._run_budget_check(
                             _t0["entry"], _t0["seed"]
@@ -3631,10 +3752,9 @@ class WorkspaceTools:
                             "(see harness console for the stager error)"
                         )
                         continue
-
-                if ephemeral:
-                    # Serialized stage->submit->wait->scrub lifecycle. The
-                    # backstop scrub runs on EVERY exit path (finally):
+                    # Serialized stage->submit->wait->scrub lifecycle (fresh
+                    # submissions only — recovered jobs were consumed above).
+                    # The backstop scrub runs on EVERY exit path (finally):
                     # a raising submit_group (controller outage, bad resource
                     # request) or wait_for_job must not leave this entry's
                     # freshly staged secrets in the shared workspace. Such
@@ -3642,54 +3762,57 @@ class WorkspaceTools:
                     # remaining entries proceed. The first wait's status is
                     # preserved so the collection loop never re-polls a
                     # finished job (SlurmExecutor.wait_for_job sleeps before
-                    # its first query).
+                    # its first query). An UNCONFIRMED wait result (the job
+                    # may still be alive) is settled via cancel + fresh
+                    # confirmation probes; if termination still cannot be
+                    # confirmed, ALL remaining ephemeral staging is aborted.
                     try:
-                        if recovered_dir:
-                            out_dir = recovered_dir
-                            job_id = (recovered_dir / "job_id.txt").read_text().strip()
-                            print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
-                        else:
-                            out_dir = (
-                                self.slurm_executor.logs_dir
-                                / self.task_name
-                                / self.exp_name
-                                / timestamp
-                                / f"group_{group_key}{suffix}"
-                            )
-                            job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
-                            job_id = self.slurm_executor.submit_group(
-                                group_cmds, job_name, out_dir
-                            )
+                        out_dir = (
+                            self.slurm_executor.logs_dir
+                            / self.task_name
+                            / self.exp_name
+                            / timestamp
+                            / f"group_{group_key}{suffix}"
+                        )
+                        job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
+                        job_id = self.slurm_executor.submit_group(
+                            group_cmds, job_name, out_dir
+                        )
                         # Serialize: block until THIS job finished before
                         # staging / submitting the next one. While the job
                         # queues, no sibling evaluation of this task runs.
-                        prewaited[job_id] = self.slurm_executor.wait_for_job(job_id)
+                        status = self.slurm_executor.wait_for_job(job_id)
+                        if status in unconfirmed_wait_states:
+                            settled = _settle_unconfirmed_wait(job_id, status)
+                            if settled is None:
+                                ephemeral_abort = (
+                                    f"job {job_id} ({_t0['orig_label']} seed "
+                                    f"{_t0['seed']}) may still be alive: wait "
+                                    "unconfirmed and cancellation could not "
+                                    "be verified"
+                                )
+                                _record_entry_failure(
+                                    f"[SUBMIT/WAIT FAILED] job {job_id}: wait "
+                                    f"returned '{status}' without confirming "
+                                    "the job stopped, and cancellation could "
+                                    "not be verified — evaluation skipped; "
+                                    "remaining ephemeral staging aborted"
+                                )
+                                continue
+                            status = settled
+                        prewaited[job_id] = status
                     except Exception as exc:
                         _record_entry_failure(
                             f"[SUBMIT/WAIT FAILED] {exc} — evaluation skipped"
                         )
                         continue
                     finally:
-                        if recovered_dir is None:
-                            # No-op when the runner already scrubbed them
-                            # in-container; guarantees removal after a
-                            # crash/timeout or a raising submit/wait.
-                            self._cleanup_staged_inputs(staged_files)
-                        else:
-                            # We did not stage this recovered job (its blobs
-                            # came from its original submission), so there is
-                            # no recorded list. Enumerate the entry's blob
-                            # paths with a dry-run of the stager (installs
-                            # nothing) and backstop-scrub them — covers a
-                            # recovered job that crashed before its
-                            # in-container scrub.
-                            try:
-                                _ok, _names = self._restage_task_inputs(
-                                    _t0["entry"], _t0["seed"], dry_run=True
-                                )
-                                self._cleanup_staged_inputs(_names)
-                            except Exception:
-                                pass
+                        # No-op when the runner already scrubbed them
+                        # in-container; guarantees removal after a
+                        # crash/timeout, a raising submit/wait, or an
+                        # unconfirmed wait (denying the possibly-alive job
+                        # its data is the safe direction).
+                        self._cleanup_staged_inputs(staged_files)
                 else:
                     if recovered_dir:
                         out_dir = recovered_dir
@@ -3728,6 +3851,12 @@ class WorkspaceTools:
                 ) else 0
                 resubmit_count = 0
                 while status == "CANCELLED" and resubmit_count < max_resubmit:
+                    if ephemeral and ephemeral_abort:
+                        # Resubmitting would STAGE — forbidden once a prior
+                        # job's liveness is unknown.
+                        print("[slurm] resubmit skipped: ephemeral staging "
+                              f"aborted ({ephemeral_abort})")
+                        break
                     resubmit_count += 1
                     print(f"[slurm] Job {job_id} was CANCELLED externally — "
                           f"resubmitting (attempt {resubmit_count}/{max_resubmit})")
@@ -3752,6 +3881,20 @@ class WorkspaceTools:
                         job_name = f"mls-{self.task_name}-g{group_key}"
                         job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
                         status = self.slurm_executor.wait_for_job(job_id)
+                        if ephemeral and status in unconfirmed_wait_states:
+                            settled = _settle_unconfirmed_wait(job_id, status)
+                            if settled is None:
+                                # Liveness unknown — abort all further
+                                # ephemeral staging (incl. later groups) and
+                                # stop retrying; treat this attempt as failed.
+                                ephemeral_abort = (
+                                    f"resubmitted job {job_id} may still be "
+                                    "alive: wait unconfirmed and cancellation "
+                                    "could not be verified"
+                                )
+                                status = "FAILED"
+                            else:
+                                status = settled
                     finally:
                         # Scrub on every exit path — a raising resubmit/wait
                         # must not leave the freshly staged blobs behind.
