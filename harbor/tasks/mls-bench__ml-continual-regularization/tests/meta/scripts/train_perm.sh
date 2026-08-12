@@ -1,9 +1,16 @@
 #!/bin/bash
 set -e
+set -o pipefail
 
 SEED=${SEED:-42}
 export OUTPUT_DIR=${OUTPUT_DIR:-./results_perm}
 mkdir -p "$OUTPUT_DIR"
+
+# Remove stale result files from previous runs of THIS experiment only.
+# main.py writes acc-<param_stamp>.txt where the stamp starts with the
+# experiment name (permMNIST here), so this glob never touches the other
+# labels' files in the shared OUTPUT_DIR.
+rm -f "$OUTPUT_DIR"/acc-permMNIST*.txt
 
 echo "=== Running Permuted-MNIST (10 contexts, domain-incremental) ==="
 
@@ -39,7 +46,7 @@ if avg_acc:
     print(f'TEST_METRICS: average_accuracy={avg_acc}', flush=True)
 else:
     import glob, os
-    acc_files = sorted(glob.glob(os.path.join('$OUTPUT_DIR', 'acc-*.txt')))
+    acc_files = sorted(glob.glob(os.path.join('$OUTPUT_DIR', 'acc-permMNIST*.txt')))
     if acc_files:
         with open(acc_files[-1]) as f:
             avg_acc = f.readline().strip()

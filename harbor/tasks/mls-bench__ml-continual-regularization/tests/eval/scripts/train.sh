@@ -1,9 +1,16 @@
 #!/bin/bash
 set -e
+set -o pipefail
 
 SEED=${SEED:-42}
 export OUTPUT_DIR=${OUTPUT_DIR:-./results}
 mkdir -p "$OUTPUT_DIR"
+
+# Remove stale result files from previous runs of THIS experiment only.
+# main.py writes acc-<param_stamp>.txt where the stamp starts with the
+# experiment name (splitMNIST here), so this glob never touches the other
+# labels' files in the shared OUTPUT_DIR.
+rm -f "$OUTPUT_DIR"/acc-splitMNIST*.txt
 
 echo "=== Running Split-MNIST (5 contexts, task-incremental) ==="
 
@@ -44,7 +51,7 @@ if avg_acc:
 else:
     # Fallback: read from results file
     import glob, os
-    acc_files = sorted(glob.glob(os.path.join('$OUTPUT_DIR', 'acc-*.txt')))
+    acc_files = sorted(glob.glob(os.path.join('$OUTPUT_DIR', 'acc-splitMNIST*.txt')))
     if acc_files:
         with open(acc_files[-1]) as f:
             avg_acc = f.readline().strip()
