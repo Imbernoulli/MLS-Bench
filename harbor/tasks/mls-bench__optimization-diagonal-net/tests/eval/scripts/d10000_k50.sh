@@ -19,7 +19,13 @@ if [[ "${MLS_BENCH_SMOKE:-0}" == "1" ]]; then
   EXTRA_ARGS+=(--smoke)
 fi
 
-python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace
+_staged_list="$(mktemp /tmp/mlsb_staged.XXXXXX)"
+# EXIT backstop: delete exactly the blobs apply.py staged for THIS eval,
+# even when the runner crashes/times out before its in-process scrub —
+# a crashed eval must not leave its withheld inputs readable for the rest
+# of the wave. Normally a no-op (the runner scrubs right after loading).
+trap 'xargs -r rm -f -- < "$_staged_list" 2>/dev/null; rm -f "$_staged_list"' EXIT
+python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace --list-out "$_staged_list"
 python RAIN/opt_diagonal_net/custom_optimizer.py \
   --seed "${SEED:-42}" \
   --label "${ENV:-d10000_k50}" \

@@ -2265,7 +2265,7 @@ class WorkspaceTools:
                 return container_cmd[:i] + ["bash", "-c", check_cmd]
         return container_cmd + ["bash", "-c", check_cmd]
 
-    def _restage_task_inputs(self, cmd_entry: dict, seed: int) -> None:
+    def _restage_task_inputs(self, cmd_entry: dict, seed: int) -> list[str]:
         """Re-materialize this run's pre-generated input blobs before a test.
 
         Tasks opt in via ``"ephemeral_inputs": true`` in config.json. Their
@@ -2274,17 +2274,25 @@ class WorkspaceTools:
         any agent-editable hook executes — keeping the withheld data (held-out
         targets / hidden labels / lookup tables) unreadable from editable
         code. Each evaluation therefore consumes its inputs, and they must be
-        re-staged before every test command (the Harbor verifier does the same
-        via tests/eval/_inputgen/apply.py).
+        re-staged immediately before every test command (the Harbor verifier
+        does the same via tests/eval/_inputgen/apply.py). Ephemeral entries
+        are additionally scheduled strictly one-at-a-time (see
+        _run_all_cmds_direct / _run_all_seeds_slurm), so a sibling entry's
+        blobs are never on disk while another entry's evaluation runs.
 
         Runs host-side in a subprocess with ENV/SEED set: mid_edit needs the
         non-published ``holdout/<task>/`` generator — the same precondition as
         workspace setup — and, with ENV/SEED set, materializes only the active
         run's blobs. Failures are logged rather than fatal; a missing input
         then surfaces in the evaluation output itself.
+
+        Returns the list of staged workspace file paths (empty when the task
+        is not ephemeral or staging failed). The caller MUST pass it to
+        _cleanup_staged_inputs after the run — the host-side backstop scrub
+        for evaluations that crash before their in-container scrub.
         """
         if not self.config_task.get("ephemeral_inputs"):
-            return
+            return []
         label = str(cmd_entry.get("label", "") or "")
         run_env = os.environ.copy()
         if label:
@@ -2297,6 +2305,10 @@ class WorkspaceTools:
         run_env["PYTHONPATH"] = (
             src_root + os.pathsep + existing if existing else src_root
         )
+        import tempfile as _tempfile
+
+        list_fd, list_path = _tempfile.mkstemp(prefix="mlsb-staged-", suffix=".txt")
+        os.close(list_fd)
         stager_cmd = [
             sys.executable,
             "-m",
@@ -2304,7 +2316,10 @@ class WorkspaceTools:
             self.task_name,
             str(self.project_root / "tasks"),
             str(self.workspace_task_dir),
+            "--list-out",
+            list_path,
         ]
+        staged: list[str] = []
         try:
             result = subprocess.run(
                 stager_cmd,
@@ -2320,11 +2335,37 @@ class WorkspaceTools:
                     f"{label or cmd_entry.get('cmd', '?')} seed {seed} "
                     f"(rc={result.returncode}):\n{tail}"
                 )
+            try:
+                with open(list_path) as fh:
+                    staged = [ln.strip() for ln in fh if ln.strip()]
+            except OSError:
+                staged = []
         except Exception as exc:
             print(
                 f"[input-stager] WARNING: re-staging error for "
                 f"{label or cmd_entry.get('cmd', '?')} seed {seed}: {exc}"
             )
+        finally:
+            try:
+                os.unlink(list_path)
+            except OSError:
+                pass
+        return staged
+
+    @staticmethod
+    def _cleanup_staged_inputs(staged_files: list[str]) -> None:
+        """Host-side backstop scrub of exactly the files the stager wrote.
+
+        The in-container runner normally deletes its blobs right after loading
+        them (MLSBENCH_EPHEMERAL_INPUTS=1), so this is usually a no-op; it
+        guarantees removal when the evaluation crashed or timed out before its
+        own scrub. Scoped to the stager's recorded file list — never a glob.
+        """
+        for path in staged_files:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     def _run_budget_check(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> str | None:
         """Run budget_check.py before training. Returns error msg or None.
@@ -2655,8 +2696,6 @@ class WorkspaceTools:
             for idx, entry in enumerate(cmd_entries):
                 label = entry.get("label", "test")
                 cmd = entry["cmd"]
-                # Re-stage ephemeral input blobs (consumed by the previous evaluation)
-                self._restage_task_inputs(entry, seed)
                 entry_gpu = session_devices[idx] if idx < len(session_devices) else None
                 exec_env_args = self._docker_exec_env_args(seed, label, gpu_devices=entry_gpu, env=entry.get("env"))
 
@@ -2867,12 +2906,21 @@ class WorkspaceTools:
         return batches
 
     def _run_single_cmd(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> tuple[str, dict, float]:
-        """Run a single test_cmd entry and return (feedback_str, metrics_dict, elapsed_sec)."""
+        """Run a single test_cmd entry and return (feedback_str, metrics_dict, elapsed_sec).
+
+        For ephemeral-input tasks: stage this entry's blobs immediately before
+        launch, and ALWAYS delete them afterwards (host-side backstop for an
+        evaluation that crashed/timed out before its in-container scrub).
+        """
+        staged_files = self._restage_task_inputs(cmd_entry, seed)
+        try:
+            return self._run_single_cmd_impl(cmd_entry, seed, gpu_devices=gpu_devices)
+        finally:
+            self._cleanup_staged_inputs(staged_files)
+
+    def _run_single_cmd_impl(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> tuple[str, dict, float]:
         label = cmd_entry.get("label", "test")
         cmd = cmd_entry["cmd"]
-
-        # Re-stage ephemeral input blobs (consumed by the previous evaluation)
-        self._restage_task_inputs(cmd_entry, seed)
 
         # Run budget check before training (fail fast)
         budget_err = self._run_budget_check(cmd_entry, seed, gpu_devices=gpu_devices)
@@ -3097,6 +3145,29 @@ class WorkspaceTools:
 
         for group_key in sorted(grouped.keys()):
             entries = grouped[group_key]
+            if self.config_task.get("ephemeral_inputs") and len(entries) > 1:
+                # Ephemeral-input tasks execute strictly ONE-AT-A-TIME even
+                # within a parallel group: while an evaluation runs (its own
+                # blobs already loaded and scrubbed), no sibling entry's
+                # secret blobs may sit staged in the shared workspace where
+                # agent-editable code could read them. _run_single_cmd stages
+                # each entry's blobs immediately before launch and always
+                # deletes them afterwards.
+                results = [
+                    self._run_single_cmd(
+                        entry,
+                        seed,
+                        self._default_gpu_assignment(entry),
+                    )
+                    for entry in entries
+                ]
+                for (fb, met, elapsed), entry in zip(results, entries):
+                    feedback_parts.append(fb)
+                    hidden_flags.append(entry.get("hidden", False))
+                    all_metrics.update(met)
+                    label = entry.get("label", "test")
+                    all_metrics[f"elapsed_{label}"] = round(elapsed, 1)
+                continue
             if len(entries) == 1:
                 fb, met, elapsed = self._run_single_cmd(
                     entries[0],
@@ -3322,6 +3393,13 @@ class WorkspaceTools:
         seed_metrics: dict[int, dict] = {s: {} for s in seeds}
         budget_script = self.project_root / "tasks" / self.task_name / "budget_check.py"
         budget_enabled = budget_script.exists()
+        # Ephemeral-input tasks: every (entry, seed) becomes its own single-
+        # command job, jobs are submitted-and-awaited strictly one-at-a-time,
+        # blobs are staged host-side immediately before each submission and
+        # backstop-scrubbed right after the job finishes. While one evaluation
+        # runs, no sibling (entry, seed)'s secret blobs exist in the shared
+        # workspace.
+        ephemeral = bool(self.config_task.get("ephemeral_inputs"))
 
         for group_key in sorted(grouped.keys()):
             entries = grouped[group_key]
@@ -3338,10 +3416,6 @@ class WorkspaceTools:
                     pkg_cfg = self._load_pkg_config(pkg_name)
                     entry_use_cuda = self._effective_use_cuda(pkg_cfg)
                 for seed in seeds:
-                    # Re-stage ephemeral input blobs right before this group's
-                    # submission (each evaluation consumes — deletes — its own
-                    # per-(label, seed) blob set after loading it).
-                    self._restage_task_inputs(entry, seed)
                     task_info = {
                         "entry": entry,
                         "seed": seed,
@@ -3376,7 +3450,11 @@ class WorkspaceTools:
                     all_tasks.append(task_info)
 
             # Global bin-packing across all seeds
-            sub_jobs = self._split_into_sub_jobs(all_tasks)
+            if ephemeral:
+                # One (entry, seed) per job — serialized below, never packed.
+                sub_jobs = [[t] for t in all_tasks]
+            else:
+                sub_jobs = self._split_into_sub_jobs(all_tasks)
 
             # Submit all sub-jobs (or recover existing ones)
             submitted: list[tuple] = []
@@ -3406,6 +3484,15 @@ class WorkspaceTools:
                             cmd_dict["budget_apptainer_cmd"] = t["budget_apptainer_cmd"]
                     group_cmds.append(cmd_dict)
 
+                # Ephemeral inputs: stage this single job's blobs host-side
+                # immediately before submission (each sub_job holds exactly
+                # one (entry, seed) in ephemeral mode).
+                staged_files: list[str] = []
+                if ephemeral:
+                    staged_files = self._restage_task_inputs(
+                        sub_tasks[0]["entry"], sub_tasks[0]["seed"]
+                    )
+
                 # Recovery: reuse existing SLURM job instead of submitting
                 recovered_dir = None
                 if self._recover_pending_slurm:
@@ -3425,6 +3512,15 @@ class WorkspaceTools:
                     )
                     job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
                     job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
+
+                if ephemeral:
+                    # Serialize: block until THIS job finished before staging /
+                    # submitting the next one, then backstop-scrub its blobs
+                    # (no-op when the runner already scrubbed them in-container;
+                    # guarantees removal after a crash/timeout). While the job
+                    # queues, no sibling evaluation of this task is running.
+                    self.slurm_executor.wait_for_job(job_id)
+                    self._cleanup_staged_inputs(staged_files)
 
                 submitted.append((job_id, sub_tasks, group_cmds, out_dir))
 
@@ -3446,12 +3542,19 @@ class WorkspaceTools:
                     print(f"[slurm] Job {job_id} was CANCELLED externally — "
                           f"resubmitting (attempt {resubmit_count}/{max_resubmit})")
                     # The cancelled attempt may already have consumed its
-                    # ephemeral input blobs — re-stage before resubmitting.
+                    # ephemeral input blobs — re-stage just before resubmitting
+                    # and backstop-scrub once the retry finished. (No-op for
+                    # non-ephemeral tasks; in ephemeral mode all sibling jobs
+                    # have already completed, so nothing runs concurrently.)
+                    _staged_retry: list[str] = []
                     for _t in sub_tasks:
-                        self._restage_task_inputs(_t["entry"], _t["seed"])
+                        _staged_retry.extend(
+                            self._restage_task_inputs(_t["entry"], _t["seed"])
+                        )
                     job_name = f"mls-{self.task_name}-g{group_key}"
                     job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
                     status = self.slurm_executor.wait_for_job(job_id)
+                    self._cleanup_staged_inputs(_staged_retry)
 
                 labels = [cmd["label"] for cmd in group_cmds]
                 outputs = self.slurm_executor.read_outputs(out_dir, labels)

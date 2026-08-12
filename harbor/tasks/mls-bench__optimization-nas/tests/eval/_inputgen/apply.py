@@ -18,11 +18,28 @@ import tempfile
 
 def main():
     here = os.path.dirname(os.path.abspath(__file__))
-    task = sys.argv[1]
-    workspace = sys.argv[2] if len(sys.argv) > 2 else "/workspace"
+    args = list(sys.argv[1:])
+    # --list-out FILE: record the absolute path of every staged file, one per
+    # line. The eval script's EXIT trap uses it as the exact scope for its
+    # crash backstop (delete THIS eval's staged blobs even when the runner
+    # died before its own in-process scrub) — never a broad glob.
+    list_out = None
+    if "--list-out" in args:
+        i = args.index("--list-out")
+        list_out = args[i + 1]
+        del args[i:i + 2]
+    task = args[0]
+    workspace = args[1] if len(args) > 1 else "/workspace"
+
+    def _write_list(paths):
+        if list_out:
+            with open(list_out, "w") as fh:
+                fh.write("".join(p + "\n" for p in paths))
+
     mid = os.path.join(here, "tasks", task, "edits", "mid_edit.py")
     if not os.path.exists(mid):
         print(f"[inputgen] no mid_edit for {task}; nothing to do")
+        _write_list([])
         return 0
     spec = importlib.util.spec_from_file_location(
         "ig_mid_" + task.replace("-", "_"), mid
@@ -30,6 +47,7 @@ def main():
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     n = 0
+    staged = []
     for op in getattr(m, "OPS", []):
         if op.get("op") != "create":
             continue
@@ -54,6 +72,8 @@ def main():
                 pass
             raise
         n += 1
+        staged.append(dst)
+    _write_list(staged)
     print(f"[inputgen] materialized {n} input file(s) for {task}")
     return 0
 

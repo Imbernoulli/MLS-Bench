@@ -25,7 +25,12 @@ any container) makes repeated re-staging a hardlink/copy instead of a
 regeneration.
 
 Usage:
-    python -m mlsbench.agent.input_stager <task_name> <tasks_dir> <workspace_task_dir>
+    python -m mlsbench.agent.input_stager <task_name> <tasks_dir> <workspace_task_dir> \
+        [--list-out FILE]
+
+``--list-out`` writes the absolute workspace paths of every staged file, one
+per line — the harness uses it as the authoritative scope for its host-side
+backstop scrub after the evaluation (never a broad glob).
 
 Environment:
     ENV / SEED               selective materialization (read by mid_edit)
@@ -131,7 +136,12 @@ def _cache_key(task_dir: Path) -> str:
     return f"{h.hexdigest()[:16]}_{env}_s{seed}"
 
 
-def restage(task_name: str, tasks_dir: Path, workspace_task_dir: Path) -> int:
+def restage(
+    task_name: str,
+    tasks_dir: Path,
+    workspace_task_dir: Path,
+    list_out: Path | None = None,
+) -> int:
     """Re-materialize the active run's non-.py mid_edit create-ops.
 
     Never deletes or overwrites anything except the blob files themselves
@@ -140,8 +150,16 @@ def restage(task_name: str, tasks_dir: Path, workspace_task_dir: Path) -> int:
     """
     task_dir = tasks_dir / task_name
     mid_edit_file = task_dir / "edits" / "mid_edit.py"
+
+    def _write_list(paths: list[Path]) -> None:
+        if list_out is not None:
+            _atomic_write_text(
+                list_out, "".join(f"{p}\n" for p in paths)
+            )
+
     if not mid_edit_file.is_file():
         print(f"[input-stager] no mid_edit for {task_name}; nothing to do")
+        _write_list([])
         return 0
 
     use_cache = os.environ.get("MLSBENCH_INPUT_CACHE", "1") != "0"
@@ -152,10 +170,12 @@ def restage(task_name: str, tasks_dir: Path, workspace_task_dir: Path) -> int:
         try:
             names = json.loads(marker.read_text())["files"]
             if all((cache_dir / "files" / n).is_file() for n in names):
+                dsts = []
                 for n in names:
-                    _atomic_link_or_copy(
-                        cache_dir / "files" / n, _resolve_dst(workspace_task_dir, n)
-                    )
+                    dst = _resolve_dst(workspace_task_dir, n)
+                    _atomic_link_or_copy(cache_dir / "files" / n, dst)
+                    dsts.append(dst)
+                _write_list(dsts)
                 print(
                     f"[input-stager] staged {len(names)} input file(s) for "
                     f"{task_name} (cache hit: {cache_dir.name})"
@@ -166,6 +186,7 @@ def restage(task_name: str, tasks_dir: Path, workspace_task_dir: Path) -> int:
 
     ops = _load_mid_edit_ops(mid_edit_file, task_name)
     staged: list[str] = []
+    staged_dsts: list[Path] = []
     for op in ops:
         if op.get("op") != "create":
             continue
@@ -177,13 +198,16 @@ def restage(task_name: str, tasks_dir: Path, workspace_task_dir: Path) -> int:
             content += "\n"  # mirror apply_pre_edit's normalization
         # The cache mirrors the op's full relative path under files/; the
         # marker records the same paths for workspace resolution on cache hits.
+        dst = _resolve_dst(workspace_task_dir, filename)
         if use_cache:
             cache_file = cache_dir / "files" / filename
             _atomic_write_text(cache_file, content)
-            _atomic_link_or_copy(cache_file, _resolve_dst(workspace_task_dir, filename))
+            _atomic_link_or_copy(cache_file, dst)
         else:
-            _atomic_write_text(_resolve_dst(workspace_task_dir, filename), content)
+            _atomic_write_text(dst, content)
         staged.append(filename)
+        staged_dsts.append(dst)
+    _write_list(staged_dsts)
     if use_cache:
         _atomic_write_text(marker, json.dumps({"files": staged}, indent=1))
     print(
@@ -195,14 +219,25 @@ def restage(task_name: str, tasks_dir: Path, workspace_task_dir: Path) -> int:
 
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    list_out: Path | None = None
+    if "--list-out" in argv:
+        i = argv.index("--list-out")
+        try:
+            list_out = Path(argv[i + 1]).resolve()
+        except IndexError:
+            print("--list-out requires a path", file=sys.stderr)
+            return 2
+        del argv[i:i + 2]
     if len(argv) != 3:
         print(
             "usage: python -m mlsbench.agent.input_stager "
-            "<task_name> <tasks_dir> <workspace_task_dir>",
+            "<task_name> <tasks_dir> <workspace_task_dir> [--list-out FILE]",
             file=sys.stderr,
         )
         return 2
-    return restage(argv[0], Path(argv[1]).resolve(), Path(argv[2]).resolve())
+    return restage(
+        argv[0], Path(argv[1]).resolve(), Path(argv[2]).resolve(), list_out
+    )
 
 
 if __name__ == "__main__":
