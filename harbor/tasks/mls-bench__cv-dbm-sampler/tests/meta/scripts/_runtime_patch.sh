@@ -64,6 +64,21 @@ if sample_sh.exists():
         '          --master_port $DBIM_MASTER_PORT"\n'
     )
     text = text.replace(old_gpu, new_gpu, 1)
+    # The current baked image ships sample.sh with pre_edit's NGPU probe
+    # already applied (fixed --master_port 29511), so the upstream-text
+    # anchor above never matches there and every concurrent torchrun would
+    # share port 29511. Second anchor for that layout: swap only the fixed
+    # port for the task-salted deterministic one. Guarded so it never
+    # re-applies.
+    if "DBIM_MASTER_PORT" not in text:
+        text = text.replace(
+            'run_args="--nproc_per_node $NGPU \\\n'
+            '          --master_port 29511"\n',
+            'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "cv-dbm-sampler-${ENV:-${ds:-dbim}}-${SEED:-42}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
+            'run_args="--nproc_per_node $NGPU \\\n'
+            '          --master_port $DBIM_MASTER_PORT"\n',
+            1,
+        )
     if "${num_samples:+ --num_samples=" not in text:
         text = text.replace(
             " --use_new_attention_order $ATTN_TYPE --data_dir=$DATA_DIR --dataset=$DATASET --split $SPLIT\\\n",
