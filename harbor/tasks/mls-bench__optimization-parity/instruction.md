@@ -72,13 +72,13 @@ stay unchanged.
      9: NOTE: The hidden parity secret S, the training-pool LABELS, and the held-out
     10: test labels are NOT visible to your editable hooks. The harness pre-generates
     11: the (unlabeled) training inputs and their labels; a FIXED driver loads the
-    12: labels into its own memory, deletes them from disk, then hands your
-    13: ``make_dataset`` only the UNLABELED pool and attaches the held-out labels to the
-    14: rows you pick. Your hooks therefore only ever see binary inputs — never a label,
-    15: never the secret subset S, never the test labels. The runner trains your model
-    16: and emits its predictions on a held-out test set; the host regenerates the test
-    17: labels and computes test accuracy. A strategy must make gradient training learn
-    18: the parity — it cannot recover the secret from labels.
+    12: labels into its own memory (scrubbing them from disk when the harness marks
+    13: them ephemeral), then hands your ``make_dataset`` only the UNLABELED pool and
+    14: attaches the held-out labels to the rows you pick. Your hooks only ever see
+    15: binary inputs — never a label, never S, never the test labels. The runner
+    16: trains your model and emits its predictions on a held-out test set; the host
+    17: regenerates the test labels and computes accuracy. A strategy must make
+    18: gradient training learn the parity — it cannot recover the secret from labels.
     19: """
     20: 
     21: from __future__ import annotations
@@ -248,9 +248,9 @@ stay unchanged.
    185: # =====================================================================
    186: # FIXED: held-out input loading (the harness pre-generates these; the
    187: # secret and the test labels are never present in this process). The
-   188: # training-pool LABELS are loaded here, in fixed code, and then scrubbed
-   189: # from disk BEFORE any editable hook runs — so make_dataset() below only
-   190: # ever sees the UNLABELED pool.
+   188: # training-pool LABELS are loaded here, in fixed code — and scrubbed from
+   189: # disk when the harness marks them ephemeral (MLSBENCH_EPHEMERAL_INPUTS=1)
+   190: # — so make_dataset() below only ever sees the UNLABELED pool.
    191: # =====================================================================
    192: def _inputs_dir() -> str:
    193:     """Directory holding the pre-generated parity inputs for this task."""
@@ -296,8 +296,8 @@ stay unchanged.
    233:     ``max_train_examples`` pool; unpack to a float tensor in {0, 1}.
    234: 
    235:     This is FIXED code, called only by ``_load_all_train_labels`` below, which
-   236:     immediately deletes the on-disk blob afterward. It is never invoked from an
-   237:     editable hook.
+   236:     deletes the on-disk blob afterward when the harness marks the inputs as
+   237:     ephemeral. It is never invoked from an editable hook.
    238:     """
    239:     import numpy as np
    240: 
@@ -311,25 +311,25 @@ stay unchanged.
    248: 
    249: def _load_all_train_labels(config: TaskConfig, seed: int) -> dict[int, torch.Tensor]:
    250:     """Load every hidden secret's training-pool labels into memory, then DELETE
-   251:     the on-disk label blobs.
-   252: 
-   253:     After this returns, the labels exist only inside this fixed driver's local
-   254:     scope; the ``.labels.b64`` files are gone from the workspace, so the editable
-   255:     ``make_dataset`` hook (which runs later) cannot open them to recover the
-   256:     hidden secret. This is what keeps parity honest: the strategy must help
-   257:     gradient training learn the parity rather than solve the secret from labels.
-   258:     """
-   259:     labels: dict[int, torch.Tensor] = {}
-   260:     for secret_index in range(config.num_hidden_secrets):
-   261:         labels[secret_index] = load_train_labels(config, seed, secret_index)
-   262:     tag = _config_tag(config)
-   263:     inputs_dir = _inputs_dir()
-   264:     for secret_index in range(config.num_hidden_secrets):
-   265:         blob = os.path.join(inputs_dir, f"{tag}_seed{seed}_s{secret_index}.labels.b64")
-   266:         try:
-   267:             os.remove(blob)
-   268:         except OSError:
-   269:             pass
+   251:     the on-disk label blobs when the harness marks the materialized inputs as
+   252:     ephemeral (MLSBENCH_EPHEMERAL_INPUTS=1, i.e. re-created before every
+   253:     evaluation). The delete keeps parity honest there: the editable
+   254:     ``make_dataset`` hook (which runs later) cannot reopen the blobs to recover
+   255:     the hidden secret, so the strategy must help gradient training learn the
+   256:     parity. Natively (no ENV set) the blobs persist — they are staged once per
+   257:     workspace and must survive across evaluations."""
+   258:     labels: dict[int, torch.Tensor] = {}
+   259:     for secret_index in range(config.num_hidden_secrets):
+   260:         labels[secret_index] = load_train_labels(config, seed, secret_index)
+   261:     if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
+   262:         tag = _config_tag(config)
+   263:         inputs_dir = _inputs_dir()
+   264:         for secret_index in range(config.num_hidden_secrets):
+   265:             blob = os.path.join(inputs_dir, f"{tag}_seed{seed}_s{secret_index}.labels.b64")
+   266:             try:
+   267:                 os.remove(blob)
+   268:             except OSError:
+   269:                 pass
    270:     return labels
    271: 
    272: 
@@ -582,8 +582,8 @@ stay unchanged.
    519:         flush=True,
    520:     )
    521: 
-   522:     # FIXED: load every secret's pool labels into memory and delete the on-disk
-   523:     # blobs before any editable hook runs. Labels now live only in this local.
+   522:     # FIXED: load every secret's pool labels into memory (scrubbing the blobs
+   523:     # when the harness marks them ephemeral) before any editable hook runs.
    524:     labels_by_secret = _load_all_train_labels(config, seed)
    525: 
    526:     results: list[RunResult] = []

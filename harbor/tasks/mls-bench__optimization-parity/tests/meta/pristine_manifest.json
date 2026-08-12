@@ -197,7 +197,7 @@
   "pytorch-examples/mnist_rnn/README.md": "ea2dd196f74b93bc60567383fee4b036b840bab4e1448a9c3249884c4e91fba3",
   "pytorch-examples/mnist_rnn/main.py": "ebd462cfda1fc8ace2160e8a99e6f97125802e645f924c049ed5e63a0666b019",
   "pytorch-examples/mnist_rnn/requirements.txt": "005cbc6604c36772776d4e1104cc0ab3e2869f1fab0bfbbbd3540592792f7108",
-  "pytorch-examples/optimization_parity/custom_strategy.py": "53e3ad97f4933a942f176f3fd622b729c9fba304ad8a8b3e892613cc33fdcf4d",
+  "pytorch-examples/optimization_parity/custom_strategy.py": "c29787bf2f0f64fde62885842f47f08d6e730fe9b7811281b8a0b796f6c76e76",
   "pytorch-examples/regression/README.md": "72469c1ea4484c1163679a829320e97b3ca2ca7f989328b24d22abc350b998ce",
   "pytorch-examples/regression/main.py": "87ba43405ca6df6ef1e24e6ee85bfb0cfff95df3bbaf5794d4662308184a90a0",
   "pytorch-examples/regression/requirements.txt": "6647b8314a965c8c1c888a358ad46dcd51955fdad5bc439a26fe0efd6aca8933",
