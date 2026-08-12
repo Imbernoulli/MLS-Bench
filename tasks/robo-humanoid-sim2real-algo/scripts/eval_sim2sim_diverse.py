@@ -208,34 +208,53 @@ def main():
     num_commands = int(os.getenv('NUM_COMMANDS', '100'))
     eval_duration = float(os.getenv('EVAL_DURATION', '10.0'))
 
+    # --- policy discovery start (self-contained: os/sys only; smoke-tested standalone) ---
     # Find the trained model:
-    #   1. Prefer $OUTPUT_DIR/exported/policies/ — persists across baseline runs so eval-only
-    #      invocations (different workspace from train) can still see the trained policy.
-    #   2. Fall back to /workspace/humanoid-gym/logs/<latest>/exported/policies/ — used when
-    #      train and eval run in the same workspace (combined runs).
+    #   1. If $OUTPUT_DIR is set (MLS-Bench and Harbor always set it, per seed), the policy
+    #      MUST be at $OUTPUT_DIR/exported/policies/. train.sh clears that dir before
+    #      training and repopulates it only after a verified export, so its absence means
+    #      training failed — fail loudly instead of falling back. The workspace logs may
+    #      still hold an export from a previous test iteration (or another seed), and
+    #      silently scoring that stale policy would hide the failure.
+    #   2. Only when OUTPUT_DIR is unset (manual/combined runs): prefer this seed's
+    #      experiment dir logs/XBot_ppo_s$SEED (matching train.sh), else fall back to the
+    #      most recently modified experiment dir under /workspace/humanoid-gym/logs/.
     output_dir = os.environ.get('OUTPUT_DIR', '')
-    persistent_dir = os.path.join(output_dir, 'exported', 'policies') if output_dir else ''
     workspace_log_dir = '/workspace/humanoid-gym/logs'
     model_dir = None
-    if persistent_dir and os.path.exists(persistent_dir):
-        # Only use it if it has at least one non-placeholder .pt
-        if any(f.endswith('.pt') and f != 'policy_example.pt' for f in os.listdir(persistent_dir)):
-            model_dir = persistent_dir
-            print(f"Using persistent OUTPUT_DIR policy: {model_dir}")
-    if model_dir is None:
-        if not os.path.isdir(workspace_log_dir):
-            print(f"ERROR: No persistent policy at {persistent_dir} and no workspace logs at {workspace_log_dir}")
+    if output_dir:
+        persistent_dir = os.path.join(output_dir, 'exported', 'policies')
+        has_policy = os.path.isdir(persistent_dir) and any(
+            f.endswith('.pt') and f != 'policy_example.pt' for f in os.listdir(persistent_dir)
+        )
+        if not has_policy:
+            print(f"ERROR: OUTPUT_DIR is set but no trained policy found at {persistent_dir}.")
+            print("The train step must run (and export policy_1.pt) before eval — check its log.")
+            print("Refusing to fall back to workspace logs: they may hold a stale policy from a "
+                  "previous test iteration or another seed.")
             sys.exit(1)
-        experiment_dirs = [d for d in os.listdir(workspace_log_dir) if os.path.isdir(os.path.join(workspace_log_dir, d))]
-        if not experiment_dirs:
-            print(f"ERROR: No experiment directories found in {workspace_log_dir}/")
-            sys.exit(1)
-        latest_exp = max(experiment_dirs, key=lambda d: os.path.getmtime(os.path.join(workspace_log_dir, d)))
-        model_dir = os.path.join(workspace_log_dir, latest_exp, 'exported', 'policies')
-        if not os.path.exists(model_dir):
-            print(f"ERROR: No exported policy found at {model_dir}")
-            print("Make sure the policy was exported during training.")
-            sys.exit(1)
+        model_dir = persistent_dir
+        print(f"Using persistent OUTPUT_DIR policy: {model_dir}")
+    else:
+        seed = os.environ.get('SEED', '42')
+        seed_dir = os.path.join(workspace_log_dir, f'XBot_ppo_s{seed}', 'exported', 'policies')
+        if os.path.isdir(seed_dir):
+            model_dir = seed_dir
+            print(f"Using seed-scoped workspace policy: {model_dir}")
+        else:
+            if not os.path.isdir(workspace_log_dir):
+                print(f"ERROR: OUTPUT_DIR unset and no workspace logs at {workspace_log_dir}")
+                sys.exit(1)
+            experiment_dirs = [d for d in os.listdir(workspace_log_dir) if os.path.isdir(os.path.join(workspace_log_dir, d))]
+            if not experiment_dirs:
+                print(f"ERROR: No experiment directories found in {workspace_log_dir}/")
+                sys.exit(1)
+            latest_exp = max(experiment_dirs, key=lambda d: os.path.getmtime(os.path.join(workspace_log_dir, d)))
+            model_dir = os.path.join(workspace_log_dir, latest_exp, 'exported', 'policies')
+            if not os.path.exists(model_dir):
+                print(f"ERROR: No exported policy found at {model_dir}")
+                print("Make sure the policy was exported during training.")
+                sys.exit(1)
 
     # Load the policy: pick the most-recently-saved .pt that is NOT the placeholder.
     # `policy_example.pt` ships with the package; the actual trained policy is
@@ -249,6 +268,7 @@ def main():
         sys.exit(2)
     candidates.sort(key=lambda f: os.path.getmtime(os.path.join(model_dir, f)), reverse=True)
     policy_path = os.path.join(model_dir, candidates[0])
+    # --- policy discovery end ---
     print(f"Loading policy from: {policy_path}")
     policy = load_policy(policy_path)
 
