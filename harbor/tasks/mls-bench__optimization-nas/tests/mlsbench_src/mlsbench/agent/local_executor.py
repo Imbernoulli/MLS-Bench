@@ -473,13 +473,32 @@ class LocalSchedulerExecutor:
         """Cancel a scheduler job (kills the whole process tree if running).
 
         Reuses the scheduler CLI's cancel logic so the queue entry is marked
-        cancelled and orphaned descendants are killed.
+        cancelled and orphaned descendants are killed. Returns True only when
+        the scheduler actually FOUND the job: ``cmd_cancel`` reports "not
+        found" (no exception) when the queue entry is gone — e.g. queue.json
+        was deleted/reinitialized while the worker process survived — and
+        treating that as success would let a caller stage over a possibly-
+        alive orphaned job (C1).
         """
         try:
             import argparse as _argparse
+            import contextlib as _contextlib
+            import io as _io
 
             from mlsbench.scheduler import cmd_cancel
-            cmd_cancel(_argparse.Namespace(job_id=int(job_id)))
+            buf = _io.StringIO()
+            with _contextlib.redirect_stdout(buf):
+                cmd_cancel(_argparse.Namespace(job_id=int(job_id)))
+            out = buf.getvalue()
+            if out:
+                print(out, end="")
+            if "not found" in out:
+                print(
+                    f"[local-scheduler] cancel of job {job_id}: the scheduler "
+                    "has NO record of it (queue metadata lost?) — the worker "
+                    "may still be alive; reporting cancel as FAILED"
+                )
+                return False
             return True
         except Exception as exc:
             print(f"[local-scheduler] cancel of job {job_id} raised: {exc}")
@@ -492,9 +511,17 @@ class LocalSchedulerExecutor:
 
         Returns the SLURM-style terminal state when the scheduler queue shows
         one, or None when termination could not be confirmed (job still
-        queued/running, or its queue entry unreadable). A job "unknown" to
-        the queue was cleared by the scheduler, which only clears terminal
-        jobs — reported as FAILED (stopped for sure; exact state unknown).
+        queued/running, or its queue entry unreadable).
+
+        A job "unknown" to the queue is NOT confirmed terminal (C1): the
+        scheduler only forgets a job when its queue metadata is gone — either
+        because a terminal job was cleared, OR because queue.json was
+        deleted/reinitialized while the worker process (and its Docker
+        container) survived. The executor keeps no independent liveness
+        record (no PID/container handle of its own), so the two cases are
+        indistinguishable here and the safe answer is None — the caller's
+        ephemeral-abort path then refuses to stage over a possibly-alive
+        orphan.
         """
         from mlsbench.scheduler import poll_job
 
@@ -513,9 +540,7 @@ class LocalSchedulerExecutor:
             if state in state_map:
                 print(f"[local-scheduler] Job {job_id} confirmed terminal: {state}")
                 return state_map[state]
-            if state == "unknown":
-                print(f"[local-scheduler] Job {job_id} cleared from queue — treating as FAILED")
-                return "FAILED"
+            # "unknown" (or any unrecognized state) proves NOTHING — probe on.
         print(f"[local-scheduler] Job {job_id}: termination NOT confirmed after {attempts} probes")
         return None
 

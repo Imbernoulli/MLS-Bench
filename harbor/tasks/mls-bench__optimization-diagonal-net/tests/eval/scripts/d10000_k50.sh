@@ -1,12 +1,14 @@
 #!/bin/bash
-# Evaluate on large-scale setting: d=10000, k=50, delta=0.5, alpha=1.0
+# Evaluate on setting: d=10000, k=50, sigma=0.0
 set -euo pipefail
 
 cd /workspace
 
-# Inputs for this run are re-materialized by apply.py below, so they are
-# treated as ephemeral (read+unlinked by the fixed wrapper before any
-# editable code runs).
+# Inputs for this run are PIPED to the fixed wrapper as JSON (apply.py
+# --emit-json -> fixed_entry.py --inputs-json-stdin) and NEVER touch the
+# shared workspace filesystem: Harbor runs the setting x seed wave
+# CONCURRENTLY, so an on-disk staging window would be readable by a sibling
+# eval's agent code. MLSBENCH_EPHEMERAL_INPUTS=1 marks them ephemeral.
 export MLSBENCH_EPHEMERAL_INPUTS=1
 _EVAL_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -18,30 +20,26 @@ if [[ "${MLS_BENCH_SMOKE:-0}" == "1" ]]; then
 fi
 
 _staged_list="$(mktemp /tmp/mlsb_staged.XXXXXX)"
-# EXIT backstop: delete exactly the blobs apply.py staged for THIS eval,
-# even when the runner crashes/times out before its in-process scrub —
-# a crashed eval must not leave its withheld inputs readable for the rest
-# of the wave. Normally a no-op (the fixed wrapper unlinks right after
-# preloading).
+# EXIT backstop: no-op with --emit-json (nothing is staged to disk); covers
+# a version-skewed apply.py that stages the old way — the wrapper's
+# --inputs-glob pass unlinks any such stragglers before importing the module.
 trap 'xargs -r rm -f -- < "$_staged_list" 2>/dev/null; rm -f "$_staged_list"' EXIT
-python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace --list-out "$_staged_list"
-# FIXED wrapper: preloads and unlinks this run's staged input blobs BEFORE
-# importing the editable module, so top-level statements in the editable
-# range never see them on disk.
-python "$_EVAL_SCRIPTS_DIR/fixed_entry.py" \
-  --module RAIN/opt_diagonal_net/custom_optimizer.py \
-  --inputs-glob "RAIN/opt_diagonal_net/_inputs/d10000_k50_sig0_*.npz.b64" \
-  --inject-module fixed_benchmark \
-  --entry main \
-  -- \
-  --seed "${SEED:-42}" \
-  --label "${ENV:-d10000_k50}" \
-  --output-dir "$OUT_DIR" \
-  --dim 10000 \
-  --sparsity 50 \
-  --sigma 0.0 \
-  --delta 0.5 \
-  --alpha-init 1.0 \
-  --n-test 10000 \
-  --grid-max 2000 \
-  "${EXTRA_ARGS[@]}"
+# FIXED wrapper: preloads this run's staged input blobs (from stdin; the disk
+# glob is only an unlink backstop) BEFORE importing the editable module.
+python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace \
+    --emit-json --list-out "$_staged_list" \
+  | python "$_EVAL_SCRIPTS_DIR/fixed_entry.py" \
+      --module RAIN/opt_diagonal_net/custom_optimizer.py \
+      --inputs-json-stdin \
+      --inputs-glob "RAIN/opt_diagonal_net/_inputs/d10000_k50_sig0_*.npz.b64" \
+      --inject-module fixed_benchmark \
+      --entry main \
+      -- \
+      --seed "${SEED:-42}" \
+      --label "${ENV:-d10000_k50}" \
+      --output-dir "$OUT_DIR" \
+      --dim 10000 \
+      --sparsity 50 \
+      --sigma 0.0 \
+      --delta 0.5 \
+      "${EXTRA_ARGS[@]}"

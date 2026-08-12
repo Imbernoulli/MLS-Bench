@@ -11,6 +11,7 @@ numpy's version-stable seeded RNG, the inputs and the held-out truth stay
 mutually consistent and byte-identical to the native pipeline.
 """
 import importlib.util
+import json
 import os
 import sys
 import tempfile
@@ -29,8 +30,22 @@ def main():
         i = args.index("--list-out")
         list_out = args[i + 1]
         del args[i:i + 2]
+    # --emit-json: do NOT write the staged blobs into the workspace at all —
+    # print them as a single JSON object {op-file: content} on stdout for the
+    # fixed wrapper's --inputs-json-stdin. Harbor runs the whole (label, seed)
+    # wave CONCURRENTLY in one shared filesystem, so an on-disk staging window
+    # (apply -> wrapper unlink) is readable by a sibling eval's agent code
+    # (or a detached watcher left by the pre-wave budget check). Piping the
+    # payloads means no withheld bytes ever touch the shared FS (C2). All
+    # diagnostics go to stderr in this mode so stdout stays pure JSON.
+    emit_json = False
+    if "--emit-json" in args:
+        args.remove("--emit-json")
+        emit_json = True
     task = args[0]
     workspace = args[1] if len(args) > 1 else "/workspace"
+
+    out = sys.stderr if emit_json else sys.stdout
 
     list_fh = open(list_out, "w") if list_out else None
 
@@ -41,7 +56,9 @@ def main():
 
     mid = os.path.join(here, "tasks", task, "edits", "mid_edit.py")
     if not os.path.exists(mid):
-        print(f"[inputgen] no mid_edit for {task}; nothing to do")
+        print(f"[inputgen] no mid_edit for {task}; nothing to do", file=out)
+        if emit_json:
+            print("{}")
         if list_fh is not None:
             list_fh.close()
         return 0
@@ -49,9 +66,18 @@ def main():
         "ig_mid_" + task.replace("-", "_"), mid
     )
     m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
+    # The mid_edit is stdlib-only and silent; the redirect is belt-and-
+    # suspenders so a stray print can never corrupt the JSON stream.
+    if emit_json:
+        sys.stdout = sys.stderr
+    try:
+        spec.loader.exec_module(m)
+    finally:
+        if emit_json:
+            sys.stdout = sys.__stdout__  # restore real stdout
     n = 0
     staged = []
+    emitted = {}
     try:
         for op in getattr(m, "OPS", []):
             if op.get("op") != "create":
@@ -59,6 +85,12 @@ def main():
             f = op.get("file", "")
             if f.endswith(".py"):
                 continue  # never overwrite the agent's editable program
+            if emit_json:
+                # Key by the op's workspace-relative file; the wrapper keys
+                # its preload map by basename, exactly as the disk flow does.
+                emitted[f] = op.get("content", "")
+                n += 1
+                continue
             dst = os.path.join(workspace, f)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
             # Atomic write: group evals run concurrently and each materializes
@@ -82,7 +114,14 @@ def main():
                 raise
             n += 1
             staged.append(dst)
-        print(f"[inputgen] materialized {n} input file(s) for {task}")
+        if emit_json:
+            json.dump(emitted, sys.__stdout__)
+            sys.__stdout__.flush()
+            print(file=sys.__stdout__)
+            print(f"[inputgen] emitted {n} input blob(s) for {task} "
+                  "(no on-disk staging)", file=sys.stderr)
+        else:
+            print(f"[inputgen] materialized {n} input file(s) for {task}")
         return 0
     except BaseException:
         # Belt and braces: remove everything staged so far before exiting

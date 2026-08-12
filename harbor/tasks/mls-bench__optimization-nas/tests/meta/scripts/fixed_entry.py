@@ -54,6 +54,15 @@ arrays — that in-memory boundary is inherent to the in-process task design
 hooks). This wrapper's contract is filesystem-only: no withheld bytes
 remain ON DISK once any agent-authored code can run.
 
+Harbor concurrent-wave note (``--inputs-json-stdin``): Harbor's verifier
+runs the whole (label, seed) wave CONCURRENTLY in one shared filesystem, so
+even the short stage→unlink window above would be readable by a sibling
+eval's already-running agent code. The Harbor eval scripts therefore pipe
+the blobs in via stdin (``apply.py --emit-json``): the withheld bytes never
+touch the shared FS at all, and the wave keeps full parallelism (no
+serialization, no deadline impact). The disk glob flow remains for the
+serialized native runs and as an unlink backstop.
+
 Usage:
     python fixed_entry.py --module <editable.py> --inputs-glob <glob> \
         [--inputs-glob <glob> ...] [--inject-module <name>] [--entry main] \
@@ -85,6 +94,17 @@ def _parse_args(argv: list[str]) -> tuple[argparse.Namespace, list[str]]:
     parser.add_argument("--inputs-glob", action="append", default=[],
                         help="Glob of staged input blobs to preload+unlink "
                              "(repeatable; relative to the CWD).")
+    parser.add_argument("--inputs-json-stdin", action="store_true",
+                        help="Read the staged blobs as a JSON "
+                             "{op-file: content} map from STDIN (emitted by "
+                             "apply.py --emit-json) instead of the "
+                             "filesystem. Harbor runs the (label, seed) wave "
+                             "CONCURRENTLY in one shared filesystem, so the "
+                             "blobs are piped, never written to disk — a "
+                             "sibling eval's agent code cannot read what "
+                             "never touches the FS. Any --inputs-glob disk "
+                             "pass still runs afterwards as a backstop "
+                             "(read+unlink of anything staged the old way).")
     parser.add_argument("--inject-module", default=None,
                         help="Module name holding the FIXED loaders to inject "
                              "_PRELOADED_INPUTS into (default: the editable "
@@ -132,13 +152,40 @@ def main() -> int:
     # always CAN delete them; a failure here is a real filesystem fault.)
     preloaded: dict[str, str] = {}
     ephemeral = os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1"
+    if args.inputs_json_stdin:
+        # Harbor concurrent-wave mode: the blobs arrive as a JSON map on
+        # stdin (apply.py --emit-json) and were NEVER written to the shared
+        # filesystem. A parse failure is FATAL without running module code —
+        # a missing/malformed payload means the eval cannot run, and a
+        # version-skewed stager must fail safe here, not leak.
+        import json as _json
+        try:
+            raw_stdin = sys.stdin.read()
+            data = _json.loads(raw_stdin) if raw_stdin.strip() else {}
+            if not isinstance(data, dict) or not all(
+                isinstance(k, str) and isinstance(v, str) for k, v in data.items()
+            ):
+                raise ValueError("expected a JSON object mapping path -> text")
+        except (ValueError, OSError) as exc:
+            print(
+                f"[fixed-entry] FATAL: could not decode staged inputs from "
+                f"stdin as JSON: {exc} — refusing to run the evaluation",
+                file=sys.stderr, flush=True,
+            )
+            return 6
+        preloaded.update({os.path.basename(k): v for k, v in data.items()})
+        print(
+            f"[fixed-entry] preloaded {len(preloaded)} input blob(s) from "
+            "stdin (never staged on disk)",
+            flush=True,
+        )
     for pattern in args.inputs_glob:
         for path in sorted(_glob.glob(pattern)):
             if not os.path.isfile(path):
                 continue
             try:
                 with open(path, "r") as fh:
-                    preloaded[os.path.basename(path)] = fh.read()
+                    content = fh.read()
             except OSError as exc:
                 print(
                     f"[fixed-entry] FATAL: could not read staged input "
@@ -146,6 +193,7 @@ def main() -> int:
                     file=sys.stderr, flush=True,
                 )
                 return 3
+            preloaded.setdefault(os.path.basename(path), content)
             if ephemeral:
                 try:
                     os.remove(path)
@@ -157,13 +205,14 @@ def main() -> int:
                         file=sys.stderr, flush=True,
                     )
                     return 4
-    print(
-        f"[fixed-entry] preloaded {len(preloaded)} input blob(s)"
-        + (" and unlinked them" if ephemeral else " (kept on disk: not "
-           "marked ephemeral)")
-        + " before deciding how to run the module",
-        flush=True,
-    )
+    if not args.inputs_json_stdin:
+        print(
+            f"[fixed-entry] preloaded {len(preloaded)} input blob(s)"
+            + (" and unlinked them" if ephemeral else " (kept on disk: not "
+               "marked ephemeral)")
+            + " before deciding how to run the module",
+            flush=True,
+        )
 
     # ── Protocol detection (AFTER the ephemeral unlink) ─────────────────
     # The injection protocol requires (a) the FIXED loader module to consult
