@@ -24,9 +24,9 @@ def pipeline(args):
 
     set_seed(args.seed)
 
-    save_path = f'results/{args.pipeline_name}/{args.task.env_name}/'
-    if os.path.exists(save_path) is False:
-        os.makedirs(save_path)
+    save_path = f'results/{args.pipeline_name}/{args.task.env_name}_s{args.seed}/'  # per-seed dir: parallel seeds of one label must not share ckpts
+    if args.mode == "train": import shutil; shutil.rmtree(save_path, ignore_errors=True)  # fresh train dir: never silently score a stale exact-step ckpt
+    os.makedirs(save_path, exist_ok=True)
 
     # ---------------------- Create Dataset ----------------------
     env = gym.make(args.task.env_name)

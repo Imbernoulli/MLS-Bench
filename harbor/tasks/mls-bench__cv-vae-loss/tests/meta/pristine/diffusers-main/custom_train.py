@@ -171,14 +171,25 @@ def evaluate_reconstruction(model, test_loader, device, output_dir,
     model.eval()
     psnr_sum, ssim_sum, count = 0.0, 0.0, 0
 
-    # Use RAM-backed tmpfs for image I/O (much faster than disk)
-    orig_dir = "/dev/shm/_eval_orig"
-    recon_dir = "/dev/shm/_eval_recon"
+    # Use RAM-backed tmpfs for image I/O (much faster than disk).
+    # /dev/shm is shared beyond this run: parallel seeds in this container,
+    # and co-located instances under Apptainer (which binds the host
+    # /dev/shm), all see the same tmpfs — with fixed paths, concurrent
+    # evals rmtree/overwrite each other's images mid-eval. Scope the dirs
+    # per (ENV label, SEED, pid) instead.
+    def _fs_safe(value):
+        return "".join(c if (c.isalnum() or c in "._-") else "_" for c in str(value))
+    _eval_scope = "{}_s{}_p{}".format(
+        _fs_safe(os.environ.get("ENV", "default")),
+        _fs_safe(os.environ.get("SEED", "0")),
+        os.getpid(),
+    )
+    orig_dir = f"/dev/shm/_eval_orig_{_eval_scope}"
+    recon_dir = f"/dev/shm/_eval_recon_{_eval_scope}"
 
     if rank == 0:
         for d in [orig_dir, recon_dir]:
-            if os.path.exists(d):
-                shutil.rmtree(d)
+            shutil.rmtree(d, ignore_errors=True)
             os.makedirs(d)
     if world_size > 1:
         dist.barrier()
@@ -186,84 +197,90 @@ def evaluate_reconstruction(model, test_loader, device, output_dir,
     sample_pairs = []
     idx = 0
 
-    with torch.no_grad():
-        for x, _ in test_loader:
-            x = x.to(device)
-            with torch.amp.autocast(device_type='cuda'):
-                recon, _ = model(x)
+    try:
+        with torch.no_grad():
+            for x, _ in test_loader:
+                x = x.to(device)
+                with torch.amp.autocast(device_type='cuda'):
+                    recon, _ = model(x)
 
-            x_01 = (x * 0.5 + 0.5).float()
-            recon_01 = recon.clamp(-1, 1).float() * 0.5 + 0.5
+                x_01 = (x * 0.5 + 0.5).float()
+                recon_01 = recon.clamp(-1, 1).float() * 0.5 + 0.5
 
-            psnr_sum += compute_psnr(recon_01, x_01).item() * x.shape[0]
-            ssim_sum += compute_ssim(recon_01, x_01).item() * x.shape[0]
-            count += x.shape[0]
+                psnr_sum += compute_psnr(recon_01, x_01).item() * x.shape[0]
+                ssim_sum += compute_ssim(recon_01, x_01).item() * x.shape[0]
+                count += x.shape[0]
 
-            if rank == 0:
-                # Collect first 10 pairs for visual comparison
-                if len(sample_pairs) < 10:
-                    n = min(10 - len(sample_pairs), x.shape[0])
-                    for j in range(n):
-                        sample_pairs.append((
-                            (x_01[j] * 255).clamp(0, 255).byte().cpu(),
-                            (recon_01[j] * 255).clamp(0, 255).byte().cpu(),
-                        ))
+                if rank == 0:
+                    # Collect first 10 pairs for visual comparison
+                    if len(sample_pairs) < 10:
+                        n = min(10 - len(sample_pairs), x.shape[0])
+                        for j in range(n):
+                            sample_pairs.append((
+                                (x_01[j] * 255).clamp(0, 255).byte().cpu(),
+                                (recon_01[j] * 255).clamp(0, 255).byte().cpu(),
+                            ))
 
-                # Save to RAM tmpfs for FID computation
-                x_uint8 = (x_01 * 255).clamp(0, 255).byte().cpu()
-                r_uint8 = (recon_01 * 255).clamp(0, 255).byte().cpu()
-                for j in range(x.shape[0]):
-                    Image.fromarray(x_uint8[j].permute(1, 2, 0).numpy()).save(
-                        os.path.join(orig_dir, f'{idx:05d}.png'))
-                    Image.fromarray(r_uint8[j].permute(1, 2, 0).numpy()).save(
-                        os.path.join(recon_dir, f'{idx:05d}.png'))
-                    idx += 1
+                    # Save to RAM tmpfs for FID computation
+                    x_uint8 = (x_01 * 255).clamp(0, 255).byte().cpu()
+                    r_uint8 = (recon_01 * 255).clamp(0, 255).byte().cpu()
+                    for j in range(x.shape[0]):
+                        Image.fromarray(x_uint8[j].permute(1, 2, 0).numpy()).save(
+                            os.path.join(orig_dir, f'{idx:05d}.png'))
+                        Image.fromarray(r_uint8[j].permute(1, 2, 0).numpy()).save(
+                            os.path.join(recon_dir, f'{idx:05d}.png'))
+                        idx += 1
 
-    if world_size > 1:
-        dist.barrier()
+        if world_size > 1:
+            dist.barrier()
 
-    avg_psnr = psnr_sum / max(count, 1)
-    avg_ssim = ssim_sum / max(count, 1)
+        avg_psnr = psnr_sum / max(count, 1)
+        avg_ssim = ssim_sum / max(count, 1)
 
-    rfid = None
-    if rank == 0:
-        import cleanfid.features as _feat
+        rfid = None
+        if rank == 0:
+            import cleanfid.features as _feat
 
-        cache_dir = "/data/cleanfid"
-        os.makedirs(cache_dir, exist_ok=True)
+            cache_dir = "/data/cleanfid"
+            os.makedirs(cache_dir, exist_ok=True)
 
-        # Patch cleanfid to load inception from image cache (no network needed)
-        _orig_build = _feat.build_feature_extractor
-        def _patched_build(mode, device=device, use_dataparallel=True):
-            from cleanfid.inception_torchscript import InceptionV3W
-            m = InceptionV3W(cache_dir, download=False,
-                             resize_inside=(mode == "legacy_tensorflow")).to(device)
-            m.eval()
-            if use_dataparallel:
-                m = torch.nn.DataParallel(m)
-            return lambda x: m(x)
-        _feat.build_feature_extractor = _patched_build
+            # Patch cleanfid to load inception from image cache (no network needed)
+            _orig_build = _feat.build_feature_extractor
+            def _patched_build(mode, device=device, use_dataparallel=True):
+                from cleanfid.inception_torchscript import InceptionV3W
+                m = InceptionV3W(cache_dir, download=False,
+                                 resize_inside=(mode == "legacy_tensorflow")).to(device)
+                m.eval()
+                if use_dataparallel:
+                    m = torch.nn.DataParallel(m)
+                return lambda x: m(x)
+            _feat.build_feature_extractor = _patched_build
 
-        rfid = cleanfid.compute_fid(
-            orig_dir, recon_dir,
-            device=device, batch_size=64, verbose=False,
-        )
+            rfid = cleanfid.compute_fid(
+                orig_dir, recon_dir,
+                device=device, batch_size=64, verbose=False,
+            )
 
-        _feat.build_feature_extractor = _orig_build
+            _feat.build_feature_extractor = _orig_build
 
-        # Save 10 sample comparisons
-        sample_dir = os.path.join(output_dir, 'samples')
-        os.makedirs(sample_dir, exist_ok=True)
-        for i, (orig_t, recon_t) in enumerate(sample_pairs):
-            o = Image.fromarray(orig_t.permute(1, 2, 0).numpy())
-            r = Image.fromarray(recon_t.permute(1, 2, 0).numpy())
-            cmp = Image.new('RGB', (o.width * 2 + 4, o.height), (128, 128, 128))
-            cmp.paste(o, (0, 0))
-            cmp.paste(r, (o.width + 4, 0))
-            cmp.save(os.path.join(sample_dir, f'cmp_{i:02d}.png'))
+            # Save 10 sample comparisons
+            sample_dir = os.path.join(output_dir, 'samples')
+            os.makedirs(sample_dir, exist_ok=True)
+            for i, (orig_t, recon_t) in enumerate(sample_pairs):
+                o = Image.fromarray(orig_t.permute(1, 2, 0).numpy())
+                r = Image.fromarray(recon_t.permute(1, 2, 0).numpy())
+                cmp = Image.new('RGB', (o.width * 2 + 4, o.height), (128, 128, 128))
+                cmp.paste(o, (0, 0))
+                cmp.paste(r, (o.width + 4, 0))
+                cmp.save(os.path.join(sample_dir, f'cmp_{i:02d}.png'))
 
-        shutil.rmtree(orig_dir, ignore_errors=True)
-        shutil.rmtree(recon_dir, ignore_errors=True)
+    finally:
+        # Self-scoped cleanup: always reclaim this run's /dev/shm dirs,
+        # even when the eval raises, so tmpfs never leaks across runs
+        # (only rank 0 ever created them).
+        if rank == 0:
+            shutil.rmtree(orig_dir, ignore_errors=True)
+            shutil.rmtree(recon_dir, ignore_errors=True)
 
     if world_size > 1:
         dist.barrier()
