@@ -88,9 +88,16 @@ def step(
 
 
 
-if __name__ == "__main__":
+def main() -> None:
+    """FIXED entry: invoked by the wrapper scripts/fixed_entry.py (which
+    preloads and unlinks the staged input blobs before this module is
+    imported) or via a direct launch of this file."""
     run_cli(
         get_hyperparameters=get_hyperparameters,
         init_state=init_state,
         step=step,
     )
+
+
+if __name__ == "__main__":
+    main()

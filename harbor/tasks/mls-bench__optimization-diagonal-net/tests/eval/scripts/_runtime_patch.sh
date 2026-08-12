@@ -21,9 +21,7 @@ python3 - <<'PY'
 import os
 import tempfile
 
-TARGET = "/workspace/RAIN/opt_diagonal_net/fixed_benchmark.py"
-
-REPLACEMENTS = [
+REPLACEMENTS_FIXED_BENCHMARK = [
     # stdlib import needed by the glob-based whole-setting scrub.
     (
         '''import argparse
@@ -190,9 +188,111 @@ def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
         delta=args.delta,
 ''',
     ),
+    # ── round-7: fixed-entry wrapper protocol (preload + unlink BEFORE the
+    # editable module is imported; load_problem consults _PRELOADED_INPUTS).
+    # The pairs above bring a pre-fix image to the round-2 text; these bring
+    # the round-2 text to the current shipped template, byte-identically.
+    (
+        '''def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
+    return (
+        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}"
+        f"_nmax{int(n_max_train)}_nt{int(n_test)}_seed{int(seed)}"
+    )
+
+
+def load_problem(
+''',
+        '''def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
+    return (
+        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}"
+        f"_nmax{int(n_max_train)}_nt{int(n_test)}_seed{int(seed)}"
+    )
+
+
+# Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
+# unlinked the staged input blobs and BEFORE the editable module was
+# imported: maps blob basename -> file content (base64 text). None when the
+# program is launched directly — load_problem then reads the on-disk blobs
+# (legacy flow).
+_PRELOADED_INPUTS: dict[str, str] | None = None
+
+
+def load_problem(
+''',
+    ),
+    (
+        '''    path = os.path.join(
+        _inputs_dir(),
+        f"{_input_key(dim, sparsity, sigma, n_max_train, n_test, seed)}.npz.b64",
+    )
+    with open(path, "r") as f:
+        raw = base64.b64decode(f.read())
+    with np.load(io.BytesIO(raw)) as data:
+''',
+        '''    name = f"{_input_key(dim, sparsity, sigma, n_max_train, n_test, seed)}.npz.b64"
+    # Prefer the payload preloaded by the FIXED wrapper (which read and
+    # unlinked the blobs before any editable code could run); fall back to
+    # the on-disk blob when the program is launched directly.
+    payload = (_PRELOADED_INPUTS or {}).pop(name, None)
+    if payload is None:
+        with open(os.path.join(_inputs_dir(), name), "r") as f:
+            payload = f.read()
+    raw = base64.b64decode(payload)
+    with np.load(io.BytesIO(raw)) as data:
+''',
+    ),
+    (
+        '''    _scrub_inputs(problem.dim, problem.sparsity, problem.sigma)
+    print("Datasets ready.", flush=True)
+''',
+        '''    _scrub_inputs(problem.dim, problem.sparsity, problem.sigma)
+    # Drop any remaining preloaded payloads: from here on the arrays live
+    # only in fixed-driver locals, exactly as in the direct-launch flow.
+    global _PRELOADED_INPUTS
+    _PRELOADED_INPUTS = None
+    print("Datasets ready.", flush=True)
+''',
+    ),
 ]
 
-if os.path.exists(TARGET):
+# custom_optimizer.py: FIXED tail only (never the editable range 23-90) —
+# round-7 adds a fixed main() entry the wrapper invokes after injection.
+REPLACEMENTS_CUSTOM_OPTIMIZER = [
+    (
+        '''if __name__ == "__main__":
+    run_cli(
+        get_hyperparameters=get_hyperparameters,
+        init_state=init_state,
+        step=step,
+    )
+''',
+        '''def main() -> None:
+    """FIXED entry: invoked by the wrapper scripts/fixed_entry.py (which
+    preloads and unlinks the staged input blobs before this module is
+    imported) or via a direct launch of this file."""
+    run_cli(
+        get_hyperparameters=get_hyperparameters,
+        init_state=init_state,
+        step=step,
+    )
+
+
+if __name__ == "__main__":
+    main()
+''',
+    ),
+]
+
+TARGETS = [
+    ("/workspace/RAIN/opt_diagonal_net/fixed_benchmark.py",
+     REPLACEMENTS_FIXED_BENCHMARK),
+    ("/workspace/RAIN/opt_diagonal_net/custom_optimizer.py",
+     REPLACEMENTS_CUSTOM_OPTIMIZER),
+]
+
+for TARGET, REPLACEMENTS in TARGETS:
+    if not os.path.exists(TARGET):
+        continue
     with open(TARGET, "r", encoding="utf-8") as fh:
         text = fh.read()
     patched = text

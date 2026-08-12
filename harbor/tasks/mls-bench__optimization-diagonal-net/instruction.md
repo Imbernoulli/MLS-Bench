@@ -175,12 +175,19 @@ Other files you may **read** for context (do not modify):
     88: 
     89: 
     90: 
-    91: if __name__ == "__main__":
-    92:     run_cli(
-    93:         get_hyperparameters=get_hyperparameters,
-    94:         init_state=init_state,
-    95:         step=step,
-    96:     )
+    91: def main() -> None:
+    92:     """FIXED entry: invoked by the wrapper scripts/fixed_entry.py (which
+    93:     preloads and unlinks the staged input blobs before this module is
+    94:     imported) or via a direct launch of this file."""
+    95:     run_cli(
+    96:         get_hyperparameters=get_hyperparameters,
+    97:         init_state=init_state,
+    98:         step=step,
+    99:     )
+   100: 
+   101: 
+   102: if __name__ == "__main__":
+   103:     main()
 ```
 
 ## Reference Baselines

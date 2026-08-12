@@ -226,22 +226,22 @@ def gen_test_x(config: TaskConfig, test_seed: int) -> torch.Tensor:
 
 
 def load_train_labels(config: TaskConfig, seed: int, secret_index: int) -> torch.Tensor:
-    """Load the bit-packed training-pool labels for one hidden secret.
+    """Load one hidden secret's bit-packed training-pool labels (only the
+    labels — the secret that produced them is held out).
 
-    Only the labels are provided (the secret that produced them is held out).
-    The labels are bit-packed for one row per training example over the full
-    ``max_train_examples`` pool; unpack to a float tensor in {0, 1}.
-
-    This is FIXED code, called only by ``_load_all_train_labels`` below, which
-    deletes the on-disk blob afterward when the harness marks the inputs as
-    ephemeral. It is never invoked from an editable hook.
+    Prefers the payload preloaded by the FIXED wrapper (scripts/fixed_entry.py
+    reads and unlinks the blobs BEFORE this module is imported); falls back to
+    the on-disk blob when launched directly. FIXED code, called only by
+    ``_load_all_train_labels`` below — never from an editable hook.
     """
     import numpy as np
 
-    tag = _config_tag(config)
-    path = os.path.join(_inputs_dir(), f"{tag}_seed{seed}_s{secret_index}.labels.b64")
-    with open(path, "r") as f:
-        packed = np.frombuffer(base64.b64decode(f.read()), dtype=np.uint8)
+    name = f"{_config_tag(config)}_seed{seed}_s{secret_index}.labels.b64"
+    payload = (_PRELOADED_INPUTS or {}).pop(name, None)
+    if payload is None:
+        with open(os.path.join(_inputs_dir(), name), "r") as f:
+            payload = f.read()
+    packed = np.frombuffer(base64.b64decode(payload), dtype=np.uint8)
     bits = np.unpackbits(packed)[: config.max_train_examples]
     return torch.from_numpy(bits.astype("float32"))
 
@@ -344,6 +344,13 @@ def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
 # =====================================================================
 # FIXED: training and prediction driver
 # =====================================================================
+# Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
+# unlinked the staged label blobs and BEFORE this module was imported:
+# maps blob basename -> file content. None when the module is launched
+# directly — the loaders above then read the on-disk blobs (legacy flow).
+_PRELOADED_INPUTS: dict[str, str] | None = None
+
+
 def train_one_run(
     train_x: torch.Tensor,
     train_y: torch.Tensor,
@@ -522,6 +529,10 @@ def run_benchmark(
     # FIXED: load every secret's pool labels into memory (scrubbing the blobs
     # when the harness marks them ephemeral) before any editable hook runs.
     labels_by_secret = _load_all_train_labels(config, seed)
+    # Drop any remaining preloaded payloads: from here on the labels live
+    # only in fixed-driver locals, exactly as in the direct-launch flow.
+    global _PRELOADED_INPUTS
+    _PRELOADED_INPUTS = None
 
     results: list[RunResult] = []
 

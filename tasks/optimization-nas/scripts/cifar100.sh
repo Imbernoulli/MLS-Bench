@@ -1,6 +1,13 @@
 #!/bin/bash
 # The harness re-stages this run's validation table before every evaluation,
-# so the runner treats it as ephemeral (deleted right after loading, before
+# so it is treated as ephemeral (read+unlinked by the fixed wrapper before
 # any editable code runs).
 export MLSBENCH_EPHEMERAL_INPUTS=1
-ENV=cifar100 NAS_EPOCHS=30 python custom_nas_search.py
+# Resolve the FIXED wrapper next to this script; it preloads and unlinks the
+# staged table BEFORE importing the editable module, so top-level statements
+# in the editable range never see it on disk.
+FIXED_ENTRY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixed_entry.py"
+ENV=cifar100 NAS_EPOCHS=30 python "$FIXED_ENTRY" \
+  --module custom_nas_search.py \
+  --inputs-glob "naslib/data/nb201_tables_*.json" \
+  --entry _main --

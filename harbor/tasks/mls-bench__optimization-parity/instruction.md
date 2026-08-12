@@ -289,22 +289,22 @@ stay unchanged.
    226: 
    227: 
    228: def load_train_labels(config: TaskConfig, seed: int, secret_index: int) -> torch.Tensor:
-   229:     """Load the bit-packed training-pool labels for one hidden secret.
-   230: 
-   231:     Only the labels are provided (the secret that produced them is held out).
-   232:     The labels are bit-packed for one row per training example over the full
-   233:     ``max_train_examples`` pool; unpack to a float tensor in {0, 1}.
-   234: 
-   235:     This is FIXED code, called only by ``_load_all_train_labels`` below, which
-   236:     deletes the on-disk blob afterward when the harness marks the inputs as
-   237:     ephemeral. It is never invoked from an editable hook.
-   238:     """
-   239:     import numpy as np
-   240: 
-   241:     tag = _config_tag(config)
-   242:     path = os.path.join(_inputs_dir(), f"{tag}_seed{seed}_s{secret_index}.labels.b64")
-   243:     with open(path, "r") as f:
-   244:         packed = np.frombuffer(base64.b64decode(f.read()), dtype=np.uint8)
+   229:     """Load one hidden secret's bit-packed training-pool labels (only the
+   230:     labels — the secret that produced them is held out).
+   231: 
+   232:     Prefers the payload preloaded by the FIXED wrapper (scripts/fixed_entry.py
+   233:     reads and unlinks the blobs BEFORE this module is imported); falls back to
+   234:     the on-disk blob when launched directly. FIXED code, called only by
+   235:     ``_load_all_train_labels`` below — never from an editable hook.
+   236:     """
+   237:     import numpy as np
+   238: 
+   239:     name = f"{_config_tag(config)}_seed{seed}_s{secret_index}.labels.b64"
+   240:     payload = (_PRELOADED_INPUTS or {}).pop(name, None)
+   241:     if payload is None:
+   242:         with open(os.path.join(_inputs_dir(), name), "r") as f:
+   243:             payload = f.read()
+   244:     packed = np.frombuffer(base64.b64decode(payload), dtype=np.uint8)
    245:     bits = np.unpackbits(packed)[: config.max_train_examples]
    246:     return torch.from_numpy(bits.astype("float32"))
    247: 
@@ -407,295 +407,306 @@ stay unchanged.
    344: # =====================================================================
    345: # FIXED: training and prediction driver
    346: # =====================================================================
-   347: def train_one_run(
-   348:     train_x: torch.Tensor,
-   349:     train_y: torch.Tensor,
-   350:     test_x: torch.Tensor,
-   351:     config: TaskConfig,
-   352:     device: torch.device,
-   353:     run_seed: int,
-   354:     order_seed: int,
-   355:     secret_index: int,
-   356:     order_index: int,
-   357: ) -> tuple[RunResult, torch.Tensor]:
-   358:     set_global_seed(run_seed)
-   359: 
-   360:     model = build_model(config).to(device)
-   361:     init_model(model, config)
-   362:     optimizer_config = normalize_optimizer_config(get_optimizer_config(config))
-   363:     optimizer = torch.optim.AdamW(
-   364:         model.parameters(),
-   365:         lr=optimizer_config.lr,
-   366:         betas=(optimizer_config.beta1, optimizer_config.beta2),
-   367:         weight_decay=optimizer_config.wd,
-   368:     )
-   369:     criterion = nn.BCELoss()
-   370: 
-   371:     steps = 0
-   372:     stable_windows = 0
-   373:     window_loss = 0.0
-   374:     window_acc = 0.0
-   375:     window_count = 0
-   376:     last_logged_step = 0
-   377:     permutation_generator = torch.Generator().manual_seed(order_seed)
-   378: 
-   379:     while steps < config.max_steps:
-   380:         permutation = torch.randperm(train_x.shape[0], generator=permutation_generator)
-   381:         for start in range(0, train_x.shape[0], config.batch_size):
-   382:             batch_indices = permutation[start : start + config.batch_size]
-   383:             batch_x = train_x.index_select(0, batch_indices).to(device)
-   384:             batch_y = train_y.index_select(0, batch_indices).to(device)
+   347: # Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
+   348: # unlinked the staged label blobs and BEFORE this module was imported:
+   349: # maps blob basename -> file content. None when the module is launched
+   350: # directly — the loaders above then read the on-disk blobs (legacy flow).
+   351: _PRELOADED_INPUTS: dict[str, str] | None = None
+   352: 
+   353: 
+   354: def train_one_run(
+   355:     train_x: torch.Tensor,
+   356:     train_y: torch.Tensor,
+   357:     test_x: torch.Tensor,
+   358:     config: TaskConfig,
+   359:     device: torch.device,
+   360:     run_seed: int,
+   361:     order_seed: int,
+   362:     secret_index: int,
+   363:     order_index: int,
+   364: ) -> tuple[RunResult, torch.Tensor]:
+   365:     set_global_seed(run_seed)
+   366: 
+   367:     model = build_model(config).to(device)
+   368:     init_model(model, config)
+   369:     optimizer_config = normalize_optimizer_config(get_optimizer_config(config))
+   370:     optimizer = torch.optim.AdamW(
+   371:         model.parameters(),
+   372:         lr=optimizer_config.lr,
+   373:         betas=(optimizer_config.beta1, optimizer_config.beta2),
+   374:         weight_decay=optimizer_config.wd,
+   375:     )
+   376:     criterion = nn.BCELoss()
+   377: 
+   378:     steps = 0
+   379:     stable_windows = 0
+   380:     window_loss = 0.0
+   381:     window_acc = 0.0
+   382:     window_count = 0
+   383:     last_logged_step = 0
+   384:     permutation_generator = torch.Generator().manual_seed(order_seed)
    385: 
-   386:             optimizer.zero_grad(set_to_none=True)
-   387:             preds = model(batch_x).view(-1)
-   388:             loss = criterion(preds, batch_y)
-   389:             loss.backward()
-   390:             optimizer.step()
-   391: 
-   392:             batch_acc = ((preds >= 0.5) == (batch_y >= 0.5)).float().mean().item()
-   393:             window_loss += loss.item()
-   394:             window_acc += batch_acc
-   395:             window_count += 1
-   396:             steps += 1
-   397: 
-   398:             should_log = steps == 1 or steps % config.log_interval == 0 or steps == config.max_steps
-   399:             if should_log:
-   400:                 avg_loss = window_loss / window_count
-   401:                 avg_acc = window_acc / window_count
-   402:                 print(
-   403:                     "TRAIN_METRICS "
-   404:                     f"secret={secret_index} order={order_index} step={steps} "
-   405:                     f"loss={avg_loss:.6f} acc={avg_acc:.6f}",
-   406:                     flush=True,
-   407:                 )
-   408:                 last_logged_step = steps
-   409:                 if steps >= config.min_steps_before_stop and avg_acc >= config.early_stop_acc:
-   410:                     stable_windows += 1
-   411:                 else:
-   412:                     stable_windows = 0
-   413:                 window_loss = 0.0
-   414:                 window_acc = 0.0
-   415:                 window_count = 0
-   416:                 if stable_windows >= config.early_stop_windows:
-   417:                     break
-   418: 
-   419:             if steps >= config.max_steps:
-   420:                 break
-   421:         if stable_windows >= config.early_stop_windows or steps >= config.max_steps:
-   422:             break
-   423: 
-   424:     if last_logged_step != steps:
-   425:         maybe_log_final_window(
-   426:             secret_index=secret_index,
-   427:             order_index=order_index,
-   428:             steps=steps,
-   429:             window_loss=window_loss,
-   430:             window_acc=window_acc,
-   431:             window_count=window_count,
-   432:         )
-   433: 
-   434:     test_preds = predict_on(model, test_x, device)
-   435:     print(
-   436:         "RUN_METRICS "
-   437:         f"secret={secret_index} order={order_index} steps={steps}",
-   438:         flush=True,
-   439:     )
-   440:     return (
-   441:         RunResult(
-   442:             secret_index=secret_index,
-   443:             order_index=order_index,
-   444:             steps=steps,
-   445:         ),
-   446:         test_preds,
-   447:     )
-   448: 
-   449: 
-   450: def resolve_device(device_arg: str) -> torch.device:
-   451:     if device_arg == "cpu":
-   452:         return torch.device("cpu")
-   453:     if device_arg == "cuda":
-   454:         if not torch.cuda.is_available():
-   455:             raise RuntimeError("CUDA requested but no GPU is available.")
-   456:         return torch.device("cuda")
-   457:     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
-   458: 
-   459: 
-   460: def maybe_apply_smoke_mode(config: TaskConfig, enabled: bool) -> TaskConfig:
-   461:     if not enabled:
-   462:         return config
-   463:     return replace(
-   464:         config,
-   465:         num_hidden_secrets=2,
-   466:         num_orderings=2,
-   467:         test_set_size=2_048,
-   468:         max_steps=4_000,
-   469:         log_interval=100,
-   470:         min_steps_before_stop=400,
-   471:         early_stop_windows=3,
-   472:     )
-   473: 
-   474: 
-   475: def _emit_pred(
-   476:     config: TaskConfig,
-   477:     seed: int,
-   478:     secret_index: int,
-   479:     order_index: int,
-   480:     test_preds: torch.Tensor,
-   481: ) -> None:
-   482:     """Emit the model's held-out predictions for the host-side scorer.
-   483: 
-   484:     Predictions are thresholded at 0.5 (the same threshold the metric uses) and
-   485:     bit-packed. We do NOT have the test labels, so we cannot (and do not) compute
-   486:     the metric here.
-   487:     """
-   488:     import numpy as np
-   489: 
-   490:     pred_bits = (test_preds.numpy() >= 0.5).astype(np.uint8)
-   491:     payload = base64.b64encode(np.packbits(pred_bits).tobytes()).decode("ascii")
-   492:     print(
-   493:         "PARITY_PRED "
-   494:         f"config={_config_tag(config)} seed={seed} secret={secret_index} "
-   495:         f"order={order_index} n={int(test_preds.numel())} preds={payload}",
-   496:         flush=True,
-   497:     )
-   498: 
-   499: 
-   500: def run_benchmark(
-   501:     config: TaskConfig,
-   502:     seed: int,
-   503:     device: torch.device,
-   504: ) -> dict[str, object]:
-   505:     print(
-   506:         "TASK_CONFIG "
-   507:         + " ".join(
-   508:             [
-   509:                 f"N={config.n_features}",
-   510:                 f"K={config.secret_size}",
-   511:                 f"W={config.hidden_width}",
-   512:                 f"num_hidden_secrets={config.num_hidden_secrets}",
-   513:                 f"num_orderings={config.num_orderings}",
-   514:                 f"test_set_size={config.test_set_size}",
-   515:                 f"batch_size={config.batch_size}",
-   516:                 f"max_steps={config.max_steps}",
-   517:             ]
-   518:         ),
-   519:         flush=True,
-   520:     )
-   521: 
-   522:     # FIXED: load every secret's pool labels into memory (scrubbing the blobs
-   523:     # when the harness marks them ephemeral) before any editable hook runs.
-   524:     labels_by_secret = _load_all_train_labels(config, seed)
-   525: 
-   526:     results: list[RunResult] = []
-   527: 
-   528:     for secret_index in range(config.num_hidden_secrets):
-   529:         train_dataset_seed = seed * 10_000 + secret_index
-   530:         x_pool = gen_train_pool_x(config, train_dataset_seed)
-   531:         y_pool = labels_by_secret[secret_index]
-   532:         # The editable hook only sees the UNLABELED pool and returns row indices;
-   533:         # fixed code attaches the held-out labels to exactly those rows.
-   534:         selected = _resolve_indices(make_dataset(x_pool, config), x_pool.shape[0], config)
-   535:         train_x, train_y = normalize_dataset(
-   536:             (x_pool.index_select(0, selected), y_pool.index_select(0, selected)),
-   537:             config,
-   538:         )
-   539:         test_x = gen_test_x(config, seed * 20_000 + secret_index)
-   540:         positive_rate = float(train_y.mean().item())
-   541:         print(
-   542:             "DATASET_METRICS "
-   543:             f"secret={secret_index} num_examples={train_x.shape[0]} "
-   544:             f"positive_rate={positive_rate:.6f}",
-   545:             flush=True,
-   546:         )
-   547: 
-   548:         for order_index in range(config.num_orderings):
-   549:             run_seed = seed * 1_000_000 + secret_index * 1_000 + order_index
-   550:             order_seed = seed * 2_000_000 + secret_index * 1_000 + order_index
-   551:             result, test_preds = train_one_run(
-   552:                 train_x=train_x,
-   553:                 train_y=train_y,
-   554:                 test_x=test_x,
-   555:                 config=config,
-   556:                 device=device,
-   557:                 run_seed=run_seed,
-   558:                 order_seed=order_seed,
-   559:                 secret_index=secret_index,
-   560:                 order_index=order_index,
-   561:             )
-   562:             results.append(result)
-   563:             _emit_pred(config, seed, secret_index, order_index, test_preds)
-   564: 
-   565:     step_tensor = torch.tensor([result.steps for result in results], dtype=torch.float64)
-   566:     print(
-   567:         "BENCH_DONE "
-   568:         f"num_runs={len(results)} mean_steps={float(step_tensor.mean().item()):.6f}",
-   569:         flush=True,
-   570:     )
-   571:     return {
-   572:         "config": asdict(config),
-   573:         "results": [asdict(result) for result in results],
-   574:     }
+   386:     while steps < config.max_steps:
+   387:         permutation = torch.randperm(train_x.shape[0], generator=permutation_generator)
+   388:         for start in range(0, train_x.shape[0], config.batch_size):
+   389:             batch_indices = permutation[start : start + config.batch_size]
+   390:             batch_x = train_x.index_select(0, batch_indices).to(device)
+   391:             batch_y = train_y.index_select(0, batch_indices).to(device)
+   392: 
+   393:             optimizer.zero_grad(set_to_none=True)
+   394:             preds = model(batch_x).view(-1)
+   395:             loss = criterion(preds, batch_y)
+   396:             loss.backward()
+   397:             optimizer.step()
+   398: 
+   399:             batch_acc = ((preds >= 0.5) == (batch_y >= 0.5)).float().mean().item()
+   400:             window_loss += loss.item()
+   401:             window_acc += batch_acc
+   402:             window_count += 1
+   403:             steps += 1
+   404: 
+   405:             should_log = steps == 1 or steps % config.log_interval == 0 or steps == config.max_steps
+   406:             if should_log:
+   407:                 avg_loss = window_loss / window_count
+   408:                 avg_acc = window_acc / window_count
+   409:                 print(
+   410:                     "TRAIN_METRICS "
+   411:                     f"secret={secret_index} order={order_index} step={steps} "
+   412:                     f"loss={avg_loss:.6f} acc={avg_acc:.6f}",
+   413:                     flush=True,
+   414:                 )
+   415:                 last_logged_step = steps
+   416:                 if steps >= config.min_steps_before_stop and avg_acc >= config.early_stop_acc:
+   417:                     stable_windows += 1
+   418:                 else:
+   419:                     stable_windows = 0
+   420:                 window_loss = 0.0
+   421:                 window_acc = 0.0
+   422:                 window_count = 0
+   423:                 if stable_windows >= config.early_stop_windows:
+   424:                     break
+   425: 
+   426:             if steps >= config.max_steps:
+   427:                 break
+   428:         if stable_windows >= config.early_stop_windows or steps >= config.max_steps:
+   429:             break
+   430: 
+   431:     if last_logged_step != steps:
+   432:         maybe_log_final_window(
+   433:             secret_index=secret_index,
+   434:             order_index=order_index,
+   435:             steps=steps,
+   436:             window_loss=window_loss,
+   437:             window_acc=window_acc,
+   438:             window_count=window_count,
+   439:         )
+   440: 
+   441:     test_preds = predict_on(model, test_x, device)
+   442:     print(
+   443:         "RUN_METRICS "
+   444:         f"secret={secret_index} order={order_index} steps={steps}",
+   445:         flush=True,
+   446:     )
+   447:     return (
+   448:         RunResult(
+   449:             secret_index=secret_index,
+   450:             order_index=order_index,
+   451:             steps=steps,
+   452:         ),
+   453:         test_preds,
+   454:     )
+   455: 
+   456: 
+   457: def resolve_device(device_arg: str) -> torch.device:
+   458:     if device_arg == "cpu":
+   459:         return torch.device("cpu")
+   460:     if device_arg == "cuda":
+   461:         if not torch.cuda.is_available():
+   462:             raise RuntimeError("CUDA requested but no GPU is available.")
+   463:         return torch.device("cuda")
+   464:     return torch.device("cuda" if torch.cuda.is_available() else "cpu")
+   465: 
+   466: 
+   467: def maybe_apply_smoke_mode(config: TaskConfig, enabled: bool) -> TaskConfig:
+   468:     if not enabled:
+   469:         return config
+   470:     return replace(
+   471:         config,
+   472:         num_hidden_secrets=2,
+   473:         num_orderings=2,
+   474:         test_set_size=2_048,
+   475:         max_steps=4_000,
+   476:         log_interval=100,
+   477:         min_steps_before_stop=400,
+   478:         early_stop_windows=3,
+   479:     )
+   480: 
+   481: 
+   482: def _emit_pred(
+   483:     config: TaskConfig,
+   484:     seed: int,
+   485:     secret_index: int,
+   486:     order_index: int,
+   487:     test_preds: torch.Tensor,
+   488: ) -> None:
+   489:     """Emit the model's held-out predictions for the host-side scorer.
+   490: 
+   491:     Predictions are thresholded at 0.5 (the same threshold the metric uses) and
+   492:     bit-packed. We do NOT have the test labels, so we cannot (and do not) compute
+   493:     the metric here.
+   494:     """
+   495:     import numpy as np
+   496: 
+   497:     pred_bits = (test_preds.numpy() >= 0.5).astype(np.uint8)
+   498:     payload = base64.b64encode(np.packbits(pred_bits).tobytes()).decode("ascii")
+   499:     print(
+   500:         "PARITY_PRED "
+   501:         f"config={_config_tag(config)} seed={seed} secret={secret_index} "
+   502:         f"order={order_index} n={int(test_preds.numel())} preds={payload}",
+   503:         flush=True,
+   504:     )
+   505: 
+   506: 
+   507: def run_benchmark(
+   508:     config: TaskConfig,
+   509:     seed: int,
+   510:     device: torch.device,
+   511: ) -> dict[str, object]:
+   512:     print(
+   513:         "TASK_CONFIG "
+   514:         + " ".join(
+   515:             [
+   516:                 f"N={config.n_features}",
+   517:                 f"K={config.secret_size}",
+   518:                 f"W={config.hidden_width}",
+   519:                 f"num_hidden_secrets={config.num_hidden_secrets}",
+   520:                 f"num_orderings={config.num_orderings}",
+   521:                 f"test_set_size={config.test_set_size}",
+   522:                 f"batch_size={config.batch_size}",
+   523:                 f"max_steps={config.max_steps}",
+   524:             ]
+   525:         ),
+   526:         flush=True,
+   527:     )
+   528: 
+   529:     # FIXED: load every secret's pool labels into memory (scrubbing the blobs
+   530:     # when the harness marks them ephemeral) before any editable hook runs.
+   531:     labels_by_secret = _load_all_train_labels(config, seed)
+   532:     # Drop any remaining preloaded payloads: from here on the labels live
+   533:     # only in fixed-driver locals, exactly as in the direct-launch flow.
+   534:     global _PRELOADED_INPUTS
+   535:     _PRELOADED_INPUTS = None
+   536: 
+   537:     results: list[RunResult] = []
+   538: 
+   539:     for secret_index in range(config.num_hidden_secrets):
+   540:         train_dataset_seed = seed * 10_000 + secret_index
+   541:         x_pool = gen_train_pool_x(config, train_dataset_seed)
+   542:         y_pool = labels_by_secret[secret_index]
+   543:         # The editable hook only sees the UNLABELED pool and returns row indices;
+   544:         # fixed code attaches the held-out labels to exactly those rows.
+   545:         selected = _resolve_indices(make_dataset(x_pool, config), x_pool.shape[0], config)
+   546:         train_x, train_y = normalize_dataset(
+   547:             (x_pool.index_select(0, selected), y_pool.index_select(0, selected)),
+   548:             config,
+   549:         )
+   550:         test_x = gen_test_x(config, seed * 20_000 + secret_index)
+   551:         positive_rate = float(train_y.mean().item())
+   552:         print(
+   553:             "DATASET_METRICS "
+   554:             f"secret={secret_index} num_examples={train_x.shape[0]} "
+   555:             f"positive_rate={positive_rate:.6f}",
+   556:             flush=True,
+   557:         )
+   558: 
+   559:         for order_index in range(config.num_orderings):
+   560:             run_seed = seed * 1_000_000 + secret_index * 1_000 + order_index
+   561:             order_seed = seed * 2_000_000 + secret_index * 1_000 + order_index
+   562:             result, test_preds = train_one_run(
+   563:                 train_x=train_x,
+   564:                 train_y=train_y,
+   565:                 test_x=test_x,
+   566:                 config=config,
+   567:                 device=device,
+   568:                 run_seed=run_seed,
+   569:                 order_seed=order_seed,
+   570:                 secret_index=secret_index,
+   571:                 order_index=order_index,
+   572:             )
+   573:             results.append(result)
+   574:             _emit_pred(config, seed, secret_index, order_index, test_preds)
    575: 
-   576: 
-   577: def parse_args() -> argparse.Namespace:
-   578:     parser = argparse.ArgumentParser(description="Run the MLS-Bench optimization-parity task.")
-   579:     parser.add_argument("--seed", type=int, default=42, help="Top-level benchmark seed.")
-   580:     parser.add_argument(
-   581:         "--output-dir",
-   582:         type=Path,
-   583:         default=None,
-   584:         help="Optional directory for a JSON summary.",
-   585:     )
-   586:     parser.add_argument(
-   587:         "--label",
-   588:         type=str,
-   589:         default="eval",
-   590:         help="Optional label stored in the JSON summary.",
-   591:     )
-   592:     parser.add_argument(
-   593:         "--device",
-   594:         choices=("auto", "cpu", "cuda"),
-   595:         default="auto",
-   596:         help="Execution device.",
-   597:     )
-   598:     parser.add_argument(
-   599:         "--smoke",
-   600:         action="store_true",
-   601:         help="Run a smaller local sanity check without changing the benchmark defaults in code.",
+   576:     step_tensor = torch.tensor([result.steps for result in results], dtype=torch.float64)
+   577:     print(
+   578:         "BENCH_DONE "
+   579:         f"num_runs={len(results)} mean_steps={float(step_tensor.mean().item()):.6f}",
+   580:         flush=True,
+   581:     )
+   582:     return {
+   583:         "config": asdict(config),
+   584:         "results": [asdict(result) for result in results],
+   585:     }
+   586: 
+   587: 
+   588: def parse_args() -> argparse.Namespace:
+   589:     parser = argparse.ArgumentParser(description="Run the MLS-Bench optimization-parity task.")
+   590:     parser.add_argument("--seed", type=int, default=42, help="Top-level benchmark seed.")
+   591:     parser.add_argument(
+   592:         "--output-dir",
+   593:         type=Path,
+   594:         default=None,
+   595:         help="Optional directory for a JSON summary.",
+   596:     )
+   597:     parser.add_argument(
+   598:         "--label",
+   599:         type=str,
+   600:         default="eval",
+   601:         help="Optional label stored in the JSON summary.",
    602:     )
    603:     parser.add_argument(
-   604:         "--n-features",
-   605:         type=int,
-   606:         default=None,
-   607:         help="Override n_features in TaskConfig.",
+   604:         "--device",
+   605:         choices=("auto", "cpu", "cuda"),
+   606:         default="auto",
+   607:         help="Execution device.",
    608:     )
    609:     parser.add_argument(
-   610:         "--secret-size",
-   611:         type=int,
-   612:         default=None,
-   613:         help="Override secret_size in TaskConfig.",
-   614:     )
-   615:     return parser.parse_args()
-   616: 
-   617: 
-   618: def main() -> None:
-   619:     args = parse_args()
-   620:     config = maybe_apply_smoke_mode(DEFAULT_TASK, args.smoke)
-   621:     if args.n_features is not None:
-   622:         config = replace(config, n_features=args.n_features)
-   623:     if args.secret_size is not None:
-   624:         config = replace(config, secret_size=args.secret_size)
-   625:     device = resolve_device(args.device)
-   626:     summary = run_benchmark(config=config, seed=args.seed, device=device)
+   610:         "--smoke",
+   611:         action="store_true",
+   612:         help="Run a smaller local sanity check without changing the benchmark defaults in code.",
+   613:     )
+   614:     parser.add_argument(
+   615:         "--n-features",
+   616:         type=int,
+   617:         default=None,
+   618:         help="Override n_features in TaskConfig.",
+   619:     )
+   620:     parser.add_argument(
+   621:         "--secret-size",
+   622:         type=int,
+   623:         default=None,
+   624:         help="Override secret_size in TaskConfig.",
+   625:     )
+   626:     return parser.parse_args()
    627: 
-   628:     if args.output_dir is not None:
-   629:         args.output_dir.mkdir(parents=True, exist_ok=True)
-   630:         output_path = args.output_dir / f"{args.label}_seed{args.seed}.json"
-   631:         output_path.write_text(json.dumps(summary, indent=2))
-   632: 
-   633: 
-   634: if __name__ == "__main__":
-   635:     main()
+   628: 
+   629: def main() -> None:
+   630:     args = parse_args()
+   631:     config = maybe_apply_smoke_mode(DEFAULT_TASK, args.smoke)
+   632:     if args.n_features is not None:
+   633:         config = replace(config, n_features=args.n_features)
+   634:     if args.secret_size is not None:
+   635:         config = replace(config, secret_size=args.secret_size)
+   636:     device = resolve_device(args.device)
+   637:     summary = run_benchmark(config=config, seed=args.seed, device=device)
+   638: 
+   639:     if args.output_dir is not None:
+   640:         args.output_dir.mkdir(parents=True, exist_ok=True)
+   641:         output_path = args.output_dir / f"{args.label}_seed{args.seed}.json"
+   642:         output_path.write_text(json.dumps(summary, indent=2))
+   643: 
+   644: 
+   645: if __name__ == "__main__":
+   646:     main()
 ```
 
 ## Reference Baselines

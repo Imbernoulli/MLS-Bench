@@ -355,6 +355,26 @@ class WorkspaceTools:
         self.save_path = save_path
         self.seeds = seeds or [42]
         self.container_runtime = container_runtime
+        if container_runtime == "local" and self.config_task.get("ephemeral_inputs"):
+            # Fail fast at setup, BEFORE anything is staged. Tasks with
+            # ephemeral_inputs withhold data (labels / held-out targets /
+            # oracle tables) by staging blobs immediately before each
+            # serialized evaluation and unlinking them right after. Under
+            # container_runtime: local the agent-editable code executes
+            # directly on the host as the harness user, so it can spawn a
+            # detached process that OUTLIVES its own evaluation and reads the
+            # NEXT evaluation's blobs while they are staged — serialization
+            # and unlinking cannot withhold anything from a peer host process.
+            # (The stager's --no-cache flag alone does not close this; the
+            # only sound boundary is a container.)
+            raise RuntimeError(
+                f"Task '{task_name}' declares ephemeral_inputs (withheld "
+                "input blobs) and cannot be evaluated with "
+                "container_runtime: local — agent code running as the "
+                "harness user on the host could read the staged blobs of "
+                "subsequent evaluations. Use container_runtime: docker or "
+                "apptainer for this task."
+            )
         self._use_cuda_override = use_cuda   # None = defer to pkg config
         self._platform = platform             # e.g. "linux/amd64" for Rosetta
         self.gpu_devices = gpu_devices
@@ -2331,18 +2351,16 @@ class WorkspaceTools:
         ]
         if dry_run:
             stager_cmd.append("--dry-run")
-        if self.container_runtime == "local":
-            # Local mode: agent-editable code runs directly on the host as the
-            # harness user and could traverse into the persistent .input_cache
-            # (which retains the withheld data even after the staged
-            # destinations are scrubbed). Disable the cache AND delete any
-            # pre-existing cache dir for this task (a docker/apptainer run of
-            # the same workspace may have populated it). Container modes keep
-            # the cache: it lives at <workspace_task_dir>/.input_cache, a
-            # sibling of the bind-mounted package dir, and the
-            # workspace_task_dir itself is never bind-mounted (verified: the
-            # three ephemeral tasks' pkg/task configs declare no data binds).
-            stager_cmd.append("--no-cache")
+        # container_runtime: local never reaches this point: the constructor
+        # rejects local + ephemeral_inputs outright (host-side agent code
+        # could read a later evaluation's staged blobs), and this method
+        # returns early for non-ephemeral tasks. Container modes keep the
+        # persistent .input_cache: it lives at
+        # <workspace_task_dir>/.input_cache, a sibling of the bind-mounted
+        # package dir, and the workspace_task_dir itself is never
+        # bind-mounted (verified: the three ephemeral tasks' pkg/task configs
+        # declare no data binds). The stager's --no-cache flag remains
+        # available as a standalone/defensive CLI option.
         staged: list[str] = []
         ok = False
         try:

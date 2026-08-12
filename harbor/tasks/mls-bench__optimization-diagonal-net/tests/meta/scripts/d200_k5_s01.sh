@@ -2,11 +2,15 @@
 # Evaluate on setting: d=200, k=5, sigma=0.1
 set -euo pipefail
 
+# Resolve the FIXED wrapper next to this script BEFORE any cd (robust to a
+# relative invocation path).
+FIXED_ENTRY="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/fixed_entry.py"
+
 cd /workspace
 
 # The harness re-stages this run's pre-generated input blobs before every
-# evaluation, so the runner treats them as ephemeral (deleted right after
-# loading, before any editable code runs).
+# evaluation, so they are treated as ephemeral (read+unlinked by the fixed
+# wrapper before any editable code runs).
 export MLSBENCH_EPHEMERAL_INPUTS=1
 
 OUT_DIR="${OUTPUT_DIR:-${SAVE_PATH:-/tmp/mlsbench_opt_diagonal_net}}"
@@ -16,7 +20,15 @@ if [[ "${MLS_BENCH_SMOKE:-0}" == "1" ]]; then
   EXTRA_ARGS+=(--smoke)
 fi
 
-python RAIN/opt_diagonal_net/custom_optimizer.py \
+# FIXED wrapper: preloads and unlinks this run's staged input blobs BEFORE
+# importing the editable module, so top-level statements in the editable
+# range never see them on disk.
+python "$FIXED_ENTRY" \
+  --module RAIN/opt_diagonal_net/custom_optimizer.py \
+  --inputs-glob "RAIN/opt_diagonal_net/_inputs/*.npz.b64" \
+  --inject-module fixed_benchmark \
+  --entry main \
+  -- \
   --seed "${SEED:-42}" \
   --label "${ENV:-d200_k5_s01}" \
   --output-dir "$OUT_DIR" \

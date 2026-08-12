@@ -38,16 +38,18 @@ stager also unlinks everything it installed so far before exiting non-zero
 (belt and braces); the caller must still treat a non-zero exit as fatal for
 the entry and scrub whatever the list contains.
 
-``--no-cache`` (used by the harness for ``container_runtime: local``) goes
-further than MLSBENCH_INPUT_CACHE=0: it also DELETES any pre-existing
-``.input_cache/<task>`` directory before staging. In local mode the
-agent-editable code runs directly on the host as the harness user and could
-traverse from its package dir into the persistent cache — which would keep
-the withheld data readable even after the staged destinations are scrubbed
-(a cache left behind by an earlier docker/apptainer run of the same
-workspace included). Container modes keep the cache: it lives at
-``<workspace_task_dir>/.input_cache``, a SIBLING of the bind-mounted package
-dir, and the workspace_task_dir itself is never bind-mounted.
+``--no-cache`` goes further than MLSBENCH_INPUT_CACHE=0: it also DELETES any
+pre-existing ``.input_cache/<task>`` directory before staging. It exists as a
+standalone/defensive CLI option for host-side runs of this stager: a
+persistent cache keeps the withheld data readable even after the staged
+destinations are scrubbed (including a cache left behind by an earlier
+docker/apptainer run of the same workspace). NOTE the harness itself no
+longer passes it — ``container_runtime: local`` is rejected outright for
+ephemeral-input tasks (host-side agent code could read a later evaluation's
+staged blobs; no cache policy can fix that). Container modes keep the cache:
+it lives at ``<workspace_task_dir>/.input_cache``, a SIBLING of the
+bind-mounted package dir, and the workspace_task_dir itself is never
+bind-mounted.
 
 Environment:
     ENV / SEED               selective materialization (read by mid_edit)
@@ -235,9 +237,9 @@ def restage(
     uses this to derive the backstop-scrub scope for recovered jobs whose
     blobs were staged by a previous process.
 
-    ``no_cache=True`` (local execution mode) disables the persistent cache
-    AND deletes any pre-existing ``.input_cache/<task>`` directory — in local
-    mode agent code runs on the host and could read it directly.
+    ``no_cache=True`` disables the persistent cache AND deletes any
+    pre-existing ``.input_cache/<task>`` directory — for host-side contexts
+    where a lingering cache would be readable outside the harness's control.
     """
     task_dir = tasks_dir / task_name
     mid_edit_file = task_dir / "edits" / "mid_edit.py"
@@ -250,7 +252,7 @@ def restage(
                 shutil.rmtree(stale_cache, ignore_errors=True)
                 print(
                     f"[input-stager] removed pre-existing cache for "
-                    f"{task_name} (local mode: cache disabled)"
+                    f"{task_name} (--no-cache: cache disabled)"
                 )
         if not mid_edit_file.is_file():
             print(f"[input-stager] no mid_edit for {task_name}; nothing to do")

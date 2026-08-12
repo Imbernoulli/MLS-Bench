@@ -118,6 +118,14 @@ def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
     )
 
 
+# Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
+# unlinked the staged input blobs and BEFORE the editable module was
+# imported: maps blob basename -> file content (base64 text). None when the
+# program is launched directly — load_problem then reads the on-disk blobs
+# (legacy flow).
+_PRELOADED_INPUTS: dict[str, str] | None = None
+
+
 def load_problem(
     dim: int,
     sparsity: int,
@@ -140,12 +148,15 @@ def load_problem(
     Returns:
         (X_train, y_train, X_test, y_test) as torch.Tensor (float64)
     """
-    path = os.path.join(
-        _inputs_dir(),
-        f"{_input_key(dim, sparsity, sigma, n_max_train, n_test, seed)}.npz.b64",
-    )
-    with open(path, "r") as f:
-        raw = base64.b64decode(f.read())
+    name = f"{_input_key(dim, sparsity, sigma, n_max_train, n_test, seed)}.npz.b64"
+    # Prefer the payload preloaded by the FIXED wrapper (which read and
+    # unlinked the blobs before any editable code could run); fall back to
+    # the on-disk blob when the program is launched directly.
+    payload = (_PRELOADED_INPUTS or {}).pop(name, None)
+    if payload is None:
+        with open(os.path.join(_inputs_dir(), name), "r") as f:
+            payload = f.read()
+    raw = base64.b64decode(payload)
     with np.load(io.BytesIO(raw)) as data:
         X_train_np = data["X_train"].astype(np.float64)
         y_train_np = data["y_train"].astype(np.float64)
@@ -477,6 +488,10 @@ def _coarse_to_fine_search(
             problem.n_test, seed,
         )
     _scrub_inputs(problem.dim, problem.sparsity, problem.sigma)
+    # Drop any remaining preloaded payloads: from here on the arrays live
+    # only in fixed-driver locals, exactly as in the direct-launch flow.
+    global _PRELOADED_INPUTS
+    _PRELOADED_INPUTS = None
     print("Datasets ready.", flush=True)
 
     # Editable hooks below are invoked only AFTER the input blobs are scrubbed.
