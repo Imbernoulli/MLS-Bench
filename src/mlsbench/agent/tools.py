@@ -2265,7 +2265,9 @@ class WorkspaceTools:
                 return container_cmd[:i] + ["bash", "-c", check_cmd]
         return container_cmd + ["bash", "-c", check_cmd]
 
-    def _restage_task_inputs(self, cmd_entry: dict, seed: int) -> list[str]:
+    def _restage_task_inputs(
+        self, cmd_entry: dict, seed: int, dry_run: bool = False
+    ) -> tuple[bool, list[str]]:
         """Re-materialize this run's pre-generated input blobs before a test.
 
         Tasks opt in via ``"ephemeral_inputs": true`` in config.json. Their
@@ -2293,6 +2295,11 @@ class WorkspaceTools:
         entry and the evaluation must be skipped). This is the host-side
         backstop scrub for evaluations that crash before their in-container
         scrub, and for stager crashes that leave partial installs behind.
+
+        With ``dry_run=True`` the stager installs NOTHING and only records the
+        workspace destinations the entry's blobs resolve to — used to derive
+        the backstop-scrub scope for a recovered SLURM job whose blobs were
+        staged by a previous harness process (no recorded list exists).
         """
         if not self.config_task.get("ephemeral_inputs"):
             return True, []
@@ -2322,6 +2329,8 @@ class WorkspaceTools:
             "--list-out",
             list_path,
         ]
+        if dry_run:
+            stager_cmd.append("--dry-run")
         staged: list[str] = []
         ok = False
         try:
@@ -3494,9 +3503,8 @@ class WorkspaceTools:
 
             # Submit all sub-jobs (or recover existing ones)
             submitted: list[tuple] = []
-            for sub_idx, sub_tasks in enumerate(sub_jobs):
-                suffix = f"_{sub_idx}" if len(sub_jobs) > 1 else ""
 
+            def _build_group_cmds(sub_tasks: list[dict]) -> list[dict]:
                 group_cmds = []
                 for t in sub_tasks:
                     cmd_dict = {
@@ -3519,18 +3527,46 @@ class WorkspaceTools:
                         if "budget_apptainer_cmd" in t:
                             cmd_dict["budget_apptainer_cmd"] = t["budget_apptainer_cmd"]
                     group_cmds.append(cmd_dict)
+                return group_cmds
 
-                # Ephemeral inputs: budget check FIRST (it executes agent
-                # code and must never see staged blobs), then stage this
-                # single job's blobs host-side immediately before submission
-                # (each sub_job holds exactly one (entry, seed) in ephemeral
-                # mode). A failed check/staging is fatal for the entry: it is
-                # recorded as a failure and never submitted.
+            # Recovery is resolved up-front for every sub-job: a recovered
+            # ephemeral job may already be RUNNING agent-editable code from a
+            # previous harness process — its blobs were staged at its ORIGINAL
+            # submission and scrubbed by its runner on load, so staging
+            # anything while it runs would hand running agent code the
+            # withheld data. In ephemeral mode all recovered jobs are
+            # therefore DRAINED FIRST (waited + backstop-scrubbed) before any
+            # fresh job is staged or submitted.
+            prepared = []
+            for sub_idx, sub_tasks in enumerate(sub_jobs):
+                suffix = f"_{sub_idx}" if len(sub_jobs) > 1 else ""
+                recovered_dir = None
+                if self._recover_pending_slurm:
+                    recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
+                prepared.append(
+                    (suffix, sub_tasks, _build_group_cmds(sub_tasks), recovered_dir)
+                )
+            if ephemeral:
+                ordered = (
+                    [p for p in prepared if p[3] is not None]
+                    + [p for p in prepared if p[3] is None]
+                )
+            else:
+                ordered = prepared
+
+            for suffix, sub_tasks, group_cmds, recovered_dir in ordered:
+                # Ephemeral inputs (fresh submission only): budget check FIRST
+                # (it executes agent code and must never see staged blobs),
+                # then stage this single job's blobs host-side immediately
+                # before submission (each sub_job holds exactly one
+                # (entry, seed) in ephemeral mode). A failed check/staging is
+                # fatal for the entry: it is recorded as a failure and never
+                # submitted. Recovered jobs stage NOTHING here.
                 staged_files: list[str] = []
                 if ephemeral:
                     _t0 = sub_tasks[0]
 
-                    def _record_entry_failure(message: str) -> None:
+                    def _record_entry_failure(message: str, _t0: dict = _t0) -> None:
                         self._current_test_had_failures = True
                         seed_feedback[_t0["seed"]].append(
                             f"### {_t0['orig_label']} "
@@ -3540,6 +3576,7 @@ class WorkspaceTools:
                             _t0["entry"].get("hidden", False)
                         )
 
+                if ephemeral and recovered_dir is None:
                     if budget_enabled:
                         budget_err = self._run_budget_check(
                             _t0["entry"], _t0["seed"]
@@ -3558,11 +3595,6 @@ class WorkspaceTools:
                             "(see harness console for the stager error)"
                         )
                         continue
-
-                # Recovery: reuse existing SLURM job instead of submitting
-                recovered_dir = None
-                if self._recover_pending_slurm:
-                    recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
 
                 if recovered_dir:
                     out_dir = recovered_dir
@@ -3586,7 +3618,21 @@ class WorkspaceTools:
                     # guarantees removal after a crash/timeout). While the job
                     # queues, no sibling evaluation of this task is running.
                     self.slurm_executor.wait_for_job(job_id)
-                    self._cleanup_staged_inputs(staged_files)
+                    if recovered_dir is not None:
+                        # We did not stage this recovered job (its blobs came
+                        # from its original submission), so there is no
+                        # recorded list. Enumerate the entry's blob paths with
+                        # a dry-run of the stager (installs nothing) and
+                        # backstop-scrub them — covers a recovered job that
+                        # crashed before its in-container scrub, which would
+                        # otherwise leave its secrets on disk during the
+                        # remaining serialized entries' evaluations.
+                        _ok, _names = self._restage_task_inputs(
+                            _t0["entry"], _t0["seed"], dry_run=True
+                        )
+                        self._cleanup_staged_inputs(_names)
+                    else:
+                        self._cleanup_staged_inputs(staged_files)
 
                 submitted.append((job_id, sub_tasks, group_cmds, out_dir))
 

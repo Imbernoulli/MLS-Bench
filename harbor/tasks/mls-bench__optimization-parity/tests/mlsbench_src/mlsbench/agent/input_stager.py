@@ -162,7 +162,19 @@ def _load_mid_edit_ops(mid_edit_file: Path, task_name: str) -> list[dict]:
 
 
 def _cache_key(task_dir: Path) -> str:
-    """Content hash over everything the generated blobs depend on."""
+    """Content hash over everything the generated blobs depend on.
+
+    Public side: mid_edit.py, config.json, scripts/*.sh. Private side: the
+    holdout provider the generation imports — mid_edit resolves it as
+    ``<project_root>/holdout/<task>/`` (project_root = tasks_dir.parent), and
+    every file in that directory (dgp.py plus any data files it loads, e.g.
+    nas's nb201_tables.json.gz) is folded into the key so a holdout change
+    invalidates cached blobs even when no public file changed. When holdout/
+    is absent (e.g. a public checkout with a self-contained mid_edit), the key
+    carries an explicit ``noholdout`` token instead of a hash — a later
+    holdout-bearing run therefore computes a different key and can never
+    trust a holdout-blind cache entry (the marker records the same token).
+    """
     h = hashlib.sha256()
     for p in [task_dir / "edits" / "mid_edit.py", task_dir / "config.json"]:
         if p.is_file():
@@ -173,9 +185,23 @@ def _cache_key(task_dir: Path) -> str:
         for p in sorted(scripts.glob("*.sh")):
             h.update(p.name.encode())
             h.update(p.read_bytes())
+    holdout_dir = task_dir.parent.parent / "holdout" / task_dir.name
+    if holdout_dir.is_dir():
+        hh = hashlib.sha256()
+        for p in sorted(holdout_dir.rglob("*")):
+            if not p.is_file():
+                continue
+            rel = p.relative_to(holdout_dir).as_posix()
+            if "__pycache__" in rel or rel.endswith(".pyc"):
+                continue
+            hh.update(rel.encode())
+            hh.update(p.read_bytes())
+        holdout_tag = f"h{hh.hexdigest()[:12]}"
+    else:
+        holdout_tag = "noholdout"
     env = re.sub(r"[^A-Za-z0-9._-]", "_", os.environ.get("ENV") or "ALL")
     seed = re.sub(r"[^A-Za-z0-9._-]", "_", os.environ.get("SEED") or "ALL")
-    return f"{h.hexdigest()[:16]}_{env}_s{seed}"
+    return f"{h.hexdigest()[:16]}_{holdout_tag}_{env}_s{seed}"
 
 
 def restage(
@@ -183,6 +209,7 @@ def restage(
     tasks_dir: Path,
     workspace_task_dir: Path,
     list_out: Path | None = None,
+    dry_run: bool = False,
 ) -> int:
     """Re-materialize the active run's non-.py mid_edit create-ops.
 
@@ -190,6 +217,11 @@ def restage(
     (atomic replace), and never touches .py files — the agent's editable
     program is left alone. On an internal failure everything installed so far
     is unlinked before returning non-zero.
+
+    ``dry_run=True`` installs NOTHING: it only records (via --list-out) the
+    workspace destinations the active run's blobs resolve to — the harness
+    uses this to derive the backstop-scrub scope for recovered jobs whose
+    blobs were staged by a previous process.
     """
     task_dir = tasks_dir / task_name
     mid_edit_file = task_dir / "edits" / "mid_edit.py"
@@ -211,16 +243,21 @@ def restage(
                 names = json.loads(marker.read_text())["files"]
             except (json.JSONDecodeError, KeyError, OSError):
                 names = None
-            if names is not None and all(
-                (cache_dir / "files" / n).is_file() for n in names
+            if names is not None and (
+                dry_run
+                or all((cache_dir / "files" / n).is_file() for n in names)
             ):
                 for n in names:
                     dst = _resolve_dst(workspace_task_dir, n)
+                    if dry_run:
+                        lw.add(dst)
+                        continue
                     _install_workspace_file(dst, lw, src=cache_dir / "files" / n)
                     installed.append(dst)
                 print(
-                    f"[input-stager] staged {len(names)} input file(s) for "
-                    f"{task_name} (cache hit: {cache_dir.name})"
+                    f"[input-stager] "
+                    f"{'enumerated' if dry_run else 'staged'} {len(names)} "
+                    f"input file(s) for {task_name} (cache hit: {cache_dir.name})"
                 )
                 return 0
             # fall through to regeneration
@@ -237,6 +274,10 @@ def restage(
             if not content.endswith("\n"):
                 content += "\n"  # mirror apply_pre_edit's normalization
             dst = _resolve_dst(workspace_task_dir, filename)
+            if dry_run:
+                lw.add(dst)
+                staged_names.append(filename)
+                continue
             if use_cache:
                 # The cache mirrors the op's full relative path under files/;
                 # cache writes are host-only (never agent-visible).
@@ -247,14 +288,16 @@ def restage(
                 _install_workspace_file(dst, lw, content=content)
             installed.append(dst)
             staged_names.append(filename)
-        if use_cache:
+        if use_cache and not dry_run:
             _atomic_write_text(
-                marker, json.dumps({"files": staged_names}, indent=1)
+                marker,
+                json.dumps({"files": staged_names, "key": cache_dir.name}, indent=1),
             )
         print(
-            f"[input-stager] staged {len(staged_names)} input file(s) for "
-            f"{task_name} "
-            f"(generated{'; cached as ' + cache_dir.name if use_cache else ''})"
+            f"[input-stager] "
+            f"{'enumerated' if dry_run else 'staged'} {len(staged_names)} "
+            f"input file(s) for {task_name} "
+            f"({'dry run' if dry_run else 'generated' + ('; cached as ' + cache_dir.name if use_cache else '')})"
         )
         return 0
     except BaseException:
@@ -288,15 +331,21 @@ def main(argv: list[str] | None = None) -> int:
             print("--list-out requires a path", file=sys.stderr)
             return 2
         del argv[i:i + 2]
+    dry_run = False
+    if "--dry-run" in argv:
+        dry_run = True
+        argv.remove("--dry-run")
     if len(argv) != 3:
         print(
             "usage: python -m mlsbench.agent.input_stager "
-            "<task_name> <tasks_dir> <workspace_task_dir> [--list-out FILE]",
+            "<task_name> <tasks_dir> <workspace_task_dir> "
+            "[--list-out FILE] [--dry-run]",
             file=sys.stderr,
         )
         return 2
     return restage(
-        argv[0], Path(argv[1]).resolve(), Path(argv[2]).resolve(), list_out
+        argv[0], Path(argv[1]).resolve(), Path(argv[2]).resolve(), list_out,
+        dry_run,
     )
 
 
