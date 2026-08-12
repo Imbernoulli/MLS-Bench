@@ -322,10 +322,10 @@ stay unchanged.
    259:     for secret_index in range(config.num_hidden_secrets):
    260:         labels[secret_index] = load_train_labels(config, seed, secret_index)
    261:     if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
-   262:         tag = _config_tag(config)
-   263:         inputs_dir = _inputs_dir()
-   264:         for secret_index in range(config.num_hidden_secrets):
-   265:             blob = os.path.join(inputs_dir, f"{tag}_seed{seed}_s{secret_index}.labels.b64")
+   262:         import glob as _glob
+   263:         tag = _config_tag(config)
+   264:         pattern = os.path.join(_inputs_dir(), f"{tag}_seed{seed}_s*.labels.b64")
+   265:         for blob in _glob.glob(pattern):
    266:             try:
    267:                 os.remove(blob)
    268:             except OSError:

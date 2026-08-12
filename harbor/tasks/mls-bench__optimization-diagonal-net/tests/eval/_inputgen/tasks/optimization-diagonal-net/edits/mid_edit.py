@@ -12,12 +12,17 @@ into the workspace as base64 text — the agent never sees the generator or
 w_star. Inputs are byte-identical to the originals, so honest results are
 unchanged.
 
-In the Harbor verifier this module is re-imported for every evaluation by
-``apply.py`` with ENV/SEED exported, so only the active run's blobs are
-materialized — and the runner deletes them after loading, before any editable
-code executes (MLSBENCH_EPHEMERAL_INPUTS=1 in the eval scripts). Natively (no
-ENV at workspace-setup time) every setting's blobs are materialized once and
-kept, so repeated tests in the same workspace keep working.
+This module is re-run for every evaluation with ENV/SEED exported — by
+``apply.py`` in the Harbor verifier and by the harness's host-side
+``mlsbench.agent.input_stager`` natively (config.json ``"ephemeral_inputs"``)
+— so only the active run's blobs are materialized, and the runner deletes
+them after loading, before any editable code executes
+(MLSBENCH_EPHEMERAL_INPUTS=1 in the eval scripts). At workspace-setup time
+(no ENV/SEED) NO blobs are staged — matching Harbor's agent-session
+_scaffold. Blobs staged at setup would linger unconsumed in the shared
+workspace, readable by editable code during other settings' evaluations;
+instead each evaluation's blobs exist only between its re-stage and its
+load-then-scrub.
 """
 
 import base64
@@ -131,12 +136,18 @@ _ALL_SCRIPTS = sorted((_TASK_DIR / "scripts").glob("*.sh"))
 _ENV = os.environ.get("ENV")
 _SEED = os.environ.get("SEED")
 if _ENV in {_s.stem for _s in _ALL_SCRIPTS} and _SEED is not None:
-    # Harbor eval-time materialization: just the active run's blobs.
+    # Eval-time materialization (Harbor apply.py / native input_stager):
+    # just the active run's blobs.
     _SCRIPTS = [_s for _s in _ALL_SCRIPTS if _s.stem == _ENV]
     _ACTIVE_MASTER_SEEDS = [int(_SEED)]
 else:
-    _SCRIPTS = _ALL_SCRIPTS
-    _ACTIVE_MASTER_SEEDS = [int(_m) for _m in _MASTER_SEEDS]
+    # Workspace setup (no ENV/SEED) or an unrecognized label: stage NO input
+    # blobs. Every evaluation re-materializes its own and scrubs them after
+    # loading, so anything staged here would only linger unconsumed in the
+    # shared workspace — readable by editable code during OTHER settings'
+    # evaluations (Harbor's agent-session _scaffold ships no blobs either).
+    _SCRIPTS = []
+    _ACTIVE_MASTER_SEEDS = []
 
 _seen = set()
 for _script in _SCRIPTS:

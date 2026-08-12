@@ -24,6 +24,18 @@ import tempfile
 TARGET = "/workspace/RAIN/opt_diagonal_net/fixed_benchmark.py"
 
 REPLACEMENTS = [
+    # stdlib import needed by the glob-based whole-setting scrub.
+    (
+        '''import argparse
+import base64
+import io
+''',
+        '''import argparse
+import base64
+import glob
+import io
+''',
+    ),
     # ProblemConfig: carry the setting tag.
     (
         '''    """Immutable descriptor for a sparse-recovery problem setting."""
@@ -89,13 +101,15 @@ def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
     been loaded into memory, BEFORE any editable hook runs.
 
     The editable optimizer''',
-        '''def _scrub_inputs(dim, sparsity, sigma, n_max_train, n_test, seeds) -> None:
-    """Delete the pre-generated input blobs from the workspace once they have
-    been loaded into memory, BEFORE any editable hook runs — but only when the
-    harness marks the materialized inputs as ephemeral
-    (MLSBENCH_EPHEMERAL_INPUTS=1, i.e. re-created for every evaluation).
-    Natively (no ENV set) the blobs are staged once per workspace and must
-    persist so later tests can load them again.
+        '''def _scrub_inputs(dim, sparsity, sigma) -> None:
+    """Delete EVERY pre-generated input blob for this (dim, sparsity, sigma)
+    setting once the run's datasets are in memory, BEFORE any editable hook
+    runs — but only when the harness marks the materialized inputs as
+    ephemeral (MLSBENCH_EPHEMERAL_INPUTS=1, i.e. re-created for every
+    evaluation). ALL n_max / n_test / seed variants of the setting are removed
+    (e.g. the --smoke grid's smaller companion files), not just the variant
+    this run loaded: a same-setting variant left on disk would still expose
+    held-out targets. Without the flag (no harness staging) blobs persist.
 
     The editable optimizer''',
     ),
@@ -117,12 +131,11 @@ def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
     """
     if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") != "1":
         return
-    inputs_dir = _inputs_dir()
-    for seed in seeds:
-        blob = os.path.join(
-            inputs_dir,
-            f"{_input_key(dim, sparsity, sigma, n_max_train, n_test, seed)}.npz.b64",
-        )
+    pattern = os.path.join(
+        _inputs_dir(),
+        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}_*.npz.b64",
+    )
+    for blob in glob.glob(pattern):
         try:
             os.remove(blob)
         except OSError:
@@ -151,10 +164,7 @@ def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
             problem.dim, problem.sparsity, problem.sigma, n_max_train,
             problem.n_test, seed,
         )
-    _scrub_inputs(
-        problem.dim, problem.sparsity, problem.sigma, n_max_train,
-        problem.n_test, seeds,
-    )
+    _scrub_inputs(problem.dim, problem.sparsity, problem.sigma)
 ''',
     ),
     (

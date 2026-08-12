@@ -1,6 +1,7 @@
 {
   "allow_create": false,
   "rigorous_codebase": true,
+  "ephemeral_inputs": true,
   "test_cmds": [
     {
       "cmd": "scripts/eval.sh",

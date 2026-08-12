@@ -2265,6 +2265,67 @@ class WorkspaceTools:
                 return container_cmd[:i] + ["bash", "-c", check_cmd]
         return container_cmd + ["bash", "-c", check_cmd]
 
+    def _restage_task_inputs(self, cmd_entry: dict, seed: int) -> None:
+        """Re-materialize this run's pre-generated input blobs before a test.
+
+        Tasks opt in via ``"ephemeral_inputs": true`` in config.json. Their
+        eval scripts export MLSBENCH_EPHEMERAL_INPUTS=1, so the FIXED runner
+        deletes the staged blobs right after loading them into memory — BEFORE
+        any agent-editable hook executes — keeping the withheld data (held-out
+        targets / hidden labels / lookup tables) unreadable from editable
+        code. Each evaluation therefore consumes its inputs, and they must be
+        re-staged before every test command (the Harbor verifier does the same
+        via tests/eval/_inputgen/apply.py).
+
+        Runs host-side in a subprocess with ENV/SEED set: mid_edit needs the
+        non-published ``holdout/<task>/`` generator — the same precondition as
+        workspace setup — and, with ENV/SEED set, materializes only the active
+        run's blobs. Failures are logged rather than fatal; a missing input
+        then surfaces in the evaluation output itself.
+        """
+        if not self.config_task.get("ephemeral_inputs"):
+            return
+        label = str(cmd_entry.get("label", "") or "")
+        run_env = os.environ.copy()
+        if label:
+            run_env["ENV"] = label
+        run_env["SEED"] = str(seed)
+        import mlsbench
+
+        src_root = str(Path(mlsbench.__file__).resolve().parent.parent)
+        existing = run_env.get("PYTHONPATH")
+        run_env["PYTHONPATH"] = (
+            src_root + os.pathsep + existing if existing else src_root
+        )
+        stager_cmd = [
+            sys.executable,
+            "-m",
+            "mlsbench.agent.input_stager",
+            self.task_name,
+            str(self.project_root / "tasks"),
+            str(self.workspace_task_dir),
+        ]
+        try:
+            result = subprocess.run(
+                stager_cmd,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+                env=run_env,
+            )
+            if result.returncode != 0:
+                tail = ((result.stdout or "") + (result.stderr or ""))[-1500:]
+                print(
+                    f"[input-stager] WARNING: re-staging failed for "
+                    f"{label or cmd_entry.get('cmd', '?')} seed {seed} "
+                    f"(rc={result.returncode}):\n{tail}"
+                )
+        except Exception as exc:
+            print(
+                f"[input-stager] WARNING: re-staging error for "
+                f"{label or cmd_entry.get('cmd', '?')} seed {seed}: {exc}"
+            )
+
     def _run_budget_check(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> str | None:
         """Run budget_check.py before training. Returns error msg or None.
 
@@ -2594,6 +2655,8 @@ class WorkspaceTools:
             for idx, entry in enumerate(cmd_entries):
                 label = entry.get("label", "test")
                 cmd = entry["cmd"]
+                # Re-stage ephemeral input blobs (consumed by the previous evaluation)
+                self._restage_task_inputs(entry, seed)
                 entry_gpu = session_devices[idx] if idx < len(session_devices) else None
                 exec_env_args = self._docker_exec_env_args(seed, label, gpu_devices=entry_gpu, env=entry.get("env"))
 
@@ -2807,6 +2870,9 @@ class WorkspaceTools:
         """Run a single test_cmd entry and return (feedback_str, metrics_dict, elapsed_sec)."""
         label = cmd_entry.get("label", "test")
         cmd = cmd_entry["cmd"]
+
+        # Re-stage ephemeral input blobs (consumed by the previous evaluation)
+        self._restage_task_inputs(cmd_entry, seed)
 
         # Run budget check before training (fail fast)
         budget_err = self._run_budget_check(cmd_entry, seed, gpu_devices=gpu_devices)
@@ -3272,6 +3338,10 @@ class WorkspaceTools:
                     pkg_cfg = self._load_pkg_config(pkg_name)
                     entry_use_cuda = self._effective_use_cuda(pkg_cfg)
                 for seed in seeds:
+                    # Re-stage ephemeral input blobs right before this group's
+                    # submission (each evaluation consumes — deletes — its own
+                    # per-(label, seed) blob set after loading it).
+                    self._restage_task_inputs(entry, seed)
                     task_info = {
                         "entry": entry,
                         "seed": seed,
@@ -3375,6 +3445,10 @@ class WorkspaceTools:
                     resubmit_count += 1
                     print(f"[slurm] Job {job_id} was CANCELLED externally — "
                           f"resubmitting (attempt {resubmit_count}/{max_resubmit})")
+                    # The cancelled attempt may already have consumed its
+                    # ephemeral input blobs — re-stage before resubmitting.
+                    for _t in sub_tasks:
+                        self._restage_task_inputs(_t["entry"], _t["seed"])
                     job_name = f"mls-{self.task_name}-g{group_key}"
                     job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
                     status = self.slurm_executor.wait_for_job(job_id)

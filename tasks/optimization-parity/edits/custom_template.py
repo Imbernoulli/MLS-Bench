@@ -259,10 +259,10 @@ def _load_all_train_labels(config: TaskConfig, seed: int) -> dict[int, torch.Ten
     for secret_index in range(config.num_hidden_secrets):
         labels[secret_index] = load_train_labels(config, seed, secret_index)
     if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
+        import glob as _glob
         tag = _config_tag(config)
-        inputs_dir = _inputs_dir()
-        for secret_index in range(config.num_hidden_secrets):
-            blob = os.path.join(inputs_dir, f"{tag}_seed{seed}_s{secret_index}.labels.b64")
+        pattern = os.path.join(_inputs_dir(), f"{tag}_seed{seed}_s*.labels.b64")
+        for blob in _glob.glob(pattern):
             try:
                 os.remove(blob)
             except OSError:
