@@ -34,7 +34,7 @@ else
     NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
 fi
 if [ "$NGPU" -gt 1 ]; then
-    torchrun --nproc_per_node="$NGPU" --master_port=29500 custom_train.py
+    torchrun --nproc_per_node="$NGPU" --master_port=$((29500 + ($(printf "%s" "${ENV:-x}-${SEED:-42}" | cksum | cut -d' ' -f1) % 1000))) custom_train.py
 else
     python -u custom_train.py
 fi
