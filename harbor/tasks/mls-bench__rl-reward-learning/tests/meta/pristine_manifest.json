@@ -29,7 +29,7 @@
   "imitation/ci/check_typeignore.py": "e64e7bcb5e7153704082cb9e10cf2bd0f2953cec795dfdf01330da9bcca48683",
   "imitation/ci/clean_notebooks.py": "56e193cf15ee7a6bdd0cb84a0957e1b443813a0202df5b194240707e7ccb0268",
   "imitation/ci/xorg.conf": "dc864ae227bcbec9716789b71e76d7253f7277767a13dd9f35508ed9762ddd40",
-  "imitation/custom_irl.py": "4711e22a0255348e0556343053f2a759c8b0f686ab2d5ea450f36487522b7eae",
+  "imitation/custom_irl.py": "595b4765c9a55c1b3545066ce60dd8a16c374190a4c00455af49f66a20379f54",
   "imitation/docs/.gitignore": "4734de29c6786d2e3d36497792e903509c285f9365a38ffba7aa8e498733cf1a",
   "imitation/docs/Makefile": "f95d75eaad8f6fd9c2e458381409fd484ee0543bea74ea5d76ca4cbaac42237e",
   "imitation/docs/_static/css/custom.css": "e4c7547a0005707eb44fd0b5131b832f3dd0b7313c4648567ff623126d2ce0bc",

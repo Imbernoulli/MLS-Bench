@@ -65,14 +65,14 @@ def make_env(env_id, seed, idx=0):
 # =====================================================================
 # FIXED: Expert demonstration generation & loading
 # =====================================================================
-def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=25000):
-    """Train PPO expert and collect demonstrations on GPU."""
+def _generate_expert_demos_impl(demo_path, env_id, gen_seed, total_timesteps=2_000_000, n_demos=25000):
+    """Train the PPO expert under ``gen_seed`` and collect demonstrations."""
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
     from stable_baselines3.common.evaluation import evaluate_policy as sb3_eval
 
     os.makedirs(demo_path, exist_ok=True)
-    print(f"Training expert for {env_id} ({total_timesteps} steps)...", flush=True)
+    print(f"Training expert for {env_id} ({total_timesteps} steps, seed {gen_seed})...", flush=True)
 
     train_env = SubprocVecEnv([lambda eid=env_id, i=i: gym.make(eid) for i in range(4)])
     sb3_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -80,15 +80,15 @@ def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=
                 n_steps=2048, batch_size=64, n_epochs=10,
                 learning_rate=3e-4, gamma=0.99, gae_lambda=0.95,
                 clip_range=0.2, ent_coef=0.0, vf_coef=0.5,
-                max_grad_norm=0.5, device=sb3_device)
+                max_grad_norm=0.5, device=sb3_device, seed=gen_seed)
     model.learn(total_timesteps=total_timesteps)
     train_env.close()
-
     eval_env = DummyVecEnv([lambda eid=env_id: gym.make(eid)])
+    if hasattr(eval_env, "seed"):
+        eval_env.seed(gen_seed)
     mean_reward, std_reward = sb3_eval(model, eval_env, n_eval_episodes=20)
     print(f"  Expert {env_id}: {mean_reward:.1f} +/- {std_reward:.1f}", flush=True)
     _atomic_save_model(model, demo_path, env_id)
-
     all_obs, all_acts, all_next_obs, all_dones = [], [], [], []
     obs = eval_env.reset()
     for _ in range(n_demos):
@@ -490,6 +490,50 @@ def _locked_demo_load(demo_path, env_id, path):
                 return _read_demo_arrays(path)
         finally:
             fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def _save_rng_states():
+    """Snapshot the global RNG states (python, numpy, torch, torch.cuda)."""
+    states = {
+        "random": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        states["cuda"] = torch.cuda.get_rng_state_all()
+    return states
+
+
+def _restore_rng_states(states):
+    random.setstate(states["random"])
+    np.random.set_state(states["numpy"])
+    torch.set_rng_state(states["torch"])
+    if "cuda" in states:
+        torch.cuda.set_rng_state_all(states["cuda"])
+
+
+def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=25000):
+    """Deterministic expert generation, independent of the caller's seed.
+
+    The expert (and thus the shared demo cache) must not depend on which
+    concurrent run happens to win the generation lock, so training runs
+    under a FIXED seed derived from ``env_id`` alone. The caller's RNG
+    states are saved first and restored afterwards, so each run's own
+    per-seed randomness is unaffected by whether it generated or loaded.
+    """
+    import zlib
+
+    gen_seed = zlib.crc32(env_id.encode("utf-8")) % (2 ** 31)
+    saved = _save_rng_states()
+    try:
+        random.seed(gen_seed)
+        np.random.seed(gen_seed)
+        torch.manual_seed(gen_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(gen_seed)
+        _generate_expert_demos_impl(demo_path, env_id, gen_seed, total_timesteps, n_demos)
+    finally:
+        _restore_rng_states(saved)
 
 
 # =====================================================================
