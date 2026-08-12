@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 import time as _time
+import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -426,6 +427,14 @@ class WorkspaceTools:
             sanitized = re.sub(r'[/: ]', '_', model_name)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.exp_name = f"{sanitized}_{ts}" if sanitized else ts
+
+        # Per-run token embedded in SLURM job NAMES so name-based cancellation
+        # (cancel_job_by_name on an id-less uncertain submission) can only ever
+        # target THIS run's own job — never a co-located agent/baseline or a
+        # parallel experiment that happens to share (task, group). exp_name is
+        # NOT reliably unique (baselines pass a bare exp_name with no
+        # timestamp), so we mint an explicit random token (R11-2).
+        self._run_token = uuid.uuid4().hex[:8]
 
         # Job scheduler executor (None = direct execution)
         self._recover_pending_slurm = False  # set by resume to recover orphaned SLURM jobs
@@ -3474,21 +3483,30 @@ class WorkspaceTools:
             job_id = (candidate / "job_id.txt").read_text().strip()
         except OSError:
             return "indeterminate"
-        from mlsbench.agent.slurm import _run_slurm_query
+        from mlsbench.agent.slurm import (
+            _is_terminal_slurm_state,
+            _normalize_slurm_state,
+            _run_slurm_query,
+        )
         sq = _run_slurm_query(["squeue", "-j", job_id, "--noheader", "-o", "%T"])
         if sq.returncode == 0:
             # squeue SUCCEEDED — authoritative for active jobs.
             if sq.stdout.strip():
-                state = sq.stdout.strip().split()[0].rstrip("+")
-                if state in ("PENDING", "RUNNING"):
+                # A job present in squeue with ANY non-terminal state
+                # (PENDING, RUNNING, CONFIGURING, COMPLETING, SUSPENDED,
+                # RESIZING, REQUEUED, unknown, ...) is STILL LIVE — it must be
+                # drained, never treated as absent (R11-3). Only a terminal
+                # state falls through to sacct.
+                state = sq.stdout.strip().splitlines()[0]
+                if not _is_terminal_slurm_state(state):
                     return "recoverable"
-            # Not active per squeue (empty or terminal). Job is NOT running,
-            # so staging is safe regardless of sacct — decide recoverable
-            # (COMPLETED, collect its output) vs not_recoverable.
+            # Not live per squeue (empty or terminal). Staging is safe;
+            # decide recoverable (COMPLETED — collect its output) vs
+            # not_recoverable.
             sa = _run_slurm_query(
                 ["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
             if sa.returncode == 0 and sa.stdout.strip():
-                st = sa.stdout.strip().splitlines()[0].strip().split()[0].rstrip("+")
+                st = _normalize_slurm_state(sa.stdout.strip().splitlines()[0])
                 if st == "COMPLETED":
                     return "recoverable"
             return "not_recoverable"
@@ -3496,11 +3514,11 @@ class WorkspaceTools:
         sa = _run_slurm_query(
             ["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
         if sa.returncode == 0 and sa.stdout.strip():
-            st = sa.stdout.strip().splitlines()[0].strip().split()[0].rstrip("+")
-            if st == "COMPLETED":
-                return "recoverable"
-            if st in ("PENDING", "RUNNING"):
-                return "recoverable"      # confirmed alive — drain it
+            raw = sa.stdout.strip().splitlines()[0]
+            if not _is_terminal_slurm_state(raw):
+                return "recoverable"      # sacct shows a LIVE (non-terminal) state — drain it
+            if _normalize_slurm_state(raw) == "COMPLETED":
+                return "recoverable"      # done, output collectable
             return "not_recoverable"      # confirmed terminal-other
         # Both squeue and sacct failed to resolve — liveness unknown.
         return "indeterminate"
@@ -3991,7 +4009,7 @@ class WorkspaceTools:
                             / timestamp
                             / f"group_{group_key}{suffix}"
                         )
-                        job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
+                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}{suffix}"
                         job_id = self.slurm_executor.submit_group(
                             group_cmds, job_name, out_dir
                         )
@@ -4072,7 +4090,7 @@ class WorkspaceTools:
                             / timestamp
                             / f"group_{group_key}{suffix}"
                         )
-                        job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
+                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}{suffix}"
                         job_id = self.slurm_executor.submit_group(
                             group_cmds, job_name, out_dir
                         )
@@ -4124,7 +4142,7 @@ class WorkspaceTools:
                         print("[slurm] resubmit aborted: input re-staging failed")
                         break
                     try:
-                        job_name = f"mls-{self.task_name}-g{group_key}"
+                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}"
                         try:
                             job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
                         except SubmitUncertainError as exc:

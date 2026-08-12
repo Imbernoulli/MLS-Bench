@@ -36,9 +36,15 @@ serialized, where exact scoping is simply a further tightening.
 
 Back-compat: when the module tree predates the injection protocol (the
 loader has no ``_PRELOADED_INPUTS`` marker, or the entry function is
-missing), the wrapper leaves the blobs on disk and executes the module
-unchanged as ``__main__`` — byte-for-byte the legacy flow, whose fixed
-runner loads and scrubs in-process.
+missing), the behavior depends on the task type. On a NON-ephemeral task
+(nothing is withheld) the wrapper leaves the blobs on disk and executes the
+module unchanged as ``__main__`` — byte-for-byte the legacy flow, whose
+fixed runner loads and scrubs in-process. On an EPHEMERAL task there is NO
+on-disk fallback: the blobs were already read into memory and unlinked
+above, and the wrapper REFUSES to run the module (exit 5). Every template
+and scaffold carries the marker since the protocol shipped, so a
+marker-less ephemeral module means a stale or tampered workspace, and the
+legacy on-disk flow is exactly the path that exposed the withheld data.
 
 Accepted residual (documented, not solved here): once the editable module
 is imported, agent code shares the interpreter with the fixed runner and
@@ -105,48 +111,25 @@ def main() -> int:
     module_name = os.path.splitext(os.path.basename(module_path))[0]
     inject_name = args.inject_module or module_name
 
-    # ── Protocol detection (BEFORE anything is unlinked) ────────────────
-    # The injection protocol requires (a) the FIXED loader module to consult
-    # _PRELOADED_INPUTS and (b) the editable module to expose the entry
-    # function. Both live in guard-protected fixed regions, so a plain text
-    # scan is authoritative; a stale workspace fails it and gets the legacy
-    # flow (blobs left on disk, module run as __main__, in-process scrub).
     module_text = _read_text(module_path)
     if module_text is None:
         print(f"[fixed-entry] ERROR: cannot read module {module_path}",
               file=sys.stderr)
         return 2
-    if inject_name == module_name:
-        inject_text = module_text
-    else:
-        inject_text = _read_text(os.path.join(module_dir, inject_name + ".py"))
-    protocol_ok = (
-        inject_text is not None
-        and "_PRELOADED_INPUTS" in inject_text
-        and f"def {args.entry}(" in module_text
-    )
 
     sys.argv = [module_path] + list(module_argv)
     if module_dir and module_dir not in sys.path:
         sys.path.insert(0, module_dir)
 
-    if not protocol_ok:
-        print(
-            "[fixed-entry] legacy module (no _PRELOADED_INPUTS protocol); "
-            "running it directly on the staged inputs",
-            flush=True,
-        )
-        runpy.run_path(module_path, run_name="__main__")
-        return 0
-
-    # ── 1+2: preload the staged blobs, then unlink them ────────────────
-    # BOTH steps are FATAL on failure. If a read fails we cannot run the
-    # eval; if an unlink fails the secret would still be on disk when the
-    # editable module is imported — that breaks the isolation contract, so
-    # we must NOT proceed to import. Either way: exit non-zero, do not
-    # import the editable module. (Blobs live in the writable package dir,
-    # not the read-only task mount, so a healthy run always CAN delete
-    # them; a failure here means a real filesystem/permission fault.)
+    # ── 1+2: preload the staged blobs, then unlink them — BEFORE the
+    # protocol decision and BEFORE any module code runs. Doing the unlink
+    # first means that even a marker-less (stale/tampered) module never sees
+    # the withheld data on disk. BOTH steps are FATAL on failure: a read
+    # failure means we cannot run the eval; an unlink failure means the
+    # secret would remain readable, which breaks the isolation contract. In
+    # either case: exit non-zero, run NO module code. (Blobs live in the
+    # writable package dir, not the read-only task mount, so a healthy run
+    # always CAN delete them; a failure here is a real filesystem fault.)
     preloaded: dict[str, str] = {}
     ephemeral = os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1"
     for pattern in args.inputs_glob:
@@ -167,15 +150,10 @@ def main() -> int:
                 try:
                     os.remove(path)
                 except OSError as exc:
-                    # The secret is still on disk and would be readable by
-                    # the editable module we are about to import. Abort
-                    # BEFORE importing — never trade the isolation contract
-                    # for a completed run.
                     print(
                         f"[fixed-entry] FATAL: could not unlink staged input "
                         f"{path}: {exc} — the withheld data would remain "
-                        "readable by editable code; refusing to import the "
-                        "module",
+                        "readable by editable code; refusing to run",
                         file=sys.stderr, flush=True,
                     )
                     return 4
@@ -183,9 +161,53 @@ def main() -> int:
         f"[fixed-entry] preloaded {len(preloaded)} input blob(s)"
         + (" and unlinked them" if ephemeral else " (kept on disk: not "
            "marked ephemeral)")
-        + " before importing the editable module",
+        + " before deciding how to run the module",
         flush=True,
     )
+
+    # ── Protocol detection (AFTER the ephemeral unlink) ─────────────────
+    # The injection protocol requires (a) the FIXED loader module to consult
+    # _PRELOADED_INPUTS and (b) the editable module to expose the entry
+    # function. Both live in guard-protected fixed regions, so a plain text
+    # scan is authoritative. Round 7 shipped the marker into every
+    # template + scaffold in lockstep, so a marker-LESS module in an
+    # EPHEMERAL task means a stale or tampered workspace.
+    if inject_name == module_name:
+        inject_text = module_text
+    else:
+        inject_text = _read_text(os.path.join(module_dir, inject_name + ".py"))
+    protocol_ok = (
+        inject_text is not None
+        and "_PRELOADED_INPUTS" in inject_text
+        and f"def {args.entry}(" in module_text
+    )
+
+    if not protocol_ok:
+        if ephemeral:
+            # REFUSE. The blobs were already read into memory and unlinked
+            # above, so injection COULD still work if the module were
+            # compliant — but it is not, and running a marker-less module
+            # (as __main__, on-disk) is exactly the round-7 fallback that
+            # exposed secrets. For an ephemeral task a marker-less module is
+            # a stale/tampered workspace: fail, do not execute it.
+            print(
+                "[fixed-entry] FATAL: module lacks the _PRELOADED_INPUTS "
+                "injection protocol but the task is ephemeral (withheld "
+                "inputs). This workspace predates the protocol or was "
+                "tampered with — refusing to run it. Recreate / re-render "
+                "the workspace from the current template.",
+                file=sys.stderr, flush=True,
+            )
+            return 5
+        # Non-ephemeral: nothing is withheld, so the legacy on-disk flow is
+        # safe. (The blobs above were kept on disk for exactly this path.)
+        print(
+            "[fixed-entry] legacy module (no _PRELOADED_INPUTS protocol) on a "
+            "non-ephemeral task; running it directly as __main__",
+            flush=True,
+        )
+        runpy.run_path(module_path, run_name="__main__")
+        return 0
 
     # ── 3: import the editable module (top-level agent code runs NOW, on ──
     # ── an already-empty inputs dir; _PRELOADED_INPUTS is still None)    ──

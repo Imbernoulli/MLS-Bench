@@ -58,6 +58,44 @@ def _resolve_slurm_command(name: str) -> str:
     return shutil.which(name) or name
 
 
+# Canonical SLURM TERMINAL states. A job is "done" iff its state normalizes
+# into this set; EVERYTHING ELSE — PENDING, RUNNING, CONFIGURING, COMPLETING,
+# SUSPENDED, RESIZING, REQUEUED, STAGE_OUT, SIGNALING, and any unknown/future
+# state string — is treated as LIVE (may still be running agent code). We
+# enumerate terminal states explicitly and invert, so an unrecognized state
+# is conservatively live rather than silently "absent" (R11-3).
+TERMINAL_SLURM_STATES = frozenset({
+    "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "OUT_OF_MEMORY",
+    "NODE_FAIL", "BOOT_FAIL", "DEADLINE", "PREEMPTED", "REVOKED",
+    "SPECIAL_EXIT",
+})
+
+
+def _normalize_slurm_state(raw: str) -> str:
+    """Normalize a squeue/sacct state token: take the first word and strip a
+    trailing ``+`` (e.g. ``"CANCELLED by 224356"`` / ``"CANCELLED+"`` ->
+    ``"CANCELLED"``)."""
+    raw = (raw or "").strip()
+    if not raw:
+        return ""
+    return raw.split()[0].rstrip("+")
+
+
+def _is_terminal_slurm_state(raw: str) -> bool:
+    """True iff the (normalized) state is a known TERMINAL state. Unknown or
+    non-terminal states return False -> the caller treats the job as LIVE."""
+    return _normalize_slurm_state(raw) in TERMINAL_SLURM_STATES
+
+
+def _current_user() -> str:
+    """Best-effort current username for scoping scancel/squeue --user."""
+    import getpass
+    try:
+        return getpass.getuser()
+    except Exception:
+        return os.environ.get("USER") or os.environ.get("LOGNAME") or ""
+
+
 def _run_slurm_query(cmd: list[str], timeout: int = 30) -> subprocess.CompletedProcess:
     """Run a squeue/sacct command while holding a global file lock.
 
@@ -513,7 +551,6 @@ class SlurmExecutor:
         All squeue/sacct calls go through _run_slurm_query() which holds a
         global file lock — see module docstring for rationale.
         """
-        terminal_states = {"COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL", "OUT_OF_MEMORY"}
         start = time.time()
         consecutive_query_failures = 0
         seen_in_squeue = False
@@ -540,8 +577,8 @@ class SlurmExecutor:
                     )
                     if sacct.returncode == 0 and sacct.stdout.strip():
                         for state in sacct.stdout.strip().split("\n"):
-                            norm = state.strip().split()[0].rstrip("+")
-                            if norm in terminal_states:
+                            if _is_terminal_slurm_state(state):
+                                norm = _normalize_slurm_state(state)
                                 print(f"[slurm] Job {job_id} finished (via sacct fallback): {state.strip()}")
                                 return norm
                     # DISTINCT status: the queries kept failing, so we never
@@ -563,11 +600,11 @@ class SlurmExecutor:
 
             if sq.stdout.strip():
                 seen_in_squeue = True
-                # Job is still in the queue — keep waiting
+                # Job is still in the queue. Any NON-terminal state (PENDING,
+                # RUNNING, CONFIGURING, COMPLETING, SUSPENDED, ...) means keep
+                # waiting; only a terminal state falls through to sacct.
                 state = sq.stdout.strip().split("\n")[0].strip()
-                # Normalize: "CANCELLED+" -> "CANCELLED", "CANCELLED by ..." -> "CANCELLED"
-                norm_state = state.split()[0].rstrip("+")
-                if norm_state not in terminal_states:
+                if not _is_terminal_slurm_state(state):
                     if timeout and (time.time() - start) > timeout:
                         print(f"[slurm] Job {job_id} timed out after {timeout}s")
                         return "TIMEOUT"
@@ -585,11 +622,9 @@ class SlurmExecutor:
             if result.returncode == 0 and result.stdout.strip():
                 states = [s.strip() for s in result.stdout.strip().split("\n") if s.strip()]
                 for state in states:
-                    # Normalize: "CANCELLED by 224356" -> "CANCELLED", "CANCELLED+" -> "CANCELLED"
-                    norm_state = state.split()[0].rstrip("+")
-                    if norm_state in terminal_states:
+                    if _is_terminal_slurm_state(state):
                         print(f"[slurm] Job {job_id} finished: {state}")
-                        return norm_state
+                        return _normalize_slurm_state(state)
 
             # sacct may not have data (e.g. accounting disabled).
             # If job is gone from squeue and sacct has no info, treat as COMPLETED
@@ -607,10 +642,9 @@ class SlurmExecutor:
                 )
                 if result2.returncode == 0 and result2.stdout.strip():
                     for state in result2.stdout.strip().split("\n"):
-                        norm_state = state.strip().split()[0].rstrip("+")
-                        if norm_state in terminal_states:
+                        if _is_terminal_slurm_state(state):
                             print(f"[slurm] Job {job_id} finished: {state.strip()}")
-                            return norm_state
+                            return _normalize_slurm_state(state)
                 # sacct still empty — job vanished, assume completed
                 print(f"[slurm] Job {job_id} left squeue (sacct unavailable), assuming COMPLETED")
                 return "COMPLETED"
@@ -647,23 +681,22 @@ class SlurmExecutor:
             return False
 
     def cancel_job_by_name(self, job_name: str) -> bool:
-        """Best-effort ``scancel --name`` for an accepted job with no known ID
-        (SubmitUncertainError with job_id=None).
+        """Best-effort ``scancel --name --user $USER`` for an accepted job with
+        no known ID (SubmitUncertainError with job_id=None).
 
-        Job names (``mls-<task>-g<group><suffix>``) are unique within one
-        harness run but NOT across runs: an older, dead harness process may
-        have left a same-named job. Cancelling those too is acceptable — in
-        the ephemeral flow every recoverable same-task job was already
-        drained to termination before any submission, so a same-named
-        survivor is an orphan we want stopped anyway. Only ever used for
-        ephemeral tasks.
+        Scoped to the current user so it cannot touch another user's job. The
+        job name is made unique PER RUN by the caller (WorkspaceTools embeds a
+        random run token, see _run_token), so ``--name`` targets only THIS
+        run's just-submitted job — never a co-located agent/baseline or a
+        parallel experiment. Only ever used for ephemeral tasks.
         """
+        cmd = [_resolve_slurm_command("scancel"), "--name", job_name]
+        user = _current_user()
+        if user:
+            cmd += ["--user", user]
         try:
             result = subprocess.run(
-                [_resolve_slurm_command("scancel"), "--name", job_name],
-                capture_output=True,
-                text=True,
-                timeout=120,
+                cmd, capture_output=True, text=True, timeout=120,
             )
             if result.returncode != 0:
                 print(
@@ -679,32 +712,29 @@ class SlurmExecutor:
     def confirm_no_job_named(
         self, job_name: str, attempts: int = 6, poll_interval: int = 10
     ) -> bool:
-        """CONFIRM no job with this name is pending/running.
+        """CONFIRM no live job with this name (scoped to the current user).
 
         True only when a SUCCESSFUL squeue query returns no non-terminal job
         with the name; failing queries prove nothing and keep probing; False
-        after ``attempts`` probes without confirmation.
+        after ``attempts`` probes without confirmation. A state is "live"
+        unless it is a known TERMINAL state (so CONFIGURING/COMPLETING/
+        SUSPENDED/unknown all keep us probing — R11-3).
         """
-        terminal_states = {
-            "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL",
-            "OUT_OF_MEMORY",
-        }
+        base = ["squeue", "--name", job_name, "--noheader", "-o", "%T"]
+        user = _current_user()
+        if user:
+            base += ["--user", user]
         for attempt in range(attempts):
             if attempt:
                 time.sleep(poll_interval)
-            sq = _run_slurm_query(
-                ["squeue", "--name", job_name, "--noheader", "-o", "%T"],
-            )
+            sq = _run_slurm_query(base)
             if sq.returncode != 0:
                 continue  # query failed — proves nothing
-            states = [
-                s.strip().split()[0].rstrip("+")
-                for s in sq.stdout.strip().split("\n") if s.strip()
-            ]
-            if not states or all(s in terminal_states for s in states):
+            states = [s.strip() for s in sq.stdout.strip().split("\n") if s.strip()]
+            if not states or all(_is_terminal_slurm_state(s) for s in states):
                 print(f"[slurm] No live job named {job_name} (confirmed)")
                 return True
-            # Still PENDING/RUNNING (e.g. draining after scancel) — probe on.
+            # A non-terminal job with this name is still live — probe on.
         print(f"[slurm] Job name {job_name}: liveness NOT resolved after {attempts} probes")
         return False
 
@@ -722,10 +752,6 @@ class SlurmExecutor:
         over CANCELLED/COMPLETED so no auto-resubmit or false success is
         triggered — the eval outputs, if any, are still read normally).
         """
-        terminal_states = {
-            "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL",
-            "OUT_OF_MEMORY",
-        }
         for attempt in range(attempts):
             if attempt:
                 time.sleep(poll_interval)
@@ -736,11 +762,13 @@ class SlurmExecutor:
                 continue  # query failed — proves nothing, probe again
             out = sq.stdout.strip()
             if out:
-                state = out.split("\n")[0].strip().split()[0].rstrip("+")
-                if state in terminal_states:
-                    print(f"[slurm] Job {job_id} confirmed terminal via squeue: {state}")
-                    return state
-                # Still PENDING/RUNNING (e.g. draining after scancel) — keep
+                state = out.split("\n")[0].strip()
+                if _is_terminal_slurm_state(state):
+                    norm = _normalize_slurm_state(state)
+                    print(f"[slurm] Job {job_id} confirmed terminal via squeue: {norm}")
+                    return norm
+                # Any NON-terminal state (RUNNING, COMPLETING, SUSPENDED,
+                # CONFIGURING, unknown, ...) still counts as live — keep
                 # probing; it must leave the queue before we can proceed.
                 continue
             # Job gone from the queue (query SUCCEEDED) — it is not running.
@@ -749,8 +777,8 @@ class SlurmExecutor:
             )
             if sacct.returncode == 0 and sacct.stdout.strip():
                 for state in sacct.stdout.strip().split("\n"):
-                    norm = state.strip().split()[0].rstrip("+")
-                    if norm in terminal_states:
+                    if _is_terminal_slurm_state(state):
+                        norm = _normalize_slurm_state(state)
                         print(f"[slurm] Job {job_id} confirmed terminal via sacct: {norm}")
                         return norm
             print(f"[slurm] Job {job_id} confirmed gone from squeue (no sacct state) — treating as FAILED")
