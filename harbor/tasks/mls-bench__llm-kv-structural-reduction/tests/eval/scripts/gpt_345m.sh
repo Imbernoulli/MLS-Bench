@@ -3,6 +3,11 @@
 # 2-GPU DDP, matching llm-pretrain-attention setup.
 cd "${MLSBENCH_PKG_DIR:-/workspace/nanoGPT}"
 N_GPU=$(python3 -c "import torch; print(torch.cuda.device_count())")
+# Pre-clean stale outputs from a previous test iteration: custom_pretrain.py
+# writes these only at the successful end of training and the eval step only
+# checks that they exist, so a leftover checkpoint from an earlier run would
+# be silently scored if this training run fails.
+rm -f "${OUTPUT_DIR:-out}/ckpt_${ENV:-gpt-345m}.pt" "${OUTPUT_DIR:-out}/model_source_${ENV:-gpt-345m}.py" "${OUTPUT_DIR:-out}/metrics_${ENV:-gpt-345m}.json"
 SEED="${SEED:-42}" OUTPUT_DIR="${OUTPUT_DIR:-out}" ENV="${ENV:-gpt-345m}" \
 RUN_AUX_EVAL=1 AUX_EVAL_DATASETS="${AUX_EVAL_DATASETS:-wikitext2,wikitext103,lambada}" \
 AUX_EVAL_ITERS="${AUX_EVAL_ITERS:-16}" AUX_EVAL_BATCH_SIZE="${AUX_EVAL_BATCH_SIZE:-4}" \
