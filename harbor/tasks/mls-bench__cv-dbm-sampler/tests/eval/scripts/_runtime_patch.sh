@@ -59,7 +59,7 @@ if sample_sh.exists():
         'if [ -z "${NGPU:-}" ] || [ "$NGPU" -lt 1 ]; then\n'
         "    NGPU=1\n"
         "fi\n"
-        'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "cv-dbm-sampler-${ENV:-${ds:-dbim}}-${SEED:-42}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
+        'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "cv-dbm-sampler-${ENV:-${ds:-dbim}}-${SEED:-42}-${OUTPUT_DIR:-}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
         'run_args="--nproc_per_node $NGPU \\\n'
         '          --master_port $DBIM_MASTER_PORT"\n'
     )
@@ -74,7 +74,7 @@ if sample_sh.exists():
         text = text.replace(
             'run_args="--nproc_per_node $NGPU \\\n'
             '          --master_port 29511"\n',
-            'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "cv-dbm-sampler-${ENV:-${ds:-dbim}}-${SEED:-42}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
+            'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "cv-dbm-sampler-${ENV:-${ds:-dbim}}-${SEED:-42}-${OUTPUT_DIR:-}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
             'run_args="--nproc_per_node $NGPU \\\n'
             '          --master_port $DBIM_MASTER_PORT"\n',
             1,

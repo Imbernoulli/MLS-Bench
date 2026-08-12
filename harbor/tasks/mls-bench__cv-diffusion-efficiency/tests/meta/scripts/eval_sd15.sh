@@ -30,7 +30,7 @@ if [ "$NGPU" -lt 1 ]; then
 fi
 # Deterministic per-(label,seed) rendezvous port: concurrent eval labels share
 # one network namespace, so a RANDOM port can collide (EADDRINUSE crash-zero).
-MASTER_PORT=${MASTER_PORT:-$((29500 + ($(printf "%s" "cv-diffusion-efficiency-${ENV:-sd15}-${SEED:-42}" | cksum | cut -d " " -f 1) % 1000)))}
+MASTER_PORT=${MASTER_PORT:-$((29500 + ($(printf "%s" "cv-diffusion-efficiency-${ENV:-sd15}-${SEED:-42}-${OUTPUT_DIR:-}" | cksum | cut -d " " -f 1) % 1000)))}
 
 torchrun --nproc_per_node=$NGPU --master_port=$MASTER_PORT batch_eval.py \
     --model sd15 \
