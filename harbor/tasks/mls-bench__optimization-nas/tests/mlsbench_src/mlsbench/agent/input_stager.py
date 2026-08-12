@@ -28,9 +28,15 @@ Usage:
     python -m mlsbench.agent.input_stager <task_name> <tasks_dir> <workspace_task_dir> \
         [--list-out FILE]
 
-``--list-out`` writes the absolute workspace paths of every staged file, one
-per line — the harness uses it as the authoritative scope for its host-side
-backstop scrub after the evaluation (never a broad glob).
+``--list-out`` records the workspace paths this stager installs, one per
+line, INCREMENTALLY: each destination (and its temp file) is appended and
+flushed BEFORE any of its bytes reach the workspace, so even after a mid-run
+crash or SIGKILL the list is the authoritative superset of everything that
+was (partially) installed. The harness uses it as the exact scope for its
+host-side backstop scrub — never a broad glob. On an internal failure the
+stager also unlinks everything it installed so far before exiting non-zero
+(belt and braces); the caller must still treat a non-zero exit as fatal for
+the entry and scrub whatever the list contains.
 
 Environment:
     ENV / SEED               selective materialization (read by mid_edit)
@@ -47,6 +53,7 @@ import re
 import shutil
 import sys
 import tempfile
+import traceback
 from pathlib import Path
 
 
@@ -71,7 +78,25 @@ def _resolve_dst(workspace_task_dir: Path, filename: str) -> Path:
     return workspace_task_dir / filename
 
 
+class _StagedList:
+    """Incremental --list-out writer: one flushed line per recorded path."""
+
+    def __init__(self, path: Path | None):
+        self._fh = open(path, "w") if path is not None else None
+
+    def add(self, p: Path) -> None:
+        if self._fh is not None:
+            self._fh.write(f"{p}\n")
+            self._fh.flush()
+
+    def close(self) -> None:
+        if self._fh is not None:
+            self._fh.close()
+            self._fh = None
+
+
 def _atomic_write_text(path: Path, text: str) -> None:
+    """Atomic write for HOST-side cache/marker files (never agent-visible)."""
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
     try:
@@ -86,15 +111,32 @@ def _atomic_write_text(path: Path, text: str) -> None:
         raise
 
 
-def _atomic_link_or_copy(src: Path, dst: Path) -> None:
-    """Materialize dst with src's content atomically (hardlink, else copy)."""
+def _install_workspace_file(
+    dst: Path,
+    lw: _StagedList,
+    *,
+    src: Path | None = None,
+    content: str | None = None,
+) -> None:
+    """Install one blob into the workspace, crash-accountably.
+
+    The temp path AND the final path are appended (and flushed) to the
+    --list-out record BEFORE any byte is written, so a SIGKILL at any point
+    leaves the backstop scrub with the full scope. The final rename is atomic
+    (concurrent readers never see a partial file)."""
     dst.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dst.parent / f".{dst.name}.{os.getpid()}.tmp"
+    tmp = dst.parent / f".{dst.name}.{os.getpid()}.stage.tmp"
+    lw.add(tmp)
+    lw.add(dst)
     try:
-        try:
-            os.link(src, tmp)
-        except OSError:
-            shutil.copyfile(src, tmp)
+        if src is not None:
+            try:
+                os.link(src, tmp)
+            except OSError:
+                shutil.copyfile(src, tmp)
+        else:
+            with open(tmp, "w") as fh:
+                fh.write(content or "")
         os.replace(tmp, dst)
     except BaseException:
         try:
@@ -146,75 +188,93 @@ def restage(
 
     Never deletes or overwrites anything except the blob files themselves
     (atomic replace), and never touches .py files — the agent's editable
-    program is left alone.
+    program is left alone. On an internal failure everything installed so far
+    is unlinked before returning non-zero.
     """
     task_dir = tasks_dir / task_name
     mid_edit_file = task_dir / "edits" / "mid_edit.py"
+    lw = _StagedList(list_out)
+    installed: list[Path] = []
+    try:
+        if not mid_edit_file.is_file():
+            print(f"[input-stager] no mid_edit for {task_name}; nothing to do")
+            return 0
 
-    def _write_list(paths: list[Path]) -> None:
-        if list_out is not None:
-            _atomic_write_text(
-                list_out, "".join(f"{p}\n" for p in paths)
-            )
+        use_cache = os.environ.get("MLSBENCH_INPUT_CACHE", "1") != "0"
+        cache_dir = (
+            workspace_task_dir / ".input_cache" / task_name / _cache_key(task_dir)
+        )
+        marker = cache_dir / "COMPLETE.json"
 
-    if not mid_edit_file.is_file():
-        print(f"[input-stager] no mid_edit for {task_name}; nothing to do")
-        _write_list([])
-        return 0
-
-    use_cache = os.environ.get("MLSBENCH_INPUT_CACHE", "1") != "0"
-    cache_dir = workspace_task_dir / ".input_cache" / task_name / _cache_key(task_dir)
-    marker = cache_dir / "COMPLETE.json"
-
-    if use_cache and marker.is_file():
-        try:
-            names = json.loads(marker.read_text())["files"]
-            if all((cache_dir / "files" / n).is_file() for n in names):
-                dsts = []
+        if use_cache and marker.is_file():
+            try:
+                names = json.loads(marker.read_text())["files"]
+            except (json.JSONDecodeError, KeyError, OSError):
+                names = None
+            if names is not None and all(
+                (cache_dir / "files" / n).is_file() for n in names
+            ):
                 for n in names:
                     dst = _resolve_dst(workspace_task_dir, n)
-                    _atomic_link_or_copy(cache_dir / "files" / n, dst)
-                    dsts.append(dst)
-                _write_list(dsts)
+                    _install_workspace_file(dst, lw, src=cache_dir / "files" / n)
+                    installed.append(dst)
                 print(
                     f"[input-stager] staged {len(names)} input file(s) for "
                     f"{task_name} (cache hit: {cache_dir.name})"
                 )
                 return 0
-        except (json.JSONDecodeError, KeyError, OSError):
-            pass  # fall through to regeneration
+            # fall through to regeneration
 
-    ops = _load_mid_edit_ops(mid_edit_file, task_name)
-    staged: list[str] = []
-    staged_dsts: list[Path] = []
-    for op in ops:
-        if op.get("op") != "create":
-            continue
-        filename = op.get("file", "")
-        if filename.endswith(".py"):
-            continue  # never overwrite the agent's editable program
-        content = op.get("content", "")
-        if not content.endswith("\n"):
-            content += "\n"  # mirror apply_pre_edit's normalization
-        # The cache mirrors the op's full relative path under files/; the
-        # marker records the same paths for workspace resolution on cache hits.
-        dst = _resolve_dst(workspace_task_dir, filename)
+        ops = _load_mid_edit_ops(mid_edit_file, task_name)
+        staged_names: list[str] = []
+        for op in ops:
+            if op.get("op") != "create":
+                continue
+            filename = op.get("file", "")
+            if filename.endswith(".py"):
+                continue  # never overwrite the agent's editable program
+            content = op.get("content", "")
+            if not content.endswith("\n"):
+                content += "\n"  # mirror apply_pre_edit's normalization
+            dst = _resolve_dst(workspace_task_dir, filename)
+            if use_cache:
+                # The cache mirrors the op's full relative path under files/;
+                # cache writes are host-only (never agent-visible).
+                cache_file = cache_dir / "files" / filename
+                _atomic_write_text(cache_file, content)
+                _install_workspace_file(dst, lw, src=cache_file)
+            else:
+                _install_workspace_file(dst, lw, content=content)
+            installed.append(dst)
+            staged_names.append(filename)
         if use_cache:
-            cache_file = cache_dir / "files" / filename
-            _atomic_write_text(cache_file, content)
-            _atomic_link_or_copy(cache_file, dst)
-        else:
-            _atomic_write_text(dst, content)
-        staged.append(filename)
-        staged_dsts.append(dst)
-    _write_list(staged_dsts)
-    if use_cache:
-        _atomic_write_text(marker, json.dumps({"files": staged}, indent=1))
-    print(
-        f"[input-stager] staged {len(staged)} input file(s) for {task_name} "
-        f"(generated{'; cached as ' + cache_dir.name if use_cache else ''})"
-    )
-    return 0
+            _atomic_write_text(
+                marker, json.dumps({"files": staged_names}, indent=1)
+            )
+        print(
+            f"[input-stager] staged {len(staged_names)} input file(s) for "
+            f"{task_name} "
+            f"(generated{'; cached as ' + cache_dir.name if use_cache else ''})"
+        )
+        return 0
+    except BaseException:
+        # Belt and braces: unlink everything installed so far, then exit
+        # non-zero. The caller must STILL backstop-scrub the --list-out
+        # contents (covers SIGKILL, where this handler never runs).
+        traceback.print_exc()
+        for dst in installed:
+            try:
+                os.unlink(dst)
+            except OSError:
+                pass
+        print(
+            f"[input-stager] ERROR: staging failed for {task_name}; "
+            f"removed {len(installed)} partially-staged file(s)",
+            file=sys.stderr,
+        )
+        return 1
+    finally:
+        lw.close()
 
 
 def main(argv: list[str] | None = None) -> int:
