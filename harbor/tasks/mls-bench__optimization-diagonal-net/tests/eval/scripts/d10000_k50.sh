@@ -9,9 +9,6 @@ cd /workspace
 # editable code runs).
 export MLSBENCH_EPHEMERAL_INPUTS=1
 _EVAL_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Splice the fixed runner blocks into stale baked workspace images (anchored
-# exact-match replaces; no-op when the workspace is already up to date).
-source "$_EVAL_SCRIPTS_DIR/_runtime_patch.sh"
 
 OUT_DIR="${OUTPUT_DIR:-${SAVE_PATH:-/tmp/mlsbench_opt_diagonal_net}}"
 EXTRA_ARGS=()

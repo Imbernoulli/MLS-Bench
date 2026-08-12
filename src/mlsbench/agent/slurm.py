@@ -77,6 +77,29 @@ def _run_slurm_query(cmd: list[str], timeout: int = 30) -> subprocess.CompletedP
         lock_fd.close()
 
 
+class SubmitUncertainError(RuntimeError):
+    """submit_group failed AFTER the scheduler command ran.
+
+    The job may have been ACCEPTED (and may start running) even though the
+    submission "failed" from the caller's point of view: sbatch exited
+    nonzero but its output names a job, sbatch succeeded but its output
+    could not be parsed for an ID, or the job was accepted and job_id.txt
+    could not be written. Failures BEFORE the scheduler command (script
+    prep, sbatch binary missing / spawn failure, clean nonzero rejection)
+    raise a plain RuntimeError instead — those definitely started nothing.
+
+    Carries ``job_id`` when it is known and ``job_name`` for best-effort
+    cancel-by-name when it is not. Ephemeral-input callers must treat this
+    as unknown liveness: cancel + confirm before staging anything else.
+    """
+
+    def __init__(self, message: str, *, job_id: str | None = None,
+                 job_name: str | None = None):
+        super().__init__(message)
+        self.job_id = job_id
+        self.job_name = job_name
+
+
 class SlurmExecutor:
     """Submit grouped container commands as SLURM jobs and wait for completion."""
 
@@ -429,6 +452,19 @@ class SlurmExecutor:
             break
 
         if result.returncode != 0:
+            # sbatch can, in rare partial-failure modes, ACCEPT the job and
+            # still exit nonzero — if its output names a job, the failure is
+            # post-acceptance (the job may run) and must be classified as
+            # uncertain, not as a clean rejection.
+            match = re.search(r"Submitted batch job (\d+)", result.stdout or "")
+            if match:
+                raise SubmitUncertainError(
+                    f"sbatch exited {result.returncode} but its output names "
+                    f"job {match.group(1)} — the job may have been accepted "
+                    f"(stderr: {result.stderr.strip()})",
+                    job_id=match.group(1),
+                    job_name=job_name,
+                )
             raise RuntimeError(
                 f"sbatch failed (exit {result.returncode}):\n"
                 f"stdout: {result.stdout}\nstderr: {result.stderr}"
@@ -437,11 +473,29 @@ class SlurmExecutor:
         # Parse job ID from "Submitted batch job 12345"
         match = re.search(r"Submitted batch job (\d+)", result.stdout)
         if not match:
-            raise RuntimeError(f"Could not parse job ID from sbatch output: {result.stdout}")
+            # sbatch SUCCEEDED — a job was accepted, but we cannot name it.
+            raise SubmitUncertainError(
+                "sbatch succeeded but its output could not be parsed for a "
+                f"job ID: {result.stdout!r} — an accepted job may be running "
+                "with no known ID",
+                job_id=None,
+                job_name=job_name,
+            )
 
         job_id = match.group(1)
         # Save job ID for resume recovery
-        (out_dir / "job_id.txt").write_text(job_id)
+        try:
+            (out_dir / "job_id.txt").write_text(job_id)
+        except Exception as exc:
+            # The job IS accepted; without job_id.txt resume/recovery cannot
+            # see it. Classify as uncertain WITH the id so the caller can
+            # cancel + confirm it directly.
+            raise SubmitUncertainError(
+                f"job {job_id} was accepted but job_id.txt could not be "
+                f"written ({exc}) — recovery would not see the running job",
+                job_id=job_id,
+                job_name=job_name,
+            ) from exc
         print(f"[slurm] Submitted job {job_id}: {job_name}")
         return job_id
 
@@ -591,6 +645,68 @@ class SlurmExecutor:
         except Exception as exc:
             print(f"[slurm] scancel {job_id} raised: {exc}")
             return False
+
+    def cancel_job_by_name(self, job_name: str) -> bool:
+        """Best-effort ``scancel --name`` for an accepted job with no known ID
+        (SubmitUncertainError with job_id=None).
+
+        Job names (``mls-<task>-g<group><suffix>``) are unique within one
+        harness run but NOT across runs: an older, dead harness process may
+        have left a same-named job. Cancelling those too is acceptable — in
+        the ephemeral flow every recoverable same-task job was already
+        drained to termination before any submission, so a same-named
+        survivor is an orphan we want stopped anyway. Only ever used for
+        ephemeral tasks.
+        """
+        try:
+            result = subprocess.run(
+                [_resolve_slurm_command("scancel"), "--name", job_name],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if result.returncode != 0:
+                print(
+                    f"[slurm] scancel --name {job_name} failed "
+                    f"(rc={result.returncode}): "
+                    f"{(result.stderr or result.stdout).strip()}"
+                )
+            return result.returncode == 0
+        except Exception as exc:
+            print(f"[slurm] scancel --name {job_name} raised: {exc}")
+            return False
+
+    def confirm_no_job_named(
+        self, job_name: str, attempts: int = 6, poll_interval: int = 10
+    ) -> bool:
+        """CONFIRM no job with this name is pending/running.
+
+        True only when a SUCCESSFUL squeue query returns no non-terminal job
+        with the name; failing queries prove nothing and keep probing; False
+        after ``attempts`` probes without confirmation.
+        """
+        terminal_states = {
+            "COMPLETED", "FAILED", "CANCELLED", "TIMEOUT", "NODE_FAIL",
+            "OUT_OF_MEMORY",
+        }
+        for attempt in range(attempts):
+            if attempt:
+                time.sleep(poll_interval)
+            sq = _run_slurm_query(
+                ["squeue", "--name", job_name, "--noheader", "-o", "%T"],
+            )
+            if sq.returncode != 0:
+                continue  # query failed — proves nothing
+            states = [
+                s.strip().split()[0].rstrip("+")
+                for s in sq.stdout.strip().split("\n") if s.strip()
+            ]
+            if not states or all(s in terminal_states for s in states):
+                print(f"[slurm] No live job named {job_name} (confirmed)")
+                return True
+            # Still PENDING/RUNNING (e.g. draining after scancel) — probe on.
+        print(f"[slurm] Job name {job_name}: liveness NOT resolved after {attempts} probes")
+        return False
 
     def confirm_job_terminal(
         self, job_id: str, attempts: int = 6, poll_interval: int = 10

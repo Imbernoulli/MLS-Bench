@@ -9,9 +9,6 @@ export SEED="${SEED:-42}"
 export MLSBENCH_EPHEMERAL_INPUTS=1
 cd /workspace
 _EVAL_SCRIPTS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# Splice the fixed runner blocks into stale baked workspace images (anchored
-# exact-match replaces; no-op when the workspace is already up to date).
-source "$_EVAL_SCRIPTS_DIR/_runtime_patch.sh"
 _staged_list="$(mktemp /tmp/mlsb_staged.XXXXXX)"
 # EXIT backstop: delete exactly the blobs apply.py staged for THIS eval,
 # even when the runner crashes/times out before its in-process scrub —

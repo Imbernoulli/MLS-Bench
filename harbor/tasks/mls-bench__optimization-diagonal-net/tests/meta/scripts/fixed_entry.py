@@ -140,19 +140,45 @@ def main() -> int:
         return 0
 
     # ── 1+2: preload the staged blobs, then unlink them ────────────────
+    # BOTH steps are FATAL on failure. If a read fails we cannot run the
+    # eval; if an unlink fails the secret would still be on disk when the
+    # editable module is imported — that breaks the isolation contract, so
+    # we must NOT proceed to import. Either way: exit non-zero, do not
+    # import the editable module. (Blobs live in the writable package dir,
+    # not the read-only task mount, so a healthy run always CAN delete
+    # them; a failure here means a real filesystem/permission fault.)
     preloaded: dict[str, str] = {}
     ephemeral = os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1"
     for pattern in args.inputs_glob:
         for path in sorted(_glob.glob(pattern)):
             if not os.path.isfile(path):
                 continue
-            with open(path, "r") as fh:
-                preloaded[os.path.basename(path)] = fh.read()
+            try:
+                with open(path, "r") as fh:
+                    preloaded[os.path.basename(path)] = fh.read()
+            except OSError as exc:
+                print(
+                    f"[fixed-entry] FATAL: could not read staged input "
+                    f"{path}: {exc} — refusing to run the evaluation",
+                    file=sys.stderr, flush=True,
+                )
+                return 3
             if ephemeral:
                 try:
                     os.remove(path)
-                except OSError:
-                    pass
+                except OSError as exc:
+                    # The secret is still on disk and would be readable by
+                    # the editable module we are about to import. Abort
+                    # BEFORE importing — never trade the isolation contract
+                    # for a completed run.
+                    print(
+                        f"[fixed-entry] FATAL: could not unlink staged input "
+                        f"{path}: {exc} — the withheld data would remain "
+                        "readable by editable code; refusing to import the "
+                        "module",
+                        file=sys.stderr, flush=True,
+                    )
+                    return 4
     print(
         f"[fixed-entry] preloaded {len(preloaded)} input blob(s)"
         + (" and unlinked them" if ephemeral else " (kept on disk: not "
