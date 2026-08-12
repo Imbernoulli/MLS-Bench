@@ -2,6 +2,9 @@
 # Working directory is already /workspace (package root)
 # Hyperparameters aligned with official TSLib per-pattern configs
 
+# Fix the shared ./m4_results/<model>/ makedirs race in pre-fix workspaces (no-op otherwise).
+source "$(dirname "${BASH_SOURCE[0]}")/_runtime_patch.sh"
+
 SEED=${SEED:-42}
 
 # Per-pattern d_model/d_ff tuned for M4 (small univariate datasets)

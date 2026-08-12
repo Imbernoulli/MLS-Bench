@@ -1,6 +1,9 @@
 #!/bin/bash
 # Working directory is already /workspace (package root)
 
+# Fix the shared ./m4_results/<model>/ makedirs race in pre-fix workspaces (no-op otherwise).
+source "$(dirname "${BASH_SOURCE[0]}")/_runtime_patch.sh"
+
 SEED=${SEED:-42}
 # Hyperparameters aligned with official TSLib TimeMixer_M4 script
 

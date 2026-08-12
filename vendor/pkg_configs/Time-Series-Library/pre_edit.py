@@ -52,6 +52,16 @@ _STF_SMAPE = (
     '        print(f"mape:{_mape:.6f}")'
 )
 
+# Short-term forecasting: race-safe creation of the shared ./m4_results/<model>/
+# leaf (pristine lines 208-210). All three m4_* labels (plus every baseline /
+# oracle run, and every seed) execute concurrently in one workspace, and the
+# pristine `if not os.path.exists(folder_path): os.makedirs(folder_path)` is a
+# check-then-create TOCTOU: the loser of the race dies with FileExistsError
+# AFTER training completes, losing its metric.
+_STF_MAKEDIRS_FIX = (
+    "        os.makedirs(folder_path, exist_ok=True)"
+)
+
 # Imputation: inject after line 144 (after the Epoch/Steps/Loss print)
 _IMP_TRAIN_METRICS = (
     '            print(f"TRAIN_METRICS epoch={epoch+1} '
@@ -119,6 +129,18 @@ OPS = [
         "file": "Time-Series-Library/exp/exp_long_term_forecasting.py",
         "after_line": 155,
         "content": _LTF_TRAIN_METRICS,
+    },
+    # Short-term forecasting - race-safe m4_results dir creation.
+    # Placed BEFORE the two STF inserts below so its pristine coordinates
+    # (209-210) are valid; it only shifts lines >210, so the inserts at
+    # after_line=116 and after_line=206 (pristine 205, shifted +1 by the
+    # first insert) keep their existing coordinates.
+    {
+        "op": "replace",
+        "file": "Time-Series-Library/exp/exp_short_term_forecasting.py",
+        "start_line": 209,
+        "end_line": 210,
+        "content": _STF_MAKEDIRS_FIX,
     },
     # Short-term forecasting - training metrics
     {
