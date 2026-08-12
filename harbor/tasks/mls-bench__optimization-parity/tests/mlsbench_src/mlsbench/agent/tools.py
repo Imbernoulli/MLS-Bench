@@ -3767,9 +3767,25 @@ class WorkspaceTools:
                         f"[slurm-resume] Draining recovered job {job_id} "
                         f"(group {g_key}{suffix}) task-wide before any staging"
                     )
-                    status: str | None = self.slurm_executor.wait_for_job(job_id)
-                    if status in unconfirmed_wait_states:
-                        status = _settle_unconfirmed_wait(job_id, status)
+                    try:
+                        status: str | None = self.slurm_executor.wait_for_job(job_id)
+                    except Exception as wait_exc:
+                        # The drain wait itself RAISED (scheduler-query /
+                        # filesystem fault) — the recovered job's liveness is
+                        # unknown. Settle via cancel + confirm exactly like an
+                        # unconfirmed wait status instead of letting the
+                        # exception tear down the whole run (R12).
+                        print(
+                            f"[slurm-resume] drain wait for recovered job "
+                            f"{job_id} RAISED ({wait_exc}) — treating liveness "
+                            "as unconfirmed"
+                        )
+                        status = None
+                    if status is None or status in unconfirmed_wait_states:
+                        status = _settle_unconfirmed_wait(
+                            job_id,
+                            status if status is not None else "WAIT-RAISED",
+                        )
                         if status is None:
                             ephemeral_abort = (
                                 f"recovered job {job_id} (group {g_key}{suffix}) "
@@ -4016,9 +4032,28 @@ class WorkspaceTools:
                         # Serialize: block until THIS job finished before
                         # staging / submitting the next one. While the job
                         # queues, no sibling evaluation of this task runs.
-                        status = self.slurm_executor.wait_for_job(job_id)
-                        if status in unconfirmed_wait_states:
-                            settled = _settle_unconfirmed_wait(job_id, status)
+                        try:
+                            status: str | None = self.slurm_executor.wait_for_job(job_id)
+                        except Exception as wait_exc:
+                            # The job WAS accepted (its ID is known) but the
+                            # WAIT itself raised — an unexpected scheduler-
+                            # query / filesystem exception, NOT an
+                            # unconfirmed-status return. Same liveness-
+                            # uncertainty class as the round-9 status path:
+                            # settle via cancel + confirm below; never just
+                            # record-and-continue while the accepted job may
+                            # still be running agent code (R12).
+                            print(
+                                f"[slurm] ephemeral job {job_id}: wait_for_job "
+                                f"RAISED ({wait_exc}) — treating liveness as "
+                                "unconfirmed"
+                            )
+                            status = None
+                        if status is None or status in unconfirmed_wait_states:
+                            settled = _settle_unconfirmed_wait(
+                                job_id,
+                                status if status is not None else "WAIT-RAISED",
+                            )
                             if settled is None:
                                 ephemeral_abort = (
                                     f"job {job_id} ({_t0['orig_label']} seed "
@@ -4027,11 +4062,16 @@ class WorkspaceTools:
                                     "be verified"
                                 )
                                 _record_entry_failure(
-                                    f"[SUBMIT/WAIT FAILED] job {job_id}: wait "
-                                    f"returned '{status}' without confirming "
-                                    "the job stopped, and cancellation could "
-                                    "not be verified — evaluation skipped; "
-                                    "remaining ephemeral staging aborted"
+                                    f"[SUBMIT/WAIT FAILED] job {job_id}: "
+                                    + (
+                                        "wait_for_job raised an exception"
+                                        if status is None
+                                        else f"wait returned '{status}'"
+                                    )
+                                    + " without confirming the job stopped, "
+                                    "and cancellation could not be verified — "
+                                    "evaluation skipped; remaining ephemeral "
+                                    "staging aborted"
                                 )
                                 continue
                             status = settled
@@ -4161,9 +4201,28 @@ class WorkspaceTools:
                             print(f"[slurm] resubmit uncertain: {exc}")
                             status = "FAILED"
                             break
-                        status = self.slurm_executor.wait_for_job(job_id)
-                        if ephemeral and status in unconfirmed_wait_states:
-                            settled = _settle_unconfirmed_wait(job_id, status)
+                        try:
+                            status = self.slurm_executor.wait_for_job(job_id)
+                        except Exception as wait_exc:
+                            if not ephemeral:
+                                raise  # non-ephemeral: propagate as before
+                            # The resubmitted job WAS accepted (id known) but
+                            # the WAIT raised — same liveness-uncertainty
+                            # class as an unconfirmed status: settle via
+                            # cancel + confirm (R12).
+                            print(
+                                f"[slurm] resubmitted job {job_id}: "
+                                f"wait_for_job RAISED ({wait_exc}) — treating "
+                                "liveness as unconfirmed"
+                            )
+                            status = None
+                        if ephemeral and (
+                            status is None or status in unconfirmed_wait_states
+                        ):
+                            settled = _settle_unconfirmed_wait(
+                                job_id,
+                                status if status is not None else "WAIT-RAISED",
+                            )
                             if settled is None:
                                 # Liveness unknown — abort all further
                                 # ephemeral staging (incl. later groups) and
