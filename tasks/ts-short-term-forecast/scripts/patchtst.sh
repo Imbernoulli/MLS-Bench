@@ -2,9 +2,6 @@
 # Working directory is already /workspace (package root)
 # Hyperparameters aligned with official TSLib per-pattern configs
 
-# Fix the shared ./m4_results/<model>/ makedirs race in pre-fix workspaces (no-op otherwise).
-source "$(dirname "${BASH_SOURCE[0]}")/_runtime_patch.sh"
-
 SEED=${SEED:-42}
 
 # Per-pattern d_model/d_ff tuned for M4 (small univariate datasets)
@@ -14,6 +11,13 @@ case "${ENV}" in
   m4_yearly)    SP=Yearly;    DM=16; DFF=32 ;;
   *)            SP=Monthly;   DM=32; DFF=32 ;;
 esac
+
+# Pre-create the shared ./m4_results/<model>/ results leaf. All three m4_*
+# labels (and parallel seeds) start concurrently in one workspace, and the
+# package's check-then-create in exp_short_term_forecasting.py loses a TOCTOU
+# race when the leaf is missing (the loser dies with FileExistsError AFTER
+# training). With the directory already present, the racy branch never runs.
+mkdir -p "./m4_results/PatchTST/"
 
 python -u run.py \
   --task_name short_term_forecast \

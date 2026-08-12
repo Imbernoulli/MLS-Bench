@@ -1,10 +1,14 @@
 #!/bin/bash
 # Working directory is already /workspace (package root)
 
-# Fix the shared ./m4_results/<model>/ makedirs race in pre-fix workspaces (no-op otherwise).
-source "$(dirname "${BASH_SOURCE[0]}")/_runtime_patch.sh"
-
 SEED=${SEED:-42}
+
+# Pre-create the shared ./m4_results/<model>/ results leaf. All three m4_*
+# labels (and parallel seeds) start concurrently in one workspace, and the
+# package's check-then-create in exp_short_term_forecasting.py loses a TOCTOU
+# race when the leaf is missing (the loser dies with FileExistsError AFTER
+# training). With the directory already present, the racy branch never runs.
+mkdir -p "./m4_results/Custom/"
 
 python -u run.py \
   --task_name short_term_forecast \
