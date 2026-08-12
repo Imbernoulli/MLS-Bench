@@ -87,7 +87,7 @@ def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=
     eval_env = DummyVecEnv([lambda eid=env_id: gym.make(eid)])
     mean_reward, std_reward = sb3_eval(model, eval_env, n_eval_episodes=20)
     print(f"  Expert {env_id}: {mean_reward:.1f} +/- {std_reward:.1f}", flush=True)
-    model.save(os.path.join(demo_path, f"{env_id}_expert"))
+    _atomic_save_model(model, demo_path, env_id)
 
     all_obs, all_acts, all_next_obs, all_dones = [], [], [], []
     obs = eval_env.reset()
@@ -106,23 +106,23 @@ def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=
         "next_obs": np.array(all_next_obs, dtype=np.float32),
         "dones": np.array(all_dones, dtype=np.float32),
     }
-    np.savez(os.path.join(demo_path, f"{env_id}_demos.npz"), **demos)
+    _atomic_save_npz(demos, os.path.join(demo_path, f"{env_id}_demos.npz"))
     print(f"  Saved {n_demos} transitions for {env_id}", flush=True)
     eval_env.close()
 
 
 def load_expert_demos(demo_path, env_id, device):
-    """Load expert demonstrations, generating them if needed."""
+    """Load expert demonstrations, generating them if needed.
+
+    Concurrent runs (e.g. several seeds) share ``demo_path``, so the
+    generate-or-load step is serialized with an inter-process file lock, the
+    cache is only ever published atomically, and a corrupt cache file is
+    regenerated under the lock (see the concurrency helpers further down).
+    """
     path = os.path.join(demo_path, f"{env_id}_demos.npz")
-    if not os.path.exists(path):
-        generate_expert_demos(demo_path, env_id)
-    data = np.load(path)
-    demos = {
-        "obs": torch.tensor(data["obs"], dtype=torch.float32, device=device),
-        "acts": torch.tensor(data["acts"], dtype=torch.float32, device=device),
-        "next_obs": torch.tensor(data["next_obs"], dtype=torch.float32, device=device),
-        "dones": torch.tensor(data["dones"], dtype=torch.float32, device=device),
-    }
+    data = _locked_demo_load(demo_path, env_id, path)
+    demos = {k: torch.tensor(data[k], dtype=torch.float32, device=device)
+             for k in ("obs", "acts", "next_obs", "dones")}
     print(f"Loaded {len(demos['obs'])} expert transitions from {path}")
     return demos
 
@@ -436,6 +436,60 @@ def ppo_update(policy, optimizer, buffer, args, device):
         "v_loss": total_v_loss / max(n_updates, 1),
         "entropy": total_entropy / max(n_updates, 1),
     }
+
+
+# =====================================================================
+# FIXED: Demo-cache concurrency helpers (atomic publish + file lock)
+# =====================================================================
+def _atomic_save_model(model, demo_path, env_id):
+    """Save the SB3 expert atomically (temp file in the same dir + os.replace)."""
+    tmp = os.path.join(demo_path, f".{env_id}_expert.tmp-{os.getpid()}.zip")
+    model.save(tmp)
+    os.replace(tmp, os.path.join(demo_path, f"{env_id}_expert.zip"))
+
+
+def _atomic_save_npz(arrays, final_path):
+    """np.savez to a temp file in the same dir, then os.replace onto the final
+    path, so a concurrent reader can never observe a partially written file."""
+    tmp = os.path.join(os.path.dirname(final_path),
+                       f".{os.path.basename(final_path)}.tmp-{os.getpid()}.npz")
+    np.savez(tmp, **arrays)
+    os.replace(tmp, final_path)
+
+
+def _read_demo_arrays(path):
+    """Fully materialize the demo arrays (validates the whole file on read)."""
+    with np.load(path) as data:
+        return {k: np.asarray(data[k]) for k in ("obs", "acts", "next_obs", "dones")}
+
+
+def _locked_demo_load(demo_path, env_id, path):
+    """Generate-or-load the shared demo cache under an inter-process lock.
+
+    All runs sharing ``demo_path`` serialize here: the first process trains
+    the expert and publishes the cache atomically while the others block on
+    the lock and then just load it. A cache file that fails to load (e.g. a
+    torn write left behind by a crashed/killed earlier run) is deleted and
+    regenerated under the same lock.
+    """
+    import fcntl
+    import zipfile
+
+    os.makedirs(demo_path, exist_ok=True)
+    with open(path + ".lock", "a") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            if not os.path.exists(path):
+                generate_expert_demos(demo_path, env_id)
+            try:
+                return _read_demo_arrays(path)
+            except (zipfile.BadZipFile, EOFError, KeyError, ValueError, OSError) as exc:
+                print(f"Corrupt demo cache {path} ({exc!r}); regenerating...", flush=True)
+                os.remove(path)
+                generate_expert_demos(demo_path, env_id)
+                return _read_demo_arrays(path)
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
 
 
 # =====================================================================
