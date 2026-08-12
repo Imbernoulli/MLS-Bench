@@ -30,6 +30,22 @@ data_path="/data/vs_data"
 save_dir="${OUTPUT_DIR}/checkpoints_no_similar_protein"
 tmp_save_dir="${OUTPUT_DIR}/tmp"
 tsb_dir="${OUTPUT_DIR}/tensorboard"
+
+# FRESH-TRAIN GUARD: OUTPUT_DIR is constant for an entire agent run, and
+# unicore-train auto-resumes from "${save_dir}/checkpoint_last.pt". Its train
+# loop is `while epoch_itr.next_epoch_idx <= max_epoch`, so once one invocation
+# has reached --max-epoch, every later invocation would load checkpoint_last,
+# do zero epochs, exit in seconds, and leave the OLD checkpoint_best.pt in
+# place — the group-2 eval scripts would then re-score the previous run's
+# weights and report byte-identical metrics for every subsequent code edit.
+# Deleting the save dir before launching training (a) defeats auto-resume so
+# each test truly retrains, and (b) guarantees that a crashed/failed retrain
+# leaves NO checkpoint_best.pt, so the eval scripts fail loudly instead of
+# silently scoring stale weights. Only checkpoints live here; tmp_save_dir and
+# tsb_dir are siblings, and this label is alone in test group 1, so no other
+# command reads or writes this directory concurrently.
+rm -rf "${save_dir}"
+
 mkdir -p "${save_dir}" "${tmp_save_dir}" "${tsb_dir}"
 
 finetune_mol_model="/data/pretrain/mol_pre_no_h_220816.pt"

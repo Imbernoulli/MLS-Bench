@@ -3,6 +3,17 @@
 
 
 CHECKPOINT="${OUTPUT_DIR}/checkpoints_no_similar_protein/checkpoint_best.pt"
+
+# Fail loudly if training did not produce a checkpoint. scripts/train.sh wipes
+# the save dir before every run, so a missing checkpoint_best.pt means this
+# test's training step crashed or was killed. Without this guard the evaluation
+# could only ever score a stale checkpoint or die with an opaque torch error.
+if [ ! -f "${CHECKPOINT}" ]; then
+    echo "ERROR: checkpoint not found: ${CHECKPOINT}" >&2
+    echo "ERROR: training (scripts/train.sh) must complete successfully before evaluation; aborting DEKOIS eval." >&2
+    exit 1
+fi
+
 RESULTS="${OUTPUT_DIR}/results"
 mkdir -p "${RESULTS}"
 
