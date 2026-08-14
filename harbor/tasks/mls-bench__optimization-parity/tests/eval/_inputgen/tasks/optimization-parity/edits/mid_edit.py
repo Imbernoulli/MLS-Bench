@@ -19,10 +19,24 @@ Labels are written as base64-encoded bit-packed bytes (the create op writes
 text), decoded by the runner's ``load_train_labels``. Each file covers the full
 ``max_train_examples`` pool; thanks to the prefix property of ``torch.randint``,
 every baseline's smaller dataset is reproduced exactly by slicing.
+
+This module is re-run for every evaluation with ENV/SEED exported — by
+``apply.py`` in the Harbor verifier and by the harness's host-side
+``mlsbench.agent.input_stager`` natively (config.json ``"ephemeral_inputs"``)
+— so only the active run's label blobs are materialized, and the runner
+deletes them after loading, before any editable code executes
+(MLSBENCH_EPHEMERAL_INPUTS=1 in the eval scripts). At workspace-setup time
+(no ENV/SEED) NO label blobs are staged — matching Harbor's agent-session
+_scaffold. Blobs staged at setup would linger unconsumed in the shared
+workspace, readable by editable code during other runs' evaluations; instead
+each evaluation's blobs exist only between its re-stage and its
+load-then-scrub.
 """
 
 import base64
 import json
+import os
+import re
 import sys
 from pathlib import Path
 
@@ -52,6 +66,22 @@ _CONFIGS = [
     (50, 8),   # eval_n50_k8.sh
     (64, 8),   # eval_n64_k8.sh
 ]
+
+# Eval-time materialization (Harbor apply.py / native input_stager): ENV is
+# the test label (e.g. "n50-k8"; the default script's label is "n32-k8") and
+# SEED the active run seed — materialize just the active run's blobs. At
+# workspace-setup time neither is set and NO blobs are staged (they would
+# linger unconsumed in the shared workspace, readable by editable code during
+# other runs' evaluations; each evaluation re-stages its own instead).
+_ENV = os.environ.get("ENV")
+_SEED = os.environ.get("SEED")
+_m = re.fullmatch(r"n(\d+)-k(\d+)", _ENV or "")
+if _m and (int(_m.group(1)), int(_m.group(2))) in _CONFIGS and _SEED is not None:
+    _CONFIGS = [(int(_m.group(1)), int(_m.group(2)))]
+    _SEEDS = [int(_SEED)]
+else:
+    _CONFIGS = []
+    _SEEDS = []
 
 
 def _config_tag(n_features, secret_size):

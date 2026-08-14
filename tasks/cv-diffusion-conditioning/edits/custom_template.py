@@ -282,7 +282,16 @@ def compute_fid(model, device, num_samples=2048, num_classes=10, num_steps=1000,
         my_samples += 1
     start_idx = rank * (num_samples // world_size) + min(rank, num_samples % world_size)
 
-    gen_dir = os.path.join(tempfile.gettempdir(), f"fid_gen_{os.getpid()}")
+    # All FID scratch dirs live under this run's OUTPUT_DIR so leftovers from
+    # a crashed or concurrent eval sharing /tmp can never leak into this FID.
+    fid_base = os.path.join(os.environ.get('OUTPUT_DIR', '/tmp/output'), '_fid_tmp')
+    if rank == 0:
+        if os.path.exists(fid_base):
+            shutil.rmtree(fid_base)
+        os.makedirs(fid_base)
+    if world_size > 1:
+        dist.barrier()
+    gen_dir = os.path.join(fid_base, f"fid_gen_{os.getpid()}")
     os.makedirs(gen_dir, exist_ok=True)
 
     generated = 0
@@ -308,7 +317,7 @@ def compute_fid(model, device, num_samples=2048, num_classes=10, num_steps=1000,
     score = 0.0
     if rank == 0:
         # Merge images from all ranks into one dir
-        merged_dir = os.path.join(tempfile.gettempdir(), "fid_merged")
+        merged_dir = os.path.join(fid_base, "fid_merged")
         if os.path.exists(merged_dir):
             shutil.rmtree(merged_dir)
         os.makedirs(merged_dir)
@@ -318,9 +327,9 @@ def compute_fid(model, device, num_samples=2048, num_classes=10, num_steps=1000,
             shutil.copy2(os.path.join(gen_dir, f), os.path.join(merged_dir, f))
 
         if world_size > 1:
-            # Other ranks wrote to /tmp on the same node
+            # Other ranks wrote their own subdirs under this run's fid_base
             import glob
-            for other_dir in glob.glob(os.path.join(tempfile.gettempdir(), "fid_gen_*")):
+            for other_dir in glob.glob(os.path.join(fid_base, "fid_gen_*")):
                 if other_dir == gen_dir:
                     continue
                 for f in os.listdir(other_dir):
@@ -378,6 +387,10 @@ def compute_fid(model, device, num_samples=2048, num_classes=10, num_steps=1000,
 
     if world_size > 1:
         dist.barrier()
+
+    # Remove this run's FID scratch base (merged_dir + per-rank dirs are gone)
+    if rank == 0:
+        shutil.rmtree(fid_base, ignore_errors=True)
 
     model.train()
     return score

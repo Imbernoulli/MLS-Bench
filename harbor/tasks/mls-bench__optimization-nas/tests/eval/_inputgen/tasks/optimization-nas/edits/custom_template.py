@@ -236,16 +236,30 @@ class NASOptimizer:
 # =====================================================================
 # FIXED: Main entry point — search + final-architecture report
 # =====================================================================
+# Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
+# unlinked the staged validation table and BEFORE this module was imported:
+# maps blob basename -> file content. None when the module is launched
+# directly — _load_val_table then reads the on-disk table (legacy flow).
+_PRELOADED_INPUTS: dict[str, str] | None = None
+
+
 def _load_val_table(env_name, seed):
-    """Load this run's validation table and (when the harness marks the
-    materialized inputs as ephemeral, i.e. re-created for every evaluation)
-    delete the on-disk copy BEFORE any editable code runs."""
-    path = (
-        Path(__file__).resolve().parent
-        / "naslib"
-        / "data"
-        / f"nb201_tables_{env_name}_s{seed}.json"
-    )
+    """Load this run's validation table. Prefers the payload preloaded by the
+    FIXED wrapper (which read and unlinked the table before any editable code
+    could run); falls back to the on-disk copy when launched directly, deleting
+    it after loading when the harness marks the materialized inputs as
+    ephemeral (i.e. re-created for every evaluation)."""
+    global _PRELOADED_INPUTS
+    name = f"nb201_tables_{env_name}_s{seed}.json"
+    preloaded = _PRELOADED_INPUTS
+    # Drop the raw payloads before any editable code runs: from here on the
+    # table lives only in this fixed entry's scope (handed to BenchmarkAPI).
+    _PRELOADED_INPUTS = None
+    payload = (preloaded or {}).pop(name, None)
+    if payload is not None:
+        tables = json.loads(payload)
+        return tables["val"]
+    path = Path(__file__).resolve().parent / "naslib" / "data" / name
     if not path.exists():
         print(f"ERROR: validation table not found: {path}", flush=True)
         sys.exit(1)

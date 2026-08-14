@@ -3,6 +3,10 @@
 # UNet2DModel: block_out_channels=(160,320,320,320), layers_per_block=2
 # 8-GPU DDP training
 
+# Apply the eval-time runtime patch to the image-baked custom_train.py (FID
+# scratch dirs scoped under $OUTPUT_DIR/_fid_tmp); no-op once the fix is baked.
+source "$(dirname "${BASH_SOURCE[0]}")/_runtime_patch.sh"
+
 export TORCH_HOME="${TORCH_HOME:-/data/pretrained}"
 mkdir -p "$TORCH_HOME"
 
@@ -34,7 +38,7 @@ else
     NGPU=$(nvidia-smi -L 2>/dev/null | wc -l)
 fi
 if [ "$NGPU" -gt 1 ]; then
-    torchrun --nproc_per_node="$NGPU" --master_port=29500 custom_train.py
+    torchrun --nproc_per_node="$NGPU" --master_port=$((29500 + ($(printf "%s" "cv-diffusion-conditioning-${ENV:-x}-${SEED:-42}-${OUTPUT_DIR:-}" | cksum | cut -d' ' -f1) % 1000))) custom_train.py
 else
     python -u custom_train.py
 fi

@@ -121,9 +121,9 @@ stay unchanged.
     23: 
     24:     set_seed(args.seed)
     25: 
-    26:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}/'
-    27:     if os.path.exists(save_path) is False:
-    28:         os.makedirs(save_path)
+    26:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}_s{args.seed}/'  # per-seed dir: parallel seeds of one label must not share ckpts
+    27:     if args.mode == "train": import shutil; shutil.rmtree(save_path, ignore_errors=True)  # fresh train dir: never silently score a stale exact-step ckpt
+    28:     os.makedirs(save_path, exist_ok=True)
     29: 
     30:     # ---------------------- Create Dataset ----------------------
     31:     env = gym.make(args.task.env_name)
@@ -362,9 +362,9 @@ Lines 1–28:
     23: 
     24:     set_seed(args.seed)
     25: 
-    26:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}/'
-    27:     if os.path.exists(save_path) is False:
-    28:         os.makedirs(save_path)
+    26:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}_s{args.seed}/'  # per-seed dir: parallel seeds of one label must not share ckpts
+    27:     if args.mode == "train": import shutil; shutil.rmtree(save_path, ignore_errors=True)  # fresh train dir: never silently score a stale exact-step ckpt
+    28:     os.makedirs(save_path, exist_ok=True)
     29: 
     30:     # ---------------------- Create Dataset ----------------------
     31:     env = gym.make(args.task.env_name)
@@ -550,9 +550,9 @@ Lines 1–26:
     21: 
     22:     set_seed(args.seed)
     23: 
-    24:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}/'
-    25:     if os.path.exists(save_path) is False:
-    26:         os.makedirs(save_path)
+    24:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}_s{args.seed}/'  # per-seed dir: parallel seeds of one label must not share ckpts
+    25:     if args.mode == "train": import shutil; shutil.rmtree(save_path, ignore_errors=True)  # fresh train dir: never silently score a stale exact-step ckpt
+    26:     os.makedirs(save_path, exist_ok=True)
     27: 
     28:     # ---------------------- Create Dataset ----------------------
     29:     env = gym.make(args.task.env_name)
@@ -721,9 +721,9 @@ Lines 1–31:
     26: 
     27:     set_seed(args.seed)
     28: 
-    29:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}/'
-    30:     if os.path.exists(save_path) is False:
-    31:         os.makedirs(save_path)
+    29:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}_s{args.seed}/'  # per-seed dir: parallel seeds of one label must not share ckpts
+    30:     if args.mode == "train": import shutil; shutil.rmtree(save_path, ignore_errors=True)  # fresh train dir: never silently score a stale exact-step ckpt
+    31:     os.makedirs(save_path, exist_ok=True)
     32: 
     33:     # ---------------------- Create Dataset ----------------------
     34:     env = gym.make(args.task.env_name)

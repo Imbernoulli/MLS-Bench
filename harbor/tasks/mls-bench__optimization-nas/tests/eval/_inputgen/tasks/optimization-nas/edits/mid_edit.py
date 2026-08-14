@@ -9,12 +9,17 @@ the host-side provider ``holdout/optimization-nas/dgp.py``. The held-out TEST
 accuracy of the final architecture is joined by the task parser OUTSIDE the
 agent's process (the runner's ``FINAL_ARCH`` report).
 
-In the Harbor verifier this module is re-imported for every evaluation by
-``apply.py`` with ENV/SEED exported, so only the active run's table is
-materialized — and the runner deletes it before any editable code executes
-(MLSBENCH_EPHEMERAL_INPUTS=1 in the eval scripts). Natively (no ENV at
-workspace-setup time) every (dataset, seed) combination is materialized once
-and kept, so repeated tests in the same workspace keep working.
+This module is re-run for every evaluation with ENV/SEED exported — by
+``apply.py`` in the Harbor verifier and by the harness's host-side
+``mlsbench.agent.input_stager`` natively (config.json ``"ephemeral_inputs"``)
+— so only the active run's table is materialized, and the runner deletes it
+after loading, before any editable code executes (MLSBENCH_EPHEMERAL_INPUTS=1
+in the eval scripts). At workspace-setup time (no ENV/SEED) NO tables are
+staged (only the editable scaffold and the pickle placeholder) — matching
+Harbor's agent-session _scaffold. Tables staged at setup would linger
+unconsumed in the shared workspace, readable by editable code during other
+runs' evaluations (sibling dataset/seed tables are a correlated proxy for
+the budgeted oracle); each evaluation re-stages its own table instead.
 """
 
 import importlib.util as _ilu
@@ -32,20 +37,9 @@ _HOLDOUT_DIR = _PROJECT_ROOT / "holdout" / "optimization-nas"
 # exporter scripts/build_site_data.py) would otherwise collide on
 # sys.modules["dgp"]. Native setup and the Harbor inputgen exec one task per
 # process, so this is belt-and-suspenders there.
-#
-# The dgp lives OUTSIDE the agent's reach and is present ONLY when this module
-# is imported to actually MATERIALIZE the workspace tables (host-side setup /
-# Harbor inputgen). Other IN-CONTAINER importers — notably
-# ``tasks/optimization-nas/budget_check.py``, which reads only the editable
-# ``custom_nas_search.py`` template op — run where holdout/ is deliberately NOT
-# mounted (there ``_PROJECT_ROOT`` even resolves to ``/``); the load is guarded
-# so those importers succeed and the per-dataset table ops are simply skipped.
-dgp = None
-_dgp_file = _HOLDOUT_DIR / "dgp.py"
-if _dgp_file.is_file():
-    _dgp_spec = _ilu.spec_from_file_location("optimization_nas_dgp", str(_dgp_file))
-    dgp = _ilu.module_from_spec(_dgp_spec)
-    _dgp_spec.loader.exec_module(dgp)
+_dgp_spec = _ilu.spec_from_file_location("optimization_nas_dgp", str(_HOLDOUT_DIR / "dgp.py"))
+dgp = _ilu.module_from_spec(_dgp_spec)
+_dgp_spec.loader.exec_module(dgp)
 
 _TEMPLATE_PATH = _HERE.parent / "custom_template.py"
 _CUSTOM_PY = _TEMPLATE_PATH.read_text()
@@ -56,6 +50,29 @@ try:
     _SEEDS = sorted(set((_cfg.get("seeds") or []) + [42]))
 except Exception:
     _SEEDS = [0, 1, 2, 3, 4, 42]
+
+_ENV = os.environ.get("ENV")
+_SEED = os.environ.get("SEED")
+# The native harness exports the test label as ENV ("CIFAR-10"); the Harbor
+# eval scripts export the dataset key directly ("cifar10"). Accept both so
+# eval-time materialization stays selective — staging ONLY the active run's
+# table also means no sibling dataset/seed table (a correlated proxy for the
+# budgeted oracle) is ever on disk during an evaluation.
+_ENV = {
+    "CIFAR-10": "cifar10",
+    "CIFAR-100": "cifar100",
+    "ImageNet16-120": "imagenet16",
+}.get(_ENV, _ENV)
+if _ENV in dgp.DATASET_MAP and _SEED is not None:
+    # Eval-time materialization (Harbor apply.py / native input_stager):
+    # just the active run's table.
+    _COMBOS = [(_ENV, int(_SEED))]
+else:
+    # Workspace setup (no ENV/SEED) or an unrecognized label: stage NO
+    # tables — only the editable scaffold and the pickle placeholder below.
+    # Tables staged here would linger unconsumed in the shared workspace,
+    # readable by editable code during other runs' evaluations.
+    _COMBOS = []
 
 _PLACEHOLDER = (
     "NAS-Bench-201 accuracy tables are not available in the agent workspace.\n"
@@ -81,21 +98,9 @@ OPS = [
     },
 ]
 
-# Materialize per-(dataset, seed) VALIDATION tables — only when the dgp is
-# reachable (host-side setup / Harbor inputgen). In the in-container budget
-# check the dgp is absent and OPS above already carries the template op that
-# budget_check.py reads.
-if dgp is not None:
-    _ENV = os.environ.get("ENV")
-    _SEED = os.environ.get("SEED")
-    if _ENV in dgp.DATASET_MAP and _SEED is not None:
-        # Harbor eval-time materialization: just the active run's table.
-        _COMBOS = [(_ENV, int(_SEED))]
-    else:
-        _COMBOS = [(_env, _seed) for _env in dgp.DATASET_MAP for _seed in _SEEDS]
-    for _env, _seed in _COMBOS:
-        OPS.append({
-            "op": "create",
-            "file": f"naslib/naslib/data/nb201_tables_{_env}_s{_seed}.json",
-            "content": json.dumps({"val": dgp.val_table(_env)}),
-        })
+for _env, _seed in _COMBOS:
+    OPS.append({
+        "op": "create",
+        "file": f"naslib/naslib/data/nb201_tables_{_env}_s{_seed}.json",
+        "content": json.dumps({"val": dgp.val_table(_env)}),
+    })

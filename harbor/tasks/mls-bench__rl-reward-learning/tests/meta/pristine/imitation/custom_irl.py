@@ -65,14 +65,14 @@ def make_env(env_id, seed, idx=0):
 # =====================================================================
 # FIXED: Expert demonstration generation & loading
 # =====================================================================
-def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=25000):
-    """Train PPO expert and collect demonstrations on GPU."""
+def _generate_expert_demos_impl(demo_path, env_id, gen_seed, total_timesteps=2_000_000, n_demos=25000):
+    """Train the PPO expert under ``gen_seed`` and collect demonstrations."""
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv
     from stable_baselines3.common.evaluation import evaluate_policy as sb3_eval
 
     os.makedirs(demo_path, exist_ok=True)
-    print(f"Training expert for {env_id} ({total_timesteps} steps)...", flush=True)
+    print(f"Training expert for {env_id} ({total_timesteps} steps, seed {gen_seed})...", flush=True)
 
     train_env = SubprocVecEnv([lambda eid=env_id, i=i: gym.make(eid) for i in range(4)])
     sb3_device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -80,15 +80,15 @@ def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=
                 n_steps=2048, batch_size=64, n_epochs=10,
                 learning_rate=3e-4, gamma=0.99, gae_lambda=0.95,
                 clip_range=0.2, ent_coef=0.0, vf_coef=0.5,
-                max_grad_norm=0.5, device=sb3_device)
+                max_grad_norm=0.5, device=sb3_device, seed=gen_seed)
     model.learn(total_timesteps=total_timesteps)
     train_env.close()
-
     eval_env = DummyVecEnv([lambda eid=env_id: gym.make(eid)])
+    if hasattr(eval_env, "seed"):
+        eval_env.seed(gen_seed)
     mean_reward, std_reward = sb3_eval(model, eval_env, n_eval_episodes=20)
     print(f"  Expert {env_id}: {mean_reward:.1f} +/- {std_reward:.1f}", flush=True)
-    model.save(os.path.join(demo_path, f"{env_id}_expert"))
-
+    _atomic_save_model(model, demo_path, env_id)
     all_obs, all_acts, all_next_obs, all_dones = [], [], [], []
     obs = eval_env.reset()
     for _ in range(n_demos):
@@ -106,23 +106,23 @@ def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=
         "next_obs": np.array(all_next_obs, dtype=np.float32),
         "dones": np.array(all_dones, dtype=np.float32),
     }
-    np.savez(os.path.join(demo_path, f"{env_id}_demos.npz"), **demos)
+    _atomic_save_npz(demos, os.path.join(demo_path, f"{env_id}_demos.npz"))
     print(f"  Saved {n_demos} transitions for {env_id}", flush=True)
     eval_env.close()
 
 
 def load_expert_demos(demo_path, env_id, device):
-    """Load expert demonstrations, generating them if needed."""
+    """Load expert demonstrations, generating them if needed.
+
+    Concurrent runs (e.g. several seeds) share ``demo_path``, so the
+    generate-or-load step is serialized with an inter-process file lock, the
+    cache is only ever published atomically, and a corrupt cache file is
+    regenerated under the lock (see the concurrency helpers further down).
+    """
     path = os.path.join(demo_path, f"{env_id}_demos.npz")
-    if not os.path.exists(path):
-        generate_expert_demos(demo_path, env_id)
-    data = np.load(path)
-    demos = {
-        "obs": torch.tensor(data["obs"], dtype=torch.float32, device=device),
-        "acts": torch.tensor(data["acts"], dtype=torch.float32, device=device),
-        "next_obs": torch.tensor(data["next_obs"], dtype=torch.float32, device=device),
-        "dones": torch.tensor(data["dones"], dtype=torch.float32, device=device),
-    }
+    data = _locked_demo_load(demo_path, env_id, path)
+    demos = {k: torch.tensor(data[k], dtype=torch.float32, device=device)
+             for k in ("obs", "acts", "next_obs", "dones")}
     print(f"Loaded {len(demos['obs'])} expert transitions from {path}")
     return demos
 
@@ -436,6 +436,104 @@ def ppo_update(policy, optimizer, buffer, args, device):
         "v_loss": total_v_loss / max(n_updates, 1),
         "entropy": total_entropy / max(n_updates, 1),
     }
+
+
+# =====================================================================
+# FIXED: Demo-cache concurrency helpers (atomic publish + file lock)
+# =====================================================================
+def _atomic_save_model(model, demo_path, env_id):
+    """Save the SB3 expert atomically (temp file in the same dir + os.replace)."""
+    tmp = os.path.join(demo_path, f".{env_id}_expert.tmp-{os.getpid()}.zip")
+    model.save(tmp)
+    os.replace(tmp, os.path.join(demo_path, f"{env_id}_expert.zip"))
+
+
+def _atomic_save_npz(arrays, final_path):
+    """np.savez to a temp file in the same dir, then os.replace onto the final
+    path, so a concurrent reader can never observe a partially written file."""
+    tmp = os.path.join(os.path.dirname(final_path),
+                       f".{os.path.basename(final_path)}.tmp-{os.getpid()}.npz")
+    np.savez(tmp, **arrays)
+    os.replace(tmp, final_path)
+
+
+def _read_demo_arrays(path):
+    """Fully materialize the demo arrays (validates the whole file on read)."""
+    with np.load(path) as data:
+        return {k: np.asarray(data[k]) for k in ("obs", "acts", "next_obs", "dones")}
+
+
+def _locked_demo_load(demo_path, env_id, path):
+    """Generate-or-load the shared demo cache under an inter-process lock.
+
+    All runs sharing ``demo_path`` serialize here: the first process trains
+    the expert and publishes the cache atomically while the others block on
+    the lock and then just load it. A cache file that fails to load (e.g. a
+    torn write left behind by a crashed/killed earlier run) is deleted and
+    regenerated under the same lock.
+    """
+    import fcntl
+    import zipfile
+
+    os.makedirs(demo_path, exist_ok=True)
+    with open(path + ".lock", "a") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            if not os.path.exists(path):
+                generate_expert_demos(demo_path, env_id)
+            try:
+                return _read_demo_arrays(path)
+            except (zipfile.BadZipFile, EOFError, KeyError, ValueError, OSError) as exc:
+                print(f"Corrupt demo cache {path} ({exc!r}); regenerating...", flush=True)
+                os.remove(path)
+                generate_expert_demos(demo_path, env_id)
+                return _read_demo_arrays(path)
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+
+
+def _save_rng_states():
+    """Snapshot the global RNG states (python, numpy, torch, torch.cuda)."""
+    states = {
+        "random": random.getstate(),
+        "numpy": np.random.get_state(),
+        "torch": torch.get_rng_state(),
+    }
+    if torch.cuda.is_available():
+        states["cuda"] = torch.cuda.get_rng_state_all()
+    return states
+
+
+def _restore_rng_states(states):
+    random.setstate(states["random"])
+    np.random.set_state(states["numpy"])
+    torch.set_rng_state(states["torch"])
+    if "cuda" in states:
+        torch.cuda.set_rng_state_all(states["cuda"])
+
+
+def generate_expert_demos(demo_path, env_id, total_timesteps=2_000_000, n_demos=25000):
+    """Deterministic expert generation, independent of the caller's seed.
+
+    The expert (and thus the shared demo cache) must not depend on which
+    concurrent run happens to win the generation lock, so training runs
+    under a FIXED seed derived from ``env_id`` alone. The caller's RNG
+    states are saved first and restored afterwards, so each run's own
+    per-seed randomness is unaffected by whether it generated or loaded.
+    """
+    import zlib
+
+    gen_seed = zlib.crc32(env_id.encode("utf-8")) % (2 ** 31)
+    saved = _save_rng_states()
+    try:
+        random.seed(gen_seed)
+        np.random.seed(gen_seed)
+        torch.manual_seed(gen_seed)
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(gen_seed)
+        _generate_expert_demos_impl(demo_path, env_id, gen_seed, total_timesteps, n_demos)
+    finally:
+        _restore_rng_states(saved)
 
 
 # =====================================================================

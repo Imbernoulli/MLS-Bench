@@ -18,7 +18,7 @@
   "oyster/docker/environment.yml": "4bb52a048712480246216f42c5b58178619ce22819486d99d584be35d8d50bbe",
   "oyster/docker/install_mujoco.py": "372e0f9b2baefcd9ce4e3ec602dc3ac91421d18a6a328e75065f985948e4ee52",
   "oyster/launch.py": "de7ac2646f936fddbf369b35e4eb3e10dd4f69b3d254bc3921b923fa8ac64280",
-  "oyster/launch_custom.py": "e8be740fa6cdad94d80c098c4c7c4841f712701677f9825cd6a1126db671aeb0",
+  "oyster/launch_custom.py": "17c61d9b766be52e6b193db21f9accf52967d3de3a106c640628777fb52569b0",
   "oyster/launch_experiment.py": "21451d2cb847b1f026d3f6a8a6cda66f2d359a97fe1b36d7d6555a216185e96f",
   "oyster/rlkit/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "oyster/rlkit/core/__init__.py": "5637e9a1b3bc73b08dc8794588318f233863bdef7e77cdf130f1fadd271e014e",

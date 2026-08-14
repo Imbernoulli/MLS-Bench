@@ -9,12 +9,17 @@ the host-side provider ``holdout/optimization-nas/dgp.py``. The held-out TEST
 accuracy of the final architecture is joined by the task parser OUTSIDE the
 agent's process (the runner's ``FINAL_ARCH`` report).
 
-In the Harbor verifier this module is re-imported for every evaluation by
-``apply.py`` with ENV/SEED exported, so only the active run's table is
-materialized — and the runner deletes it before any editable code executes
-(MLSBENCH_EPHEMERAL_INPUTS=1 in the eval scripts). Natively (no ENV at
-workspace-setup time) every (dataset, seed) combination is materialized once
-and kept, so repeated tests in the same workspace keep working.
+This module is re-run for every evaluation with ENV/SEED exported — by
+``apply.py`` in the Harbor verifier and by the harness's host-side
+``mlsbench.agent.input_stager`` natively (config.json ``"ephemeral_inputs"``)
+— so only the active run's table is materialized, and the runner deletes it
+after loading, before any editable code executes (MLSBENCH_EPHEMERAL_INPUTS=1
+in the eval scripts). At workspace-setup time (no ENV/SEED) NO tables are
+staged (only the editable scaffold and the pickle placeholder) — matching
+Harbor's agent-session _scaffold. Tables staged at setup would linger
+unconsumed in the shared workspace, readable by editable code during other
+runs' evaluations (sibling dataset/seed tables are a correlated proxy for
+the budgeted oracle); each evaluation re-stages its own table instead.
 """
 
 import importlib.util as _ilu
@@ -48,11 +53,26 @@ except Exception:
 
 _ENV = os.environ.get("ENV")
 _SEED = os.environ.get("SEED")
+# The native harness exports the test label as ENV ("CIFAR-10"); the Harbor
+# eval scripts export the dataset key directly ("cifar10"). Accept both so
+# eval-time materialization stays selective — staging ONLY the active run's
+# table also means no sibling dataset/seed table (a correlated proxy for the
+# budgeted oracle) is ever on disk during an evaluation.
+_ENV = {
+    "CIFAR-10": "cifar10",
+    "CIFAR-100": "cifar100",
+    "ImageNet16-120": "imagenet16",
+}.get(_ENV, _ENV)
 if _ENV in dgp.DATASET_MAP and _SEED is not None:
-    # Harbor eval-time materialization: just the active run's table.
+    # Eval-time materialization (Harbor apply.py / native input_stager):
+    # just the active run's table.
     _COMBOS = [(_ENV, int(_SEED))]
 else:
-    _COMBOS = [(_env, _seed) for _env in dgp.DATASET_MAP for _seed in _SEEDS]
+    # Workspace setup (no ENV/SEED) or an unrecognized label: stage NO
+    # tables — only the editable scaffold and the pickle placeholder below.
+    # Tables staged here would linger unconsumed in the shared workspace,
+    # readable by editable code during other runs' evaluations.
+    _COMBOS = []
 
 _PLACEHOLDER = (
     "NAS-Bench-201 accuracy tables are not available in the agent workspace.\n"

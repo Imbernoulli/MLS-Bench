@@ -29,7 +29,9 @@ NGPU=${NGPU:-1}
 if [ "$NGPU" -lt 1 ]; then
     NGPU=1
 fi
-MASTER_PORT=${MASTER_PORT:-$((29500 + RANDOM % 1000))}
+# Deterministic per-(label,seed) rendezvous port: concurrent eval labels share
+# one network namespace, so a RANDOM port can collide (EADDRINUSE crash-zero).
+MASTER_PORT=${MASTER_PORT:-$((29500 + ($(printf "%s" "cv-diffusion-efficiency-${ENV:-sd20}-${SEED:-42}-${OUTPUT_DIR:-}" | cksum | cut -d " " -f 1) % 1000)))}
 
 torchrun --nproc_per_node=$NGPU --master_port=$MASTER_PORT batch_eval.py \
     --model sd20 \

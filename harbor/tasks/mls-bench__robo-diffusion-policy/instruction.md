@@ -98,9 +98,9 @@ stay unchanged.
     24: 
     25:     set_seed(args.seed)
     26: 
-    27:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}/'
-    28:     if os.path.exists(save_path) is False:
-    29:         os.makedirs(save_path)
+    27:     save_path = f'results/{args.pipeline_name}/{args.task.env_name}_s{args.seed}/'  # per-seed dir: parallel seeds of one label must not share ckpts
+    28:     if args.mode == "train": import shutil; shutil.rmtree(save_path, ignore_errors=True)  # fresh train dir: never silently score a stale exact-step ckpt
+    29:     os.makedirs(save_path, exist_ok=True)
     30: 
     31:     # ---------------------- Create Dataset ----------------------
     32:     env = gym.make(args.task.env_name)

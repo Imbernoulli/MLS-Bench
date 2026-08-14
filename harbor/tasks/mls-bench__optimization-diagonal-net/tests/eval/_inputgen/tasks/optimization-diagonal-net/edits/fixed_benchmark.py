@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import glob
 import io
 import json
 import math
@@ -47,6 +48,7 @@ class ProblemConfig:
     """Immutable descriptor for a sparse-recovery problem setting."""
     dim: int
     sparsity: int
+    sigma: float = 0.0
     delta: float = 0.5
     n_test: int = 4096
     alpha_init: float = 1e-3
@@ -104,16 +106,30 @@ def _inputs_dir() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_inputs")
 
 
-def _input_key(dim, sparsity, n_max_train, n_test, seed) -> str:
+def _sigma_tag(sigma) -> str:
+    """Filename-safe canonical tag for the --sigma value (e.g. 0.1 -> '0p1')."""
+    return f"{float(sigma):g}".replace("-", "m").replace(".", "p")
+
+
+def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
     return (
-        f"d{int(dim)}_k{int(sparsity)}"
+        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}"
         f"_nmax{int(n_max_train)}_nt{int(n_test)}_seed{int(seed)}"
     )
+
+
+# Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
+# unlinked the staged input blobs and BEFORE the editable module was
+# imported: maps blob basename -> file content (base64 text). None when the
+# program is launched directly — load_problem then reads the on-disk blobs
+# (legacy flow).
+_PRELOADED_INPUTS: dict[str, str] | None = None
 
 
 def load_problem(
     dim: int,
     sparsity: int,
+    sigma: float,
     n_max_train: int,
     n_test: int,
     seed: int,
@@ -132,12 +148,15 @@ def load_problem(
     Returns:
         (X_train, y_train, X_test, y_test) as torch.Tensor (float64)
     """
-    path = os.path.join(
-        _inputs_dir(),
-        f"{_input_key(dim, sparsity, n_max_train, n_test, seed)}.npz.b64",
-    )
-    with open(path, "r") as f:
-        raw = base64.b64decode(f.read())
+    name = f"{_input_key(dim, sparsity, sigma, n_max_train, n_test, seed)}.npz.b64"
+    # Prefer the payload preloaded by the FIXED wrapper (which read and
+    # unlinked the blobs before any editable code could run); fall back to
+    # the on-disk blob when the program is launched directly.
+    payload = (_PRELOADED_INPUTS or {}).pop(name, None)
+    if payload is None:
+        with open(os.path.join(_inputs_dir(), name), "r") as f:
+            payload = f.read()
+    raw = base64.b64decode(payload)
     with np.load(io.BytesIO(raw)) as data:
         X_train_np = data["X_train"].astype(np.float64)
         y_train_np = data["y_train"].astype(np.float64)
@@ -152,9 +171,15 @@ def load_problem(
     return X_train, y_train, X_test, y_test
 
 
-def _scrub_inputs(dim, sparsity, n_max_train, n_test, seeds) -> None:
-    """Delete the pre-generated input blobs from the workspace once they have
-    been loaded into memory, BEFORE any editable hook runs.
+def _scrub_inputs(dim, sparsity, sigma) -> None:
+    """Delete EVERY pre-generated input blob for this (dim, sparsity, sigma)
+    setting once the run's datasets are in memory, BEFORE any editable hook
+    runs — but only when the harness marks the materialized inputs as
+    ephemeral (MLSBENCH_EPHEMERAL_INPUTS=1, i.e. re-created for every
+    evaluation). ALL n_max / n_test / seed variants of the setting are removed
+    (e.g. the --smoke grid's smaller companion files), not just the variant
+    this run loaded: a same-setting variant left on disk would still expose
+    held-out targets. Without the flag (no harness staging) blobs persist.
 
     The editable optimizer (get_hyperparameters / init_state / step) only ever
     receives gradients — never the raw arrays — so it has no legitimate need for
@@ -164,12 +189,13 @@ def _scrub_inputs(dim, sparsity, n_max_train, n_test, seeds) -> None:
     than the current sample size ``n`` and bypass the smallest-``n`` search). The
     arrays then live only in this fixed driver's local scope.
     """
-    inputs_dir = _inputs_dir()
-    for seed in seeds:
-        blob = os.path.join(
-            inputs_dir,
-            f"{_input_key(dim, sparsity, n_max_train, n_test, seed)}.npz.b64",
-        )
+    if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") != "1":
+        return
+    pattern = os.path.join(
+        _inputs_dir(),
+        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}_*.npz.b64",
+    )
+    for blob in glob.glob(pattern):
         try:
             os.remove(blob)
         except OSError:
@@ -445,7 +471,9 @@ def _coarse_to_fine_search(
     n_max_train = max(grid)
 
     # Load pre-generated clean datasets for all seeds at max training size INTO
-    # MEMORY, then DELETE the on-disk blobs BEFORE any editable hook runs. The
+    # MEMORY and, when the harness marks the materialized inputs as ephemeral
+    # (MLSBENCH_EPHEMERAL_INPUTS=1: re-created before every evaluation), DELETE
+    # the on-disk blobs BEFORE any editable hook runs. The
     # generator (and the true w_star it builds) is host-only and never enters
     # this container; the editable optimizer only ever receives gradients, so
     # once the files are scrubbed it cannot reopen them to read the held-out
@@ -456,9 +484,14 @@ def _coarse_to_fine_search(
           flush=True)
     for seed in seeds:
         datasets[seed] = load_problem(
-            problem.dim, problem.sparsity, n_max_train, problem.n_test, seed,
+            problem.dim, problem.sparsity, problem.sigma, n_max_train,
+            problem.n_test, seed,
         )
-    _scrub_inputs(problem.dim, problem.sparsity, n_max_train, problem.n_test, seeds)
+    _scrub_inputs(problem.dim, problem.sparsity, problem.sigma)
+    # Drop any remaining preloaded payloads: from here on the arrays live
+    # only in fixed-driver locals, exactly as in the direct-launch flow.
+    global _PRELOADED_INPUTS
+    _PRELOADED_INPUTS = None
     print("Datasets ready.", flush=True)
 
     # Editable hooks below are invoked only AFTER the input blobs are scrubbed.
@@ -542,7 +575,9 @@ def run_cli(get_hyperparameters, init_state, step):
     parser.add_argument("--dim", type=int, required=True)
     parser.add_argument("--sparsity", type=int, required=True)
     parser.add_argument("--sigma", type=float, default=0.0,
-                        help="(deprecated, ignored) Use --delta instead.")
+                        help="Setting tag: selects this setting's pre-generated "
+                             "input files; does not enter the benchmark math "
+                             "(training label noise is --delta).")
     parser.add_argument("--delta", type=float, default=0.5)
     parser.add_argument("--alpha-init", type=float, default=1e-3)
     parser.add_argument("--n-test", type=int, default=4096)
@@ -555,6 +590,7 @@ def run_cli(get_hyperparameters, init_state, step):
     problem = ProblemConfig(
         dim=args.dim,
         sparsity=args.sparsity,
+        sigma=args.sigma,
         delta=args.delta,
         n_test=args.n_test,
         alpha_init=args.alpha_init,

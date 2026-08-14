@@ -11,11 +11,24 @@ bind-mounted). Here we import it host-side and write ONLY the observable problem
 into the workspace as base64 text — the agent never sees the generator or
 w_star. Inputs are byte-identical to the originals, so honest results are
 unchanged.
+
+This module is re-run for every evaluation with ENV/SEED exported — by
+``apply.py`` in the Harbor verifier and by the harness's host-side
+``mlsbench.agent.input_stager`` natively (config.json ``"ephemeral_inputs"``)
+— so only the active run's blobs are materialized, and the runner deletes
+them after loading, before any editable code executes
+(MLSBENCH_EPHEMERAL_INPUTS=1 in the eval scripts). At workspace-setup time
+(no ENV/SEED) NO blobs are staged — matching Harbor's agent-session
+_scaffold. Blobs staged at setup would linger unconsumed in the shared
+workspace, readable by editable code during other settings' evaluations;
+instead each evaluation's blobs exist only between its re-stage and its
+load-then-scrub.
 """
 
 import base64
 import io
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -66,10 +79,19 @@ def _resolved_grid(base_grid, grid_max):
     return tuple(extended)
 
 
-def _input_key(dim, sparsity, n_max_train, n_test, seed):
-    # Must match fixed_benchmark.py _input_key() exactly.
+def _sigma_tag(sigma):
+    # Must match fixed_benchmark.py _sigma_tag() exactly.
+    return f"{float(sigma):g}".replace("-", "m").replace(".", "p")
+
+
+def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed):
+    # Must match fixed_benchmark.py _input_key() exactly. Sigma is a setting
+    # tag only (it does not enter the generator), but it MUST be part of the
+    # key so settings that share (dim, sparsity) — e.g. d500_k10_s01 vs
+    # d500_k10_s02 — read DISJOINT files and one run's ephemeral scrub can
+    # never race a concurrently running sibling setting.
     return (
-        f"d{int(dim)}_k{int(sparsity)}"
+        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}"
         f"_nmax{int(n_max_train)}_nt{int(n_test)}_seed{int(seed)}"
     )
 
@@ -110,17 +132,35 @@ OPS = [
     },
 ]
 
+_ALL_SCRIPTS = sorted((_TASK_DIR / "scripts").glob("*.sh"))
+_ENV = os.environ.get("ENV")
+_SEED = os.environ.get("SEED")
+if _ENV in {_s.stem for _s in _ALL_SCRIPTS} and _SEED is not None:
+    # Eval-time materialization (Harbor apply.py / native input_stager):
+    # just the active run's blobs.
+    _SCRIPTS = [_s for _s in _ALL_SCRIPTS if _s.stem == _ENV]
+    _ACTIVE_MASTER_SEEDS = [int(_SEED)]
+else:
+    # Workspace setup (no ENV/SEED) or an unrecognized label: stage NO input
+    # blobs. Every evaluation re-materializes its own and scrubs them after
+    # loading, so anything staged here would only linger unconsumed in the
+    # shared workspace — readable by editable code during OTHER settings'
+    # evaluations (Harbor's agent-session _scaffold ships no blobs either).
+    _SCRIPTS = []
+    _ACTIVE_MASTER_SEEDS = []
+
 _seen = set()
-for _script in sorted((_TASK_DIR / "scripts").glob("*.sh")):
+for _script in _SCRIPTS:
     _a = _parse_script_args(_script.read_text())
     if _a.get("dim") is None or _a.get("sparsity") is None:
         continue
     _dim = int(_a["dim"])
     _sparsity = int(_a["sparsity"])
+    _sigma = float(_a["sigma"]) if _a.get("sigma") else 0.0
     _n_test = int(_a["n-test"]) if _a.get("n-test") else 4096
     _grid_max = int(_a["grid-max"]) if _a.get("grid-max") else None
 
-    for _master in _MASTER_SEEDS:
+    for _master in _ACTIVE_MASTER_SEEDS:
         for _base_grid, _num_seeds in (
             (_FULL_GRID, _FULL_NUM_SEEDS),
             (_SMOKE_GRID, _SMOKE_NUM_SEEDS),
@@ -128,7 +168,9 @@ for _script in sorted((_TASK_DIR / "scripts").glob("*.sh")):
             _grid = _resolved_grid(_base_grid, _grid_max)
             _n_max_train = max(_grid)
             for _seed in range(int(_master), int(_master) + _num_seeds):
-                _key = _input_key(_dim, _sparsity, _n_max_train, _n_test, _seed)
+                _key = _input_key(
+                    _dim, _sparsity, _sigma, _n_max_train, _n_test, _seed,
+                )
                 if _key in _seen:
                     continue
                 _seen.add(_key)

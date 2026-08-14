@@ -3,6 +3,13 @@
 
 SEED=${SEED:-42}
 
+# Pre-create the shared ./m4_results/<model>/ results leaf. All three m4_*
+# labels (and parallel seeds) start concurrently in one workspace, and the
+# package's check-then-create in exp_short_term_forecasting.py loses a TOCTOU
+# race when the leaf is missing (the loser dies with FileExistsError AFTER
+# training). With the directory already present, the racy branch never runs.
+mkdir -p "./m4_results/Custom/"
+
 python -u run.py \
   --task_name short_term_forecast \
   --is_training 1 \

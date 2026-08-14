@@ -59,11 +59,26 @@ if sample_sh.exists():
         'if [ -z "${NGPU:-}" ] || [ "$NGPU" -lt 1 ]; then\n'
         "    NGPU=1\n"
         "fi\n"
-        'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "${ENV:-${ds:-dbim}}-${SEED:-42}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
+        'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "cv-dbm-sampler-${ENV:-${ds:-dbim}}-${SEED:-42}-${OUTPUT_DIR:-}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
         'run_args="--nproc_per_node $NGPU \\\n'
         '          --master_port $DBIM_MASTER_PORT"\n'
     )
     text = text.replace(old_gpu, new_gpu, 1)
+    # The current baked image ships sample.sh with pre_edit's NGPU probe
+    # already applied (fixed --master_port 29511), so the upstream-text
+    # anchor above never matches there and every concurrent torchrun would
+    # share port 29511. Second anchor for that layout: swap only the fixed
+    # port for the task-salted deterministic one. Guarded so it never
+    # re-applies.
+    if "DBIM_MASTER_PORT" not in text:
+        text = text.replace(
+            'run_args="--nproc_per_node $NGPU \\\n'
+            '          --master_port 29511"\n',
+            'DBIM_MASTER_PORT="${DBIM_MASTER_PORT:-$((29511 + ($(printf "%s" "cv-dbm-sampler-${ENV:-${ds:-dbim}}-${SEED:-42}-${OUTPUT_DIR:-}" | cksum | cut -d " " -f 1) % 1000)))}"\n'
+            'run_args="--nproc_per_node $NGPU \\\n'
+            '          --master_port $DBIM_MASTER_PORT"\n',
+            1,
+        )
     if "${num_samples:+ --num_samples=" not in text:
         text = text.replace(
             " --use_new_attention_order $ATTN_TYPE --data_dir=$DATA_DIR --dataset=$DATASET --split $SPLIT\\\n",
@@ -207,20 +222,25 @@ if evaluate_sh.exists():
         "fi\n",
         1,
     )
-    text = text.replace(
-        "    python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n",
-        '    if [[ "${DBIM_SKIP_LPIPS:-0}" != "1" ]]; then\n'
-        "        python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n"
-        "    fi\n",
-        1,
-    )
-    text = text.replace(
-        '    python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n',
-        '    if [[ "${DBIM_SKIP_IS:-0}" != "1" ]]; then\n'
-        '        python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n'
-        "    fi\n",
-        1,
-    )
+    # The wrapped replacement still contains the searched line as a substring
+    # (deeper indent), so an unguarded replace re-wraps on every application
+    # and the file never converges. Only wrap when not already wrapped.
+    if "DBIM_SKIP_LPIPS" not in text:
+        text = text.replace(
+            "    python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n",
+            '    if [[ "${DBIM_SKIP_LPIPS:-0}" != "1" ]]; then\n'
+            "        python evaluations/evaluator.py $REF_PATH $SAMPLE_PATH --metric lpips\n"
+            "    fi\n",
+            1,
+        )
+    if "DBIM_SKIP_IS" not in text:
+        text = text.replace(
+            '    python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n',
+            '    if [[ "${DBIM_SKIP_IS:-0}" != "1" ]]; then\n'
+            '        python evaluations/evaluator.py "" $SAMPLE_PATH --metric is\n'
+            "    fi\n",
+            1,
+        )
     write_if_changed(evaluate_sh, text)
 
 
@@ -556,17 +576,49 @@ if fid_util_py.exists():
     write_if_changed(fid_util_py, text)
 
 
+# ddbm/karras_diffusion.py is the task's DECLARED editable file: the guard
+# byte-segment-compares its protected regions against tests/meta/pristine on
+# every verifier pass, so the verifier must never mutate it. Older versions
+# of this patch gated the LPIPS construction in-place there — heal that back
+# to pristine if present (anchored on the old patched text; agent edits live
+# in the allowed ranges and are untouched).
 karras_py = Path("ddbm/karras_diffusion.py")
 if karras_py.exists():
     text = karras_py.read_text()
     text = text.replace(
-        'if loss_norm == "lpips":\n'
-        '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
         'if loss_norm == "lpips" and '
         '__import__("os").environ.get("DBIM_DISABLE_SAMPLE_LPIPS", "0") != "1":\n'
+        '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
+        'if loss_norm == "lpips":\n'
         '            self.lpips_loss = LPIPS(replace_pooling=True, reduction="none")',
         1,
     )
     write_if_changed(karras_py, text)
+
+# The LPIPS gate lives in ddbm/script_util.py instead (NOT a declared file;
+# its verifier-patched sha is whitelisted via tests/meta/verifier_patched_shas.json):
+# sampling never computes training losses, so constructing the VGG-based LPIPS
+# in KarrasDenoiser.__init__ is pure RSS overhead under the verifier.
+script_util_py = Path("ddbm/script_util.py")
+if script_util_py.exists():
+    text = script_util_py.read_text()
+    text = text.replace(
+        "    diffusion = KarrasDenoiser(\n"
+        "        noise_schedule=ns,\n"
+        "        precond=precond,\n"
+        "        t_max=sigma_max,\n"
+        "        t_min=sigma_min,\n"
+        "    )",
+        "    diffusion = KarrasDenoiser(\n"
+        "        noise_schedule=ns,\n"
+        "        precond=precond,\n"
+        "        t_max=sigma_max,\n"
+        "        t_min=sigma_min,\n"
+        '        loss_norm=("l2" if __import__("os").environ.get(\n'
+        '            "DBIM_DISABLE_SAMPLE_LPIPS", "0") == "1" else "lpips"),\n'
+        "    )",
+        1,
+    )
+    write_if_changed(script_util_py, text)
 PY
 } 9>"${_dbim_patch_lock}"

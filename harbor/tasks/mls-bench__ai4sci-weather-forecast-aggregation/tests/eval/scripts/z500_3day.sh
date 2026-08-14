@@ -11,4 +11,11 @@ export LR=5e-4
 export WARMUP_STEPS=5000
 export PATIENCE=20
 
+# Scope checkpoints per label: all three labels run concurrently and share
+# OUTPUT_DIR, so an unscoped best_model.pt gets clobbered across labels.
+export OUTPUT_DIR="${OUTPUT_DIR:-output}/${ENV:-z500-3day}"
+mkdir -p "$OUTPUT_DIR"
+# Drop any stale checkpoint from a previous run/iteration.
+rm -f "${OUTPUT_DIR}/best_model.pt"
+
 python -u ClimaX/custom_forecast.py

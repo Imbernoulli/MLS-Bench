@@ -516,7 +516,7 @@
   "CleanDiffuser/pipelines/adaptdiffuser_d4rl_antmaze.py": "07e31b5c606c4d5fbd506acbc72fcd2fec1dba941e3fbc09fac162059e85390c",
   "CleanDiffuser/pipelines/adaptdiffuser_d4rl_kitchen.py": "11d5aa19319b591e7af8a7d44651b38edc8eaed64f35a743cef5895d2edc4206",
   "CleanDiffuser/pipelines/adaptdiffuser_d4rl_mujoco.py": "b7a4a54bf082e41a16a55488ef562282a949dcad2c8ac5b52838d45399a25983",
-  "CleanDiffuser/pipelines/custom_policy.py": "32a0e2d5c6c9bb52fc6d0eecc5585bdec77f29275463ab2f15b7b2017c9e10f9",
+  "CleanDiffuser/pipelines/custom_policy.py": "18bee825eb6ff9f3b65e23d847fb5bef459564cb96e68cf641e882dd4e196473",
   "CleanDiffuser/pipelines/dbc_kitchen.py": "4e219c4d1aef4757b0a726f0c373653dfe59e355e5d4e4a0f6cc7f9eb0fee0d2",
   "CleanDiffuser/pipelines/dbc_pusht.py": "c742abe1bb67c82421437fe9f4c8474409c628849b27b6b9c196d4a2167aae33",
   "CleanDiffuser/pipelines/dbc_pusht_image.py": "99e80656234fc6c463da92334eed3f3072041dec01035119ba135ecdf3c0b1f8",

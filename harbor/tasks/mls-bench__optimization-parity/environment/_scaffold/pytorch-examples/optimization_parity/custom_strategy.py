@@ -9,13 +9,13 @@ functions and asks the agent to control only:
 NOTE: The hidden parity secret S, the training-pool LABELS, and the held-out
 test labels are NOT visible to your editable hooks. The harness pre-generates
 the (unlabeled) training inputs and their labels; a FIXED driver loads the
-labels into its own memory, deletes them from disk, then hands your
-``make_dataset`` only the UNLABELED pool and attaches the held-out labels to the
-rows you pick. Your hooks therefore only ever see binary inputs — never a label,
-never the secret subset S, never the test labels. The runner trains your model
-and emits its predictions on a held-out test set; the host regenerates the test
-labels and computes test accuracy. A strategy must make gradient training learn
-the parity — it cannot recover the secret from labels.
+labels into its own memory (scrubbing them from disk when the harness marks
+them ephemeral), then hands your ``make_dataset`` only the UNLABELED pool and
+attaches the held-out labels to the rows you pick. Your hooks only ever see
+binary inputs — never a label, never S, never the test labels. The runner
+trains your model and emits its predictions on a held-out test set; the host
+regenerates the test labels and computes accuracy. A strategy must make
+gradient training learn the parity — it cannot recover the secret from labels.
 """
 
 from __future__ import annotations
@@ -185,9 +185,9 @@ def maybe_log_final_window(
 # =====================================================================
 # FIXED: held-out input loading (the harness pre-generates these; the
 # secret and the test labels are never present in this process). The
-# training-pool LABELS are loaded here, in fixed code, and then scrubbed
-# from disk BEFORE any editable hook runs — so make_dataset() below only
-# ever sees the UNLABELED pool.
+# training-pool LABELS are loaded here, in fixed code — and scrubbed from
+# disk when the harness marks them ephemeral (MLSBENCH_EPHEMERAL_INPUTS=1)
+# — so make_dataset() below only ever sees the UNLABELED pool.
 # =====================================================================
 def _inputs_dir() -> str:
     """Directory holding the pre-generated parity inputs for this task."""
@@ -226,47 +226,47 @@ def gen_test_x(config: TaskConfig, test_seed: int) -> torch.Tensor:
 
 
 def load_train_labels(config: TaskConfig, seed: int, secret_index: int) -> torch.Tensor:
-    """Load the bit-packed training-pool labels for one hidden secret.
+    """Load one hidden secret's bit-packed training-pool labels (only the
+    labels — the secret that produced them is held out).
 
-    Only the labels are provided (the secret that produced them is held out).
-    The labels are bit-packed for one row per training example over the full
-    ``max_train_examples`` pool; unpack to a float tensor in {0, 1}.
-
-    This is FIXED code, called only by ``_load_all_train_labels`` below, which
-    immediately deletes the on-disk blob afterward. It is never invoked from an
-    editable hook.
+    Prefers the payload preloaded by the FIXED wrapper (scripts/fixed_entry.py
+    reads and unlinks the blobs BEFORE this module is imported); falls back to
+    the on-disk blob when launched directly. FIXED code, called only by
+    ``_load_all_train_labels`` below — never from an editable hook.
     """
     import numpy as np
 
-    tag = _config_tag(config)
-    path = os.path.join(_inputs_dir(), f"{tag}_seed{seed}_s{secret_index}.labels.b64")
-    with open(path, "r") as f:
-        packed = np.frombuffer(base64.b64decode(f.read()), dtype=np.uint8)
+    name = f"{_config_tag(config)}_seed{seed}_s{secret_index}.labels.b64"
+    payload = (_PRELOADED_INPUTS or {}).pop(name, None)
+    if payload is None:
+        with open(os.path.join(_inputs_dir(), name), "r") as f:
+            payload = f.read()
+    packed = np.frombuffer(base64.b64decode(payload), dtype=np.uint8)
     bits = np.unpackbits(packed)[: config.max_train_examples]
     return torch.from_numpy(bits.astype("float32"))
 
 
 def _load_all_train_labels(config: TaskConfig, seed: int) -> dict[int, torch.Tensor]:
     """Load every hidden secret's training-pool labels into memory, then DELETE
-    the on-disk label blobs.
-
-    After this returns, the labels exist only inside this fixed driver's local
-    scope; the ``.labels.b64`` files are gone from the workspace, so the editable
-    ``make_dataset`` hook (which runs later) cannot open them to recover the
-    hidden secret. This is what keeps parity honest: the strategy must help
-    gradient training learn the parity rather than solve the secret from labels.
-    """
+    the on-disk label blobs when the harness marks the materialized inputs as
+    ephemeral (MLSBENCH_EPHEMERAL_INPUTS=1, i.e. re-created before every
+    evaluation). The delete keeps parity honest there: the editable
+    ``make_dataset`` hook (which runs later) cannot reopen the blobs to recover
+    the hidden secret, so the strategy must help gradient training learn the
+    parity. Natively (no ENV set) the blobs persist — they are staged once per
+    workspace and must survive across evaluations."""
     labels: dict[int, torch.Tensor] = {}
     for secret_index in range(config.num_hidden_secrets):
         labels[secret_index] = load_train_labels(config, seed, secret_index)
-    tag = _config_tag(config)
-    inputs_dir = _inputs_dir()
-    for secret_index in range(config.num_hidden_secrets):
-        blob = os.path.join(inputs_dir, f"{tag}_seed{seed}_s{secret_index}.labels.b64")
-        try:
-            os.remove(blob)
-        except OSError:
-            pass
+    if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
+        import glob as _glob
+        tag = _config_tag(config)
+        pattern = os.path.join(_inputs_dir(), f"{tag}_seed{seed}_s*.labels.b64")
+        for blob in _glob.glob(pattern):
+            try:
+                os.remove(blob)
+            except OSError:
+                pass
     return labels
 
 
@@ -344,6 +344,13 @@ def get_optimizer_config(config: TaskConfig) -> dict[str, float]:
 # =====================================================================
 # FIXED: training and prediction driver
 # =====================================================================
+# Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
+# unlinked the staged label blobs and BEFORE this module was imported:
+# maps blob basename -> file content. None when the module is launched
+# directly — the loaders above then read the on-disk blobs (legacy flow).
+_PRELOADED_INPUTS: dict[str, str] | None = None
+
+
 def train_one_run(
     train_x: torch.Tensor,
     train_y: torch.Tensor,
@@ -519,9 +526,13 @@ def run_benchmark(
         flush=True,
     )
 
-    # FIXED: load every secret's pool labels into memory and delete the on-disk
-    # blobs before any editable hook runs. Labels now live only in this local.
+    # FIXED: load every secret's pool labels into memory (scrubbing the blobs
+    # when the harness marks them ephemeral) before any editable hook runs.
     labels_by_secret = _load_all_train_labels(config, seed)
+    # Drop any remaining preloaded payloads: from here on the labels live
+    # only in fixed-driver locals, exactly as in the direct-launch flow.
+    global _PRELOADED_INPUTS
+    _PRELOADED_INPUTS = None
 
     results: list[RunResult] = []
 
