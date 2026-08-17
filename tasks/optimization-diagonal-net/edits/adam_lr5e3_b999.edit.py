@@ -7,6 +7,7 @@ def get_hyperparameters(
     dim: int,
     sparsity: int,
     delta: float,
+    alpha_init: float,
 ) -> dict[str, Any]:
     """Adam (no bias correction) hyperparameters: lr=0.005, beta2=0.999."""
     return {"lr": 0.005, "beta1": 0.9, "beta2": 0.999, "eps": 1e-6}

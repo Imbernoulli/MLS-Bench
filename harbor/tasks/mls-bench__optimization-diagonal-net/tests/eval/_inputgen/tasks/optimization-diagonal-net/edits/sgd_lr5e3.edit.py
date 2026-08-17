@@ -7,6 +7,7 @@ def get_hyperparameters(
     dim: int,
     sparsity: int,
     delta: float,
+    alpha_init: float,
 ) -> dict[str, Any]:
     """SGD hyperparameters: lr=0.005."""
     return {"lr": 0.005}

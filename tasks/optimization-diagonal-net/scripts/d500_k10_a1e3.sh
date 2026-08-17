@@ -1,5 +1,5 @@
 #!/bin/bash
-# Evaluate on large-scale setting: d=10000, k=50, delta=0.5, alpha=1.0
+# Evaluate on setting: d=500, k=10, alpha=1e-3 (rich regime)
 set -euo pipefail
 
 # Resolve the FIXED wrapper next to this script BEFORE any cd (robust to a
@@ -25,18 +25,15 @@ fi
 # range never see them on disk.
 python "$FIXED_ENTRY" \
   --module RAIN/opt_diagonal_net/custom_optimizer.py \
-  --inputs-glob "RAIN/opt_diagonal_net/_inputs/d10000_k50_sig0_*.npz.b64" \
+  --inputs-glob "RAIN/opt_diagonal_net/_inputs/d500_k10_a0p001_*.npz.b64" \
   --inject-module fixed_benchmark \
   --entry main \
   -- \
   --seed "${SEED:-42}" \
-  --label "${ENV:-d10000_k50}" \
+  --label "${ENV:-d500_k10_a1e3}" \
   --output-dir "$OUT_DIR" \
-  --dim 10000 \
-  --sparsity 50 \
-  --sigma 0.0 \
+  --dim 500 \
+  --sparsity 10 \
   --delta 0.5 \
-  --alpha-init 1.0 \
-  --n-test 10000 \
-  --grid-max 2000 \
+  --alpha-init 0.001 \
   "${EXTRA_ARGS[@]}"

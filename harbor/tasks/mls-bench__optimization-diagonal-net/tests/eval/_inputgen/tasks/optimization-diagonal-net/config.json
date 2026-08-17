@@ -4,32 +4,32 @@
   "ephemeral_inputs": true,
   "test_cmds": [
     {
-      "cmd": "scripts/d200_k5_s01.sh",
-      "label": "d200_k5_s01",
+      "cmd": "scripts/d200_k5_a1e3.sh",
+      "label": "d200_k5_a1e3",
       "group": 1,
       "compute": 1.0,
       "time": "04:00:00",
       "package": "RAIN"
     },
     {
-      "cmd": "scripts/d500_k10_s01.sh",
-      "label": "d500_k10_s01",
+      "cmd": "scripts/d500_k10_a1e3.sh",
+      "label": "d500_k10_a1e3",
       "group": 1,
       "compute": 1.0,
       "time": "04:00:00",
       "package": "RAIN"
     },
     {
-      "cmd": "scripts/d500_k10_s02.sh",
-      "label": "d500_k10_s02",
+      "cmd": "scripts/d500_k10_a5e1.sh",
+      "label": "d500_k10_a5e1",
       "group": 2,
       "compute": 1.0,
-      "time": "04:00:00",
+      "time": "06:00:00",
       "package": "RAIN"
     },
     {
-      "cmd": "scripts/d10000_k50.sh",
-      "label": "d10000_k50",
+      "cmd": "scripts/d10000_k50_a1e0.sh",
+      "label": "d10000_k50_a1e0",
       "group": 2,
       "compute": 1.0,
       "time": "08:00:00",

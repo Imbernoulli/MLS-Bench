@@ -24,6 +24,7 @@ def get_hyperparameters(
     dim: int,
     sparsity: int,
     delta: float,
+    alpha_init: float,
 ) -> dict[str, Any]:
     """Return optimizer hyperparameters for this problem setting.
 

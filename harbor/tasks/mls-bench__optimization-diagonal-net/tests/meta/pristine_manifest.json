@@ -1,8 +1,8 @@
 {
- "RAIN/README.md": "f7effe25d0e6991175aafd81b343afc56ef03e0bed4ed5d7c840e9c94f91d0ec",
- "RAIN/opt_diagonal_net/custom_optimizer.py": "899b808a56592b08493a91f609ec8352d86889e0a7c6a5fbc6fbcd5d6c0a5553",
- "RAIN/opt_diagonal_net/fixed_benchmark.py": "f240463b52eae7d57a8ff69ecca2acd5c2a8ea07e4f9a35f0af8e0f2013a0c1b",
- "RAIN/src/bilinear_func/exp_gnorm.m": "bc97b89d3d88724636d3656f7654d852d006e28fe1dca31f67793514ed52d3fd",
- "RAIN/src/delta_func/exp_gnorm.m": "8730cf4d8309e2e59fb90033f75b38625e24607c64a81f624c7105e2aed884df",
- "RAIN/src/rho_func/exp_gnorm.m": "35179d767ec482c6e82bcbf402b72cbaa8c7fd18396d5b91a14a77afeb4accb8"
+  "RAIN/README.md": "f7effe25d0e6991175aafd81b343afc56ef03e0bed4ed5d7c840e9c94f91d0ec",
+  "RAIN/opt_diagonal_net/custom_optimizer.py": "1ea21c312b2803f43a4be95e0772f19637b56e6ba39a3865ae6d86d0c72ff659",
+  "RAIN/opt_diagonal_net/fixed_benchmark.py": "f2853b8fdda03d07ea1fbaded22e5386c111aad49678056add56a6959d00143e",
+  "RAIN/src/bilinear_func/exp_gnorm.m": "bc97b89d3d88724636d3656f7654d852d006e28fe1dca31f67793514ed52d3fd",
+  "RAIN/src/delta_func/exp_gnorm.m": "8730cf4d8309e2e59fb90033f75b38625e24607c64a81f624c7105e2aed884df",
+  "RAIN/src/rho_func/exp_gnorm.m": "35179d767ec482c6e82bcbf402b72cbaa8c7fd18396d5b91a14a77afeb4accb8"
 }

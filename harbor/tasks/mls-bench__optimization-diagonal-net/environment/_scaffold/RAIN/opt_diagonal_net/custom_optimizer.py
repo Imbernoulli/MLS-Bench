@@ -24,6 +24,7 @@ def get_hyperparameters(
     dim: int,
     sparsity: int,
     delta: float,
+    alpha_init: float,
 ) -> dict[str, Any]:
     """Return optimizer hyperparameters for this problem setting.
 
@@ -31,6 +32,10 @@ def get_hyperparameters(
         dim: ambient dimension d.
         sparsity: number of nonzero entries k in the ground truth.
         delta: Rademacher noise magnitude (±delta) added to labels each step.
+        alpha_init: initialisation scale α of the diagonal net; u and v both
+            start at α / sqrt(2d).  Small α puts training in the rich regime
+            (sparsity-inducing implicit bias), large α in the lazy / kernel
+            regime (ℓ2-like bias) — the best optimizer may differ between them.
 
     Returns:
         dict of hyperparameters used by init_state and step.
@@ -80,11 +85,6 @@ def step(
     lr = float(hyperparameters["lr"])
     state["t"] = state.get("t", 0) + 1
     return u - lr * grad_u, v - lr * grad_v, state
-
-
-
-
-
 
 
 

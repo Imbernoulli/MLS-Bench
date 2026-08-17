@@ -7,6 +7,7 @@ def get_hyperparameters(
     dim: int,
     sparsity: int,
     delta: float,
+    alpha_init: float,
 ) -> dict[str, Any]:
     """AdaGrad hyperparameters: lr=0.05, eps=1e-6."""
     return {"lr": 0.05, "eps": 1e-6}

@@ -79,19 +79,20 @@ def _resolved_grid(base_grid, grid_max):
     return tuple(extended)
 
 
-def _sigma_tag(sigma):
-    # Must match fixed_benchmark.py _sigma_tag() exactly.
-    return f"{float(sigma):g}".replace("-", "m").replace(".", "p")
+def _alpha_tag(alpha_init):
+    # Must match fixed_benchmark.py _alpha_tag() exactly.
+    return f"{float(alpha_init):g}".replace("-", "m").replace(".", "p")
 
 
-def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed):
-    # Must match fixed_benchmark.py _input_key() exactly. Sigma is a setting
-    # tag only (it does not enter the generator), but it MUST be part of the
-    # key so settings that share (dim, sparsity) — e.g. d500_k10_s01 vs
-    # d500_k10_s02 — read DISJOINT files and one run's ephemeral scrub can
-    # never race a concurrently running sibling setting.
+def _input_key(dim, sparsity, alpha_init, n_max_train, n_test, seed):
+    # Must match fixed_benchmark.py _input_key() exactly. alpha_init does not
+    # enter the generator (the dataset is identical for every initialisation
+    # scale), but it MUST be part of the key so settings that share
+    # (dim, sparsity) — e.g. d500_k10_a1e3 vs d500_k10_a5e1 — read DISJOINT
+    # files and one run's ephemeral scrub can never race a concurrently
+    # running sibling setting.
     return (
-        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}"
+        f"d{int(dim)}_k{int(sparsity)}_a{_alpha_tag(alpha_init)}"
         f"_nmax{int(n_max_train)}_nt{int(n_test)}_seed{int(seed)}"
     )
 
@@ -156,7 +157,7 @@ for _script in _SCRIPTS:
         continue
     _dim = int(_a["dim"])
     _sparsity = int(_a["sparsity"])
-    _sigma = float(_a["sigma"]) if _a.get("sigma") else 0.0
+    _alpha_init = float(_a["alpha-init"]) if _a.get("alpha-init") else 1e-3
     _n_test = int(_a["n-test"]) if _a.get("n-test") else 4096
     _grid_max = int(_a["grid-max"]) if _a.get("grid-max") else None
 
@@ -169,7 +170,7 @@ for _script in _SCRIPTS:
             _n_max_train = max(_grid)
             for _seed in range(int(_master), int(_master) + _num_seeds):
                 _key = _input_key(
-                    _dim, _sparsity, _sigma, _n_max_train, _n_test, _seed,
+                    _dim, _sparsity, _alpha_init, _n_max_train, _n_test, _seed,
                 )
                 if _key in _seen:
                     continue
