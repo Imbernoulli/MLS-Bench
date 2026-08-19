@@ -1,8 +1,9 @@
 # optimization-diagonal-net：改动交接说明
 
-**分支**：`feat/diagnet-alpha-third-setting`（工作树，尚未提交）
-**基线**：`7256efe7` == `origin/fix/concurrency-staleness-batch` 的 tip
-**验证**：`python3 tasks/optimization-diagonal-net/tools/check_consistency.py` → 170/170 通过
+**分支**：`feat/diagnet-alpha-third-setting`（2 个 commit：代码改动 + leaderboard 重测）
+**基线**：`7256efe7` == `origin/fix/concurrency-staleness-batch` 的 tip，该分支已由 PR #81 并入 main
+**验证**：`python3 tasks/optimization-diagonal-net/tools/check_consistency.py` → 170/170 通过；
+leaderboard 四个设定 × 四个 baseline 全部重测（详见 commit message）
 
 ## 本次改动一句话
 
@@ -29,21 +30,20 @@
 
 ## 一、需要 project lead 处理的全局事项
 
-按优先级排列。第 2、3、4 项同一个根因，见 P1 末尾。
+按优先级排列。P2、P3 与 P1 同一个根因（见 P1 末尾）；P4 是独立的一条，且不限于本 task。
 
-### P0 — 合并顺序：本工作依赖 `fix/concurrency-staleness-batch`
+### P0 —（已作废）合并顺序依赖已解除
 
-本分支**不是**从 main 切出来的，而是直接接在 `origin/fix/concurrency-staleness-batch`
-的 tip 上（领先 `merge-base(main, HEAD)` = `8a9bd778` 共 33 个 commit）。该分支尚未合入 main。
+本分支不是从 main 切出来的，而是接在 `origin/fix/concurrency-staleness-batch` 的 tip
+（`7256efe7`）上；写这份文档时该分支尚未合入 main，所以原本要求按顺序合并。
 
-依赖是硬的：本 task 的 eval 脚本引用 `scripts/fixed_entry.py`，而该文件只存在于那个分支
-（main 上不存在，main 版脚本是直接 `python RAIN/opt_diagonal_net/custom_optimizer.py`）。
-另外 `mlsbench/agent/input_stager.py`、`tools.py` 的 ephemeral-inputs 基础设施也来自那里。
+**现已解除**：`fix/concurrency-staleness-batch` 已通过 PR #81 并入 main（`cfd57a7e`），
+`7256efe7` 现在是 `origin/main` 的祖先。本分支只有 2 个 commit 领先 main、0 个落后，
+且与 main 新增的改动无文件重叠，可以直接对 main 开 PR，无需 rebase 或排序。
 
-**需要注意的一点**：那个分支引入了 `_sigma_tag()` / `sig{tag}` 作为 blob 区分轴来修 #82；
-本次改动把它替换成 `_alpha_tag()` / `a{tag}`。两者解决同一个问题，方案互斥，但**不构成冲突**
-——因为是先后关系而非并行。按 `fix/concurrency-staleness-batch` → 本分支 的顺序合并即可，
-中间状态自洽（sigma 版本本身能跑）。请不要试图把本分支单独 rebase 到 main。
+留档一句以免误读历史：那个分支曾用 `_sigma_tag()` / `sig{tag}` 作为 blob 区分轴来修
+issue #82，本次改动把它替换成 `_alpha_tag()` / `a{tag}`。两者解决同一问题、方案互斥，
+但因为是先后关系而非并行，不构成冲突。
 
 ### P1 — `adapter.py:204` 的 `_ALLOWED_OP_IMPORT_ROOTS`：17/140 个 task 无法重新渲染
 
@@ -79,9 +79,11 @@ _ALLOWED_OP_IMPORT_ROOTS = {"custom_template", "importlib", "json", "math", "pat
   ——证据：101/140 与 `_manual_task_digest()` 精确吻合（不可能是巧合），因为生成时 `harbor` 包不可导入。
   所以这个值是可以离线复算的。
 - **39/140 已经陈旧**，且 diagonal-net 在我动手**之前**就已陈旧：`dataset.toml:382` 写的是
-  `d7fc0b58…`，而 HEAD 版本的 task 目录算出来是 `da9a3832…` ——两者都不是我造成的。
-- 本次改动后 diagonal-net 的正确值：
-  `sha256:9d8f03bc890d5c9e0898da0f5b0c4ba3ed510f18fb9b6ebd210ab558f7886f67`
+  `d7fc0b58…`，而当时 HEAD 版本的 task 目录算出来是 `da9a3832…` ——两者都不是我造成的。
+- 本分支两个 commit 之后，diagonal-net 的正确值是：
+  `sha256:c44e2694c2f0faf1e9493fac5a1cdd78c78f989426b7256551a7f3d44866838a`
+  （注意 `_manual_task_digest()` 把 `tests/` 整棵树纳进来，所以 `tests/meta/leaderboard.csv`
+  一变这个值就变；如果合并前又重测了 leaderboard，请重算而不要照抄这一串。）
 
 建议整体重新生成（`python -m mls_bench.main --output-dir <dir>`），因为还有另外 38 个也是陈旧的
 ——但这被 P1 挡住。如果只想让本 task 自洽，手改 `dataset.toml:382` 那一行即可。
@@ -109,6 +111,33 @@ _ALLOWED_OP_IMPORT_ROOTS = {"custom_template", "importlib", "json", "math", "pat
 
 ---
 
+### P4 — leaderboard 的 `n*` 依赖硬件：跨机器数字不可直接比较
+
+这不是 diagonal-net 独有的，凡是「阈值 + 多 seed 投票」型判据的 task 都适用，所以列在这里。
+
+本 task 的判据是「test MSE < 1.0 在 5 个 seed 里至少 4 个成立」，`n*` 是满足它的最小网格点。
+同一份代码、同一份数据、同一批 seed，换一批 GPU 就得到不同的 `n*`：
+
+| 格子 | 旧硬件 | 本次硬件（H20） |
+|---|---|---|
+| `d500_k10` adam | 56 | 59 |
+| `d500_k10` adam2 | 53 | 56 |
+| `d10000_k50` adam2 | 350 | 362 |
+
+同批 12 个格子里另外 9 个（含 sgd、adagrad 全部）精确复现，说明不是随机噪声，而是**贴着判据边界
+的那些 baseline 会被浮点归约顺序翻掉一个 seed**；离边界远的完全稳定。同机器上重跑是确定性的
+（改动前/改动后代码各跑一遍，三个值都逐一重现）。
+
+含义与建议：
+
+- 排行榜数字应当**连同测量硬件一起记录**，否则跨提交/跨模型的 ±5% 级差异无法区分是方法差异还是
+  机器差异。`leaderboard.csv` 目前没有这一列。
+- 判据可以做得更稳（例如把「≥4/5」放宽成带容差的判据，或对 MSE 做多次平均），但那会改变 task
+  定义、动到所有历史分数，需要 lead 决策，我没有动。
+- 至少在下次全量重测时，让同一批硬件跑完全部 baseline —— 本次是这么做的（16 个格子同一批 H20）。
+
+---
+
 ## 二、本 task 范围内已自行修掉的 3 个既有 bug
 
 不需要 lead 动手，列在这里是为了让 review 的人知道这些改动的来由。
@@ -124,26 +153,32 @@ _ALLOWED_OP_IMPORT_ROOTS = {"custom_template", "importlib", "json", "math", "pat
 
 ---
 
-## 三、仍待 GPU 验证的部分
+## 三、GPU 实测结果（已完成）
 
-无 GPU 环境，以下两项按决策③（底线是不能 saturate）留待补齐：
+四个设定 × 四个 baseline 全部重测，每格 5 个 seed（42–46），每格独占 1 张 GPU 并行跑完，
+墙钟 4.6 小时。每个设定用的是它自己 `scripts/<name>.sh` 的原始参数（两个 α=1e-3 的设定不传
+`--grid-max`，网格上界 1600；另两个到 2000）。`score` 严格等于 `-log2(n*)`。
 
-- **α=0.5 尚未经 GPU 验证**，它目前是**基于证据的默认值**而非实测结论。依据：现有 α=1.0 的隐藏
-  设定里 adagrad 的 `n*` 已经顶到 2000 —— 正好是它的 `--grid-max`，即已经饱和；所以在 d=500 上
-  直接用 α=1.0 很可能同样顶格。α=0.5 配 `--grid-max 2000` 留了余量。
-- **`leaderboard.csv` 里 `d500_k10_a5e1` 的 score / n_star / elapsed 三列已留空**，等实测填。
-  其余三个设定的数据保留：sgd 50/62/–/487，adagrad 175/487/–/2000，adam 50/56/–/350，adam2 50/53/–/350。
+| n\* | `d200_k5_a1e3` | `d500_k10_a1e3` | `d500_k10_a5e1` | `d10000_k50_a1e0` |
+|---|---|---|---|---|
+| sgd | 50 | 62 | 62 | 487 |
+| adagrad | 175 | 487 | 500 | 2000 |
+| adam | 50 | 59 | 65 | 350 |
+| adam2 | 50 | 56 | 53 | 362 |
 
-校准工具：`tools/alpha_sweep.py`。它在 (d=500, k=10) 上扫 α × baseline，复用了
-`_alpha_tag` / `_input_key` / `resolve_grid` 的同一套逻辑，每个 seed 的数据只生成一次然后以多个
-α 文件名写出，并会报出 SATURATED（`n*` 顶到网格上界）、DEGENERATE（所有 baseline 打平）以及
-相对 α=1e-3 参考的方法排序变化；结尾会打印「若换用别的 α，需要改哪 6 处」。
-已在 CPU 上跑通两轮 smoke（走到过 SATURATED 和 解除-SATURATED/DEGENERATE 两条判定路径），
-但那两轮用的是 d=50/k=3 的玩具配置，只验证管路，**不是校准结论**。
+**α=0.5 可用，决策③的底线达到**：不饱和（最大 `n*`=500，网格上界 2000）、不退化（四值互不相同），
+并且排序确实变了 —— α=1e-3 是 `adam2 < adam < sgd < adagrad`，α=0.5 是
+`adam2 < sgd < adam < adagrad`。只抬初始化尺度就换了 regime，这是原先那个重复设定做不到的。
 
-按决策③：如果实测发现调不出不饱和的 α，就照实报告，不强求方法排序发生变化。
+**旧设定的回归**：12 个旧格子里 9 个精确复现，3 个变了（`d500_k10` 的 adam 56→59、adam2 53→56，
+`d10000_k50` 的 adam2 350→362）。这是机器差异而非行为变化，并且是**验证过的**：把改动前的代码
+（`129a483d^`，用它自己的 `--sigma` 旧 CLI 和 `sig` 标签 blob）在同一批 GPU 上重跑，同样得到
+59 / 56 / 362，而 sgd 对照两版都是 62；改动后的代码复跑也精确重现 59 / 56 / 362，说明这台机器是
+确定性的，差异落在机器之间。静态上也只能如此：σ 从不进入 benchmark 数学（被删掉的那个 flag 的
+help 文本自己就这么写，它只出现在 blob 文件名里）、数据生成器未改、唯一的功能改动
+（`alpha_init` 传进 `get_hyperparameters`）没有任何 baseline 读取。
 
----
+`leaderboard.csv` 的 elapsed 列也一并换成本次硬件的实测值，两份副本保持字节一致。
 
 ## 四、怎么验证这次改动
 
