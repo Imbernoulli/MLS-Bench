@@ -14,7 +14,7 @@ leaderboard 四个设定 × 四个 baseline 全部重测（详见 commit message
 
 | 新标签 | dim | k | α | blob 前缀 | 备注 |
 |---|---|---|---|---|---|
-| `d200_k5_a1e3` | 200 | 5 | 0.001 | `a0p001` | |
+| `d200_k20_a1e3` | 200 | 20 | 0.001 | `a0p001` | |
 | `d500_k10_a1e3` | 500 | 10 | 0.001 | `a0p001` | |
 | `d500_k10_a5e1` | 500 | 10 | 0.5 | `a0p5` | `--grid-max 2000`，time 06:00:00 |
 | `d10000_k50_a1e0` | 10000 | 50 | 1.0 | `a1` | hidden |
@@ -80,10 +80,11 @@ _ALLOWED_OP_IMPORT_ROOTS = {"custom_template", "importlib", "json", "math", "pat
   所以这个值是可以离线复算的。
 - **39/140 已经陈旧**，且 diagonal-net 在我动手**之前**就已陈旧：`dataset.toml:382` 写的是
   `d7fc0b58…`，而当时 HEAD 版本的 task 目录算出来是 `da9a3832…` ——两者都不是我造成的。
-- 本分支两个 commit 之后，diagonal-net 的正确值是：
-  `sha256:c44e2694c2f0faf1e9493fac5a1cdd78c78f989426b7256551a7f3d44866838a`
+- 本分支（含把第一个 setting 从 k=5 调到 k=20 的改动）之后，diagonal-net 的正确值是：
+  `sha256:098dbeb8f1f7c28413e0c24018b85aabead3a47ce418f6b143e51ebd5faa104c`
   （注意 `_manual_task_digest()` 把 `tests/` 整棵树纳进来，所以 `tests/meta/leaderboard.csv`
-  一变这个值就变；如果合并前又重测了 leaderboard，请重算而不要照抄这一串。）
+  一变这个值就变；如果合并前又重测了 leaderboard，请重算而不要照抄这一串。
+  前一版 k=5 时的值是 `c44e2694…`，已随本次 k=20 改动作废。）
 
 建议整体重新生成（`python -m mls_bench.main --output-dir <dir>`），因为还有另外 38 个也是陈旧的
 ——但这被 P1 挡住。如果只想让本 task 自洽，手改 `dataset.toml:382` 那一行即可。
@@ -159,12 +160,12 @@ _ALLOWED_OP_IMPORT_ROOTS = {"custom_template", "importlib", "json", "math", "pat
 墙钟 4.6 小时。每个设定用的是它自己 `scripts/<name>.sh` 的原始参数（两个 α=1e-3 的设定不传
 `--grid-max`，网格上界 1600；另两个到 2000）。`score` 严格等于 `-log2(n*)`。
 
-| n\* | `d200_k5_a1e3` | `d500_k10_a1e3` | `d500_k10_a5e1` | `d10000_k50_a1e0` |
+| n\* | `d200_k20_a1e3` | `d500_k10_a1e3` | `d500_k10_a5e1` | `d10000_k50_a1e0` |
 |---|---|---|---|---|
-| sgd | 50 | 62 | 62 | 487 |
-| adagrad | 175 | 487 | 500 | 2000 |
-| adam | 50 | 59 | 65 | 350 |
-| adam2 | 50 | 56 | 53 | 362 |
+| sgd | 78 | 62 | 62 | 487 |
+| adagrad | 200 | 487 | 500 | 2000 |
+| adam | 71 | 59 | 65 | 350 |
+| adam2 | 68 | 56 | 53 | 362 |
 
 **α=0.5 可用，决策③的底线达到**：不饱和（最大 `n*`=500，网格上界 2000）、不退化（四值互不相同），
 并且排序确实变了 —— α=1e-3 是 `adam2 < adam < sgd < adagrad`，α=0.5 是

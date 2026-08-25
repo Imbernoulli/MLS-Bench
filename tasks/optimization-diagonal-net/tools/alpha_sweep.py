@@ -2,7 +2,7 @@
 """Calibrate the initialisation scale alpha for the third diagonal-net setting.
 
 The three visible settings must not all reward the same optimizer.  Two of them
-(``d200_k5_a1e3``, ``d500_k10_a1e3``) sit deep in the RICH regime (alpha=1e-3),
+(``d200_k20_a1e3``, ``d500_k10_a1e3``) sit deep in the RICH regime (alpha=1e-3),
 where the diagonal-net's implicit bias is sparsity-inducing.  The third,
 ``d500_k10_a5e1``, keeps (d, k) identical and raises ONLY alpha, moving training
 toward the LAZY / kernel regime -- so alpha is the single controlled variable.

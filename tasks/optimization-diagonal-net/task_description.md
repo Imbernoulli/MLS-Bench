@@ -43,7 +43,7 @@ with torch.no_grad():
 
 ## Evaluation
 Settings exercised by the harness include:
-- **d200_k5_a1e3**: d=200, k=5, alpha=1e-3, delta=0.5.
+- **d200_k20_a1e3**: d=200, k=20, alpha=1e-3, delta=0.5.
 - **d500_k10_a1e3**: d=500, k=10, alpha=1e-3, delta=0.5.
 - **d500_k10_a5e1**: d=500, k=10, alpha=0.5, delta=0.5 — identical (d, k) to the
   setting above, so the initialisation scale `alpha` is the ONLY difference.
