@@ -48,7 +48,6 @@ class ProblemConfig:
     """Immutable descriptor for a sparse-recovery problem setting."""
     dim: int
     sparsity: int
-    sigma: float = 0.0
     delta: float = 0.5
     n_test: int = 4096
     alpha_init: float = 1e-3
@@ -106,14 +105,14 @@ def _inputs_dir() -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), "_inputs")
 
 
-def _sigma_tag(sigma) -> str:
-    """Filename-safe canonical tag for the --sigma value (e.g. 0.1 -> '0p1')."""
-    return f"{float(sigma):g}".replace("-", "m").replace(".", "p")
+def _alpha_tag(alpha_init) -> str:
+    """Filename-safe canonical tag for --alpha-init (e.g. 0.001 -> '0p001')."""
+    return f"{float(alpha_init):g}".replace("-", "m").replace(".", "p")
 
 
-def _input_key(dim, sparsity, sigma, n_max_train, n_test, seed) -> str:
+def _input_key(dim, sparsity, alpha_init, n_max_train, n_test, seed) -> str:
     return (
-        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}"
+        f"d{int(dim)}_k{int(sparsity)}_a{_alpha_tag(alpha_init)}"
         f"_nmax{int(n_max_train)}_nt{int(n_test)}_seed{int(seed)}"
     )
 
@@ -129,7 +128,7 @@ _PRELOADED_INPUTS: dict[str, str] | None = None
 def load_problem(
     dim: int,
     sparsity: int,
-    sigma: float,
+    alpha_init: float,
     n_max_train: int,
     n_test: int,
     seed: int,
@@ -148,7 +147,7 @@ def load_problem(
     Returns:
         (X_train, y_train, X_test, y_test) as torch.Tensor (float64)
     """
-    name = f"{_input_key(dim, sparsity, sigma, n_max_train, n_test, seed)}.npz.b64"
+    name = f"{_input_key(dim, sparsity, alpha_init, n_max_train, n_test, seed)}.npz.b64"
     # Prefer the payload preloaded by the FIXED wrapper (which read and
     # unlinked the blobs before any editable code could run); fall back to
     # the on-disk blob when the program is launched directly.
@@ -171,8 +170,8 @@ def load_problem(
     return X_train, y_train, X_test, y_test
 
 
-def _scrub_inputs(dim, sparsity, sigma) -> None:
-    """Delete EVERY pre-generated input blob for this (dim, sparsity, sigma)
+def _scrub_inputs(dim, sparsity, alpha_init) -> None:
+    """Delete EVERY pre-generated input blob for this (dim, sparsity, alpha_init)
     setting once the run's datasets are in memory, BEFORE any editable hook
     runs — but only when the harness marks the materialized inputs as
     ephemeral (MLSBENCH_EPHEMERAL_INPUTS=1, i.e. re-created for every
@@ -193,7 +192,7 @@ def _scrub_inputs(dim, sparsity, sigma) -> None:
         return
     pattern = os.path.join(
         _inputs_dir(),
-        f"d{int(dim)}_k{int(sparsity)}_sig{_sigma_tag(sigma)}_*.npz.b64",
+        f"d{int(dim)}_k{int(sparsity)}_a{_alpha_tag(alpha_init)}_*.npz.b64",
     )
     for blob in glob.glob(pattern):
         try:
@@ -484,10 +483,10 @@ def _coarse_to_fine_search(
           flush=True)
     for seed in seeds:
         datasets[seed] = load_problem(
-            problem.dim, problem.sparsity, problem.sigma, n_max_train,
+            problem.dim, problem.sparsity, problem.alpha_init, n_max_train,
             problem.n_test, seed,
         )
-    _scrub_inputs(problem.dim, problem.sparsity, problem.sigma)
+    _scrub_inputs(problem.dim, problem.sparsity, problem.alpha_init)
     # Drop any remaining preloaded payloads: from here on the arrays live
     # only in fixed-driver locals, exactly as in the direct-launch flow.
     global _PRELOADED_INPUTS
@@ -495,7 +494,9 @@ def _coarse_to_fine_search(
     print("Datasets ready.", flush=True)
 
     # Editable hooks below are invoked only AFTER the input blobs are scrubbed.
-    hparams = get_hparams_fn(problem.dim, problem.sparsity, problem.delta)
+    hparams = get_hparams_fn(
+        problem.dim, problem.sparsity, problem.delta, problem.alpha_init
+    )
 
     all_tested: dict[int, dict[str, Any]] = {}
     first_success_idx: int | None = None
@@ -574,12 +575,10 @@ def run_cli(get_hyperparameters, init_state, step):
     parser.add_argument("--label", type=str, default="eval")
     parser.add_argument("--dim", type=int, required=True)
     parser.add_argument("--sparsity", type=int, required=True)
-    parser.add_argument("--sigma", type=float, default=0.0,
-                        help="Setting tag: selects this setting's pre-generated "
-                             "input files; does not enter the benchmark math "
-                             "(training label noise is --delta).")
     parser.add_argument("--delta", type=float, default=0.5)
-    parser.add_argument("--alpha-init", type=float, default=1e-3)
+    parser.add_argument("--alpha-init", type=float, default=1e-3,
+                        help="Initialisation scale of the diagonal network. Also "
+                             "tags this setting's pre-generated input files.")
     parser.add_argument("--n-test", type=int, default=4096)
     parser.add_argument("--eval-batch", type=int, default=1000)
     parser.add_argument("--grid-max", type=int, default=None,
@@ -590,7 +589,6 @@ def run_cli(get_hyperparameters, init_state, step):
     problem = ProblemConfig(
         dim=args.dim,
         sparsity=args.sparsity,
-        sigma=args.sigma,
         delta=args.delta,
         n_test=args.n_test,
         alpha_init=args.alpha_init,

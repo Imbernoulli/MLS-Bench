@@ -13,14 +13,14 @@ The critical quantity is the **sample complexity of recovery**: how many trainin
 ## Task
 Modify the three functions in `RAIN/opt_diagonal_net/custom_optimizer.py` (inside the editable block) to implement a novel or improved optimizer:
 
-1. `get_hyperparameters(dim, sparsity, noise_scale, delta)` — return optimizer configuration.
+1. `get_hyperparameters(dim, sparsity, delta, alpha_init)` — return optimizer configuration.
 2. `init_state(u, v, hyperparameters)` — initialise optimizer state.
 3. `step(u, v, grad_u, grad_v, state, hyperparameters)` — perform one update step.
 
 The default template implements vanilla gradient descent. Your goal is to achieve successful recovery (test MSE < 1.0) with fewer training samples across all evaluation settings.
 
 ## Interface
-- `u`, `v`: parameter vectors of shape `(d,)` as `torch.Tensor` (float64), initialised as `alpha/sqrt(2d) * ones(d)` with `alpha = 1e-3`.
+- `u`, `v`: parameter vectors of shape `(d,)` as `torch.Tensor` (float64), initialised as `alpha/sqrt(2d) * ones(d)`, where `alpha` is the setting's `alpha_init` (passed to `get_hyperparameters`) and VARIES ACROSS SETTINGS.
 - `grad_u`, `grad_v`: full-batch MSE gradients w.r.t. `u` and `v` (computed by PyTorch autograd).
 - `state`: mutable dict for optimizer internal state (momentum buffers, accumulators, etc.).
 - `hyperparameters`: dict returned by `get_hyperparameters`.
@@ -43,10 +43,14 @@ with torch.no_grad():
 
 ## Evaluation
 Settings exercised by the harness include:
-- **d200_k5_s01**: d=200, k=5, sigma=0.1, delta=0.5.
-- **d500_k10_s01**: d=500, k=10, sigma=0.1, delta=0.5.
-- **d500_k10_s02**: d=500, k=10, sigma=0.2, delta=0.5.
-- A larger-scale setting at d=10000, k=50.
+- **d200_k20_a1e3**: d=200, k=20, alpha=1e-3, delta=0.5.
+- **d500_k10_a1e3**: d=500, k=10, alpha=1e-3, delta=0.5.
+- **d500_k10_a5e1**: d=500, k=10, alpha=0.5, delta=0.5 — identical (d, k) to the
+  setting above, so the initialisation scale `alpha` is the ONLY difference.
+  Small alpha trains in the rich regime (implicit bias toward sparse solutions);
+  alpha=0.5 is close to the lazy / kernel regime, where the bias is instead
+  ell-2-like. An optimizer tuned for one regime need not win in the other.
+- A larger-scale setting at d=10000, k=50, alpha=1.0.
 
 For each setting, the benchmark performs a coarse-to-fine search over training-set sizes `n ∈ {50, 75, ..., 1600}` (with the larger setting using a wider range) to find the smallest `n*` where recovery succeeds on at least 4 of 5 seeds. Recovery means test MSE < 1.0 at the time training stops.
 
@@ -62,6 +66,6 @@ Training uses full-batch gradients (with noisy labels) and a shared stopping rul
 ## Hints
 - The diagonal-net parameterization `w = u^2 - v^2` naturally biases gradient descent toward sparse solutions when initialised near zero.
 - Adaptive methods (Adam, AdaGrad) change the effective geometry of this bias — this can help or hurt.
-- The initialisation `alpha/sqrt(2d) * ones(d)` with `alpha = 1e-3` means u=v at init, so w_hat=0 initially.
+- The initialisation `alpha/sqrt(2d) * ones(d)` means u=v at init, so w_hat=0 initially. `alpha` varies BY SETTING and is passed to `get_hyperparameters`, so hyperparameters may depend on it.
 - The Rademacher noise (delta parameter) adds stochasticity to training — your optimizer should be robust to this.
 - Consider how your optimizer interacts with the non-convex structure: coordinate-wise adaptivity, momentum, and learning rate scheduling all affect the sparsity bias.

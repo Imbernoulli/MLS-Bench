@@ -1,5 +1,9 @@
 #!/bin/bash
-# Evaluate on setting: d=500, k=10, sigma=0.2
+# Evaluate on setting: d=500, k=10, alpha=0.5 (lazy / kernel regime).
+# Same (d, k) as the rich-regime setting above: alpha is the ONLY difference,
+# so the two isolate the effect of the initialisation scale on which
+# optimizer recovers the sparse predictor from the fewest samples.  The
+# larger alpha pushes n* up, hence the raised --grid-max.
 set -euo pipefail
 
 # Resolve the FIXED wrapper next to this script BEFORE any cd (robust to a
@@ -25,15 +29,16 @@ fi
 # range never see them on disk.
 python "$FIXED_ENTRY" \
   --module RAIN/opt_diagonal_net/custom_optimizer.py \
-  --inputs-glob "RAIN/opt_diagonal_net/_inputs/d500_k10_sig0p2_*.npz.b64" \
+  --inputs-glob "RAIN/opt_diagonal_net/_inputs/d500_k10_a0p5_*.npz.b64" \
   --inject-module fixed_benchmark \
   --entry main \
   -- \
   --seed "${SEED:-42}" \
-  --label "${ENV:-d500_k10_s02}" \
+  --label "${ENV:-d500_k10_a5e1}" \
   --output-dir "$OUT_DIR" \
   --dim 500 \
   --sparsity 10 \
-  --sigma 0.2 \
   --delta 0.5 \
+  --alpha-init 0.5 \
+  --grid-max 2000 \
   "${EXTRA_ARGS[@]}"

@@ -25,7 +25,7 @@ the shared workspace; a wildcard sweep here would unlink a sibling eval's
 just-staged files before that sibling could read them. Each eval script
 therefore passes a glob that interpolates its own setting constants and
 ${SEED} — mirroring the blob naming of the task's mid_edit.py (parity:
-{tag}_seed{seed}_s*.labels.b64; diag: the sigma-keyed setting family of
+{tag}_seed{seed}_s*.labels.b64; diag: the alpha-keyed setting family of
 fixed_benchmark._input_key, the same scope as its in-module _scrub_inputs;
 nas: the exact nb201_tables_{env}_s{seed}.json). Native runs are strictly
 serialized, where exact scoping is simply a further tightening.

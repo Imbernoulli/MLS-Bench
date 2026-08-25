@@ -1,5 +1,5 @@
 #!/bin/bash
-# Evaluate on setting: d=500, k=10, sigma=0.2
+# Evaluate on setting: d=500, k=10, alpha=1e-3 (rich regime)
 set -euo pipefail
 
 cd /workspace
@@ -31,15 +31,15 @@ python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace \
   | python "$_EVAL_SCRIPTS_DIR/fixed_entry.py" \
       --module RAIN/opt_diagonal_net/custom_optimizer.py \
       --inputs-json-stdin \
-      --inputs-glob "RAIN/opt_diagonal_net/_inputs/d500_k10_sig0p2_*.npz.b64" \
+      --inputs-glob "RAIN/opt_diagonal_net/_inputs/d500_k10_a0p001_*.npz.b64" \
       --inject-module fixed_benchmark \
       --entry main \
       -- \
       --seed "${SEED:-42}" \
-      --label "${ENV:-d500_k10_s02}" \
+      --label "${ENV:-d500_k10_a1e3}" \
       --output-dir "$OUT_DIR" \
       --dim 500 \
       --sparsity 10 \
-      --sigma 0.2 \
       --delta 0.5 \
+      --alpha-init 0.001 \
       "${EXTRA_ARGS[@]}"

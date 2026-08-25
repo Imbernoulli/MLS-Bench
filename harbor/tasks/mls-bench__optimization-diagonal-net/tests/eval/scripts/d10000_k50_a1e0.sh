@@ -1,5 +1,5 @@
 #!/bin/bash
-# Evaluate on setting: d=500, k=10, sigma=0.1
+# Evaluate on large-scale setting: d=10000, k=50, alpha=1.0 (lazy regime)
 set -euo pipefail
 
 cd /workspace
@@ -31,15 +31,17 @@ python "/tests/eval/_inputgen/apply.py" "optimization-diagonal-net" /workspace \
   | python "$_EVAL_SCRIPTS_DIR/fixed_entry.py" \
       --module RAIN/opt_diagonal_net/custom_optimizer.py \
       --inputs-json-stdin \
-      --inputs-glob "RAIN/opt_diagonal_net/_inputs/d500_k10_sig0p1_*.npz.b64" \
+      --inputs-glob "RAIN/opt_diagonal_net/_inputs/d10000_k50_a1_*.npz.b64" \
       --inject-module fixed_benchmark \
       --entry main \
       -- \
       --seed "${SEED:-42}" \
-      --label "${ENV:-d500_k10_s01}" \
+      --label "${ENV:-d10000_k50_a1e0}" \
       --output-dir "$OUT_DIR" \
-      --dim 500 \
-      --sparsity 10 \
-      --sigma 0.1 \
+      --dim 10000 \
+      --sparsity 50 \
       --delta 0.5 \
+      --alpha-init 1 \
+      --n-test 10000 \
+      --grid-max 2000 \
       "${EXTRA_ARGS[@]}"
