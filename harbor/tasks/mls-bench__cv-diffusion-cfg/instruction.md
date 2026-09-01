@@ -82,7 +82,7 @@ may add or remove lines inside it. Only code outside the editable ranges must
 stay unchanged.
 
 - `CFGpp-main/latent_diffusion.py`
-- editable lines **622–680**
+- editable lines **621–679**
 - `CFGpp-main/latent_sdxl.py`
 - editable lines **713–755**
 
@@ -92,7 +92,7 @@ stay unchanged.
 ## Readable Context
 
 
-### `CFGpp-main/latent_diffusion.py`  [EDITABLE — lines 622–680 only]
+### `CFGpp-main/latent_diffusion.py`  [EDITABLE — lines 621–679 only]
 
 ```python
      1: """
@@ -334,267 +334,267 @@ stay unchanged.
    237:         noise_uc, noise_c = self.predict_noise(xc, t, uc, c)
    238:         noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
    239:         denoised = self.calculate_denoised(x, noise_pred, sigma)
-   240:         # Preserve tuple-unpack compatibility while preventing sampler code from
-   241:         # accessing the pure unconditional denoised prediction.
-   242:         return denoised, denoised
-   243: 
-   244: ###########################################
-   245: # Base version
-   246: ###########################################
-   247: 
-   248: @register_solver("ddim")
-   249: class BaseDDIM(StableDiffusion):
-   250:     """
-   251:     Basic DDIM solver for SD.
-   252:     Useful for text-to-image generation
-   253:     """
-   254: 
-   255:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   256:     def sample(self,
-   257:                cfg_guidance=7.5,
-   258:                prompt=["",""],
-   259:                callback_fn=None,
-   260:                **kwargs):
-   261:         """
-   262:         Main function that defines each solver.
-   263:         This will generate samples without considering measurements.
-   264:         """
-   265: 
-   266:         # Text embedding
-   267:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
-   268: 
-   269:         # Initialize zT
-   270:         zt = self.initialize_latent()
-   271:         zt = zt.requires_grad_()
-   272: 
-   273:         # Sampling
-   274:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
-   275:         for step, t in enumerate(pbar):
-   276:             at = self.alpha(t)
-   277:             at_prev = self.alpha(t - self.skip)
-   278: 
-   279:             with torch.no_grad():
-   280:                 noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
-   281:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   282: 
-   283:             # tweedie
-   284:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-   285: 
-   286:             # add noise
-   287:             zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_pred
-   288: 
-   289:             if callback_fn is not None:
-   290:                 callback_kwargs = {'z0t': z0t.detach(),
-   291:                                     'zt': zt.detach(),
-   292:                                     'decode': self.decode}
-   293:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   294:                 z0t = callback_kwargs["z0t"]
-   295:                 zt = callback_kwargs["zt"]
-   296: 
-   297:         # for the last step, do not add noise
-   298:         img = self.decode(z0t)
-   299:         img = (img / 2 + 0.5).clamp(0, 1)
-   300:         return img.detach().cpu()
+   240:         # Keep the tuple shape; hide the pure unconditional denoised prediction.
+   241:         return denoised, denoised
+   242: 
+   243: ###########################################
+   244: # Base version
+   245: ###########################################
+   246: 
+   247: @register_solver("ddim")
+   248: class BaseDDIM(StableDiffusion):
+   249:     """
+   250:     Basic DDIM solver for SD.
+   251:     Useful for text-to-image generation
+   252:     """
+   253: 
+   254:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   255:     def sample(self,
+   256:                cfg_guidance=7.5,
+   257:                prompt=["",""],
+   258:                callback_fn=None,
+   259:                **kwargs):
+   260:         """
+   261:         Main function that defines each solver.
+   262:         This will generate samples without considering measurements.
+   263:         """
+   264: 
+   265:         # Text embedding
+   266:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
+   267: 
+   268:         # Initialize zT
+   269:         zt = self.initialize_latent()
+   270:         zt = zt.requires_grad_()
+   271: 
+   272:         # Sampling
+   273:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
+   274:         for step, t in enumerate(pbar):
+   275:             at = self.alpha(t)
+   276:             at_prev = self.alpha(t - self.skip)
+   277: 
+   278:             with torch.no_grad():
+   279:                 noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
+   280:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+   281: 
+   282:             # tweedie
+   283:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+   284: 
+   285:             # add noise
+   286:             zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_pred
+   287: 
+   288:             if callback_fn is not None:
+   289:                 callback_kwargs = {'z0t': z0t.detach(),
+   290:                                     'zt': zt.detach(),
+   291:                                     'decode': self.decode}
+   292:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
+   293:                 z0t = callback_kwargs["z0t"]
+   294:                 zt = callback_kwargs["zt"]
+   295: 
+   296:         # for the last step, do not add noise
+   297:         img = self.decode(z0t)
+   298:         img = (img / 2 + 0.5).clamp(0, 1)
+   299:         return img.detach().cpu()
+   300:     
    301:     
-   302:     
-   303: @register_solver("euler")
-   304: class EulerCFGSolver(StableDiffusion):
-   305:     """
-   306:     Karras Euler (VE casted)
-   307:     """
-   308:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   309:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
-   310:         # Text embedding
-   311:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
-   312: 
-   313:         # perpare alphas and sigmas
-   314:         timesteps = reversed(torch.linspace(0, 1000, len(self.scheduler.timesteps)+1).long())
-   315:         # convert to karras sigma scheduler
-   316:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-   317:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
-   318:         # initialize
-   319:         x = self.initialize_latent(method="random_kdiffusion",
-   320:                                    latent_dim=(1, 4, 64, 64),
-   321:                                    sigmas=sigmas).to(torch.float16)
-   322: 
-   323:         # Sampling
-   324:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
-   325:         for i, _ in enumerate(pbar):
-   326:             sigma = sigmas[i]
-   327:             t = self.timestep(sigma).to(self.device)
-   328:             
-   329:             with torch.no_grad():
-   330:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, t)
-   331:             
-   332:             d = self.to_d(x, sigma, denoised)
-   333:             # Euler method
-   334:             x = denoised + d * sigmas[i+1]
-   335: 
-   336:             if callback_fn is not None:
-   337:                 callback_kwargs = {'z0t': denoised.detach(),
-   338:                                     'zt': x.detach(),
-   339:                                     'decode': self.decode}
-   340:                 callback_kwargs = callback_fn(i, t, callback_kwargs)
-   341:                 z0t = callback_kwargs["z0t"]
-   342:                 zt = callback_kwargs["zt"]
-   343: 
-   344:         # for the last step, do not add noise
-   345:         img = self.decode(denoised)
-   346:         img = (img / 2 + 0.5).clamp(0, 1)
-   347:         return img.detach().cpu()
+   302: @register_solver("euler")
+   303: class EulerCFGSolver(StableDiffusion):
+   304:     """
+   305:     Karras Euler (VE casted)
+   306:     """
+   307:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   308:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
+   309:         # Text embedding
+   310:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
+   311: 
+   312:         # perpare alphas and sigmas
+   313:         timesteps = reversed(torch.linspace(0, 1000, len(self.scheduler.timesteps)+1).long())
+   314:         # convert to karras sigma scheduler
+   315:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   316:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+   317:         # initialize
+   318:         x = self.initialize_latent(method="random_kdiffusion",
+   319:                                    latent_dim=(1, 4, 64, 64),
+   320:                                    sigmas=sigmas).to(torch.float16)
+   321: 
+   322:         # Sampling
+   323:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
+   324:         for i, _ in enumerate(pbar):
+   325:             sigma = sigmas[i]
+   326:             t = self.timestep(sigma).to(self.device)
+   327:             
+   328:             with torch.no_grad():
+   329:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, t)
+   330:             
+   331:             d = self.to_d(x, sigma, denoised)
+   332:             # Euler method
+   333:             x = denoised + d * sigmas[i+1]
+   334: 
+   335:             if callback_fn is not None:
+   336:                 callback_kwargs = {'z0t': denoised.detach(),
+   337:                                     'zt': x.detach(),
+   338:                                     'decode': self.decode}
+   339:                 callback_kwargs = callback_fn(i, t, callback_kwargs)
+   340:                 z0t = callback_kwargs["z0t"]
+   341:                 zt = callback_kwargs["zt"]
+   342: 
+   343:         # for the last step, do not add noise
+   344:         img = self.decode(denoised)
+   345:         img = (img / 2 + 0.5).clamp(0, 1)
+   346:         return img.detach().cpu()
+   347:     
    348:     
-   349:     
-   350: @register_solver("euler_a")
-   351: class EulerAncestralCFGSolver(StableDiffusion):
-   352:     """
-   353:     Karras Euler (VE casted) + Ancestral sampling
-   354:     """
-   355:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   356:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
-   357:         # Text embedding
-   358:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
-   359:         # convert to karras sigma scheduler
-   360:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-   361:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
-   362:         # initialize
-   363:         x = self.initialize_latent(method="random_kdiffusion",
-   364:                                    latent_dim=(1, 4, 64, 64),
-   365:                                    sigmas=sigmas).to(torch.float16)
-   366:         # Sampling
-   367:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
-   368:         for i, _ in enumerate(pbar):
-   369:             sigma = sigmas[i]
-   370:             t = self.timestep(sigma).to(self.device)
-   371:             sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1])
-   372:             with torch.no_grad():
-   373:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, t)
-   374:             
-   375:             # Euler method
-   376:             d = self.to_d(x, sigma, denoised)
-   377:             x = denoised + d * sigma_down
-   378:             
-   379:             if sigmas[i + 1] > 0:
-   380:                 x = x + torch.randn_like(x) * sigma_up
-   381: 
-   382:             if callback_fn is not None:
-   383:                 callback_kwargs = {'z0t': denoised.detach(),
-   384:                                     'zt': x.detach(),
-   385:                                     'decode': self.decode}
-   386:                 callback_kwargs = callback_fn(i, t, callback_kwargs)
-   387: 
-   388:         # for the last step, do not add noise
-   389:         img = self.decode(denoised)
-   390:         img = (img / 2 + 0.5).clamp(0, 1)
-   391:         return img.detach().cpu()
+   349: @register_solver("euler_a")
+   350: class EulerAncestralCFGSolver(StableDiffusion):
+   351:     """
+   352:     Karras Euler (VE casted) + Ancestral sampling
+   353:     """
+   354:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   355:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
+   356:         # Text embedding
+   357:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
+   358:         # convert to karras sigma scheduler
+   359:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   360:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+   361:         # initialize
+   362:         x = self.initialize_latent(method="random_kdiffusion",
+   363:                                    latent_dim=(1, 4, 64, 64),
+   364:                                    sigmas=sigmas).to(torch.float16)
+   365:         # Sampling
+   366:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
+   367:         for i, _ in enumerate(pbar):
+   368:             sigma = sigmas[i]
+   369:             t = self.timestep(sigma).to(self.device)
+   370:             sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1])
+   371:             with torch.no_grad():
+   372:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, t)
+   373:             
+   374:             # Euler method
+   375:             d = self.to_d(x, sigma, denoised)
+   376:             x = denoised + d * sigma_down
+   377:             
+   378:             if sigmas[i + 1] > 0:
+   379:                 x = x + torch.randn_like(x) * sigma_up
+   380: 
+   381:             if callback_fn is not None:
+   382:                 callback_kwargs = {'z0t': denoised.detach(),
+   383:                                     'zt': x.detach(),
+   384:                                     'decode': self.decode}
+   385:                 callback_kwargs = callback_fn(i, t, callback_kwargs)
+   386: 
+   387:         # for the last step, do not add noise
+   388:         img = self.decode(denoised)
+   389:         img = (img / 2 + 0.5).clamp(0, 1)
+   390:         return img.detach().cpu()
+   391:     
    392:     
-   393:     
-   394: @register_solver("dpm++_2s_a")
-   395: class DPMpp2sAncestralCFGSolver(StableDiffusion):
-   396:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   397:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
-   398:         t_fn = lambda sigma: sigma.log().neg()
-   399:         sigma_fn = lambda t: t.neg().exp()
-   400:         # Text embedding
-   401:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
-   402:         # convert to karras sigma scheduler
-   403:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-   404:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
-   405:         # initialize
-   406:         x = self.initialize_latent(method="random_kdiffusion",
-   407:                                    latent_dim=(1, 4, 64, 64),
-   408:                                    sigmas=sigmas).to(torch.float16)
-   409:         # Sampling
-   410:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
-   411:         for i, _ in enumerate(pbar):
-   412:             sigma = sigmas[i]
-   413:             new_t = self.timestep(sigma).to(self.device)
-   414:             
-   415:             with torch.no_grad():
-   416:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, new_t)
-   417: 
-   418:             sigma_down, sigma_up = self.get_ancestral_step(sigmas[i], sigmas[i + 1])
-   419:             if sigma_down == 0:
-   420:                 # Euler method
-   421:                 d = self.to_d(x, sigmas[i], denoised)
-   422:                 x = denoised + d * sigma_down
-   423:             else:
-   424:                 # DPM-Solver++(2S)
-   425:                 t, t_next = t_fn(sigmas[i]), t_fn(sigma_down)
-   426:                 r = 1 / 2
-   427:                 h = t_next - t
-   428:                 s = t + r * h
-   429:                 x_2 = (sigma_fn(s) / sigma_fn(t)) * x - (-h * r).expm1() * denoised
-   430:                 
-   431:                 with torch.no_grad():
-   432:                     sigma_s = sigma_fn(s)
-   433:                     t_2 = self.timestep(sigma_s).to(self.device)
-   434:                     denoised_2, _ = self.kdiffusion_x_to_denoised(x_2, sigma_s, uc, c, cfg_guidance, t_2)
-   435:                 
-   436:                 x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_2
-   437:             # Noise addition
-   438:             if sigmas[i + 1] > 0:
-   439:                 x = x + torch.randn_like(x) * sigma_up
-   440: 
-   441:             if callback_fn is not None:
-   442:                 callback_kwargs = { 'z0t': denoised.detach(),
-   443:                                     'zt': x.detach(),
-   444:                                     'decode': self.decode}
-   445:                 callback_kwargs = callback_fn(i, new_t, callback_kwargs)
-   446:                 denoised = callback_kwargs["z0t"]
-   447:                 x = callback_kwargs["zt"]
-   448:         
-   449:         # for the last step, do not add noise
-   450:         img = self.decode(x)
-   451:         img = (img / 2 + 0.5).clamp(0, 1)
-   452:         return img.detach().cpu()
+   393: @register_solver("dpm++_2s_a")
+   394: class DPMpp2sAncestralCFGSolver(StableDiffusion):
+   395:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   396:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
+   397:         t_fn = lambda sigma: sigma.log().neg()
+   398:         sigma_fn = lambda t: t.neg().exp()
+   399:         # Text embedding
+   400:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
+   401:         # convert to karras sigma scheduler
+   402:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   403:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+   404:         # initialize
+   405:         x = self.initialize_latent(method="random_kdiffusion",
+   406:                                    latent_dim=(1, 4, 64, 64),
+   407:                                    sigmas=sigmas).to(torch.float16)
+   408:         # Sampling
+   409:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
+   410:         for i, _ in enumerate(pbar):
+   411:             sigma = sigmas[i]
+   412:             new_t = self.timestep(sigma).to(self.device)
+   413:             
+   414:             with torch.no_grad():
+   415:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, new_t)
+   416: 
+   417:             sigma_down, sigma_up = self.get_ancestral_step(sigmas[i], sigmas[i + 1])
+   418:             if sigma_down == 0:
+   419:                 # Euler method
+   420:                 d = self.to_d(x, sigmas[i], denoised)
+   421:                 x = denoised + d * sigma_down
+   422:             else:
+   423:                 # DPM-Solver++(2S)
+   424:                 t, t_next = t_fn(sigmas[i]), t_fn(sigma_down)
+   425:                 r = 1 / 2
+   426:                 h = t_next - t
+   427:                 s = t + r * h
+   428:                 x_2 = (sigma_fn(s) / sigma_fn(t)) * x - (-h * r).expm1() * denoised
+   429:                 
+   430:                 with torch.no_grad():
+   431:                     sigma_s = sigma_fn(s)
+   432:                     t_2 = self.timestep(sigma_s).to(self.device)
+   433:                     denoised_2, _ = self.kdiffusion_x_to_denoised(x_2, sigma_s, uc, c, cfg_guidance, t_2)
+   434:                 
+   435:                 x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_2
+   436:             # Noise addition
+   437:             if sigmas[i + 1] > 0:
+   438:                 x = x + torch.randn_like(x) * sigma_up
+   439: 
+   440:             if callback_fn is not None:
+   441:                 callback_kwargs = { 'z0t': denoised.detach(),
+   442:                                     'zt': x.detach(),
+   443:                                     'decode': self.decode}
+   444:                 callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+   445:                 denoised = callback_kwargs["z0t"]
+   446:                 x = callback_kwargs["zt"]
+   447:         
+   448:         # for the last step, do not add noise
+   449:         img = self.decode(x)
+   450:         img = (img / 2 + 0.5).clamp(0, 1)
+   451:         return img.detach().cpu()
+   452:     
    453:     
-   454:     
-   455: @register_solver("dpm++_2m")
-   456: class DPMpp2mCFGSolver(StableDiffusion):
-   457:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   458:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
-   459:         t_fn = lambda sigma: sigma.log().neg()
-   460:         sigma_fn = lambda t: t.neg().exp()
-   461:         # Text embedding
-   462:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
-   463:         # convert to karras sigma scheduler
-   464:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-   465:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
-   466:         # initialize
-   467:         x = self.initialize_latent(method="random_kdiffusion",
-   468:                                    latent_dim=(1, 4, 64, 64),
-   469:                                    sigmas=sigmas).to(torch.float16)
-   470:         old_denoised = None # buffer
-   471:         # Sampling
-   472:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
-   473:         for i, _ in enumerate(pbar):
-   474:             sigma = sigmas[i]
-   475:             new_t = self.timestep(sigma).to(self.device)
-   476:             
-   477:             with torch.no_grad():
-   478:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, new_t)
-   479: 
-   480:             # solve ODE one step
-   481:             t, t_next = t_fn(sigmas[i]), t_fn(sigmas[i+1])
-   482:             h = t_next - t
-   483:             if old_denoised is None or sigmas[i+1] == 0:
-   484:                 x = denoised + self.to_d(x, sigmas[i], denoised) * sigmas[i+1]
-   485:             else:
-   486:                 h_last = t - t_fn(sigmas[i-1])
-   487:                 r = h_last / h
-   488:                 extra1 = -torch.exp(-h) * denoised - (-h).expm1() * (denoised - old_denoised) / (2*r)
-   489:                 extra2 = torch.exp(-h) * x
-   490:                 x = denoised + extra1 + extra2
-   491:             old_denoised = denoised
-   492: 
-   493:             if callback_fn is not None:
-   494:                 callback_kwargs = { 'z0t': denoised.detach(),
-   495:                                     'zt': x.detach(),
-   496:                                     'decode': self.decode}
-   497:                 callback_kwargs = callback_fn(i, new_t, callback_kwargs)
-   498:                 denoised = callback_kwargs["z0t"]
-   499:                 x = callback_kwargs["zt"]
-   500:         
+   454: @register_solver("dpm++_2m")
+   455: class DPMpp2mCFGSolver(StableDiffusion):
+   456:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   457:     def sample(self, cfg_guidance, prompt=["", ""], callback_fn=None, **kwargs):
+   458:         t_fn = lambda sigma: sigma.log().neg()
+   459:         sigma_fn = lambda t: t.neg().exp()
+   460:         # Text embedding
+   461:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
+   462:         # convert to karras sigma scheduler
+   463:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   464:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+   465:         # initialize
+   466:         x = self.initialize_latent(method="random_kdiffusion",
+   467:                                    latent_dim=(1, 4, 64, 64),
+   468:                                    sigmas=sigmas).to(torch.float16)
+   469:         old_denoised = None # buffer
+   470:         # Sampling
+   471:         pbar = tqdm(self.scheduler.timesteps, desc="SD")
+   472:         for i, _ in enumerate(pbar):
+   473:             sigma = sigmas[i]
+   474:             new_t = self.timestep(sigma).to(self.device)
+   475:             
+   476:             with torch.no_grad():
+   477:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, new_t)
+   478: 
+   479:             # solve ODE one step
+   480:             t, t_next = t_fn(sigmas[i]), t_fn(sigmas[i+1])
+   481:             h = t_next - t
+   482:             if old_denoised is None or sigmas[i+1] == 0:
+   483:                 x = denoised + self.to_d(x, sigmas[i], denoised) * sigmas[i+1]
+   484:             else:
+   485:                 h_last = t - t_fn(sigmas[i-1])
+   486:                 r = h_last / h
+   487:                 extra1 = -torch.exp(-h) * denoised - (-h).expm1() * (denoised - old_denoised) / (2*r)
+   488:                 extra2 = torch.exp(-h) * x
+   489:                 x = denoised + extra1 + extra2
+   490:             old_denoised = denoised
+   491: 
+   492:             if callback_fn is not None:
+   493:                 callback_kwargs = { 'z0t': denoised.detach(),
+   494:                                     'zt': x.detach(),
+   495:                                     'decode': self.decode}
+   496:                 callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+   497:                 denoised = callback_kwargs["z0t"]
+   498:                 x = callback_kwargs["zt"]
+   499:         
+   500:         # for the last step, do not add noise
 
 [truncated: showing at most 500 lines / 60000 bytes from CFGpp-main/latent_diffusion.py]
 ```
@@ -1120,9 +1120,10 @@ a baseline reproduction.
 In `CFGpp-main/latent_diffusion.py`:
 
 ```python
-Lines 622–680:
-   619: # CFG++ version
-   620: ###########################################
+Lines 621–679:
+   618: # CFG++ version
+   619: ###########################################
+   620: 
    621: @register_solver("ddim_cfg++")
    622: class BaseDDIMCFGpp(StableDiffusion):
    623:     """
@@ -1185,7 +1186,6 @@ Lines 622–680:
    680:         # for the last step, do not add noise
    681:         img = self.decode(z0t)
    682:         img = (img / 2 + 0.5).clamp(0, 1)
-   683:         return img.detach().cpu()
 ```
 
 ### `cfgpp` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1193,9 +1193,10 @@ Lines 622–680:
 In `CFGpp-main/latent_diffusion.py`:
 
 ```python
-Lines 622–680:
-   619: # CFG++ version
-   620: ###########################################
+Lines 621–679:
+   618: # CFG++ version
+   619: ###########################################
+   620: 
    621: @register_solver("ddim_cfg++")
    622: class BaseDDIMCFGpp(StableDiffusion):
    623:     """
@@ -1258,7 +1259,6 @@ Lines 622–680:
    680: 
    681:         # for the last step, do not add noise
    682:         img = self.decode(z0t)
-   683:         img = (img / 2 + 0.5).clamp(0, 1)
 ```
 
 ### `zeroinit` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1266,9 +1266,10 @@ Lines 622–680:
 In `CFGpp-main/latent_diffusion.py`:
 
 ```python
-Lines 622–680:
-   619: # CFG++ version
-   620: ###########################################
+Lines 621–679:
+   618: # CFG++ version
+   619: ###########################################
+   620: 
    621: @register_solver("ddim_cfg++")
    622: class BaseDDIMCFGpp(StableDiffusion):
    623:     """
@@ -1331,7 +1332,6 @@ Lines 622–680:
    680: 
    681:             if callback_fn is not None:
    682:                 callback_kwargs = {'z0t': z0t.detach(),
-   683:                                     'zt': zt.detach(),
 ```
 
 ### `cfg` baseline — editable region  [READ-ONLY — reference implementation]

@@ -11,6 +11,8 @@ Evaluation feedback: lines matching
 Metrics are keyed by dataset name, e.g. d4rl_score_pen_cloned_v1.
 """
 
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path

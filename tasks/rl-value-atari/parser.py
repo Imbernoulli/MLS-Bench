@@ -11,6 +11,8 @@ Evaluation feedback: lines matching
 Metrics are keyed by environment name, e.g. eval_return_breakoutnoframeskip_v4.
 """
 
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path
