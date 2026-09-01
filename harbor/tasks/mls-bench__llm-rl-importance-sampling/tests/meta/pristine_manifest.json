@@ -836,7 +836,7 @@
   "verl/verl/models/transformers/qwen3_vl.py": "ddf503b07a48b064903a6070925dd7a37ae0ad8f69e5f7608dd56c7300592ccd",
   "verl/verl/models/transformers/tiled_mlp.py": "5993c82aef95bff5b06ffdb2b45da266886d004e067a5d0aa80d56298c76c09b",
   "verl/verl/models/weight_loader_registry.py": "22514c6fbf53af91aa425d02228086c0355af123d7b64c104d7b2d7cc5fc1806",
-  "verl/verl/protocol.py": "b1e061e81adebfd1bf3485a76fc5cea774c5932933e4f616e946ac0375a2ae2c",
+  "verl/verl/protocol.py": "74a93c10a274dd59195786ec69ac84b2628208b2d3d6b3eec8a8e42958d9535d",
   "verl/verl/py.typed": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "verl/verl/single_controller/__init__.py": "bc8a469c28cee85f4c7e7bcf75733a03316a56adfb8254abd33b368253b07fe3",
   "verl/verl/single_controller/base/__init__.py": "90b679f1bb261ca69ccc0ec2bec1fdae7372c3403521d82a420c3a6634e9b31b",

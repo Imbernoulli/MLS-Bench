@@ -1639,7 +1639,7 @@ After you finish, evaluation runs a fixed set of scripts and aggregates the
 metrics they emit. These scripts are **not** in your workspace — you cannot
 read or modify them. The labels below indicate what each evaluation tests:
 
-- **deepmath-3bench-h100** — wall-clock budget `6:00:00`, compute share `2`
+- **deepmath-3bench-h100** — wall-clock budget `10:00:00`, compute share `2`
 
 
 Scoring uses the same `combined_score` aggregation as the MLS-Bench
