@@ -11,6 +11,11 @@ else
 fi
 echo "Detected $N_GPUS GPUs"
 
+# H200 has enough memory for the 0.5B colocated rollout.  Disabling vLLM's
+# cache-engine sleep avoids an initialization-time call into libcudart's
+# optional CUDA-memory allocator, which is not present in Daytona's direct
+# GPU sandbox image.  The default path fails before the first training step
+# with ``libcudart.so.12.9.79`` missing.
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     actor_rollout_ref.actor.policy_loss.loss_mode=custom \
@@ -45,11 +50,6 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEM_UTIL:-0.4} \
     actor_rollout_ref.rollout.max_model_len=17408 \
     actor_rollout_ref.rollout.enforce_eager=True \
-    # H200 has enough memory for the 0.5B colocated rollout.  Disabling
-    # vLLM's cache-engine sleep avoids an initialization-time call into
-    # libcudart's optional CUDA-memory allocator, which is not present in
-    # Daytona's direct GPU sandbox image.  The default (enabled) path fails
-    # before the first training step with ``libcudart.so.12.9.79`` missing.
     actor_rollout_ref.rollout.free_cache_engine=False \
     +actor_rollout_ref.rollout.engine_kwargs.vllm.max_num_seqs=256 \
     +actor_rollout_ref.rollout.enable_sleep_mode=False \
