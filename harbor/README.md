@@ -20,6 +20,59 @@ smoke-testing):
 PYTHONPATH=. harbor run -c run.yaml
 ```
 
+## Run on Daytona
+
+Harbor's built-in Daytona provider is wired into the rendered tasks. Install
+the provider extra, export a Daytona API key on the host, and use the
+dedicated configuration:
+
+```bash
+uv tool install "harbor[daytona]"
+export DAYTONA_API_KEY="<your-daytona-key>"
+PYTHONPATH=. harbor run -c run-daytona.yaml
+```
+
+The repository's `harbor_env:DaytonaEnvironment` compatibility layer handles
+the 116 GPU tasks whose Compose file is only a local-Docker NVIDIA reservation:
+Daytona receives the declared GPU count through its direct GPU sandbox API.
+The 24 CPU tasks use the same direct Daytona path. A genuine CPU-only
+multi-container Compose task, if added later, can remain delegated to Harbor's
+Daytona DinD implementation; Daytona does not support GPU+DinD/Compose.
+
+Daytona resource limits are provider/account specific. The task files request
+up to 4 CPUs, 16 GiB RAM, 60 GiB disk, and 8 GPUs; use Harbor's
+`--override-*` flags when your Daytona organization has lower limits. The
+smoke helper automatically caps CPU sandboxes at 10 GiB (the limit of the
+current Daytona organization) and can use a larger disk for GPU sandboxes.
+Some published base images are larger than Daytona can build within the
+available limits; those environments are recorded as provider errors rather
+than reported as passes.
+
+Two tasks intentionally call model APIs during evaluation:
+`mls-bench/agent-tool-reasoning` (DeepSeek/DashScope) and
+`mls-bench/mas-topology` (DeepSeek/DashScope). They also require their
+corresponding model API keys; `DAYTONA_API_KEY` only authenticates the sandbox
+provider and is not a substitute. The remaining 138 tasks use local/offline
+evaluation inputs and are suitable for a Daytona smoke run without additional
+model-provider credentials.
+
+To test environments independently, use the smoke-test helper from this
+directory. Its default `--scope environment` runs one representative task per
+package image (63 environments after excluding the two API tasks), with a
+`nop` agent and verification disabled. Set `--concurrency N` to match the
+available Daytona GPU quota (for example, `--concurrency 10`):
+
+```bash
+DAYTONA_API_KEY="<your-daytona-key>" \
+  python scripts/daytona_smoke.py --scope environment --concurrency 10
+```
+
+Use `--scope task` to run all 138 non-API task environments one by one. Each
+invocation creates its own Harbor job and Daytona sandbox; results are written
+to `jobs-daytona-smoke/report.csv`. Add `--verify --agent oracle` when the
+objective is a full baseline/verifier run rather than an environment startup
+smoke test. `--dry-run` prints the exact commands without contacting Daytona.
+
 Replace the agent with a real one by editing `run.yaml` or via CLI:
 
 ```bash
@@ -44,6 +97,7 @@ only CPU tasks.
 .
 ├── README.md          this file
 ├── run.yaml           reference Harbor config (GPU-enabled environment + oracle agent)
+├── scripts/daytona_smoke.py  isolated per-environment Daytona smoke runner
 ├── harbor_env.py      DockerGPUEnvironment — Harbor's docker env with the GPU flag flipped
 └── tasks/             140 rendered task directories + dataset.toml manifest
     ├── dataset.toml

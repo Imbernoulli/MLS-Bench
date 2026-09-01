@@ -49,6 +49,7 @@ output/
 
 # Harbor runtime artifacts (created by `harbor run`)
 jobs/
+harbor/jobs-daytona*/
 harbor_adapter/scripts/__pycache__/
 harbor_adapter/**/__pycache__/
 

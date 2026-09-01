@@ -22,9 +22,12 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
+import threading
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -122,6 +125,8 @@ def build_command(
     verify: bool,
     force_build: bool,
     delete: bool,
+    spot: bool = False,
+    gpu_type: str | None = None,
     overrides: dict[str, int | None],
 ) -> list[str]:
     """Build an argv list for one isolated Harbor invocation."""
@@ -146,6 +151,14 @@ def build_command(
     ]
     if not verify:
         command.append("--disable-verification")
+    if record.gpus > 0 and (spot or gpu_type):
+        # The custom DaytonaEnvironment consumes this kwarg and forwards it
+        # to Daytona's CreateSandbox*Params.spot field.  Keep it off CPU
+        # tasks because the Daytona API rejects spot requests with zero GPUs.
+        if spot:
+            command.extend(["--ek", "spot=true"])
+        if gpu_type:
+            command.extend(["--ek", f"gpu_type={gpu_type}"])
     if force_build:
         command.append("--force-build")
     else:
@@ -209,6 +222,28 @@ def summarize_result(path: Path, process_returncode: int) -> tuple[str, str]:
         return ("error", "trial-error")
     if stats.get("n_running_trials", 0) or stats.get("n_pending_trials", 0):
         return ("incomplete", "running-trials")
+    # Harbor persists the terminal result before Daytona client's atexit
+    # websocket cleanup.  That cleanup may be interrupted (and make the
+    # wrapper process return non-zero) even when every trial completed
+    # successfully.  Trust a durable, all-terminal result over that wrapper
+    # return code.
+    # Harbor 0.6.x stores n_total_trials at the result root, whereas newer
+    # releases include it in stats.  Accept both layouts.
+    total = stats.get("n_total_trials", data.get("n_total_trials"))
+    completed = stats.get("n_completed_trials", data.get("n_completed_trials", 0))
+    errored = stats.get("n_errored_trials", data.get("n_errored_trials", 0))
+    cancelled = stats.get("n_cancelled_trials", data.get("n_cancelled_trials", 0))
+    try:
+        terminal = (
+            int(total) > 0
+            and int(completed) + int(errored) + int(cancelled) >= int(total)
+            and int(errored) == 0
+            and int(cancelled) == 0
+        )
+    except (TypeError, ValueError):
+        terminal = False
+    if terminal:
+        return ("passed", "")
     if process_returncode:
         return ("process-error", "")
     return ("passed", "")
@@ -233,8 +268,101 @@ def write_report(path: Path, rows: list[dict[str, str]]) -> None:
         writer.writerows(rows)
 
 
+# Child Harbor commands are placed in their own process groups.  Keeping a
+# registry lets Ctrl-C (delivered to the runner's main thread while a batch is
+# being collected) terminate worker-thread children too; otherwise the
+# ThreadPoolExecutor context manager waits forever for an orphaned Harbor
+# process.  Access is protected because one batch may run several commands.
+_ACTIVE_CHILDREN: set[int] = set()
+_ACTIVE_CHILDREN_LOCK = threading.Lock()
+
+
+def _terminate_process_group(pid: int, *, grace_sec: float = 10.0) -> None:
+    """Best-effort TERM/KILL for a child process group."""
+
+    try:
+        os.killpg(pid, signal.SIGTERM)
+    except (OSError, ProcessLookupError):
+        return
+    deadline = time.monotonic() + max(0.0, grace_sec)
+    while time.monotonic() < deadline:
+        try:
+            os.kill(pid, 0)
+        except (OSError, ProcessLookupError):
+            return
+        time.sleep(0.1)
+    try:
+        os.killpg(pid, signal.SIGKILL)
+    except (OSError, ProcessLookupError):
+        pass
+
+
+def _run_harbor_subprocess(
+    command: list[str],
+    *,
+    cwd: Path,
+    env: dict[str, str],
+    timeout_sec: float | None,
+) -> int:
+    """Run Harbor in an isolated process group with a finite watchdog.
+
+    A timeout of ``None`` means no runner-level watchdog (Harbor's own task
+    timeouts still apply).  On timeout or interruption all descendants are
+    terminated and a conventional 124 status is returned, allowing the
+    caller to write a report row and retry it with ``--resume``.
+    """
+
+    process = subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+    )
+    with _ACTIVE_CHILDREN_LOCK:
+        _ACTIVE_CHILDREN.add(process.pid)
+    try:
+        try:
+            process.wait(timeout=timeout_sec)
+        except subprocess.TimeoutExpired:
+            print(
+                f"    Harbor subprocess timed out after {timeout_sec:g}s; "
+                "terminating its process group",
+                file=sys.stderr,
+                flush=True,
+            )
+            _terminate_process_group(process.pid)
+            # Reap the process after TERM/KILL.  A race can leave returncode
+            # unset briefly, so avoid leaking a worker process.
+            try:
+                process.wait(timeout=2)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            return 124
+        except KeyboardInterrupt:
+            _terminate_process_group(process.pid)
+            try:
+                process.wait(timeout=2)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+            raise
+        return int(process.returncode or 0)
+    finally:
+        with _ACTIVE_CHILDREN_LOCK:
+            _ACTIVE_CHILDREN.discard(process.pid)
+
+
+def _terminate_active_children() -> None:
+    with _ACTIVE_CHILDREN_LOCK:
+        pids = list(_ACTIVE_CHILDREN)
+    for pid in pids:
+        _terminate_process_group(pid)
+
+
 async def _daytona_sandboxes(
-    *, request_delete: bool = False, protected_ids: set[str] | None = None
+    *,
+    request_delete: bool = False,
+    protected_ids: set[str] | None = None,
+    run_id: str | None = None,
 ) -> list[str]:
     """Return active Daytona sandbox IDs, optionally requesting deletion.
 
@@ -242,21 +370,38 @@ async def _daytona_sandboxes(
     an image build, however, Daytona can leave a short-lived BUILDING_SNAPSHOT
     or BUILD_FAILED record behind after the client process exits.  Those
     records still count against the organisation's one-GPU quota.  If explicit
-    cleanup is requested, only IDs not in ``protected_ids`` are deleted.  This
-    is necessary because ``client.list()`` is organization-wide and must not
-    delete another user's sandbox.
+    cleanup is requested, only this runner's ``mlsbench-run-id`` label is
+    deleted.  An ID snapshot cannot distinguish a concurrent runner's sandbox
+    created after the snapshot.
     """
 
-    from daytona import AsyncDaytona, DaytonaConfig
+    from daytona import AsyncDaytona, DaytonaConfig, ListSandboxesQuery
 
     client = AsyncDaytona(DaytonaConfig(api_key=None))
     try:
         ids: list[str] = []
-        async for sandbox in client.list():
+        # A run label is the only safe way to identify orphans when multiple
+        # smoke runners share an organization.  The legacy protected-ID
+        # fallback remains for callers that explicitly need a full snapshot,
+        # but the runner itself always supplies run_id when cleaning.
+        query = (
+            ListSandboxesQuery(labels={"mlsbench-run-id": run_id})
+            if run_id
+            else None
+        )
+        async for sandbox in client.list(query=query):
             ids.append(str(sandbox.id))
-            # Never perform organization-wide deletion.  A caller must pass a
-            # snapshot of protected IDs; ``None`` disables deletion entirely.
-            if request_delete and protected_ids is not None and str(sandbox.id) not in protected_ids:
+            # Never perform organization-wide deletion.  With run_id, only
+            # sandboxes carrying this runner's label are returned.  Without
+            # it, a caller must pass a snapshot of protected IDs; ``None``
+            # disables deletion entirely.
+            if request_delete and (
+                (run_id is not None)
+                or (
+                    protected_ids is not None
+                    and str(sandbox.id) not in protected_ids
+                )
+            ):
                 try:
                     await sandbox.delete()
                 except BaseException:
@@ -275,7 +420,10 @@ async def _daytona_sandboxes(
 
 
 def wait_for_daytona_quiescence(
-    timeout_sec: int, *, protected_ids: set[str] | None = None
+    timeout_sec: int,
+    *,
+    protected_ids: set[str] | None = None,
+    run_id: str | None = None,
 ) -> list[str]:
     """Wait until the previous sandbox deletion releases account resources."""
 
@@ -287,23 +435,31 @@ def wait_for_daytona_quiescence(
         deadline = time.monotonic() + timeout_sec
         last_ids: list[str] = []
         while True:
-            all_ids = asyncio.run(_daytona_sandboxes(request_delete=False))
+            all_ids = asyncio.run(
+                _daytona_sandboxes(request_delete=False, run_id=run_id)
+            )
             removable = [
                 sandbox_id
                 for sandbox_id in all_ids
-                if protected_ids is not None and sandbox_id not in protected_ids
+                if run_id is not None
+                or (protected_ids is not None and sandbox_id not in protected_ids)
             ]
             if removable:
                 asyncio.run(
                     _daytona_sandboxes(
-                        request_delete=True, protected_ids=protected_ids
+                        request_delete=True,
+                        protected_ids=protected_ids,
+                        run_id=run_id,
                     )
                 )
-            last_ids = asyncio.run(_daytona_sandboxes(request_delete=False))
+            last_ids = asyncio.run(
+                _daytona_sandboxes(request_delete=False, run_id=run_id)
+            )
             remaining = [
                 sandbox_id
                 for sandbox_id in last_ids
-                if protected_ids is not None and sandbox_id not in protected_ids
+                if run_id is not None
+                or (protected_ids is not None and sandbox_id not in protected_ids)
             ]
             if not remaining:
                 return []
@@ -359,12 +515,34 @@ def parse_args() -> argparse.Namespace:
         help="maximum number of Harbor subprocesses in one batch",
     )
     parser.add_argument(
+        "--subprocess-timeout-sec",
+        type=float,
+        default=3600.0,
+        help=(
+            "runner watchdog for each Harbor subprocess (default: 3600); "
+            "set to 0 to rely only on Harbor's task timeouts"
+        ),
+    )
+    parser.add_argument(
         "--gpu-limit",
         type=int,
         default=None,
         help="aggregate GPU quota for a batch; tasks are queued by declared GPU count",
     )
     parser.add_argument("--include-api", action="store_true")
+    parser.add_argument(
+        "--spot",
+        action="store_true",
+        help=(
+            "request Daytona spot sandboxes for GPU tasks; spot sandboxes "
+            "may be preempted and are rejected for CPU-only tasks"
+        ),
+    )
+    parser.add_argument(
+        "--gpu-type",
+        default=None,
+        help="optional Daytona GPU type (for example H100 or H200)",
+    )
     parser.add_argument("--harbor-cmd", default="harbor")
     parser.add_argument(
         "--import-path", default="harbor_env:DaytonaEnvironment", dest="import_path"
@@ -391,8 +569,8 @@ def parse_args() -> argparse.Namespace:
         "--cleanup-orphans",
         action="store_true",
         help=(
-            "delete Daytona sandboxes created after this runner starts; unsafe "
-            "when another Daytona runner is active, so disabled by default"
+            "delete Daytona sandboxes carrying this runner's unique label; "
+            "disabled by default"
         ),
     )
     parser.add_argument("--limit", type=int, default=None)
@@ -417,11 +595,18 @@ def main() -> int:
         records = [record for record in records if record.gpus <= 0]
     if args.task_ids:
         wanted = set(args.task_ids)
-        records = [record for record in records if record.task_id in wanted]
+        selected = {record.task_id: record for record in records if record.task_id in wanted}
+        # An explicit task list is also a scheduling hint: keep the caller's
+        # order so short/cheap tasks can be placed first while larger jobs
+        # wait for capacity.  (The default discovery order remains sorted.)
+        records = [selected[task_id] for task_id in args.task_ids if task_id in selected]
     if args.limit is not None:
         records = records[: max(0, args.limit)]
     if args.concurrency < 1:
         print("--concurrency must be at least 1", file=sys.stderr)
+        return 2
+    if args.subprocess_timeout_sec < 0:
+        print("--subprocess-timeout-sec cannot be negative", file=sys.stderr)
         return 2
     if not records:
         print("No eligible tasks selected.", file=sys.stderr)
@@ -442,6 +627,8 @@ def main() -> int:
                 verify=args.verify,
                 force_build=not args.no_force_build,
                 delete=not args.no_delete,
+                spot=args.spot,
+                gpu_type=args.gpu_type,
                 overrides={
                     "--override-cpus": args.override_cpus,
                     "--override-memory-mb": args.override_memory_mb,
@@ -461,6 +648,11 @@ def main() -> int:
     if child_env.get("PYTHONPATH"):
         pythonpath.append(child_env["PYTHONPATH"])
     child_env["PYTHONPATH"] = os.pathsep.join(pythonpath)
+    # Every sandbox created by this runner carries a unique label.  Cleanup
+    # can therefore target only this invocation's orphans; a timestamp/ID
+    # snapshot is insufficient when another runner starts after our snapshot.
+    runner_id = uuid.uuid4().hex
+    child_env["MLSBENCH_DAYTONA_RUN_ID"] = runner_id
 
     def run_record(index: int, record: TaskRecord) -> dict[str, str] | None:
         existing_result = _result_path(jobs_dir, record.task_id)
@@ -491,6 +683,8 @@ def main() -> int:
             verify=args.verify,
             force_build=not args.no_force_build,
             delete=not args.no_delete,
+            spot=args.spot,
+            gpu_type=args.gpu_type,
             overrides={
                 "--override-cpus": args.override_cpus,
                 "--override-memory-mb": args.override_memory_mb,
@@ -499,9 +693,22 @@ def main() -> int:
             },
         )
         print(f"[{index}/{len(records)}] {record.task_id} ({record.package}, gpus={record.gpus})")
-        completed = subprocess.run(command, cwd=harbor_dir, env=child_env, check=False)
+        try:
+            returncode = _run_harbor_subprocess(
+                command,
+                cwd=harbor_dir,
+                env=child_env,
+                timeout_sec=(
+                    None
+                    if args.subprocess_timeout_sec == 0
+                    else args.subprocess_timeout_sec
+                ),
+            )
+        except OSError as exc:
+            print(f"    failed to start Harbor subprocess: {exc}", file=sys.stderr)
+            returncode = 127
         result_json = _result_path(jobs_dir, record.task_id)
-        status, exceptions = summarize_result(result_json, completed.returncode)
+        status, exceptions = summarize_result(result_json, returncode)
         print(f"    -> {status}{f' ({exceptions})' if exceptions else ''}")
         return {
             "task_id": record.task_id,
@@ -552,15 +759,10 @@ def main() -> int:
     # incremental cleanup is deliberately opt-in: two concurrent runners can
     # both start from the same baseline, and either runner would otherwise
     # delete the other's live sandboxes when its own batch finishes.
+    # Cleanup is label-scoped.  Do not snapshot all organization sandboxes:
+    # another runner may create one after the snapshot and it would otherwise
+    # be mistaken for an orphan owned by this invocation.
     protected_ids: set[str] | None = None
-    if args.cleanup_orphans:
-        try:
-            protected_ids = set(
-                asyncio.run(_daytona_sandboxes(request_delete=False))
-            )
-        except BaseException:
-            # If the baseline cannot be read, disable deletion for safety.
-            protected_ids = None
 
     # Run records in batches.  A batch avoids racing the cleanup poller while
     # still allowing independent sandboxes to use available provider quota.
@@ -568,13 +770,25 @@ def main() -> int:
         if len(batch) == 1:
             batch_rows = [run_record(*batch[0])]
         else:
-            with ThreadPoolExecutor(max_workers=len(batch)) as pool:
+            pool = ThreadPoolExecutor(max_workers=len(batch))
+            try:
                 batch_rows = list(pool.map(lambda item: run_record(*item), batch))
+            except BaseException:
+                # Signals are delivered to the main thread while workers are
+                # waiting in pool.map.  Do not let the executor's implicit
+                # shutdown wait for children that are no longer useful.
+                _terminate_active_children()
+                pool.shutdown(wait=False, cancel_futures=True)
+                raise
+            else:
+                pool.shutdown(wait=True)
         rows.extend(row for row in batch_rows if row is not None)
         write_report(report_path, rows)
         if args.cleanup_orphans:
             remaining = wait_for_daytona_quiescence(
-                args.settle_timeout_sec, protected_ids=protected_ids
+                args.settle_timeout_sec,
+                protected_ids=protected_ids,
+                run_id=runner_id,
             )
             if remaining:
                 print(
@@ -591,6 +805,9 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except KeyboardInterrupt:
+        print("Interrupted; Harbor subprocesses were terminated.", file=sys.stderr)
+        raise SystemExit(130)
     except BrokenPipeError:
         # ``... --dry-run | head`` is a convenient way to inspect a large
         # selection; do not turn the closed output pipe into a traceback.

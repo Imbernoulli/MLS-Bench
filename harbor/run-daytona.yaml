@@ -1,0 +1,43 @@
+# Daytona run configuration for the 138 non-API MLS-Bench tasks.
+#
+# Run from this directory with:
+#   DAYTONA_API_KEY=... PYTHONPATH=. harbor run -c run-daytona.yaml
+#
+# The custom import path keeps local Docker's GPU-only Compose reservation
+# overlays compatible with Daytona.  Those overlays are treated as direct GPU
+# sandboxes; real multi-container definitions remain delegated to Harbor's
+# normal Daytona DinD implementation.
+
+jobs_dir: jobs-daytona
+n_attempts: 1
+timeout_multiplier: 1.0
+# Keep remote environment allocation serial; use the smoke helper for a fresh
+# Harbor process per environment.
+n_concurrent_trials: 1
+quiet: false
+
+environment:
+  import_path: harbor_env:DaytonaEnvironment
+  force_build: true
+  delete: true
+  # Spot sandboxes do not consume the organization's on-demand GPU quota.
+  # The adapter applies this only to GPU tasks; CPU tasks remain on-demand.
+  kwargs:
+    spot: true
+
+agents:
+  - name: oracle
+
+# Replace the oracle block with a real Harbor agent when running evaluations.
+# agents:
+#   - name: codex
+#     model_name: openai/gpt-5
+
+datasets:
+  - path: tasks
+    # These two verifiers call DeepSeek/DashScope. Keep the default Daytona
+    # smoke/evaluation credential-free; opt in explicitly when model keys are
+    # available (or remove these two patterns).
+    exclude_task_names:
+      - mls-bench__agent-tool-reasoning
+      - mls-bench__mas-topology

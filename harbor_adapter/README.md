@@ -20,6 +20,44 @@ PYTHONPATH=src python3 -m mls_bench.main \
 harbor run -c run_mls-bench.yaml
 ```
 
+To run the rendered tasks on Daytona (the default config selects the 138
+non-API tasks):
+
+```bash
+uv tool install "harbor[daytona]"
+export DAYTONA_API_KEY="<your-daytona-key>"
+PYTHONPATH=src harbor run -c run-daytona.yaml
+```
+
+`run-daytona.yaml` uses `mls_bench.harbor_env:DaytonaEnvironment`. The
+adapter recognises its GPU-only Docker Compose overlays and sends those GPU
+counts to Daytona's direct sandbox resource request; this avoids Daytona's
+unsupported GPU+DinD combination while leaving CPU-only real multi-container
+tasks untouched (Daytona rejects GPU+Compose). The provider key must be set in the host environment and is never
+embedded in task files. Daytona account limits still apply: the smoke runner
+caps CPU sandboxes at 10 GiB and allows a larger disk override for GPU
+sandboxes; images that cannot be built by the provider are retained as
+explicit errors in the CSV report.
+
+The only two tasks whose benchmark commands call external model APIs are
+`agent-tool-reasoning` and `mas-topology`; supply their DeepSeek/DashScope
+credentials separately if evaluating them. They are not used as Daytona smoke
+tests.
+
+For isolated environment checks, run the helper in the sibling `harbor`
+directory (from the repository root):
+
+```bash
+DAYTONA_API_KEY="<your-daytona-key>" \
+  python harbor/scripts/daytona_smoke.py --scope environment
+```
+
+This selects one representative (GPU-preferred) task for each of the 63
+remaining package environments and launches a fresh Harbor process/sandbox for
+each. `--scope task` instead covers all 138 non-API tasks. The default uses a
+`nop` agent with verification disabled; add `--verify --agent oracle` for full
+verifier runs. A CSV report is written under `harbor/jobs-daytona-smoke/`.
+
 Per-package base images are already on Docker Hub
 (`bohanlyu2022/mlsbench-harbor-<pkg>:latest`, 65 packages). The per-task
 Dockerfile each rendered task ships is a 5-line layer on top of those.
