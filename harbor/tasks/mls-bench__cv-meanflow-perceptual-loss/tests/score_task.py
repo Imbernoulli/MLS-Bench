@@ -498,6 +498,15 @@ def _eval_env(
         else:
             env[key] = _expand_env_template(value, env)
 
+    # Command-specific environment overrides (including the materialized
+    # H200 block) must reach the actual eval subprocess.  Keep this after the
+    # package defaults so a task command can intentionally specialize them,
+    # and expand templates against the already-populated environment.
+    for key, value in (tc.get("env") or {}).items():
+        key = str(key)
+        value = str(value)
+        env[key] = _expand_env_template(value, env)
+
     task_id = _read_meta_text(task_meta, "task_id", "unknown")
     save_path = out_dir / "save"
     output_dir = save_path / task_id / "harbor" / f"seed_{seed}"
