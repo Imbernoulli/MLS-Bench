@@ -539,6 +539,58 @@ def _test_cmd_compute(tc: dict) -> float:
         return 1.0
 
 
+def _running_gpu_is_h200() -> bool:
+    """Return whether this verifier is running on an H200-class GPU.
+
+    MLS-Bench's native runner can select the H200-specific command block from
+    its host config.  Harbor runs the verifier directly inside the task
+    container, so there is no native ``compute_scale`` config to consult.  We
+    detect the actual attached device here instead; an explicit environment
+    override keeps the behavior deterministic in tests and for providers that
+    hide ``nvidia-smi`` during image setup.
+    """
+    raw = os.environ.get("MLSBENCH_GPU_TYPE", "").strip()
+    if raw:
+        return "H200" in raw.upper()
+    try:
+        probe = subprocess.run(
+            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            check=False,
+        )
+    except Exception:
+        return False
+    return "H200" in (probe.stdout or "").upper()
+
+
+def _effective_test_cmds(config: dict) -> list[dict]:
+    """Materialize hardware-specific test command overrides.
+
+    The ``h200`` blocks are deliberately metadata in the public task config:
+    they are selected only when an H200 is really attached.  Keep the original
+    dictionaries untouched so the verifier's budget and scheduling code sees
+    one consistent, fully materialized command list.
+    """
+    entries = [dict(tc) for tc in (config.get("test_cmds", []) or [])]
+    if not _running_gpu_is_h200():
+        return entries
+    for entry in entries:
+        override = entry.pop("h200", None)
+        if not isinstance(override, dict):
+            continue
+        if "cmd" in override:
+            entry["cmd"] = override["cmd"]
+        if "compute" in override:
+            entry["compute"] = override["compute"]
+        if override.get("env"):
+            env = dict(entry.get("env") or {})
+            env.update(override["env"])
+            entry["env"] = env
+    return entries
+
+
 def _config_seeds(config: dict) -> list[int]:
     seeds = config.get("seeds") or [42]
     if isinstance(seeds, int):
@@ -1099,7 +1151,12 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     config = _load_task_config(task_meta)
-    test_cmds = list(config.get("test_cmds", []))
+    # Select an H200-specific command/env/compute override when the verifier
+    # is actually running on H200 hardware.  This keeps Harbor's direct
+    # sandbox behavior aligned with MLS-Bench's native ``compute_scale=0.5``
+    # path and, importantly, applies the same materialized list to budget
+    # checks, GPU packing, and the eval subprocesses.
+    test_cmds = _effective_test_cmds(config)
     oracle_cmd_overrides = _parse_oracle_cmd_overrides(
         getattr(args, "oracle_cmd_overrides", None)
     )

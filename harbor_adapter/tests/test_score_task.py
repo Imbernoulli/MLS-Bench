@@ -368,6 +368,55 @@ def test_run_evals_applies_oracle_cmd_overrides(tmp_path: Path):
     assert "DEFAULT_SCRIPT" not in oracle_log
 
 
+def test_h200_override_materializes_command_compute_and_env(monkeypatch):
+    score_task = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_GPU_TYPE", "H200")
+    config = {
+        "test_cmds": [
+            {
+                "cmd": "scripts/h100.sh",
+                "compute": 4.0,
+                "env": {"BASE": "yes"},
+                "h200": {
+                    "cmd": "scripts/h200.sh",
+                    "compute": 2.0,
+                    "env": {"BATCH_SIZE": "96"},
+                },
+            },
+            {"cmd": "scripts/eval.sh", "compute": 1.0},
+        ]
+    }
+
+    materialized = score_task._effective_test_cmds(config)
+    assert materialized == [
+        {
+            "cmd": "scripts/h200.sh",
+            "compute": 2.0,
+            "env": {"BASE": "yes", "BATCH_SIZE": "96"},
+        },
+        {"cmd": "scripts/eval.sh", "compute": 1.0},
+    ]
+    # The source config is never mutated; this matters because budget checks
+    # and later eval groups may reuse it.
+    assert "h200" in config["test_cmds"][0]
+
+
+def test_h200_override_is_not_selected_on_h100(monkeypatch):
+    score_task = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_GPU_TYPE", "H100")
+    config = {
+        "test_cmds": [
+            {
+                "cmd": "scripts/h100.sh",
+                "compute": 4.0,
+                "h200": {"cmd": "scripts/h200.sh", "compute": 2.0},
+            }
+        ]
+    }
+    materialized = score_task._effective_test_cmds(config)
+    assert materialized == config["test_cmds"]
+
+
 def test_package_dir_matches_case_and_separators(tmp_path: Path):
     score_task = _load_score_task()
     workspace = tmp_path / "workspace"
