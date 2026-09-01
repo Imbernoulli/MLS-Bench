@@ -1039,7 +1039,7 @@
   "verl/verl/workers/__init__.py": "e65abd77db034b4f29eb1268c24867f84919dbce22e28d1997e563ed1d94179c",
   "verl/verl/workers/actor/__init__.py": "3053474474716dc57f7e1b5d80d23b28c7b146d9257f8b6bf3b7878de4eae219",
   "verl/verl/workers/actor/base.py": "4b0be9f5c3024e079b3aecd6fe755ff880eb2664d884cd52a1d79dc73897202e",
-  "verl/verl/workers/actor/dp_actor.py": "beb65a1173650f6464c2d673c43a6a661d5fc7ae53a5281754aae6dc725a95c4",
+  "verl/verl/workers/actor/dp_actor.py": "1702eb73b070d419b0e1784c7a7153e2b2eb8e8512f478160cb40d5594487831",
   "verl/verl/workers/actor/megatron_actor.py": "ec3971a758732e583112366730a4d08010f7f8ed4f78be1bf473873a7be70dcc",
   "verl/verl/workers/config/__init__.py": "68c27744af65ccaaf3ad61d98284ee587d56f868c43451c65661b32e1c875b97",
   "verl/verl/workers/config/actor.py": "7239c17110aaf9a4d6672cc5619651330dc0730a13401d3a225d86547f6839df",

@@ -46,6 +46,21 @@
           "end": 72
         }
       ]
+    },
+    {
+      "filename": "verl/verl/trainer/main_ppo.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 33, "end": 33}]
+    },
+    {
+      "filename": "verl/verl/workers/actor/dp_actor.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 31, "end": 31}]
+    },
+    {
+      "filename": "verl/verl/workers/actor/megatron_actor.py",
+      "read": [{"start": -1, "end": -1}],
+      "edit": [{"start": 41, "end": 41}]
     }
   ],
   "seeds": [

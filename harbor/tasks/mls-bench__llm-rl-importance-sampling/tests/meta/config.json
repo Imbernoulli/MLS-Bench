@@ -46,6 +46,51 @@
           "end": 72
         }
       ]
+    },
+    {
+      "filename": "verl/verl/trainer/main_ppo.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 33,
+          "end": 34
+        }
+      ]
+    },
+    {
+      "filename": "verl/verl/workers/actor/dp_actor.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 31,
+          "end": 32
+        }
+      ]
+    },
+    {
+      "filename": "verl/verl/workers/actor/megatron_actor.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 41,
+          "end": 42
+        }
+      ]
     }
   ],
   "seeds": [
