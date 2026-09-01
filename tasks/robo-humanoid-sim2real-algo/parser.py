@@ -1,5 +1,7 @@
 """Output parser for robo-humanoid-sim2real-algo task."""
 
+from __future__ import annotations
+
 import re
 import sys
 from pathlib import Path
