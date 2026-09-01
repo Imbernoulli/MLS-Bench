@@ -98,8 +98,7 @@ _KDIFF_X_TO_DENOISED_PATCH = """    def kdiffusion_x_to_denoised(self, x, sigma,
         noise_uc, noise_c = self.predict_noise(xc, t, uc, c)
         noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
         denoised = self.calculate_denoised(x, noise_pred, sigma)
-        # Preserve tuple-unpack compatibility while preventing sampler code from
-        # accessing the pure unconditional denoised prediction.
+        # Keep the tuple shape; hide the pure unconditional denoised prediction.
         return denoised, denoised
 """
 

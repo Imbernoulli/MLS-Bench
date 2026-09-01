@@ -86,7 +86,7 @@ may add or remove lines inside it. Only code outside the editable ranges must
 stay unchanged.
 
 - `CFGpp-main/latent_diffusion.py`
-- editable lines **622–678**
+- editable lines **621–677**
 - `CFGpp-main/latent_sdxl.py`
 - editable lines **713–755**
 
@@ -96,7 +96,7 @@ stay unchanged.
 ## Readable Context
 
 
-### `CFGpp-main/latent_diffusion.py`  [EDITABLE — lines 622–678 only]
+### `CFGpp-main/latent_diffusion.py`  [EDITABLE — lines 621–677 only]
 
 ```python
      1: """
@@ -338,8 +338,8 @@ stay unchanged.
    237:         noise_uc, noise_c = self.predict_noise(xc, t, uc, c)
    238:         noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
    239:         denoised = self.calculate_denoised(x, noise_pred, sigma)
-   240:         uncond_denoised = self.calculate_denoised(x, noise_uc, sigma)
-   241:         return denoised, uncond_denoised
+   240:         # Keep the tuple shape; hide the pure unconditional denoised prediction.
+   241:         return denoised, denoised
    242: 
    243: ###########################################
    244: # Base version

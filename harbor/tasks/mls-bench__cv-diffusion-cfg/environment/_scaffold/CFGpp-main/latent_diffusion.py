@@ -237,8 +237,7 @@ class StableDiffusion():
         noise_uc, noise_c = self.predict_noise(xc, t, uc, c)
         noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
         denoised = self.calculate_denoised(x, noise_pred, sigma)
-        # Preserve tuple-unpack compatibility while preventing sampler code from
-        # accessing the pure unconditional denoised prediction.
+        # Keep the tuple shape; hide the pure unconditional denoised prediction.
         return denoised, denoised
 
 ###########################################
@@ -618,6 +617,7 @@ class EditWordSwapDDIM(InversionDDIM):
 ###########################################
 # CFG++ version
 ###########################################
+
 @register_solver("ddim_cfg++")
 class BaseDDIMCFGpp(StableDiffusion):
     # TODO: Implement your improved method here.
@@ -677,7 +677,6 @@ class BaseDDIMCFGpp(StableDiffusion):
 
 
 
-        return img.detach().cpu()
     
     
 @register_solver("euler_cfg++")
