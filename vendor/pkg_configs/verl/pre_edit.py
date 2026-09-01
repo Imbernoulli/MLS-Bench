@@ -185,18 +185,25 @@ OPS = [
         ),
     },
     # Fix protocol.py concat: relax strict assert on meta_info key 'reward_extra_keys'
-    # Line 963: different batches have different reward_extra_keys → merge lists, skip assert
+    # Lines 961-966 after the list-of-dicts edit above: different batches may
+    # have different reward_extra_keys → merge lists and skip conflicting
+    # scalar metadata.
     {
         "op": "replace",
         "file": "verl/verl/protocol.py",
+        # list_of_dict_to_dict_of_list above expands by one line, so include
+        # the enclosing ``else`` at 961 when the operations are applied.
         "start_line": 961,
-        "end_line": 963,
+        "end_line": 966,
         "content": (
-            "                    if k in merged_meta_info:\n"
-            "                        if isinstance(v, (list, set)) and isinstance(merged_meta_info[k], (list, set)):\n"
-            "                            merged_meta_info[k] = list(set(list(merged_meta_info[k])) | set(list(v)))\n"
-            "                        elif merged_meta_info[k] != v:\n"
-            "                            pass  # silently skip conflicting non-list meta_info\n"
+            "                    else:\n"
+            "                        if k in merged_meta_info:\n"
+            "                            if isinstance(v, (list, set)) and isinstance(merged_meta_info[k], (list, set)):\n"
+            "                                merged_meta_info[k] = list(set(list(merged_meta_info[k])) | set(list(v)))\n"
+            "                            elif merged_meta_info[k] != v:\n"
+            "                                pass  # silently skip conflicting non-list meta_info\n"
+            "                        else:\n"
+            "                            merged_meta_info[k] = v\n"
         ),
     },
     # ── verl #2490: dynamic_bsz NCCL deadlock fix (dp_actor.py) ─────────
