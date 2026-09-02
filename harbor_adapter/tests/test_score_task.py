@@ -381,3 +381,68 @@ def test_budget_scratch_config_reflects_oracle_override(tmp_path: Path):
     score_task._copy_task_meta_for_budget(task_meta, scratch2)
     cfg2 = json.loads((scratch2 / "config.json").read_text())
     assert cfg2["test_cmds"][0]["cmd"] == "scripts/psm.sh"
+
+
+def test_purge_workspace_bytecode_removes_everything_importable(tmp_path: Path):
+    """The guard cannot see bytecode, so the evaluator must not be able to load
+    any.
+
+    `__pycache__` and `*.pyc` are excluded from pristine_manifest.json and from
+    _walk_workspace on purpose (a manifest entry the walk skips is reported as
+    a deleted file and rejects every submission). The consequence is that a
+    submission can leave a sourceless `<pkg>/json.pyc` -- Python imports a .pyc
+    with no .py beside it -- or a `__pycache__` entry whose header forges the
+    source's mtime and size, and it runs in place of the read-only module it
+    shadows. Purging before the evaluator starts is what closes that.
+    """
+    score_task = _load_score_task()
+    ws = tmp_path / "workspace"
+    pkg = ws / "pkg"
+    pkg.mkdir(parents=True)
+
+    (pkg / "real.py").write_text("VALUE = 1\n")
+    sourceless = pkg / "json.pyc"                    # legacy layout, importable
+    sourceless.write_bytes(b"\x00" * 16)
+    cache = pkg / "__pycache__"
+    cache.mkdir()
+    shadowing = cache / "real.cpython-311.pyc"       # forged header shadows real.py
+    shadowing.write_bytes(b"\x00" * 16)
+    deep = ws / "nested" / "sub" / "__pycache__"
+    deep.mkdir(parents=True)
+    (deep / "x.cpython-38.pyc").write_bytes(b"\x00" * 16)
+    (ws / "old.pyo").write_bytes(b"\x00" * 16)
+
+    removed = score_task.purge_workspace_bytecode(ws)
+
+    assert not sourceless.exists()
+    assert not shadowing.exists()
+    assert not cache.exists()
+    assert not deep.exists()
+    assert not (ws / "old.pyo").exists()
+    assert (pkg / "real.py").read_text() == "VALUE = 1\n", "source is untouched"
+    # two __pycache__ dirs (their contents go with them) + two loose files
+    assert len(removed) == 4, removed
+    assert sum(r.endswith("__pycache__") for r in removed) == 2, removed
+
+    # Idempotent, and silent on a workspace that has none.
+    assert score_task.purge_workspace_bytecode(ws) == []
+    assert score_task.purge_workspace_bytecode(tmp_path / "nope") == []
+
+
+def test_eval_env_forbids_bytecode_writes(tmp_path: Path):
+    """A .pyc written by one setting is a file the next setting would import,
+    and the integrity guard cannot see it."""
+    score_task = _load_score_task()
+    task_meta = tmp_path / "meta"
+    task_meta.mkdir()
+    (task_meta / "config.json").write_text(json.dumps({"test_cmds": []}))
+    (task_meta / "package").write_text("pkg\n")
+    env = score_task._eval_env(
+        task_meta=task_meta,
+        out_dir=tmp_path / "out",
+        workspace_root=tmp_path / "workspace",
+        pkg_dir=tmp_path / "workspace" / "pkg",
+        tc={"label": "a"},
+        seed=1,
+    )
+    assert env["PYTHONDONTWRITEBYTECODE"] == "1"
