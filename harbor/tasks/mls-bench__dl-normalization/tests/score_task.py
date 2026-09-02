@@ -655,6 +655,47 @@ def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
     return len(bins)
 
 
+def _peak_gpu_usage(computes: list[float]) -> int:
+    """GPUs needed to run every job in *computes* at once."""
+    whole = sum(max(1, math.ceil(c)) for c in computes if c >= 1.0)
+    return whole + _bin_pack_fractional_gpus([c for c in computes if 0.0 < c < 1.0])
+
+
+def _split_computes_into_waves(computes: list[float], devices: int) -> list[list[float]]:
+    """Greedy contiguous batching, same order as _partition_group_gpu_batches."""
+    waves: list[list[float]] = []
+    current: list[float] = []
+    for compute in computes:
+        if current and _peak_gpu_usage([*current, compute]) > devices:
+            waves.append(current)
+            current = [compute]
+        else:
+            current.append(compute)
+    if current:
+        waves.append(current)
+    return waves
+
+
+def _wave_balanced_gpus(
+    computes: list[float],
+    peak_gpus: int,
+    largest_job: int,
+) -> int:
+    """Widest reservation <= MAX_PARALLEL_GPUS whose waves are all equally full.
+
+    Mirrors adapter.py::_wave_balanced_gpus; see the rationale there.
+    """
+    if peak_gpus <= MAX_PARALLEL_GPUS:
+        return peak_gpus
+    for candidate in range(MAX_PARALLEL_GPUS, largest_job - 1, -1):
+        usage = [
+            _peak_gpu_usage(wave) for wave in _split_computes_into_waves(computes, candidate)
+        ]
+        if usage and len(set(usage)) == 1:
+            return usage[0]
+    return largest_job
+
+
 def _infer_reserved_gpu_count(config: dict) -> int:
     if config.get("use_cuda") is False:
         return 0
@@ -664,26 +705,35 @@ def _infer_reserved_gpu_count(config: dict) -> int:
 
     peak_gpus = 0
     largest_job = 0
+    peak_computes: list[float] = []
     n_seeds = max(1, len(_config_seeds(config)))
     for entries in _group_entries(test_cmds).values():
         whole = 0
         fractionals: list[float] = []
+        computes: list[float] = []
         for _, tc in entries:
             compute = _test_cmd_compute(tc)
+            computes.extend([compute] * n_seeds)
             if compute > 0.0:
                 largest_job = max(largest_job, max(1, math.ceil(compute)))
             if compute >= 1.0:
                 whole += n_seeds * max(1, math.ceil(compute))
             elif compute > 0.0:
                 fractionals.extend([compute] * n_seeds)
-        peak_gpus = max(peak_gpus, whole + _bin_pack_fractional_gpus(fractionals))
+        group_peak = whole + _bin_pack_fractional_gpus(fractionals)
+        if group_peak >= peak_gpus:
+            peak_computes = computes
+        peak_gpus = max(peak_gpus, group_peak)
     if not peak_gpus:
         return 0
-    # Same cap the adapter applies when rendering tests/meta/gpu_count: groups
-    # that want more GPUs at once than MAX_PARALLEL_GPUS run as sequential
-    # waves (see _partition_group_gpu_batches), except for a single job that
-    # needs more than the cap by itself.
-    return max(1, min(peak_gpus, MAX_PARALLEL_GPUS), largest_job)
+    # Same rule the adapter applies when rendering tests/meta/gpu_count: a group
+    # wanting more GPUs at once than MAX_PARALLEL_GPUS runs as sequential waves
+    # (see _partition_group_gpu_batches), and the reservation is the widest one
+    # at or below the cap that every wave fills. Clamping straight to the cap
+    # would leave the final wave holding idle GPUs — three 4-GPU jobs on 8
+    # reserved run as waves of 2 and 1, costing more GPU-hours than reserving 4
+    # and more wall clock than reserving 12.
+    return max(1, _wave_balanced_gpus(peak_computes, peak_gpus, largest_job), largest_job)
 
 
 def _reserved_gpu_count(task_meta: Path, config: dict) -> int:

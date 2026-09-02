@@ -19,9 +19,13 @@ from mls_bench.adapter import (  # noqa: E402
     _config_with_shifted_edit_ranges,
     _gpu_serialization_note,
     _gpu_waves,
+    _group_gpu_jobs,
+    _group_test_cmds,
     _load_ops_file,
+    _peak_gpus,
     _read_sections,
     _resources,
+    _seed_count,
     _stage_task_scaffold,
     _starting_workspace_text,
     _verifier_timeout_sec,
@@ -442,19 +446,24 @@ def _gpu_config(test_cmds: list[dict], seeds: list[int] | None = None) -> dict:
     return config
 
 
-def test_resources_caps_group_parallelism_at_eight_gpus():
+def test_resources_balances_waves_instead_of_clamping_to_the_cap():
     # cv-dbm-sampler: 3 whole-GPU jobs of 4 GPUs in one group = 12 concurrent.
+    # Clamping to the cap would reserve 8 and run waves of 2 jobs then 1,
+    # leaving half the reservation idle for the whole second wave — more
+    # GPU-hours than reserving 4 *and* more wall clock than reserving 12.
     config = _gpu_config([
         {"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"},
         {"label": "b", "group": 1, "compute": 4.0, "time": "4:00:00"},
         {"label": "c", "group": 1, "compute": 4.0, "time": "4:00:00"},
     ])
 
-    assert _resources({}, config)["gpus"] == MAX_PARALLEL_GPUS
+    assert _resources({}, config)["gpus"] == 4
 
 
-def test_resources_caps_seed_fanout_at_eight_gpus():
+def test_resources_balances_seed_fanout_into_even_waves():
     # rl-intrinsic-exploration: 3 single-GPU test_cmds x 3 seeds = 9 concurrent.
+    # Clamping to the cap would reserve 8 for waves of 8 and 1 — a whole extra
+    # wave to avoid reserving one more card. 3 splits the 9 jobs evenly.
     config = _gpu_config(
         [
             {"label": "a", "group": 1, "compute": 1.0, "time": "08:00:00"},
@@ -464,7 +473,7 @@ def test_resources_caps_seed_fanout_at_eight_gpus():
         seeds=[42, 123, 456],
     )
 
-    assert _resources({}, config)["gpus"] == MAX_PARALLEL_GPUS
+    assert _resources({}, config)["gpus"] == 3
 
 
 def test_resources_keeps_reservation_under_the_cap_untouched():
@@ -512,10 +521,10 @@ def test_verifier_timeout_pays_for_each_serialized_wave():
     ])
     gpus = _resources({}, config)["gpus"]
 
-    # 2 waves x (4h + the grace score_task.py grants each wave), + 30min
+    # 3 even waves x (4h + the grace score_task.py grants each wave), + 30min
     # slack + 120s per (test_cmd, seed).
     assert _verifier_timeout_sec(config, gpus) == (
-        2 * (4 * 3600 + WAVE_GRACE_SEC) + 30 * 60 + 120 * 3
+        3 * (4 * 3600 + WAVE_GRACE_SEC) + 30 * 60 + 120 * 3
     )
 
     # With enough GPUs for the whole group it collapses to a single wave.
@@ -543,7 +552,7 @@ def test_gpu_serialization_note_only_for_capped_tasks():
         {"label": "c", "group": 1, "compute": 4.0, "time": "4:00:00"},
     ])
     note = _gpu_serialization_note(capped, _resources({}, capped)["gpus"])
-    assert note and "2 sequential waves" in " ".join(note)
+    assert note and "3 sequential waves" in " ".join(note)
 
     fits = _gpu_config([{"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"}])
     assert _gpu_serialization_note(fits, _resources({}, fits)["gpus"]) == []
@@ -554,3 +563,34 @@ def test_gpu_serialization_note_only_for_capped_tasks():
     ]}
     assert _resources({}, cpu_only)["gpus"] == 0
     assert _gpu_serialization_note(cpu_only, 0) == []
+
+
+def test_no_rendered_task_reserves_gpus_a_wave_cannot_fill():
+    """Every reserved GPU must be used by every wave.
+
+    A reservation whose final wave uses only part of it is dominated: it costs
+    more GPU-hours than the smaller balanced reservation and more wall clock
+    than simply reserving the group's peak. `min(peak, MAX_PARALLEL_GPUS)` used
+    to land on exactly such values (cv-dbm-sampler reserved 8 for waves of 8
+    and 4; rl-intrinsic-exploration reserved 8 for waves of 8 and 1).
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    repo = _Path(__file__).resolve().parents[2]
+    offenders = {}
+    for cfg_path in sorted((repo / "tasks").glob("*/config.json")):
+        config = _json.loads(cfg_path.read_text())
+        gpus = _resources({}, dict(config, use_cuda=True))["gpus"]
+        if gpus <= 0:
+            continue
+        n_seeds = _seed_count(config)
+        for gid, entries in _group_test_cmds(list(config.get("test_cmds") or [])).items():
+            jobs = _group_gpu_jobs(entries, n_seeds)
+            usage = [_peak_gpus([c for c, _ in wave]) for wave in _gpu_waves(jobs, gpus)]
+            # A single job wider than the cap is exempt: it has no smaller schedule.
+            if len(usage) > 1 and len(set(usage)) > 1 and max(c for c, _ in jobs) <= gpus:
+                offenders[f"{cfg_path.parent.name}[group={gid}]"] = {
+                    "reserved": gpus, "per_wave_gpu_usage": usage
+                }
+    assert not offenders, _json.dumps(offenders, indent=2)

@@ -543,7 +543,7 @@ def test_budget_scratch_config_reflects_oracle_override(tmp_path: Path):
     assert cfg2["test_cmds"][0]["cmd"] == "scripts/psm.sh"
 
 
-def test_infer_reserved_gpu_count_caps_at_max_parallel_gpus():
+def test_infer_reserved_gpu_count_balances_waves_at_the_cap():
     st = _load_score_task()
 
     # 3 whole-GPU test_cmds x 3 seeds in one group = 9 concurrent single-GPU jobs.
@@ -556,7 +556,8 @@ def test_infer_reserved_gpu_count_caps_at_max_parallel_gpus():
             {"label": "c", "group": 1, "compute": 1.0},
         ],
     }
-    assert st._infer_reserved_gpu_count(config) == st.MAX_PARALLEL_GPUS
+    # 8 would run waves of 8 and 1; 3 splits the 9 jobs into three even waves.
+    assert st._infer_reserved_gpu_count(config) == 3
 
     # Under the cap: untouched.
     assert st._infer_reserved_gpu_count(
