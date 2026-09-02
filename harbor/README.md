@@ -45,7 +45,21 @@ harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
 `--agent-env` reaches the agent, `--verifier-env` only the verifier, and
 `--ek KEY=VALUE` the Daytona environment. For an environment-only check use
 `--agent nop --no-verifier`; the 140 tasks share 65 base images, so one task
-per image covers every environment.
+per image covers every environment. `--path` takes one task *or* a dataset
+directory and cannot be repeated — select a subset with `task_names` /
+`exclude_task_names` under the config's `datasets:` block.
+
+### The 5-hour agent budget
+
+Every rendered task ships `[agent] timeout_sec = 18000` and Harbor enforces it
+per trial, so the recommended budget needs no flag. Three things silently
+change it, and a run that used any of them is not comparable to published
+numbers: `--agent-timeout-multiplier X`, `--timeout-multiplier X` (which also
+scales the verifier and build timeouts), and `agents: [{override_timeout_sec:
+N}]` in the config. A finished run records what it used in each trial's
+`result.json` under `config.agent` and `config.timeout_multiplier`. The
+verifier timeout is separate and task-specific — sized per task from its own
+eval cost — and is deliberately not flattened to one value.
 
 ### Options
 
