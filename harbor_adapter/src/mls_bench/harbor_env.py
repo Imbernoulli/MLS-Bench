@@ -420,35 +420,59 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         # few times before giving up; the same image on another placement is
         # fine.
         attempts = max(1, self._int_kwarg("toolbox_ready_retries") or 3)
+        # Daytona places a request on whichever runner has the most free
+        # capacity, so deleting an unusable sandbox and retrying tends to land
+        # on the very same broken runner.  Keep the unusable sandboxes alive
+        # ("decoys") until a usable placement exists, so the scheduler must
+        # pick another runner; they are deleted before returning.  Set
+        # ``--ek toolbox_hold_bad_placements=0`` to release them immediately
+        # (cheaper on quota, but the retry may be pointless).
+        hold_value = self._kwargs.get("toolbox_hold_bad_placements", True)
+        if isinstance(hold_value, str):
+            hold_value = hold_value.strip().lower() in {"1", "true", "yes", "on"}
+        decoys: list[Any] = []
         last_error: Exception | None = None
-        for attempt in range(1, attempts + 1):
-            result = await super()._create_sandbox(params, *args, **kwargs)
+
+        async def _delete_quietly(sandbox: Any) -> None:
             try:
-                await self._wait_for_sandbox_toolbox()
-                return result
-            except RuntimeError as exc:
-                last_error = exc
+                await sandbox.delete()
+            except Exception as delete_exc:  # noqa: BLE001
                 self.logger.warning(
-                    "Daytona sandbox unusable (attempt %d/%d): %s",
-                    attempt,
-                    attempts,
-                    str(exc)[:300],
+                    "Could not delete unusable sandbox %s: %s",
+                    getattr(sandbox, "id", "?"),
+                    str(delete_exc)[:200],
                 )
-                sandbox = getattr(self, "_sandbox", None)
-                self._sandbox = None
-                if sandbox is not None:
-                    try:
-                        await sandbox.delete()
-                    except Exception as delete_exc:  # noqa: BLE001
-                        self.logger.warning(
-                            "Could not delete unusable sandbox %s: %s",
-                            getattr(sandbox, "id", "?"),
-                            str(delete_exc)[:200],
-                        )
-        raise RuntimeError(
-            f"Daytona sandbox toolbox never became ready after {attempts} "
-            f"placement attempts: {last_error}"
-        )
+
+        try:
+            for attempt in range(1, attempts + 1):
+                result = await super()._create_sandbox(params, *args, **kwargs)
+                try:
+                    await self._wait_for_sandbox_toolbox()
+                    return result
+                except RuntimeError as exc:
+                    last_error = exc
+                    sandbox = getattr(self, "_sandbox", None)
+                    self._sandbox = None
+                    self.logger.warning(
+                        "Daytona sandbox %s unusable (attempt %d/%d): %s",
+                        getattr(sandbox, "id", "?"),
+                        attempt,
+                        attempts,
+                        str(exc)[:300],
+                    )
+                    if sandbox is None:
+                        continue
+                    if hold_value and attempt < attempts:
+                        decoys.append(sandbox)
+                    else:
+                        await _delete_quietly(sandbox)
+            raise RuntimeError(
+                f"Daytona sandbox toolbox never became ready after {attempts} "
+                f"placement attempts: {last_error}"
+            )
+        finally:
+            for sandbox in decoys:
+                await _delete_quietly(sandbox)
 
     async def _wait_for_sandbox_toolbox(self) -> None:
         """Block until the sandbox accepts exec sessions.
