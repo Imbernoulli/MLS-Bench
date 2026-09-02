@@ -1120,7 +1120,7 @@ def _run_eval_wave(
     return results
 
 
-def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict[str, str]]:
+def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict]:
     if not raw:
         return []
     try:
@@ -1130,33 +1130,49 @@ def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict[str, str]]:
     if not isinstance(data, list):
         raise ValueError("oracle cmd overrides must be a JSON list")
 
-    out: list[dict[str, str]] = []
+    out: list[dict] = []
     for item in data:
         if not isinstance(item, dict):
             raise ValueError("oracle cmd override entries must be objects")
         cmd = str(item.get("cmd", "")).strip()
-        if not cmd:
-            raise ValueError("oracle cmd override missing non-empty cmd")
+        env = item.get("env")
+        if env is not None and not isinstance(env, dict):
+            raise ValueError("oracle cmd override env must be an object")
+        env = {str(k): str(v) for k, v in (env or {}).items()}
+        if not cmd and not env:
+            raise ValueError("oracle cmd override needs a non-empty cmd or env")
+        override: dict = {}
+        if cmd:
+            override["cmd"] = cmd
+        if env:
+            override["env"] = env
         if "labels" in item:
             labels = item.get("labels") or [""]
             if not isinstance(labels, list):
                 labels = [labels]
-            out.extend({"label": str(label), "cmd": cmd} for label in labels)
+            out.extend({"label": str(label), **override} for label in labels)
         else:
-            out.append({"label": str(item.get("label", "")), "cmd": cmd})
+            out.append({"label": str(item.get("label", "")), **override})
     return out
 
 
 def _apply_oracle_cmd_overrides(
     test_cmds: list[dict],
-    overrides: list[dict[str, str]],
+    overrides: list[dict],
 ) -> list[dict]:
     result = [dict(tc) for tc in test_cmds]
     for override in overrides:
         label = override["label"]
         for entry in result:
             if not label or str(entry.get("label", "")) == label:
-                entry["cmd"] = override["cmd"]
+                if override.get("cmd"):
+                    entry["cmd"] = override["cmd"]
+                if override.get("env"):
+                    # Baseline env (native cli exports baseline_config["env"])
+                    # reaches the eval subprocess through tc["env"].
+                    merged = dict(entry.get("env") or {})
+                    merged.update(override["env"])
+                    entry["env"] = merged
     return result
 
 

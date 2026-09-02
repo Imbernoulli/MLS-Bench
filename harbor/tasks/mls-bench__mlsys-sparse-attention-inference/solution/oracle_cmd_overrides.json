@@ -1,1 +1,8 @@
-[]
+[
+  {
+    "label": "",
+    "env": {
+      "ALLOW_DENSE_FLAG": "1"
+    }
+  }
+]

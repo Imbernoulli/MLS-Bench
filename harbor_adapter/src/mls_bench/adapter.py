@@ -716,6 +716,15 @@ def build_task_context(mb: MlsBenchRoot, task_id: str) -> TaskContext:
             else:
                 for label in labels:
                     oracle_cmd_overrides.append({"label": str(label), "cmd": baseline_cfg["cmd"]})
+        # Native MLSBench also exports baseline_config["env"] for the oracle
+        # run (e.g. mlsys-sparse-attention-inference's dense baseline needs
+        # ALLOW_DENSE_FLAG=1 or the density-budget check rejects it).  Forward
+        # it the same way as cmd so the Harbor oracle matches native.
+        baseline_env = baseline_cfg.get("env")
+        if isinstance(baseline_env, dict) and baseline_env:
+            oracle_cmd_overrides.append(
+                {"label": "", "env": {str(k): str(v) for k, v in baseline_env.items()}}
+            )
 
     return TaskContext(
         task_id=task_id,
