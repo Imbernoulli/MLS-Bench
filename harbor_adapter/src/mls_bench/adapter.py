@@ -919,7 +919,16 @@ def render_task(
     res = _resources(ctx.pkg_config, ctx.config)
     effective_config = _config_with_shifted_edit_ranges(mb, ctx)
 
-    visible_test_cmds = list(effective_config.get("test_cmds", []))
+    # NOTE: test_cmds deliberately do NOT reach the instruction template.
+    # The rendered instruction.md used to list every label with its wall-clock
+    # and compute budget under "How You Will Be Evaluated" -- including the
+    # ones marked `hidden: true`, which is precisely the set the agent is not
+    # supposed to know about. Harbor lets the tested agent re-run the
+    # evaluation, so that turned a science task into a targeting exercise;
+    # public PR #7 hand-stripped the block from all 140 shipped instructions
+    # and every re-render put it back. Keep the required disclosure (metric
+    # aggregation, reference baselines, I/O contract, editable ranges,
+    # parameter budget) and never the settings.
     baseline_sections, baseline_warnings = _baseline_sections(mb, ctx, config=effective_config)
     read_sections, read_warnings = _read_sections(mb, ctx, config=effective_config)
     oracle_cmd_overrides_token = _oracle_cmd_overrides_token(ctx)
@@ -942,7 +951,6 @@ def render_task(
         "tags": _domain_tags(ctx.task_id),
         "editable_files": _editable_files_view(effective_config),
         "extra_readable_files": _readable_only_files(effective_config),
-        "visible_test_cmds": visible_test_cmds,
         "has_budget_check": _has_budget_check(task_dir),
         "budget_multiplier": _budget_multiplier(task_dir),
         "baseline_name": ctx.chosen_baseline or "noop",
