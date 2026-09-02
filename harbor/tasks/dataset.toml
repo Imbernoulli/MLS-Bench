@@ -35,7 +35,7 @@ digest = "sha256:94fc6a2b9939c49f89b8312dd953a59f6f7e8ccbeda70f11d29dcfec6346661
 
 [[tasks]]
 name = "mls-bench/ai4sci-inverse-diffusion-algo"
-digest = "sha256:49dd97cd0e9ef298088b15ee166385af761fe7f8b1e8ad9d2fe063ce762d1e44"
+digest = "sha256:47607bad0d222b5fab57c4a6245036509900b745a340207f066ff2f3cd0d5bf2"
 
 [[tasks]]
 name = "mls-bench/ai4sci-mol-property-prediction"
