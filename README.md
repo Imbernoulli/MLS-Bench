@@ -250,6 +250,47 @@ Harbor config live under [`harbor/`](harbor/). See
 [`harbor/README.md`](harbor/README.md) for usage details and the
 self-contained per-task layout.
 
+### Running Harbor tasks on Daytona
+
+The repository also includes a Daytona provider adapter. It forwards each
+task's declared GPU count and optional GPU type to Daytona, uses direct GPU
+sandboxes for the GPU-only Compose overlays emitted by MLS-Bench, and keeps
+Harbor's normal DinD path for genuine multi-container CPU tasks. The default
+configuration excludes the two tasks whose evaluators call DeepSeek/DashScope;
+the other 138 tasks do not need model-provider credentials.
+
+```bash
+cd harbor
+uv tool install "harbor[daytona]"
+export DAYTONA_API_KEY="<your-daytona-key>"
+PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona.yaml
+```
+
+For a quick environment-only check, use the isolated runner. It starts one
+Harbor process per selected task and can batch independent sandboxes while
+respecting a GPU quota:
+
+```bash
+cd harbor
+DAYTONA_API_KEY="<your-daytona-key>" \
+  PYTHONPATH=.:../harbor_adapter/src \
+  python scripts/daytona_smoke.py --scope environment \
+  --resource gpu --gpu-limit 10 --spot --gpu-type H100 --concurrency 10
+```
+
+By default `--scope environment` selects one representative task per package
+(63 environments for the 138 non-API tasks; the GPU-only example above selects
+the 53 GPU environments). Use `--scope task` for all 138 non-API tasks,
+`--verify --agent oracle` for a real baseline/verifier run, and `--dry-run` to
+inspect the exact Harbor commands without contacting Daytona. All 30
+MLS-Bench-Lite task declarations request at most eight GPUs. The full suite can
+contain an indivisible job above that limit; the adapter preserves such a
+request and Daytona must provide the required capacity. Pass `--override-gpus`,
+`--override-memory-mb`, or `--override-storage-mb` when your Daytona
+organization has tighter per-sandbox limits. Spot is applied only to GPU
+sandboxes; CPU tasks remain on-demand. Results and provider errors are written
+to `harbor/jobs-daytona-smoke/report.csv`.
+
 ### Recommended exploration budget
 
 We recommend giving the agent a **5-hour exploration time limit per task**.

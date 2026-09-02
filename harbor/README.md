@@ -67,11 +67,15 @@ DAYTONA_API_KEY="<your-daytona-key>" \
   python scripts/daytona_smoke.py --scope environment --concurrency 10
 ```
 
-Use `--scope task` to run all 138 non-API task environments one by one. Each
-invocation creates its own Harbor job and Daytona sandbox; results are written
-to `jobs-daytona-smoke/report.csv`. Add `--verify --agent oracle` when the
-objective is a full baseline/verifier run rather than an environment startup
-smoke test. `--dry-run` prints the exact commands without contacting Daytona.
+By default `--scope environment` selects one representative task for each of
+the 63 remaining package environments. With `--resource gpu`, 53 GPU
+environments are selected; use `--resource cpu` for the remaining CPU
+environments. Use `--scope task` to run all 138 non-API task environments one by
+one. Each invocation creates its own Harbor job and Daytona sandbox; results
+are written to `jobs-daytona-smoke/report.csv`. Add `--verify --agent oracle`
+when the objective is a full baseline/verifier run rather than an environment
+startup smoke test. `--dry-run` prints the exact commands without contacting
+Daytona.
 
 Replace the agent with a real one by editing `run.yaml` or via CLI:
 

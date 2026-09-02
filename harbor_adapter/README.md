@@ -54,7 +54,9 @@ DAYTONA_API_KEY="<your-daytona-key>" \
 
 This selects one representative (GPU-preferred) task for each of the 63
 remaining package environments and launches a fresh Harbor process/sandbox for
-each. `--scope task` instead covers all 138 non-API tasks. The default uses a
+each. `--resource gpu` selects the 53 GPU environments, while `--resource cpu`
+selects the remaining CPU environments. `--scope task` instead covers all 138
+non-API tasks. The default uses a
 `nop` agent with verification disabled; add `--verify --agent oracle` for full
 verifier runs. A CSV report is written under `harbor/jobs-daytona-smoke/`.
 
