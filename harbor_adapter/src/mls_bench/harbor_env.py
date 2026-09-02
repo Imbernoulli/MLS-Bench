@@ -414,24 +414,56 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             labels = dict(getattr(params, "labels", None) or {})
             labels["mlsbench-run-id"] = run_id
             params.labels = labels
-        result = await super()._create_sandbox(params, *args, **kwargs)
-        await self._wait_for_sandbox_toolbox()
-        return result
+        # A sandbox occasionally lands on a runner whose in-sandbox toolbox
+        # never answers ("Failed to create session" / "Failed to execute
+        # command" for the same image that works elsewhere).  Recreate it a
+        # few times before giving up; the same image on another placement is
+        # fine.
+        attempts = max(1, self._int_kwarg("toolbox_ready_retries") or 3)
+        last_error: Exception | None = None
+        for attempt in range(1, attempts + 1):
+            result = await super()._create_sandbox(params, *args, **kwargs)
+            try:
+                await self._wait_for_sandbox_toolbox()
+                return result
+            except RuntimeError as exc:
+                last_error = exc
+                self.logger.warning(
+                    "Daytona sandbox unusable (attempt %d/%d): %s",
+                    attempt,
+                    attempts,
+                    str(exc)[:300],
+                )
+                sandbox = getattr(self, "_sandbox", None)
+                self._sandbox = None
+                if sandbox is not None:
+                    try:
+                        await sandbox.delete()
+                    except Exception as delete_exc:  # noqa: BLE001
+                        self.logger.warning(
+                            "Could not delete unusable sandbox %s: %s",
+                            getattr(sandbox, "id", "?"),
+                            str(delete_exc)[:200],
+                        )
+        raise RuntimeError(
+            f"Daytona sandbox toolbox never became ready after {attempts} "
+            f"placement attempts: {last_error}"
+        )
 
     async def _wait_for_sandbox_toolbox(self) -> None:
         """Block until the sandbox accepts exec sessions.
 
-        ``daytona.create()`` returns once the sandbox is STARTED, but for large
-        images the in-sandbox toolbox can still be unreachable for a while and
-        the very first ``create_session`` fails with ``DaytonaBadGatewayError``
-        ("Failed to create session").  Harbor treats that as a trial error and
-        deletes the sandbox, so poll a trivial command first.
+        ``daytona.create()`` returns once the sandbox is STARTED, but the
+        in-sandbox toolbox can still be unreachable for a while, and Harbor's
+        very first ``create_session`` would then fail with
+        ``DaytonaBadGatewayError`` and abort the trial.  Poll a trivial command
+        first; ``--ek toolbox_ready_timeout_sec`` bounds the wait per placement.
         """
         sandbox = getattr(self, "_sandbox", None)
         process = getattr(sandbox, "process", None)
         if process is None:
             return
-        timeout = float(self._kwargs.get("toolbox_ready_timeout_sec") or 600)
+        timeout = float(self._kwargs.get("toolbox_ready_timeout_sec") or 180)
         deadline = asyncio.get_running_loop().time() + timeout
         attempt = 0
         while True:
