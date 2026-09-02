@@ -576,3 +576,174 @@ def test_lite_config_lists_exactly_the_readme_lite_tasks():
     # Same provider settings as the full-dataset config, so the two cannot drift.
     assert lite["environment"] == full["environment"]
     assert lite["n_concurrent_trials"] == full["n_concurrent_trials"]
+
+
+def _h200_task(tmp_path: Path, name: str, gpus: int = 2) -> Path:
+    """A rendered bundle with a two-entry h200 profile in tests/meta/config.json."""
+    task_dir = tmp_path / name
+    env_dir = task_dir / "environment"
+    env_dir.mkdir(parents=True)
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(gpus))
+    meta = task_dir / "tests" / "meta"
+    meta.mkdir(parents=True)
+    (meta / "config.json").write_text(json.dumps({
+        "seeds": [42],
+        "test_cmds": [
+            {"cmd": "scripts/train.sh", "compute": 2,
+             "h200": {"compute": 1, "env": {"TP_SIZE": "1", "GPU_MEM_UTIL": "0.5"}}},
+            {"cmd": "scripts/eval.sh", "compute": 1},
+        ],
+    }))
+    return env_dir
+
+
+def test_h200_exports_the_native_profile_env_to_the_sandbox(tmp_path: Path):
+    """On Daytona the agent's shell sees the h200 block's env, not only the verifier.
+
+    The native runner applies the block to the agent's own test runs; without
+    the env the agent would explore with H100 settings on an H200 reservation.
+    H100 requests export nothing but the type.
+    """
+    module = _module()
+    from daytona import CreateSandboxFromImageParams, Image, Resources
+
+    seen = {}
+    for gpu_type in ("H200", "H100"):
+        env_dir = _h200_task(tmp_path, f"task-{gpu_type}")
+        trial_paths = TrialPaths(env_dir.parent / "trial")
+        trial_paths.mkdir()
+        env = module.DaytonaEnvironment(
+            environment_dir=env_dir,
+            environment_name=f"profile-{gpu_type}",
+            session_id=f"profile-{gpu_type}.1",
+            trial_paths=trial_paths,
+            task_env_config=EnvironmentConfig(
+                cpus=4, memory_mb=16384, storage_mb=61440, gpus=2
+            ),
+            gpu_type=gpu_type,
+        )
+        captured = []
+
+        async def fake_parent_create_sandbox(self, params, *args, **kwargs):
+            captured.append(params)
+            self._sandbox = object()
+
+        monkeypatch = pytest.MonkeyPatch()
+        try:
+            monkeypatch.setattr(
+                module._HarborDaytonaEnvironment,
+                "_create_sandbox",
+                fake_parent_create_sandbox,
+            )
+            params = CreateSandboxFromImageParams(
+                image=Image.base("ubuntu:22.04"),
+                resources=Resources(cpu=4, memory=16, disk=60, gpu=2),
+            )
+            asyncio.run(env._create_sandbox(params))
+        finally:
+            monkeypatch.undo()
+        seen[gpu_type] = captured[0].env_vars
+
+    assert seen["H200"]["MLSBENCH_GPU_TYPE"] == "H200"
+    assert seen["H200"]["TP_SIZE"] == "1"
+    assert seen["H200"]["GPU_MEM_UTIL"] == "0.5"
+    assert seen["H100"]["MLSBENCH_GPU_TYPE"] == "H100"
+    assert "TP_SIZE" not in seen["H100"]
+
+
+def test_docker_gpu_environment_takes_the_same_gpu_type_switch(tmp_path: Path):
+    """Local Docker: ``--ek gpu_type=H200`` reaches every exec, agent and verifier."""
+    module = _module()
+    env_dir = _h200_task(tmp_path, "docker-task")
+    trial_paths = TrialPaths(env_dir.parent / "trial")
+    trial_paths.mkdir()
+    config = EnvironmentConfig(cpus=4, memory_mb=16384, storage_mb=61440, gpus=2)
+
+    plain = module.DockerGPUEnvironment(
+        environment_dir=env_dir,
+        environment_name="docker-plain",
+        session_id="docker-plain.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+    )
+    assert plain.capabilities.gpus is True
+    assert plain._merge_env(None) is None
+
+    h200 = module.DockerGPUEnvironment(
+        environment_dir=env_dir,
+        environment_name="docker-h200",
+        session_id="docker-h200.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+        gpu_type="H200",
+    )
+    merged = h200._merge_env({"PER_EXEC": "1"})
+    assert merged["MLSBENCH_GPU_TYPE"] == "H200"
+    assert merged["TP_SIZE"] == "1"
+    assert merged["PER_EXEC"] == "1"
+
+    # harbor/harbor_env.py re-exports the same class for run.yaml.
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "harbor_env_reexport", Path("harbor/harbor_env.py")
+    )
+    reexport = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(reexport)
+    assert reexport.DockerGPUEnvironment is module.DockerGPUEnvironment
+
+
+def test_gpu_sandboxes_repair_host_overlay_loader_paths_after_toolbox_ready(tmp_path: Path):
+    """vLLM dlopens the libcudart path from /proc/self/maps verbatim; on runners
+    that report host overlay paths the adapter aliases ``<prefix>/merged`` to
+    ``/`` once the toolbox answers.  CPU sandboxes never run it."""
+    module = _module()
+    from daytona import CreateSandboxFromImageParams, Image, Resources
+
+    ran = {}
+    for gpus in (2, 0):
+        env_dir = tmp_path / f"repair-{gpus}" / "environment"
+        env_dir.mkdir(parents=True)
+        (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+        if gpus:
+            (env_dir / "docker-compose.yaml").write_text(_compose(gpus))
+        trial_paths = TrialPaths(env_dir.parent / "trial")
+        trial_paths.mkdir()
+        env = module.DaytonaEnvironment(
+            environment_dir=env_dir,
+            environment_name=f"repair-{gpus}",
+            session_id=f"repair-{gpus}.1",
+            trial_paths=trial_paths,
+            task_env_config=EnvironmentConfig(
+                cpus=4, memory_mb=16384, storage_mb=61440, gpus=gpus
+            ),
+        )
+        commands = []
+
+        async def fake_process_exec(command, timeout=None, **kwargs):
+            commands.append(command)
+            return SimpleNamespace(exit_code=0, result="aliased /var/lib/docker/overlay2/x/merged -> /")
+
+        async def fake_parent_create_sandbox(self, params, *args, **kwargs):
+            self._sandbox = SimpleNamespace(process=SimpleNamespace(exec=fake_process_exec))
+
+        monkeypatch = pytest.MonkeyPatch()
+        try:
+            monkeypatch.setattr(
+                module._HarborDaytonaEnvironment,
+                "_create_sandbox",
+                fake_parent_create_sandbox,
+            )
+            params = CreateSandboxFromImageParams(
+                image=Image.base("ubuntu:22.04"),
+                resources=Resources(cpu=4, memory=16, disk=60, gpu=gpus),
+            )
+            asyncio.run(env._create_sandbox(params))
+        finally:
+            monkeypatch.undo()
+        ran[gpus] = commands
+
+    assert ran[2][0] == "true"  # toolbox probe first
+    assert any("/proc/self/maps" in c and "merged" in c for c in ran[2])
+    assert ran[0] == ["true"]

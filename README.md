@@ -294,10 +294,12 @@ H200 is not a Daytona-specific configuration. The 15 `llm-pretrain-*` /
 count, batch/TP env — in their native config. `--ek gpu_type=H200` forwards
 `MLSBENCH_GPU_TYPE` so the verifier materializes that existing block; the
 adapter invents nothing, and tasks without the block keep their H100 baseline.
-Native (non-Harbor) runs select the same path with `compute_scale: 0.5` in
-`configs/react.yaml`; local Harbor Docker runs (`run.yaml`) with
-`--ve MLSBENCH_GPU_TYPE=H200`, while their Compose overlay still reserves the
-declared H100 GPU count. Without either, H200 hardware runs the H100 profile.
+Local Harbor Docker runs (`run.yaml`) take the same `--ek gpu_type=H200`;
+native (non-Harbor) runs select the same block with `compute_scale: 0.5` in
+`configs/react.yaml`. In every case the block's env reaches the agent's shell
+as well as the verifier, so exploration runs use the settings that get
+scored. Nothing auto-detects the card: without the switch, H200 hardware runs
+the H100 profile, which is valid there (same sm_90 kernels, more memory).
 
 ### Evaluating an agent
 

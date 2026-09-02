@@ -94,8 +94,11 @@ H200 is defined by the native MLS-Bench configs, not by the provider layer: 15
 `llm-pretrain-*`/`llm-rl-*` tasks declare validated `h200` command/compute/env
 blocks in `tasks/*/config.json`. `gpu_type=H200` passes `MLSBENCH_GPU_TYPE` to
 the verifier, which selects those blocks and derives the GPU reservation from
-their `compute` values. No batch size, TP size, or command is invented here,
-and tasks without an `h200` block are never scaled.
+their `compute` values; the blocks' env is exported to the agent's shell too,
+so exploration runs match the scored one. `run.yaml` (local Docker) takes the
+same `--ek gpu_type=H200`. No batch size, TP size, or command is invented
+here, and tasks without an `h200` block are never scaled. Without the switch,
+H200 hardware runs the H100 profile, which is valid there.
 
 `mls-bench/agent-tool-reasoning` and `mls-bench/mas-topology` call DeepSeek /
 DashScope during evaluation and need those keys too; `DAYTONA_API_KEY` only
