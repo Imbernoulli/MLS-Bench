@@ -379,6 +379,11 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
                 # that path fails with ``cudaErrorIllegalState`` during the
                 # first collective.  Fall back to the classic allocator.
                 env_vars.setdefault("NCCL_CUMEM_ENABLE", "0")
+                # NVLink SHARP (``transport/nvls.cc``) hits the same
+                # ``cudaErrorIllegalState`` (Cuda failure 401) in the sandbox
+                # on multi-GPU DDP jobs; NVLS is optional, so fall back to the
+                # ring/tree transports.
+                env_vars.setdefault("NCCL_NVLS_ENABLE", "0")
         # The sandbox cgroup grants only ``resources.cpu`` cores, but the
         # container still reports every host core, so OpenMP/MKL/PyTorch
         # would otherwise start hundreds of threads and thrash the quota.
