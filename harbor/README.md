@@ -103,23 +103,32 @@ harbor run -c run-daytona.yaml \
   --agent oracle --n-concurrent 1
 ```
 
-GPU selection is explicit. Spot GPU requests default to H100 in the adapter;
-request H200 only when the task has an H200-compatible configuration. For a
-task that supports both, either command is valid:
+GPU selection is explicit. Every GPU request defaults to H100 (Daytona's
+pool also contains Blackwell cards the pinned CUDA wheels cannot run on);
+request H200 only when the task has a native `h200` profile. For a task that
+supports both, either command is valid:
 
 ```bash
-# H100 Spot
+# H100 on-demand (the default; counts against the normal GPU quota)
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent oracle --ek gpu_type=H100
+
+# H200 on-demand
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent oracle --ek gpu_type=H200
+
+# Spot capacity (H100 or H200); not guaranteed to be available
 harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
   --agent oracle --ek spot=true --ek gpu_type=H100
-
-# H200 Spot
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek spot=true --ek gpu_type=H200
-
-# H100 on-demand (does count against the normal GPU quota)
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek spot=false --ek gpu_type=H100
 ```
+
+`run-daytona.yaml` also sets `gpu_memory_gb: 64`, `gpu_cpus: 16` and
+`MLSBENCH_EVAL_TIME_SCALE=2`. Daytona enforces `task.toml` resources as hard
+cgroup limits (local Docker effectively does not), so GPU sandboxes get a
+RAM/CPU floor, the adapter caps OpenMP/MKL threads at the CPU quota (the
+container reports every host core and would otherwise oversubscribe it ~20x),
+and the verifier's per-eval wall-clock budgets are stretched for the slower
+remote CPUs. `--ek eval_time_scale=1` restores the native budgets.
 
 H200 is implemented by the native MLS-Bench configs, not by a second Daytona
 configuration: the 15 supported `llm-pretrain-*`/`llm-rl-*` tasks declare their

@@ -93,14 +93,15 @@ Two-tier image build + verifier-side pristine baseline:
 
 `mls_bench.daytona_compat` runs at the end of `render_task()`, after verifier
 assets have been staged. It is intentionally outside `tasks/`: native
-MLS-Bench runs keep their original package versions, scripts,
-`free_cache_engine` behavior, and research scale. For Daytona, the layer may
-select a patched Harbor base image, install provider-required CUDA library
-aliases, or pin companion wheels (for example, CleanDiffuser's torch 2.7.1
-requires the matching torchvision 0.22.1 wheel). Only the rendered
-`environment/Dockerfile` and verifier copies are changed; editable source and
-native task scripts are not. The operation is idempotent, so re-rendering does
-not accumulate layers or verifier flags.
+MLS-Bench runs keep their original package versions, scripts and research
+scale. For Daytona, the layer selects the pinned verl base image (whose
+pristine manifest must match), installs the CUDA runtime alias vLLM needs,
+and caps verl's worker processes in the verifier copies of `train.sh`. Only
+the rendered `environment/Dockerfile` and verifier copies are changed;
+editable source and native task scripts are not. The operation is idempotent,
+so re-rendering does not accumulate layers or verifier flags. Runtime
+provider settings (H100 default, thread caps, RAM/CPU floors, NCCL fallback)
+live in `mls_bench.harbor_env.DaytonaEnvironment`, not in task files.
 
 Each rendered task directory:
 

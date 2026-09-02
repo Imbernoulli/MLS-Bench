@@ -289,22 +289,24 @@ cd harbor
 export DAYTONA_API_KEY="<your-daytona-key>"
 export PYTHONPATH=.:../harbor_adapter/src
 
-# One task, Oracle, Daytona Spot H100 (the default Spot GPU type)
+# One task, Oracle, on-demand H100 (the default GPU type)
 harbor run -c run-daytona.yaml \
   --path tasks/mls-bench__robo-diffusion-policy \
   --agent oracle --n-concurrent 1
 ```
 
-To request an H200 explicitly, pass an environment kwarg. H200 is not an
-implicit fallback: use it only for a task whose task/config and upstream code
-support H200. Tasks that support both can be selected either way:
+Every GPU request is placed on H100 unless you say otherwise: Daytona's
+default pool also contains RTX PRO 6000 Blackwell (sm_120) cards, and the
+pinned CUDA wheels in the MLS-Bench images have no kernels for them. H200 is
+not an implicit fallback either: use it only for a task whose native config
+carries an `h200` profile. Tasks that support both can be selected either way:
 
 ```bash
-# Explicit on-demand H100
+# Explicit on-demand H100 (the default)
 harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek spot=false --ek gpu_type=H100
+  --agent oracle --ek gpu_type=H100
 
-# Explicit H200 Spot
+# H200 on Spot capacity (does not count against the on-demand GPU quota)
 harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
   --agent oracle --ek spot=true --ek gpu_type=H200
 ```
@@ -323,9 +325,21 @@ For native MLS-Bench runs, the same support is selected by the existing
 H100). This is the repository's original H200 path, not a Daytona-specific
 training configuration.
 
-`run-daytona.yaml` already sets `spot: true` for GPU tasks. An explicit
-`--ek` value overrides that file for the invocation. CPU tasks remain
-on-demand because Daytona rejects Spot requests without a GPU.
+`run-daytona.yaml` sets the Daytona defaults (`gpu_type: H100`, `spot:
+false`, `gpu_memory_gb: 64`, `gpu_cpus: 16`, `MLSBENCH_EVAL_TIME_SCALE=2`);
+an explicit `--ek` value overrides the file for one invocation. Spot is
+opt-in because capacity is not guaranteed, and it is applied only to GPU
+tasks (Daytona rejects Spot requests without a GPU).
+
+Daytona enforces `task.toml` resources as hard cgroup limits, unlike local
+Docker. Two consequences are handled by the adapter: GPU sandboxes get a
+RAM/CPU floor (`gpu_memory_gb`, `gpu_cpus`; the 16 GiB default OOM-kills a
+7B checkpoint load), and the sandbox exports `OMP_NUM_THREADS`-style caps
+equal to its CPU quota (the container still reports every host core, so
+PyTorch would otherwise start hundreds of threads and run ~20x slower).
+`eval_time_scale` stretches the per-eval wall-clock budgets from
+`test_cmds[].time` for the slower remote CPUs; the agent budget check is
+unaffected.
 
 Replace `oracle` with any Harbor Agent. The Agent name selects Harbor's
 harness; `--model` selects the provider/model:
@@ -378,9 +392,16 @@ MLS-Bench-Lite task declarations request at most eight GPUs. The full suite can
 contain an indivisible job above that limit; the adapter preserves such a
 request and Daytona must provide the required capacity. Pass `--override-gpus`,
 `--override-memory-mb`, or `--override-storage-mb` when your Daytona
-organization has tighter per-sandbox limits. Spot is applied only to GPU
-sandboxes; CPU tasks remain on-demand. Results and provider errors are written
-to `harbor/jobs-daytona-smoke/report.csv`.
+organization has tighter per-sandbox limits. Spot (`--spot`) is applied only
+to GPU sandboxes; CPU tasks remain on-demand. Results and provider errors are
+written to `harbor/jobs-daytona-smoke/report.csv`.
+
+To validate an environment quickly, run a reduced-scale copy of the task:
+copy the rendered task directory, shorten the epoch/step counts in its
+`tests/eval/scripts/*.sh` (or point `solution/oracle_cmd_overrides.json` at
+shorter scripts), and run that copy with `--path`. The image, workspace, edit
+guard, verifier and scorer are exercised unchanged; only the resulting reward
+is not a benchmark score.
 
 ### Recommended exploration budget
 

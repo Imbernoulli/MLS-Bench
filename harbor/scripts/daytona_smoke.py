@@ -127,6 +127,9 @@ def build_command(
     delete: bool,
     spot: bool = False,
     gpu_type: str | None = None,
+    gpu_memory_gb: int | None = None,
+    gpu_cpus: int | None = None,
+    eval_time_scale: float | None = None,
     overrides: dict[str, int | None],
 ) -> list[str]:
     """Build an argv list for one isolated Harbor invocation."""
@@ -151,14 +154,20 @@ def build_command(
     ]
     if not verify:
         command.append("--disable-verification")
-    if record.gpus > 0 and (spot or gpu_type):
-        # The custom DaytonaEnvironment consumes this kwarg and forwards it
-        # to Daytona's CreateSandbox*Params.spot field.  Keep it off CPU
-        # tasks because the Daytona API rejects spot requests with zero GPUs.
+    if record.gpus > 0:
+        # The custom DaytonaEnvironment consumes these kwargs.  Keep them off
+        # CPU tasks: the Daytona API rejects spot requests with zero GPUs and
+        # the RAM/CPU floors only make sense for the GPU sandbox class.
         if spot:
             command.extend(["--ek", "spot=true"])
         if gpu_type:
             command.extend(["--ek", f"gpu_type={gpu_type}"])
+        if gpu_memory_gb:
+            command.extend(["--ek", f"gpu_memory_gb={int(gpu_memory_gb)}"])
+        if gpu_cpus:
+            command.extend(["--ek", f"gpu_cpus={int(gpu_cpus)}"])
+    if eval_time_scale and float(eval_time_scale) != 1.0:
+        command.extend(["--ek", f"eval_time_scale={eval_time_scale:g}"])
     if force_build:
         command.append("--force-build")
     else:
@@ -540,8 +549,29 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--gpu-type",
-        default=None,
-        help="optional Daytona GPU type (for example H100 or H200)",
+        default="H100",
+        help="Daytona GPU type for GPU tasks (H100 default; H200 only for tasks "
+        "with a native h200 profile)",
+    )
+    parser.add_argument(
+        "--gpu-memory-gb",
+        type=int,
+        default=64,
+        help="RAM floor for GPU sandboxes (task.toml limits are hard cgroup "
+        "limits on Daytona); 0 keeps the task value",
+    )
+    parser.add_argument(
+        "--gpu-cpus",
+        type=int,
+        default=16,
+        help="CPU floor for GPU sandboxes; 0 keeps the task value",
+    )
+    parser.add_argument(
+        "--eval-time-scale",
+        type=float,
+        default=2.0,
+        help="multiplier for test_cmds[].time wall-clock budgets inside the "
+        "sandbox (MLSBENCH_EVAL_TIME_SCALE); 1 keeps native budgets",
     )
     parser.add_argument("--harbor-cmd", default="harbor")
     parser.add_argument(
@@ -629,6 +659,9 @@ def main() -> int:
                 delete=not args.no_delete,
                 spot=args.spot,
                 gpu_type=args.gpu_type,
+                gpu_memory_gb=args.gpu_memory_gb,
+                gpu_cpus=args.gpu_cpus,
+                eval_time_scale=args.eval_time_scale,
                 overrides={
                     "--override-cpus": args.override_cpus,
                     "--override-memory-mb": args.override_memory_mb,
@@ -685,6 +718,9 @@ def main() -> int:
             delete=not args.no_delete,
             spot=args.spot,
             gpu_type=args.gpu_type,
+            gpu_memory_gb=args.gpu_memory_gb,
+            gpu_cpus=args.gpu_cpus,
+            eval_time_scale=args.eval_time_scale,
             overrides={
                 "--override-cpus": args.override_cpus,
                 "--override-memory-mb": args.override_memory_mb,
