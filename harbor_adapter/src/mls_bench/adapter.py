@@ -1074,7 +1074,13 @@ def render_task(
         "task_description": ctx.task_description,
         "package": ctx.package,
         "workdir": pkg_workdir,
-        "base_image": HARBOR_BASE_DOCKER.format(pkg=ctx.package.lower()),
+        # A package config may pin a cache-busting Harbor base tag after a
+        # package-level pre_edit fix.  The default keeps the published
+        # ``:latest`` convention for all existing tasks.
+        "base_image": ctx.config.get(
+            "harbor_base_image",
+            HARBOR_BASE_DOCKER.format(pkg=ctx.package.lower()),
+        ),
         "agent_timeout_sec": _agent_timeout_sec(ctx.config),
         "verifier_timeout_sec": _verifier_timeout_sec(ctx.config, res["gpus"]),
         "build_timeout_sec": 1800,

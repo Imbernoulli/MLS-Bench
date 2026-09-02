@@ -1,5 +1,6 @@
 {
   "allow_create": false,
+  "harbor_base_image": "bohanlyu2022/mlsbench-harbor-verl:verl-fixes-20260901",
   "test_cmds": [
     {
       "cmd": "scripts/train.sh",

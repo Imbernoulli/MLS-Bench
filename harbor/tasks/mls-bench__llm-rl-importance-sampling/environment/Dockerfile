@@ -13,6 +13,6 @@
 # only. The pristine baseline is intentionally NOT baked into the image:
 # the agent runs as root and could otherwise tamper with an image-baked
 # reference before verification.
-FROM bohanlyu2022/mlsbench-harbor-verl:latest
+FROM bohanlyu2022/mlsbench-harbor-verl:verl-fixes-20260901
 
 COPY _scaffold/ /workspace/
