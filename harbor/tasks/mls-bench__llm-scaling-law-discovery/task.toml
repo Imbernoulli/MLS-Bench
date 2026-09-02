@@ -17,7 +17,7 @@ mls_bench_package = "scaling-law-lab"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 3060
+timeout_sec = 3360
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

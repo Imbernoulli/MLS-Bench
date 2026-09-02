@@ -498,6 +498,15 @@ def _eval_env(
         else:
             env[key] = _expand_env_template(value, env)
 
+    # Command-specific environment overrides (including the materialized
+    # H200 block) must reach the actual eval subprocess.  Keep this after the
+    # package defaults so a task command can intentionally specialize them,
+    # and expand templates against the already-populated environment.
+    for key, value in (tc.get("env") or {}).items():
+        key = str(key)
+        value = str(value)
+        env[key] = _expand_env_template(value, env)
+
     task_id = _read_meta_text(task_meta, "task_id", "unknown")
     save_path = out_dir / "save"
     output_dir = save_path / task_id / "harbor" / f"seed_{seed}"
@@ -537,6 +546,64 @@ def _test_cmd_compute(tc: dict) -> float:
         return float(tc.get("compute", 1) or 1)
     except (TypeError, ValueError):
         return 1.0
+
+
+def _running_gpu_is_h200() -> bool:
+    """Return whether this verifier is running on an H200-class GPU.
+
+    MLS-Bench's native runner selects the H200-specific command block only
+    through an explicit host setting (``compute_scale: 0.5``); it never
+    auto-detects the device.  Harbor mirrors that: the provider (for example
+    the Daytona adapter, via ``--ek gpu_type=H200``) must export
+    ``MLSBENCH_GPU_TYPE=H200``.  Running the baseline command on an H200 host
+    without that variable keeps the H100 profile, exactly like native runs.
+    """
+    raw = os.environ.get("MLSBENCH_GPU_TYPE", "").strip()
+    return "H200" in raw.upper()
+
+
+def _eval_time_scale() -> float:
+    """Optional multiplier for per-eval wall-clock budgets.
+
+    ``test_cmds[].time`` was calibrated on MLS-Bench's native hosts.  A remote
+    provider with a smaller CPU quota (Daytona sandboxes enforce
+    ``task.toml`` cpus as a cgroup limit) can legitimately need longer; set
+    ``MLSBENCH_EVAL_TIME_SCALE`` (>= 1.0) in the verifier environment.  The
+    budget check of the agent's edit is unaffected.
+    """
+    raw = os.environ.get("MLSBENCH_EVAL_TIME_SCALE", "").strip()
+    if not raw:
+        return 1.0
+    try:
+        return max(1.0, float(raw))
+    except ValueError:
+        return 1.0
+
+
+def _effective_test_cmds(config: dict) -> list[dict]:
+    """Materialize hardware-specific test command overrides.
+
+    The ``h200`` blocks are deliberately metadata in the public task config:
+    they are selected only when an H200 is really attached.  Keep the original
+    dictionaries untouched so the verifier's budget and scheduling code sees
+    one consistent, fully materialized command list.
+    """
+    entries = [dict(tc) for tc in (config.get("test_cmds", []) or [])]
+    if not _running_gpu_is_h200():
+        return entries
+    for entry in entries:
+        override = entry.pop("h200", None)
+        if not isinstance(override, dict):
+            continue
+        if "cmd" in override:
+            entry["cmd"] = override["cmd"]
+        if "compute" in override:
+            entry["compute"] = override["compute"]
+        if override.get("env"):
+            env = dict(entry.get("env") or {})
+            env.update(override["env"])
+            entry["env"] = env
+    return entries
 
 
 def _config_seeds(config: dict) -> list[int]:
@@ -588,6 +655,47 @@ def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
     return len(bins)
 
 
+def _peak_gpu_usage(computes: list[float]) -> int:
+    """GPUs needed to run every job in *computes* at once."""
+    whole = sum(max(1, math.ceil(c)) for c in computes if c >= 1.0)
+    return whole + _bin_pack_fractional_gpus([c for c in computes if 0.0 < c < 1.0])
+
+
+def _split_computes_into_waves(computes: list[float], devices: int) -> list[list[float]]:
+    """Greedy contiguous batching, same order as _partition_group_gpu_batches."""
+    waves: list[list[float]] = []
+    current: list[float] = []
+    for compute in computes:
+        if current and _peak_gpu_usage([*current, compute]) > devices:
+            waves.append(current)
+            current = [compute]
+        else:
+            current.append(compute)
+    if current:
+        waves.append(current)
+    return waves
+
+
+def _wave_balanced_gpus(
+    computes: list[float],
+    peak_gpus: int,
+    largest_job: int,
+) -> int:
+    """Widest reservation <= MAX_PARALLEL_GPUS whose waves are all equally full.
+
+    Mirrors adapter.py::_wave_balanced_gpus; see the rationale there.
+    """
+    if peak_gpus <= MAX_PARALLEL_GPUS:
+        return peak_gpus
+    for candidate in range(MAX_PARALLEL_GPUS, largest_job - 1, -1):
+        usage = [
+            _peak_gpu_usage(wave) for wave in _split_computes_into_waves(computes, candidate)
+        ]
+        if usage and len(set(usage)) == 1:
+            return usage[0]
+    return largest_job
+
+
 def _infer_reserved_gpu_count(config: dict) -> int:
     if config.get("use_cuda") is False:
         return 0
@@ -597,26 +705,35 @@ def _infer_reserved_gpu_count(config: dict) -> int:
 
     peak_gpus = 0
     largest_job = 0
+    peak_computes: list[float] = []
     n_seeds = max(1, len(_config_seeds(config)))
     for entries in _group_entries(test_cmds).values():
         whole = 0
         fractionals: list[float] = []
+        computes: list[float] = []
         for _, tc in entries:
             compute = _test_cmd_compute(tc)
+            computes.extend([compute] * n_seeds)
             if compute > 0.0:
                 largest_job = max(largest_job, max(1, math.ceil(compute)))
             if compute >= 1.0:
                 whole += n_seeds * max(1, math.ceil(compute))
             elif compute > 0.0:
                 fractionals.extend([compute] * n_seeds)
-        peak_gpus = max(peak_gpus, whole + _bin_pack_fractional_gpus(fractionals))
+        group_peak = whole + _bin_pack_fractional_gpus(fractionals)
+        if group_peak >= peak_gpus:
+            peak_computes = computes
+        peak_gpus = max(peak_gpus, group_peak)
     if not peak_gpus:
         return 0
-    # Same cap the adapter applies when rendering tests/meta/gpu_count: groups
-    # that want more GPUs at once than MAX_PARALLEL_GPUS run as sequential
-    # waves (see _partition_group_gpu_batches), except for a single job that
-    # needs more than the cap by itself.
-    return max(1, min(peak_gpus, MAX_PARALLEL_GPUS), largest_job)
+    # Same rule the adapter applies when rendering tests/meta/gpu_count: a group
+    # wanting more GPUs at once than MAX_PARALLEL_GPUS runs as sequential waves
+    # (see _partition_group_gpu_batches), and the reservation is the widest one
+    # at or below the cap that every wave fills. Clamping straight to the cap
+    # would leave the final wave holding idle GPUs — three 4-GPU jobs on 8
+    # reserved run as waves of 2 and 1, costing more GPU-hours than reserving 4
+    # and more wall clock than reserving 12.
+    return max(1, _wave_balanced_gpus(peak_computes, peak_gpus, largest_job), largest_job)
 
 
 def _reserved_gpu_count(task_meta: Path, config: dict) -> int:
@@ -958,9 +1075,12 @@ def _run_eval_wave(
     default_pkg: str,
     out_dir: Path,
 ) -> dict[tuple[int, int], dict]:
-    timeout_secs = max(
-        _parse_time_to_seconds(task["entry"]["tc"].get("time", "1:00:00"))
-        for task in tasks
+    timeout_secs = int(
+        max(
+            _parse_time_to_seconds(task["entry"]["tc"].get("time", "1:00:00"))
+            for task in tasks
+        )
+        * _eval_time_scale()
     ) + WAVE_GRACE_SEC
     deadline = time.time() + timeout_secs
     running: list[dict] = []
@@ -1050,7 +1170,7 @@ def _run_eval_wave(
     return results
 
 
-def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict[str, str]]:
+def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict]:
     if not raw:
         return []
     try:
@@ -1060,33 +1180,49 @@ def _parse_oracle_cmd_overrides(raw: str | None) -> list[dict[str, str]]:
     if not isinstance(data, list):
         raise ValueError("oracle cmd overrides must be a JSON list")
 
-    out: list[dict[str, str]] = []
+    out: list[dict] = []
     for item in data:
         if not isinstance(item, dict):
             raise ValueError("oracle cmd override entries must be objects")
         cmd = str(item.get("cmd", "")).strip()
-        if not cmd:
-            raise ValueError("oracle cmd override missing non-empty cmd")
+        env = item.get("env")
+        if env is not None and not isinstance(env, dict):
+            raise ValueError("oracle cmd override env must be an object")
+        env = {str(k): str(v) for k, v in (env or {}).items()}
+        if not cmd and not env:
+            raise ValueError("oracle cmd override needs a non-empty cmd or env")
+        override: dict = {}
+        if cmd:
+            override["cmd"] = cmd
+        if env:
+            override["env"] = env
         if "labels" in item:
             labels = item.get("labels") or [""]
             if not isinstance(labels, list):
                 labels = [labels]
-            out.extend({"label": str(label), "cmd": cmd} for label in labels)
+            out.extend({"label": str(label), **override} for label in labels)
         else:
-            out.append({"label": str(item.get("label", "")), "cmd": cmd})
+            out.append({"label": str(item.get("label", "")), **override})
     return out
 
 
 def _apply_oracle_cmd_overrides(
     test_cmds: list[dict],
-    overrides: list[dict[str, str]],
+    overrides: list[dict],
 ) -> list[dict]:
     result = [dict(tc) for tc in test_cmds]
     for override in overrides:
         label = override["label"]
         for entry in result:
             if not label or str(entry.get("label", "")) == label:
-                entry["cmd"] = override["cmd"]
+                if override.get("cmd"):
+                    entry["cmd"] = override["cmd"]
+                if override.get("env"):
+                    # Baseline env (native cli exports baseline_config["env"])
+                    # reaches the eval subprocess through tc["env"].
+                    merged = dict(entry.get("env") or {})
+                    merged.update(override["env"])
+                    entry["env"] = merged
     return result
 
 
@@ -1099,7 +1235,12 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     config = _load_task_config(task_meta)
-    test_cmds = list(config.get("test_cmds", []))
+    # Select an H200-specific command/env/compute override when the verifier
+    # is actually running on H200 hardware.  This keeps Harbor's direct
+    # sandbox behavior aligned with MLS-Bench's native ``compute_scale=0.5``
+    # path and, importantly, applies the same materialized list to budget
+    # checks, GPU packing, and the eval subprocesses.
+    test_cmds = _effective_test_cmds(config)
     oracle_cmd_overrides = _parse_oracle_cmd_overrides(
         getattr(args, "oracle_cmd_overrides", None)
     )
@@ -1366,12 +1507,25 @@ def cmd_score(args: argparse.Namespace) -> int:
         from mlsbench.scoring.anchors import BaselineAnchors  # type: ignore[import-not-found]
         import mlsbench.agent.parsers  # ensures the task parser inherits this version
 
-        import importlib.util
-        parser_spec = importlib.util.spec_from_file_location(
-            "task_parser", task_meta / "parser.py"
+        import __future__
+        import types
+
+        # Compile with PEP 563 (postponed annotation evaluation) so a task
+        # parser written with PEP 585 generics (``-> tuple[str, dict]``,
+        # ``list[float] = []``) also runs on the older container Pythons that
+        # cannot subscript builtins at definition time (for example the
+        # cleanrl image's Python 3.8).  Native scoring runs the parser in the
+        # host's Python, so this difference only shows up inside Harbor.
+        parser_path = task_meta / "parser.py"
+        task_parser = types.ModuleType("task_parser")
+        task_parser.__file__ = str(parser_path)
+        code = compile(
+            parser_path.read_text(),
+            str(parser_path),
+            "exec",
+            flags=__future__.annotations.compiler_flag,
         )
-        task_parser = importlib.util.module_from_spec(parser_spec)
-        parser_spec.loader.exec_module(task_parser)
+        exec(code, task_parser.__dict__)
     except Exception as exc:
         reward_out.write_text("0\n")
         (out_dir / "score_error.txt").write_text(f"import failed: {exc}\n")

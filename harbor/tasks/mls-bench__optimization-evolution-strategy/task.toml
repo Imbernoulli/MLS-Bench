@@ -17,7 +17,7 @@ mls_bench_package = "deap"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 9480
+timeout_sec = 9780
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

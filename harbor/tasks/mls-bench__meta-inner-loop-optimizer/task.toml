@@ -17,7 +17,7 @@ mls_bench_package = "learn2learn"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 31680
+timeout_sec = 46980
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the
@@ -29,9 +29,11 @@ build_timeout_sec = 1800
 cpus = 4
 memory_mb = 16384
 storage_mb = 61440
-# Capped at 8 GPUs (MAX_PARALLEL_GPUS): running every (test_cmd, seed) eval
-# job in parallel would occupy 9 GPUs, more than a typical Harbor GPU host
-# has. The verifier instead runs them as 2 sequential waves of at most 8
-# GPUs, and [verifier].timeout_sec above budgets wall clock for every wave.
-gpus = 8
+# Reserves 3 GPUs: running every (test_cmd, seed) eval job in parallel would
+# occupy 9, above the MAX_PARALLEL_GPUS=8 cap. The verifier runs them as 3
+# sequential waves instead. 3 is the widest reservation at or below the cap
+# that every wave fills completely — a wider one would idle GPUs in the
+# final wave for no gain in wall clock. [verifier].timeout_sec above budgets
+# wall clock for every wave.
+gpus = 3
 allow_internet = true

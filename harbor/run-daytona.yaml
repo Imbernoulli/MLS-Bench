@@ -1,0 +1,56 @@
+# Daytona run configuration for the 138 non-API MLS-Bench tasks.
+#
+# Run from this directory with:
+#   DAYTONA_API_KEY=... PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona.yaml
+#
+# The custom import path keeps local Docker's GPU-only Compose reservation
+# overlays compatible with Daytona.  Those overlays are treated as direct GPU
+# sandboxes; real multi-container definitions remain delegated to Harbor's
+# normal Daytona DinD implementation.
+
+jobs_dir: jobs-daytona
+n_attempts: 1
+timeout_multiplier: 1.0
+# Keep remote environment allocation serial.  Raise this only when the
+# aggregate *declared* GPU counts of the concurrent tasks fit your quota.
+n_concurrent_trials: 1
+quiet: false
+
+environment:
+  import_path: harbor_env:DaytonaEnvironment
+  force_build: true
+  delete: true
+  kwargs:
+    # GPU sandboxes are always requested as Hopper.  Override per invocation
+    # with `--ek gpu_type=H200` only for tasks that carry a native `h200`
+    # profile (the llm-pretrain-*/llm-rl-* families).
+    gpu_type: H100
+    # Spot sandboxes do not count against the organization's on-demand GPU
+    # quota, but capacity is not guaranteed.  Enable with `--ek spot=true`;
+    # the adapter applies it only to GPU tasks.
+    spot: false
+    # task.toml resources are sized for local Docker.  Daytona enforces them
+    # as hard cgroup limits, so GPU sandboxes get a larger RAM/CPU floor.
+    gpu_memory_gb: 64
+    gpu_cpus: 16
+    # Extra sandbox environment.  test_cmds[].time budgets were calibrated on
+    # MLS-Bench's native hosts; allow slower remote CPUs a longer wall clock.
+    sandbox_env:
+      MLSBENCH_EVAL_TIME_SCALE: "2.0"
+
+agents:
+  - name: oracle
+
+# Replace the oracle block with a real Harbor agent when running evaluations.
+# agents:
+#   - name: codex
+#     model_name: openai/gpt-5
+
+datasets:
+  - path: tasks
+    # These two verifiers call DeepSeek/DashScope. Keep the default Daytona
+    # smoke/evaluation credential-free; opt in explicitly when model keys are
+    # available (or remove these two patterns).
+    exclude_task_names:
+      - mls-bench__agent-tool-reasoning
+      - mls-bench__mas-topology

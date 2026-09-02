@@ -7,12 +7,15 @@ def sample_dbim(
     diffusion,
     x,
     ts,
+    eta=1.0,
     mask=None,
-    order=2,
-    lower_order_final=True,
     seed=None,
     **kwargs,
 ):
+    # The task protects the sample_dbim signature (only the body is
+    # editable), so baseline-specific knobs come in through **kwargs.
+    order = kwargs.get("order", 2)
+    lower_order_final = kwargs.get("lower_order_final", True)
     if order not in [2, 3]:
         order=2
     x_T = x

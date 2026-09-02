@@ -1,0 +1,36 @@
+# Daytona run configuration for the rendered MLS-Bench adapter dataset.
+#
+# Run from harbor_adapter/ with:
+#   DAYTONA_API_KEY=... PYTHONPATH=src harbor run -c run-daytona.yaml
+
+jobs_dir: jobs-daytona
+n_attempts: 1
+timeout_multiplier: 1.0
+# Keep remote environment allocation serial. Raise n_concurrent_trials only when
+# the aggregate *declared* GPU counts of the concurrent tasks fit your quota.
+n_concurrent_trials: 1
+quiet: false
+
+environment:
+  import_path: mls_bench.harbor_env:DaytonaEnvironment
+  force_build: true
+  delete: true
+  kwargs:
+    # See harbor/run-daytona.yaml for the meaning of each option.
+    gpu_type: H100
+    spot: false
+    gpu_memory_gb: 64
+    gpu_cpus: 16
+    sandbox_env:
+      MLSBENCH_EVAL_TIME_SCALE: "2.0"
+
+agents:
+  - name: oracle
+
+datasets:
+  - path: datasets/mls-bench
+    # The two API-backed tasks are intentionally excluded from the default
+    # Daytona run. Add them back only when DeepSeek/DashScope keys are set.
+    exclude_task_names:
+      - mls-bench__agent-tool-reasoning
+      - mls-bench__mas-topology

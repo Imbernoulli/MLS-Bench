@@ -250,6 +250,96 @@ Harbor config live under [`harbor/`](harbor/). See
 [`harbor/README.md`](harbor/README.md) for usage details and the
 self-contained per-task layout.
 
+### Running Harbor tasks on Daytona
+
+The Daytona provider adapter forwards each task's declared GPU count and type
+to Daytona and uses direct GPU sandboxes for the GPU-only Compose overlays
+MLS-Bench emits. See [harbor/README.md](harbor/README.md#run-on-daytona) for
+the full option reference.
+
+```bash
+cd harbor
+uv tool install "harbor[daytona]"
+export DAYTONA_API_KEY="<your-daytona-key>"
+export PYTHONPATH=.:../harbor_adapter/src
+
+harbor run -c run-daytona.yaml                        # all tasks
+harbor run -c run-daytona.yaml \
+  --path tasks/mls-bench__robo-diffusion-policy \
+  --agent oracle                                      # one task, strongest baseline
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent claude-code --model anthropic/claude-opus-4-7 \
+  --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"   # one task, agent
+```
+
+`--agent nop --no-verifier` checks only that the image builds and the sandbox
+starts. The two tasks whose evaluators call DeepSeek/DashScope need those keys;
+the other 138 do not.
+
+`run-daytona.yaml` defaults to `gpu_type: H100`, `spot: false`,
+`gpu_memory_gb: 64`, `gpu_cpus: 16` and `eval_time_scale: 2.0`; any `--ek`
+overrides the file for one invocation. H100 is the default because Daytona's
+pool also holds Blackwell (sm_120) cards that the pinned CUDA wheels have no
+kernels for. Unlike local Docker, Daytona enforces `task.toml` resources as
+hard cgroup limits, hence the RAM/CPU floors and the thread caps the adapter
+injects.
+
+GPU counts come from each task's own declaration; size `--n-concurrent`
+against those, and don't lower them with `--override-gpus`.
+
+H200 is not a Daytona-specific configuration. The 15 `llm-pretrain-*` /
+`llm-rl-*` tasks that support it carry a validated `h200` block — command, GPU
+count, batch/TP env — in their native config. `--ek gpu_type=H200` forwards
+`MLSBENCH_GPU_TYPE` so the verifier materializes that existing block; the
+adapter invents nothing, and tasks without the block keep their H100 baseline.
+Native (non-Harbor) runs select the same path with `compute_scale: 0.5` in
+`configs/react.yaml`.
+
+### Evaluating an agent
+
+`--agent` selects the harness, `--model` the provider/model, and `--agent-env`
+passes credentials into the agent process. Start with one task before
+committing to a sweep:
+
+```bash
+cd harbor
+export DAYTONA_API_KEY="<your-daytona-key>"
+export PYTHONPATH=.:../harbor_adapter/src
+
+# one task, one agent
+harbor run -c run-daytona.yaml --path tasks/mls-bench__ts-classification \
+  --agent claude-code --model anthropic/claude-opus-4-7 \
+  --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+
+# every task in the dataset directory
+harbor run -c run-daytona.yaml --path tasks \
+  --agent codex --model openai/gpt-5.6 \
+  --agent-env OPENAI_API_KEY="$OPENAI_API_KEY"
+```
+
+`--path` takes a single task *or* a dataset directory; it cannot be repeated.
+To run a specific subset — there is no separate Lite dataset, `harbor/tasks/`
+is the full 140 — select it in the config's `datasets:` block instead.
+`task_names` and `exclude_task_names` both accept globs:
+
+```yaml
+datasets:
+  - path: tasks
+    task_names:                     # the MLS-Bench-Lite 30
+      - mls-bench__cv-vae-loss
+      - mls-bench__rl-value-discrete
+      # ... the remaining 28
+```
+
+`harbor run --help` lists the built-in harnesses (`claude-code`, `codex`,
+`aider`, `swe-agent`, `opencode`, `openhands`, `gemini-cli`, `goose`, ...);
+`--agent-import-path pkg.mod:Class` with `--agent-kwarg key=value` takes a
+custom one. Two agents are worth running first: `oracle` replays the task's
+strongest declared baseline through the same guard and verifier, and `nop`
+with `--no-verifier` checks only that the image builds and the sandbox starts.
+Sanity-check a new harness on a CPU task like `ml-clustering-algorithm` — a
+failure there is a credential or harness problem, not a task problem.
+
 ### Recommended exploration budget
 
 We recommend giving the agent a **5-hour exploration time limit per task**.
@@ -258,10 +348,23 @@ Every result on the public
 under that budget, so a run with a substantially different limit is not
 directly comparable to the published numbers.
 
-This is the **agent** timeout only, and every rendered Harbor task ships it as
-`[agent] timeout_sec = 18000`. The separate **verifier** timeout — how long
-scoring itself may take — is task-specific, sized to each task's own training
-and evaluation cost, and is deliberately *not* flattened to a single value.
+**You do not need to set this.** Every rendered task ships `[agent]
+timeout_sec = 18000` and Harbor enforces it per trial. What matters is not
+setting it but not silently *changing* it — three things do:
+
+| | Effect on the 5h budget |
+| --- | --- |
+| `--agent-timeout-multiplier X` | scales it to `X x 18000s` |
+| `--timeout-multiplier X` | scales the agent, verifier **and** build timeouts |
+| `agents: [{override_timeout_sec: N}]` | replaces it with `N` seconds |
+
+Leave all three alone for comparable numbers, and say so when reporting a run
+that did not. Each trial's `result.json` records what was actually used under
+`config.agent` and `config.timeout_multiplier`.
+
+This is the **agent** timeout only. The **verifier** timeout is separate and
+task-specific, sized from each task's own eval cost, and deliberately not
+flattened to one value.
 
 ## Repository Map
 

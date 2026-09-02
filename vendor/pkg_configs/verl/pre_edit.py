@@ -185,18 +185,25 @@ OPS = [
         ),
     },
     # Fix protocol.py concat: relax strict assert on meta_info key 'reward_extra_keys'
-    # Line 963: different batches have different reward_extra_keys → merge lists, skip assert
+    # Lines 961-966 after the list-of-dicts edit above: different batches may
+    # have different reward_extra_keys → merge lists and skip conflicting
+    # scalar metadata.
     {
         "op": "replace",
         "file": "verl/verl/protocol.py",
+        # list_of_dict_to_dict_of_list above expands by one line, so include
+        # the enclosing ``else`` at 961 when the operations are applied.
         "start_line": 961,
-        "end_line": 963,
+        "end_line": 966,
         "content": (
-            "                    if k in merged_meta_info:\n"
-            "                        if isinstance(v, (list, set)) and isinstance(merged_meta_info[k], (list, set)):\n"
-            "                            merged_meta_info[k] = list(set(list(merged_meta_info[k])) | set(list(v)))\n"
-            "                        elif merged_meta_info[k] != v:\n"
-            "                            pass  # silently skip conflicting non-list meta_info\n"
+            "                    else:\n"
+            "                        if k in merged_meta_info:\n"
+            "                            if isinstance(v, (list, set)) and isinstance(merged_meta_info[k], (list, set)):\n"
+            "                                merged_meta_info[k] = list(set(list(merged_meta_info[k])) | set(list(v)))\n"
+            "                            elif merged_meta_info[k] != v:\n"
+            "                                pass  # silently skip conflicting non-list meta_info\n"
+            "                        else:\n"
+            "                            merged_meta_info[k] = v\n"
         ),
     },
     # ── verl #2490: dynamic_bsz NCCL deadlock fix (dp_actor.py) ─────────
@@ -243,6 +250,27 @@ OPS = [
             "            # FSDP param all-gathers stay in lockstep (no NCCL deadlock).\n"
             "            _dp_group = torch.distributed.group.WORLD if torch.distributed.is_initialized() else None\n"
             "            micro_batches, batch_idx_list = prepare_dynamic_batch(data, max_token_len=max_token_len, dp_group=_dp_group)\n"
+        ),
+    },
+    # ── validation metrics: tolerate None extra-info values ────────────────
+    # The agent_loop.py op above aggregates reward_extra_info over the union of
+    # keys and fills None where a scorer did not emit a key.  The Lite/RL
+    # validation set mixes float scorers (gsm8k, MATH-500 -> only "acc") with a
+    # dict scorer (amc23 -> "score"/"acc"/"pred"), so every gsm8k/MATH-500
+    # sample carries pred=None and process_validation_metrics crashed with
+    # `unsupported operand type(s) for +: 'NoneType' and 'NoneType'` at the
+    # first validation.  Drop None entries before reducing (~L596-598).
+    {
+        "op": "replace",
+        "file": "verl/verl/trainer/ppo/metric_utils.py",
+        "start_line": 596,
+        "end_line": 598,
+        "content": (
+            "                # skip empty, string, or missing values (the agent-loop reward\n"
+            "                # aggregation fills None for keys a scorer did not emit)\n"
+            "                var_vals = [v for v in var_vals if v is not None]\n"
+            "                if not var_vals or isinstance(var_vals[0], str):\n"
+            "                    continue\n"
         ),
     },
 ]

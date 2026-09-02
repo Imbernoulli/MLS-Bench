@@ -5,5 +5,5 @@ services:
         reservations:
           devices:
             - driver: nvidia
-              count: 8
+              count: 4
               capabilities: [gpu]

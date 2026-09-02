@@ -599,6 +599,27 @@ def _scaled_compute(entry: dict, compute_scale: float) -> float:
     return base * scale if base <= 1.0 else base
 
 
+def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
+    """Min 1.0-capacity GPUs needed to hold all fractional-compute jobs at once.
+
+    First-fit-decreasing. Summing the fractions and rounding up under-counts
+    whenever per-GPU capacity is bin-limited: 9 jobs of 0.4 GPUs each need 5
+    GPUs, not ceil(3.6)=4, because one GPU holds at most floor(1/0.4)=2 of
+    them. Mirrors harbor_adapter/src/mls_bench/adapter.py's function of the
+    same name so the native scheduler and the Harbor renderer agree on a task's
+    peak demand by construction rather than by coincidence.
+    """
+    bins: list[float] = []
+    for compute in sorted(fractionals, reverse=True):
+        for i, capacity in enumerate(bins):
+            if capacity >= compute:
+                bins[i] = capacity - compute
+                break
+        else:
+            bins.append(1.0 - compute)
+    return len(bins)
+
+
 def infer_gpus_needed(
     task_name: str,
     groups: list[int] | None = None,
@@ -625,16 +646,16 @@ def infer_gpus_needed(
     peak_gpus = 0
     for entries in grouped.values():
         whole_gpu_jobs = 0
-        fractional = 0.0
+        fractional: list[float] = []
         for entry in entries:
             if not _test_cmd_uses_gpu(entry, task_config):
                 continue
             compute = _scaled_compute(entry, compute_scale)
             if compute >= 1.0:
                 whole_gpu_jobs += max(1, math.ceil(compute))
-            else:
-                fractional += compute
-        peak_gpus = max(peak_gpus, whole_gpu_jobs + max(0, math.ceil(fractional)))
+            elif compute > 0.0:
+                fractional.append(compute)
+        peak_gpus = max(peak_gpus, whole_gpu_jobs + _bin_pack_fractional_gpus(fractional))
 
     return max(1, peak_gpus)
 

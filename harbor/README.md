@@ -20,23 +20,82 @@ smoke-testing):
 PYTHONPATH=. harbor run -c run.yaml
 ```
 
-Replace the agent with a real one by editing `run.yaml` or via CLI:
+## Run on Daytona
 
 ```bash
-PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
-PYTHONPATH=. harbor run -c run.yaml -a codex       -m openai/gpt-5
+uv tool install "harbor[daytona]"
+export DAYTONA_API_KEY="<your-daytona-key>"
+PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona.yaml
 ```
 
-Pick specific tasks:
+`harbor_env:DaytonaEnvironment` routes all 140 tasks through Daytona's direct
+GPU sandbox API, including the 116 GPU tasks whose Compose file is only a
+local-Docker NVIDIA reservation. Daytona does not support GPU + DinD/Compose.
+
+Select one task with `--path`, and an agent with `--agent`:
 
 ```bash
-PYTHONPATH=. harbor run -c run.yaml -p tasks/mls-bench__causal-observational-linear-gaussian
+harbor run -c run-daytona.yaml --path tasks/mls-bench__robo-diffusion-policy \
+  --agent oracle                    # strongest declared baseline
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent claude-code --model anthropic/claude-opus-4-7 \
+  --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 ```
 
-`PYTHONPATH=.` is needed because `harbor_env.py` (the GPU-enabled
-`DockerEnvironment` subclass) lives next to `run.yaml`. Drop it if you
-replace the `environment` block in `run.yaml` with `type: docker` and run
-only CPU tasks.
+`--agent-env` reaches the agent, `--verifier-env` only the verifier, and
+`--ek KEY=VALUE` the Daytona environment. For an environment-only check use
+`--agent nop --no-verifier`; the 140 tasks share 65 base images, so one task
+per image covers every environment. `--path` takes one task *or* a dataset
+directory and cannot be repeated — select a subset with `task_names` /
+`exclude_task_names` under the config's `datasets:` block.
+
+### The 5-hour agent budget
+
+Every rendered task ships `[agent] timeout_sec = 18000` and Harbor enforces it
+per trial, so the recommended budget needs no flag. Three things silently
+change it, and a run that used any of them is not comparable to published
+numbers: `--agent-timeout-multiplier X`, `--timeout-multiplier X` (which also
+scales the verifier and build timeouts), and `agents: [{override_timeout_sec:
+N}]` in the config. A finished run records what it used in each trial's
+`result.json` under `config.agent` and `config.timeout_multiplier`. The
+verifier timeout is separate and task-specific — sized per task from its own
+eval cost — and is deliberately not flattened to one value.
+
+### Options
+
+`--ek` keys, with the defaults `run-daytona.yaml` already sets:
+
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `gpu_type` | `H100` | Daytona's pool also holds Blackwell cards the pinned CUDA wheels cannot run. Use `H200` only for tasks with a native `h200` profile. |
+| `spot` | `false` | Spot capacity is cheaper but frequently unavailable. |
+| `gpu_memory_gb` / `gpu_cpus` | `64` / `16` | Floors. Daytona enforces `task.toml` resources as hard cgroup limits, which local Docker effectively does not. verl RL validation needs `128`. |
+| `eval_time_scale` | `2.0` | Multiplies the verifier's per-eval budgets for the slower remote CPUs. `1` restores native budgets. |
+| `toolbox_ready_retries` | `3` | Recreates a sandbox whose toolbox never answers. |
+| `snapshot_salt` | unset | Appends a no-op `RUN` layer, forcing a fresh snapshot. Use when retries keep landing on the same bad runner — Daytona prefers whichever runner already caches the snapshot, and a cached copy can be broken. |
+
+The adapter also caps `OMP_NUM_THREADS` and friends at the CPU quota (the
+container reports every host core and would otherwise oversubscribe ~20x), and
+sets `NCCL_CUMEM_ENABLE=0` and `NCCL_NVLS_ENABLE=0` on multi-GPU sandboxes,
+where both NCCL paths fail with `cudaErrorIllegalState`.
+
+**GPU counts come from each task's own declaration** (up to 8). Size
+`--n-concurrent` against those counts, not against the trial count. Do not
+lower them with `--override-gpus`: that changes the parallelism the task was
+calibrated for. Reserve `--override-*` for an organization whose per-sandbox
+limits genuinely cannot hold the request; CPU sandboxes cap at 8 GB RAM and
+10 GB disk.
+
+H200 is defined by the native MLS-Bench configs, not by the provider layer: 15
+`llm-pretrain-*`/`llm-rl-*` tasks declare validated `h200` command/compute/env
+blocks in `tasks/*/config.json`. `gpu_type=H200` passes `MLSBENCH_GPU_TYPE` to
+the verifier, which selects those blocks and derives the GPU reservation from
+their `compute` values. No batch size, TP size, or command is invented here,
+and tasks without an `h200` block are never scaled.
+
+`mls-bench/agent-tool-reasoning` and `mls-bench/mas-topology` call DeepSeek /
+DashScope during evaluation and need those keys too; `DAYTONA_API_KEY` only
+authenticates the sandbox provider.
 
 ## What's in this directory
 

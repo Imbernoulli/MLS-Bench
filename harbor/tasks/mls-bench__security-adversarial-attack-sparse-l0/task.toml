@@ -17,7 +17,7 @@ mls_bench_package = "torchattacks"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 16560
+timeout_sec = 16860
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

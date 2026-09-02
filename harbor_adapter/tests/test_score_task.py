@@ -3,9 +3,12 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import re
 import sys
 import argparse
 from pathlib import Path
+
+import pytest
 
 
 def _load_score_task():
@@ -368,6 +371,132 @@ def test_run_evals_applies_oracle_cmd_overrides(tmp_path: Path):
     assert "DEFAULT_SCRIPT" not in oracle_log
 
 
+def test_h200_override_materializes_command_compute_and_env(monkeypatch):
+    score_task = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_GPU_TYPE", "H200")
+    config = {
+        "test_cmds": [
+            {
+                "cmd": "scripts/h100.sh",
+                "compute": 4.0,
+                "env": {"BASE": "yes"},
+                "h200": {
+                    "cmd": "scripts/h200.sh",
+                    "compute": 2.0,
+                    "env": {"BATCH_SIZE": "96"},
+                },
+            },
+            {"cmd": "scripts/eval.sh", "compute": 1.0},
+        ]
+    }
+
+    materialized = score_task._effective_test_cmds(config)
+    assert materialized == [
+        {
+            "cmd": "scripts/h200.sh",
+            "compute": 2.0,
+            "env": {"BASE": "yes", "BATCH_SIZE": "96"},
+        },
+        {"cmd": "scripts/eval.sh", "compute": 1.0},
+    ]
+    # The source config is never mutated; this matters because budget checks
+    # and later eval groups may reuse it.
+    assert "h200" in config["test_cmds"][0]
+
+
+def test_h200_override_is_not_selected_on_h100(monkeypatch):
+    score_task = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_GPU_TYPE", "H100")
+    config = {
+        "test_cmds": [
+            {
+                "cmd": "scripts/h100.sh",
+                "compute": 4.0,
+                "h200": {"cmd": "scripts/h200.sh", "compute": 2.0},
+            }
+        ]
+    }
+    materialized = score_task._effective_test_cmds(config)
+    assert materialized == config["test_cmds"]
+
+
+@pytest.mark.parametrize(
+    "task_id, expected_compute, expected_env",
+    [
+        (
+            "llm-pretrain-attention",
+            2.0,
+            {"BATCH_SIZE": "64", "GRAD_ACCUM": "8"},
+        ),
+        (
+            "llm-rl-advantage",
+            1.0,
+            {
+                "TP_SIZE": "1",
+                "MAX_TOKEN_LEN_PER_GPU": "20480",
+                "GPU_MEM_UTIL": "0.5",
+            },
+        ),
+    ],
+)
+def test_h200_materialization_preserves_native_microbatch_settings(
+    monkeypatch, task_id, expected_compute, expected_env
+):
+    """The Daytona verifier consumes the repository's original H200 metadata."""
+    score_task = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_GPU_TYPE", "H200")
+    config = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "tasks"
+            / task_id
+            / "config.json"
+        ).read_text()
+    )
+    materialized = score_task._effective_test_cmds(config)
+    assert len(materialized) == len(config["test_cmds"])
+    entry = materialized[0]
+    assert entry["compute"] == expected_compute
+    assert entry.get("env") == expected_env
+    # H200 metadata remains in the source dictionary; materialization is a
+    # verifier-local copy and cannot rewrite the native task configuration.
+    assert "h200" in config["test_cmds"][0]
+
+
+def test_all_native_pretrain_h200_profiles_preserve_effective_microbatch():
+    """Every published pretraining H200 profile keeps its macro-batch fixed."""
+    root = Path(__file__).resolve().parents[2] / "tasks"
+    for config_path in sorted((root).glob("llm-pretrain-*/config.json")):
+        config = json.loads(config_path.read_text())
+        entry = next(
+            (tc for tc in config.get("test_cmds", []) if isinstance(tc.get("h200"), dict)),
+            None,
+        )
+        if entry is None:
+            continue
+        override_env = entry["h200"].get("env", {})
+        assert {"BATCH_SIZE", "GRAD_ACCUM"} <= set(override_env)
+        script = config_path.parent / "scripts" / "gpt_345m.sh"
+        script_text = script.read_text()
+        defaults = {}
+        for key in ("BATCH_SIZE", "GRAD_ACCUM"):
+            match = re.search(rf"{key}=\$\{{{key}:-([^}}]+)\}}", script_text)
+            assert match, f"missing H100 {key} default in {script}"
+            defaults[key] = int(match.group(1))
+        assert int(override_env["BATCH_SIZE"]) * int(override_env["GRAD_ACCUM"]) == (
+            defaults["BATCH_SIZE"] * defaults["GRAD_ACCUM"]
+        )
+
+
+def test_all_native_rl_h200_profiles_include_runtime_memory_settings():
+    root = Path(__file__).resolve().parents[2] / "tasks"
+    for config_path in sorted((root).glob("llm-rl-*/config.json")):
+        config = json.loads(config_path.read_text())
+        entry = next(tc for tc in config["test_cmds"] if "h200" in tc)
+        override_env = entry["h200"].get("env", {})
+        assert {"TP_SIZE", "MAX_TOKEN_LEN_PER_GPU", "GPU_MEM_UTIL"} <= set(override_env)
+
+
 def test_package_dir_matches_case_and_separators(tmp_path: Path):
     score_task = _load_score_task()
     workspace = tmp_path / "workspace"
@@ -414,7 +543,7 @@ def test_budget_scratch_config_reflects_oracle_override(tmp_path: Path):
     assert cfg2["test_cmds"][0]["cmd"] == "scripts/psm.sh"
 
 
-def test_infer_reserved_gpu_count_caps_at_max_parallel_gpus():
+def test_infer_reserved_gpu_count_balances_waves_at_the_cap():
     st = _load_score_task()
 
     # 3 whole-GPU test_cmds x 3 seeds in one group = 9 concurrent single-GPU jobs.
@@ -427,7 +556,8 @@ def test_infer_reserved_gpu_count_caps_at_max_parallel_gpus():
             {"label": "c", "group": 1, "compute": 1.0},
         ],
     }
-    assert st._infer_reserved_gpu_count(config) == st.MAX_PARALLEL_GPUS
+    # 8 would run waves of 8 and 1; 3 splits the 9 jobs into three even waves.
+    assert st._infer_reserved_gpu_count(config) == 3
 
     # Under the cap: untouched.
     assert st._infer_reserved_gpu_count(

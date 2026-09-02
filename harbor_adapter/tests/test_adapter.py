@@ -11,6 +11,7 @@ if str(ADAPTER_SRC) not in sys.path:
     sys.path.insert(0, str(ADAPTER_SRC))
 
 from mls_bench.adapter import (  # noqa: E402
+    AGENT_TIMEOUT_SEC,
     MAX_PARALLEL_GPUS,
     WAVE_GRACE_SEC,
     MlsBenchRoot,
@@ -19,9 +20,15 @@ from mls_bench.adapter import (  # noqa: E402
     _config_with_shifted_edit_ranges,
     _gpu_serialization_note,
     _gpu_waves,
+    _group_gpu_jobs,
+    _group_test_cmds,
     _load_ops_file,
+    _load_pkg_config,
+    _peak_gpus,
+    _resolve_package,
     _read_sections,
     _resources,
+    _seed_count,
     _stage_task_scaffold,
     _starting_workspace_text,
     _verifier_timeout_sec,
@@ -442,19 +449,24 @@ def _gpu_config(test_cmds: list[dict], seeds: list[int] | None = None) -> dict:
     return config
 
 
-def test_resources_caps_group_parallelism_at_eight_gpus():
+def test_resources_balances_waves_instead_of_clamping_to_the_cap():
     # cv-dbm-sampler: 3 whole-GPU jobs of 4 GPUs in one group = 12 concurrent.
+    # Clamping to the cap would reserve 8 and run waves of 2 jobs then 1,
+    # leaving half the reservation idle for the whole second wave — more
+    # GPU-hours than reserving 4 *and* more wall clock than reserving 12.
     config = _gpu_config([
         {"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"},
         {"label": "b", "group": 1, "compute": 4.0, "time": "4:00:00"},
         {"label": "c", "group": 1, "compute": 4.0, "time": "4:00:00"},
     ])
 
-    assert _resources({}, config)["gpus"] == MAX_PARALLEL_GPUS
+    assert _resources({}, config)["gpus"] == 4
 
 
-def test_resources_caps_seed_fanout_at_eight_gpus():
+def test_resources_balances_seed_fanout_into_even_waves():
     # rl-intrinsic-exploration: 3 single-GPU test_cmds x 3 seeds = 9 concurrent.
+    # Clamping to the cap would reserve 8 for waves of 8 and 1 — a whole extra
+    # wave to avoid reserving one more card. 3 splits the 9 jobs evenly.
     config = _gpu_config(
         [
             {"label": "a", "group": 1, "compute": 1.0, "time": "08:00:00"},
@@ -464,7 +476,7 @@ def test_resources_caps_seed_fanout_at_eight_gpus():
         seeds=[42, 123, 456],
     )
 
-    assert _resources({}, config)["gpus"] == MAX_PARALLEL_GPUS
+    assert _resources({}, config)["gpus"] == 3
 
 
 def test_resources_keeps_reservation_under_the_cap_untouched():
@@ -512,10 +524,10 @@ def test_verifier_timeout_pays_for_each_serialized_wave():
     ])
     gpus = _resources({}, config)["gpus"]
 
-    # 2 waves x (4h + the grace score_task.py grants each wave), + 30min
+    # 3 even waves x (4h + the grace score_task.py grants each wave), + 30min
     # slack + 120s per (test_cmd, seed).
     assert _verifier_timeout_sec(config, gpus) == (
-        2 * (4 * 3600 + WAVE_GRACE_SEC) + 30 * 60 + 120 * 3
+        3 * (4 * 3600 + WAVE_GRACE_SEC) + 30 * 60 + 120 * 3
     )
 
     # With enough GPUs for the whole group it collapses to a single wave.
@@ -543,7 +555,7 @@ def test_gpu_serialization_note_only_for_capped_tasks():
         {"label": "c", "group": 1, "compute": 4.0, "time": "4:00:00"},
     ])
     note = _gpu_serialization_note(capped, _resources({}, capped)["gpus"])
-    assert note and "2 sequential waves" in " ".join(note)
+    assert note and "3 sequential waves" in " ".join(note)
 
     fits = _gpu_config([{"label": "a", "group": 1, "compute": 4.0, "time": "4:00:00"}])
     assert _gpu_serialization_note(fits, _resources({}, fits)["gpus"]) == []
@@ -554,3 +566,104 @@ def test_gpu_serialization_note_only_for_capped_tasks():
     ]}
     assert _resources({}, cpu_only)["gpus"] == 0
     assert _gpu_serialization_note(cpu_only, 0) == []
+
+
+def test_no_rendered_task_reserves_gpus_a_wave_cannot_fill():
+    """Every reserved GPU must be used by every wave.
+
+    A reservation whose final wave uses only part of it is dominated: it costs
+    more GPU-hours than the smaller balanced reservation and more wall clock
+    than simply reserving the group's peak. `min(peak, MAX_PARALLEL_GPUS)` used
+    to land on exactly such values (cv-dbm-sampler reserved 8 for waves of 8
+    and 4; rl-intrinsic-exploration reserved 8 for waves of 8 and 1).
+    """
+    import json as _json
+    from pathlib import Path as _Path
+
+    repo = _Path(__file__).resolve().parents[2]
+    offenders = {}
+    for cfg_path in sorted((repo / "tasks").glob("*/config.json")):
+        config = _json.loads(cfg_path.read_text())
+        gpus = _resources({}, dict(config, use_cuda=True))["gpus"]
+        if gpus <= 0:
+            continue
+        n_seeds = _seed_count(config)
+        for gid, entries in _group_test_cmds(list(config.get("test_cmds") or [])).items():
+            jobs = _group_gpu_jobs(entries, n_seeds)
+            usage = [_peak_gpus([c for c, _ in wave]) for wave in _gpu_waves(jobs, gpus)]
+            # A single job wider than the cap is exempt: it has no smaller schedule.
+            if len(usage) > 1 and len(set(usage)) > 1 and max(c for c, _ in jobs) <= gpus:
+                offenders[f"{cfg_path.parent.name}[group={gid}]"] = {
+                    "reserved": gpus, "per_wave_gpu_usage": usage
+                }
+    assert not offenders, _json.dumps(offenders, indent=2)
+
+
+def test_rendered_bundles_match_what_the_adapter_would_render():
+    """No rendered task.toml may drift from the adapter that generates it.
+
+    The bundles under harbor/tasks/ are checked in, so a change to the resource
+    or timeout formulas silently leaves 140 stale files behind unless someone
+    re-renders. That is how `optimization-diagonal-net` kept `gpus = 3` after
+    the GPU formula moved to 2, and how every task kept a verifier timeout that
+    predated WAVE_GRACE_SEC being charged per wave.
+
+    The verifier timeout is checked as a floor, not an equality: a task owner
+    who measured a slow evaluation may raise it above the formula by hand (as
+    ai4sci-climate-emulation does), and extra headroom costs nothing. Only a
+    rendered value *below* what the formula asks for is a bug — that is the
+    direction that kills a wave mid-run and scores 0.
+    """
+    import json as _json
+    import re as _re
+    from pathlib import Path as _Path
+
+    repo = _Path(__file__).resolve().parents[2]
+    mb = MlsBenchRoot(root=repo)
+    drift = {}
+    for cfg_path in sorted((repo / "tasks").glob("*/config.json")):
+        name = cfg_path.parent.name
+        bundle = repo / "harbor" / "tasks" / f"mls-bench__{name}"
+        toml = bundle / "task.toml"
+        if not toml.exists():
+            continue
+        config = _json.loads(cfg_path.read_text())
+        try:
+            pkg_config = _load_pkg_config(mb, _resolve_package(config))
+        except Exception:
+            pkg_config = {}
+        res = _resources(pkg_config, config)
+        text = toml.read_text()
+        want = {
+            "gpus": res["gpus"],
+            "cpus": res["cpus"],
+            "memory_mb": res["memory_mb"],
+            "storage_mb": res["storage_mb"],
+            "agent_timeout": AGENT_TIMEOUT_SEC,
+            "verifier_timeout": _verifier_timeout_sec(config, res["gpus"]),
+        }
+        have = {
+            k: int(m.group(1))
+            for k in ("gpus", "cpus", "memory_mb", "storage_mb")
+            if (m := _re.search(rf"^{k} = (\d+)", text, _re.M))
+        }
+        have["agent_timeout"] = int(_re.search(r"\[agent\]\ntimeout_sec = (\d+)", text).group(1))
+        verifier_timeout = int(_re.search(r"\[verifier\]\ntimeout_sec = (\d+)", text).group(1))
+        bad = {k: {"rendered": have[k], "adapter": want[k]} for k in have if have[k] != want[k]}
+        if verifier_timeout < want["verifier_timeout"]:
+            bad["verifier_timeout"] = {
+                "rendered": verifier_timeout, "adapter_minimum": want["verifier_timeout"]
+            }
+
+        gpu_count = bundle / "tests" / "meta" / "gpu_count"
+        if gpu_count.exists() and int(gpu_count.read_text().strip() or 0) != res["gpus"]:
+            bad["meta/gpu_count"] = {
+                "rendered": int(gpu_count.read_text().strip() or 0), "adapter": res["gpus"]
+            }
+        compose = bundle / "environment" / "docker-compose.yaml"
+        if compose.exists() and (m := _re.search(r"^\s*count: (\d+)", compose.read_text(), _re.M)):
+            if int(m.group(1)) != res["gpus"]:
+                bad["compose count"] = {"rendered": int(m.group(1)), "adapter": res["gpus"]}
+        if bad:
+            drift[name] = bad
+    assert not drift, _json.dumps(drift, indent=2)

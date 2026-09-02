@@ -49,6 +49,7 @@ output/
 
 # Harbor runtime artifacts (created by `harbor run`)
 jobs/
+harbor/jobs-daytona*/
 harbor_adapter/scripts/__pycache__/
 harbor_adapter/**/__pycache__/
 
@@ -59,3 +60,18 @@ tasks/agent-tool-reasoning/.openrouter_key
 tasks/agent-tool-reasoning/.deepseek_key
 tasks/agent-tool-reasoning/.dashscope_key
 tasks/agent-tool-reasoning/.sopr_work/
+
+# Daytona/Harbor run artifacts and scratch job directories
+harbor/jobs-*/
+harbor/daytona-*/
+harbor/oracle-runs/
+harbor/robo-humanoid-smoke-jobs/
+harbor/mls-bench__*/
+harbor/*.log
+harbor/dataset.toml
+daytona-lite-retry-*/
+# verl source checkout fetched by vendor/packages.yaml (not vendored in git)
+vendor/verl/
+
+# Daytona smoke-validation scratch (reduced-scale task copies, run artifacts)
+harbor/.smoke/

@@ -20,6 +20,23 @@ PYTHONPATH=src python3 -m mls_bench.main \
 harbor run -c run_mls-bench.yaml
 ```
 
+To run the rendered tasks on Daytona:
+
+```bash
+uv tool install "harbor[daytona]"
+export DAYTONA_API_KEY="<your-daytona-key>"
+PYTHONPATH=src harbor run -c run-daytona.yaml
+```
+
+`run-daytona.yaml` uses `mls_bench.harbor_env:DaytonaEnvironment`, which sends
+each task's GPU-only Compose overlay to Daytona's direct sandbox resource
+request — Daytona rejects GPU+Compose. Real CPU-only multi-container tasks are
+untouched. The provider key comes from the host environment and is never
+embedded in task files. See
+[harbor/README.md](../harbor/README.md#run-on-daytona) for the option
+reference; `agent-tool-reasoning` and `mas-topology` additionally need
+DeepSeek/DashScope credentials.
+
 Per-package base images are already on Docker Hub
 (`bohanlyu2022/mlsbench-harbor-<pkg>:latest`, 65 packages). The per-task
 Dockerfile each rendered task ships is a 5-line layer on top of those.
@@ -39,6 +56,20 @@ Two-tier image build + verifier-side pristine baseline:
    `tests/meta/pristine/<rel>` + `tests/meta/pristine_manifest.json`. Harbor
    mounts `tests/` at `/tests/` only at verify time, so a root agent cannot
    tamper with the diff baseline before scoring.
+
+### Daytona-only compatibility layer
+
+`mls_bench.daytona_compat` runs at the end of `render_task()`, after verifier
+assets have been staged. It is intentionally outside `tasks/`: native
+MLS-Bench runs keep their original package versions, scripts and research
+scale. For Daytona, the layer selects the pinned verl base image (whose
+pristine manifest must match), installs the CUDA runtime alias vLLM needs,
+and caps verl's worker processes in the verifier copies of `train.sh`. Only
+the rendered `environment/Dockerfile` and verifier copies are changed;
+editable source and native task scripts are not. The operation is idempotent,
+so re-rendering does not accumulate layers or verifier flags. Runtime
+provider settings (H100 default, thread caps, RAM/CPU floors, NCCL fallback)
+live in `mls_bench.harbor_env.DaytonaEnvironment`, not in task files.
 
 Each rendered task directory:
 

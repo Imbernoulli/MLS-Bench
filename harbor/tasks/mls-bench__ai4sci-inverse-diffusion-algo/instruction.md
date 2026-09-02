@@ -48,6 +48,10 @@ stay unchanged.
 
 - `InverseBench/algo/custom.py`
 - editable: **entire file**
+- `InverseBench/configs/algorithm/custom.yaml`
+- editable: **entire file** (the Hydra config whose `method.*` keys are passed
+  to your `Custom` class; change it if your algorithm needs different
+  constructor arguments)
 
 
 Other files you may **read** for context (do not modify):
@@ -139,6 +143,26 @@ Other files you may **read** for context (do not modify):
     72:                          self.net.img_resolution, self.net.img_resolution,
     73:                          device=device)
     74:         return x
+```
+
+### `InverseBench/configs/algorithm/custom.yaml`  [EDITABLE — entire file only]
+
+```yaml
+     1: name: Custom
+     2: method:
+     3:   _target_: algo.custom.Custom
+     4:   diffusion_scheduler_config:
+     5:     num_steps: 1000
+     6:     schedule: 'vp'
+     7:     timestep: 'vp'
+     8:     scaling: 'vp'
+     9:   guidance_scale: 10.0
+    10:   sde: true
+    11:   num_optim_steps: 1000
+    12:   observation_weight: 1.0
+    13:   base_lambda: 0.25
+    14:   base_lr: 0.5
+    15:   num_mc_samples: 10
 ```
 
 ## Reference Baselines

@@ -17,7 +17,7 @@ mls_bench_package = "pytorch-geometric"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 12960
+timeout_sec = 13260
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

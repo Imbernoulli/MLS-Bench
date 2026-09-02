@@ -21,6 +21,8 @@ from typing import Any
 import tomli_w
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from .daytona_compat import apply_daytona_compatibility
+
 
 # --------------------------------------------------------------------------- #
 # MLS-Bench paths
@@ -714,6 +716,15 @@ def build_task_context(mb: MlsBenchRoot, task_id: str) -> TaskContext:
             else:
                 for label in labels:
                     oracle_cmd_overrides.append({"label": str(label), "cmd": baseline_cfg["cmd"]})
+        # Native MLSBench also exports baseline_config["env"] for the oracle
+        # run (e.g. mlsys-sparse-attention-inference's dense baseline needs
+        # ALLOW_DENSE_FLAG=1 or the density-budget check rejects it).  Forward
+        # it the same way as cmd so the Harbor oracle matches native.
+        baseline_env = baseline_cfg.get("env")
+        if isinstance(baseline_env, dict) and baseline_env:
+            oracle_cmd_overrides.append(
+                {"label": "", "env": {str(k): str(v) for k, v in baseline_env.items()}}
+            )
 
     return TaskContext(
         task_id=task_id,
@@ -882,6 +893,38 @@ def _fits_on_gpus(computes: list[float], devices: int) -> bool:
     return True
 
 
+def _wave_balanced_gpus(
+    computes: list[float],
+    peak_gpus: int,
+    largest_job: int,
+) -> int:
+    """Largest reservation <= MAX_PARALLEL_GPUS that leaves no wave half idle.
+
+    Clamping straight to the cap can land on a reservation whose final wave
+    uses a fraction of it: three 4-GPU jobs on 8 reserved GPUs run as waves of
+    2 and 1, so half the reservation sits idle for the whole second wave.  That
+    value is dominated on both axes — it burns more GPU-hours than reserving
+    `largest_job` (48 -> 64 for cv-dbm-sampler) *and* more wall clock than
+    reserving `peak_gpus`.  Nine 1-GPU jobs on 8 are worse still: waves of 8
+    and 1 to avoid reserving one more card.
+
+    So walk candidate reservations down from the cap and take the first whose
+    waves all use the same number of GPUs.  Reserving fewer GPUs for more waves
+    trades wall clock for utilization; reserving a number no wave can fill
+    trades away both.
+    """
+    if peak_gpus <= MAX_PARALLEL_GPUS:
+        return peak_gpus
+    jobs = [(c, 0) for c in computes]
+    for candidate in range(MAX_PARALLEL_GPUS, largest_job - 1, -1):
+        usage = [_peak_gpus([c for c, _ in wave]) for wave in _gpu_waves(jobs, candidate)]
+        if usage and len(set(usage)) == 1:
+            # `usage[0]`, not `candidate`: a candidate above the balanced width
+            # produces the same split, and reserving the surplus helps nobody.
+            return usage[0]
+    return largest_job
+
+
 def _gpu_waves(
     jobs: list[tuple[float, int]],
     devices: int,
@@ -922,11 +965,13 @@ def _gpu_serialization_note(config: dict, gpus: int) -> list[str]:
     if peak <= gpus:
         return []
     return textwrap.wrap(
-        f"Capped at {gpus} GPUs (MAX_PARALLEL_GPUS): running every "
-        f"(test_cmd, seed) eval job in parallel would occupy {peak} GPUs, more "
-        "than a typical Harbor GPU host has. The verifier instead runs them as "
-        f"{waves} sequential waves of at most {gpus} GPUs, and "
-        "[verifier].timeout_sec above budgets wall clock for every wave.",
+        f"Reserves {gpus} GPUs: running every (test_cmd, seed) eval job in "
+        f"parallel would occupy {peak}, above the MAX_PARALLEL_GPUS="
+        f"{MAX_PARALLEL_GPUS} cap. The verifier runs them as {waves} sequential "
+        f"waves instead. {gpus} is the widest reservation at or below the cap "
+        "that every wave fills completely — a wider one would idle GPUs in the "
+        "final wave for no gain in wall clock. [verifier].timeout_sec above "
+        "budgets wall clock for every wave.",
         width=74,
     )
 
@@ -963,12 +1008,15 @@ def _resources(pkg_config: dict, config: dict) -> dict:
         n_seeds = _seed_count(config)
         peak_gpus = 0
         largest_job = 0
+        all_computes: list[float] = []
         for entries in _group_test_cmds(list(config.get("test_cmds", []) or [])).values():
             # Every (test_cmd, seed) pair is its own concurrent job: `seeds`
             # copies of a whole-GPU job each take dedicated GPU(s), `seeds`
             # copies of a fractional job compete for fractional space and get
             # bin-packed.
             computes = [c for c, _ in _group_gpu_jobs(entries, n_seeds)]
+            if _peak_gpus(computes) >= peak_gpus:
+                all_computes = computes
             peak_gpus = max(peak_gpus, _peak_gpus(computes))
             for compute in computes:
                 if compute > 0.0:
@@ -978,7 +1026,7 @@ def _resources(pkg_config: dict, config: dict) -> dict:
         # concurrently as later sequential waves, and `_verifier_timeout_sec`
         # pays for those extra waves. A single job that needs more than the cap
         # on its own is exempt — it has no smaller schedule.
-        gpus = max(1, min(peak_gpus, MAX_PARALLEL_GPUS), largest_job)
+        gpus = max(1, _wave_balanced_gpus(all_computes, peak_gpus, largest_job), largest_job)
         if largest_job > MAX_PARALLEL_GPUS:
             # Waves cannot help here, so the reservation is raised above the cap
             # and the task simply will not start on a host with fewer GPUs. Say
@@ -1074,7 +1122,13 @@ def render_task(
         "task_description": ctx.task_description,
         "package": ctx.package,
         "workdir": pkg_workdir,
-        "base_image": HARBOR_BASE_DOCKER.format(pkg=ctx.package.lower()),
+        # A package config may pin a cache-busting Harbor base tag after a
+        # package-level pre_edit fix.  The default keeps the published
+        # ``:latest`` convention for all existing tasks.
+        "base_image": ctx.config.get(
+            "harbor_base_image",
+            HARBOR_BASE_DOCKER.format(pkg=ctx.package.lower()),
+        ),
         "agent_timeout_sec": _agent_timeout_sec(ctx.config),
         "verifier_timeout_sec": _verifier_timeout_sec(ctx.config, res["gpus"]),
         "build_timeout_sec": 1800,
@@ -1176,6 +1230,17 @@ def render_task(
         mb, ctx, tests_dir, task_dir,
         scaffold_dir=env_dir / "_scaffold",
         config=effective_config,
+    )
+    # Provider-specific runtime workarounds belong to the rendered Harbor
+    # bundle.  Keep the native ``tasks/`` tree (and its original scale and
+    # scripts) untouched; Daytona compatibility may adjust only the image
+    # layer and verifier copies after all assets have been staged.
+    apply_daytona_compatibility(
+        ctx.task_id,
+        dockerfile=env_dir / "Dockerfile",
+        tests_dir=tests_dir,
+        scaffold_dir=env_dir / "_scaffold",
+        package_source=_materialized_package_source(mb, ctx.package),
     )
     (tests_dir / "meta" / "oracle_cmd_overrides.token").write_text(
         oracle_cmd_overrides_token + "\n"

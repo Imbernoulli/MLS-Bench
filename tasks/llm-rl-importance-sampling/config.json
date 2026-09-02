@@ -7,7 +7,7 @@
       "group": 1,
       "compute": 2,
       "mem": 200,
-      "time": "6:00:00",
+      "time": "10:00:00",
       "package": "verl",
       "h200": {
         "compute": 1,

@@ -24,6 +24,7 @@ python3 -m verl.trainer.main_ppo \
     data.filter_overlong_prompts=True \
     data.truncation='error' \
     data.shuffle=False \
+    data.dataloader_num_workers=0 \
     data.seed=$SEED_VALUE \
     actor_rollout_ref.model.path=/models/Qwen2.5-0.5B \
     actor_rollout_ref.actor.optim.lr=1e-6 \
@@ -45,6 +46,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.gpu_memory_utilization=${GPU_MEM_UTIL:-0.4} \
     actor_rollout_ref.rollout.max_model_len=17408 \
     actor_rollout_ref.rollout.enforce_eager=True \
+    actor_rollout_ref.rollout.agent.num_workers=${AGENT_NUM_WORKERS:-1} \
     +actor_rollout_ref.rollout.engine_kwargs.vllm.max_num_seqs=256 \
     +actor_rollout_ref.rollout.enable_sleep_mode=False \
     actor_rollout_ref.rollout.n=16 \
@@ -53,6 +55,7 @@ python3 -m verl.trainer.main_ppo \
     actor_rollout_ref.rollout.val_kwargs.do_sample=True \
     actor_rollout_ref.rollout.load_format=safetensors \
     actor_rollout_ref.ref.fsdp_config.param_offload=False \
+    reward.num_workers=${REWARD_NUM_WORKERS:-1} \
     algorithm.use_kl_in_reward=False \
     +algorithm.filter_groups.enable=True \
     +algorithm.filter_groups.metric=acc \
