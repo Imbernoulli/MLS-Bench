@@ -101,6 +101,11 @@ def _h200_gpu_count_from_rendered_task(environment_dir: Path, fallback: int) -> 
         entries = list(config.get("test_cmds", []) or [])
         if not entries:
             return fallback
+        # Do not reinterpret a task that has no native H200 profile.  Its
+        # declared reservation is already the source of truth, even if a
+        # hand-authored task.toml happens to differ from the computed peak.
+        if not any(isinstance(entry.get("h200"), dict) for entry in entries):
+            return fallback
         seeds = config.get("seeds") or [42]
         n_seeds = 1 if isinstance(seeds, int) else max(1, len(seeds))
         grouped: dict[object, list[dict]] = {}

@@ -302,6 +302,32 @@ def test_h100_keeps_native_baseline_reservation_with_h200_metadata(tmp_path: Pat
     assert env.task_env_config.gpus == 2
 
 
+def test_h200_does_not_scale_tasks_without_native_profile(tmp_path: Path):
+    module = _module()
+    env_dir = tmp_path / "environment"
+    env_dir.mkdir()
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(2))
+    meta = tmp_path / "tests" / "meta"
+    meta.mkdir(parents=True)
+    (meta / "config.json").write_text(
+        json.dumps({"test_cmds": [{"cmd": "scripts/train.sh", "compute": 2}]})
+    )
+    trial_paths = TrialPaths(tmp_path / "trial")
+    trial_paths.mkdir()
+    config = EnvironmentConfig(cpus=2, memory_mb=4096, storage_mb=10240, gpus=2)
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="unprofiled-h200-task",
+        session_id="unprofiled-h200-task.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+        spot=True,
+        gpu_type="H200",
+    )
+    assert env.task_env_config.gpus == 2
+
+
 def test_spot_defaults_to_h100_without_explicit_gpu_type(tmp_path: Path):
     module = _module()
     env_dir = tmp_path / "environment"
