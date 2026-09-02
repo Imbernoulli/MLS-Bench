@@ -144,6 +144,28 @@ environment:
 Switch to `type: docker` if you don't need GPU and don't want to install
 this adapter as a package.
 
+### Apptainer / Singularity (no Docker daemon)
+
+On clusters that only have `apptainer`/`singularity` (e.g. SLURM nodes),
+use `mls_bench.harbor_env:SingularityGPUEnvironment` instead. It parses the
+per-task Dockerfile directly (no docker-compose needed) and adds `--nv` GPU
+passthrough the same way `DockerGPUEnvironment` does.
+
+```yaml
+environment:
+  import_path: mls_bench.harbor_env:SingularityGPUEnvironment
+```
+
+**Known issue:** most per-package base images are built on Ubuntu 22.04
+(glibc 2.35). On a cluster where the invoking user has no `/etc/subuid`
+entry, apptainer's `--fakeroot` bind-mounts a helper linked against the
+*host's* glibc, which crashes with `GLIBC_2.38 not found` against that older
+image. Fix: rebuild the affected `.sif` on a newer base with
+`scripts/rebuild_glibc_base_image.py --pkg <pkg>` (run `--list` first to see
+which packages it can rebuild automatically), then point
+`SingularityGPUEnvironment`'s `singularity_image_cache_dir` kwarg at its
+output directory.
+
 ### IsaacGym on Hopper needs a >= 570 user-space driver
 
 `mls-bench__robo-humanoid-sim2real-algo` runs IsaacGym Preview 4, whose
@@ -241,7 +263,10 @@ containing `tasks/` + `vendor/packages.yaml` → `~/MLS-Bench/`.
   in-container mini-scheduler
 - `src/mls_bench/task-template/tests/score_task.py::cmd_guard` — the
   edit-range guard
-- `src/mls_bench/harbor_env.py` — `DockerGPUEnvironment` plugin
+- `src/mls_bench/harbor_env.py` — `DockerGPUEnvironment` /
+  `SingularityGPUEnvironment` plugins
 - `scripts/build_base_image.py::build_one` — per-package harbor base build
+- `scripts/rebuild_glibc_base_image.py` — rebuild a base `.sif` on newer
+  glibc (see GPU support → Apptainer / Singularity)
 - `tests/test_scheduler.py`, `tests/test_adapter.py`,
   `tests/test_score_task.py` — 28 unit tests
