@@ -720,9 +720,10 @@ def main() -> int:
             "result_json": str(result_json),
         }
 
-    # Pack batches by aggregate declared GPU count when requested.  This keeps
-    # each task's resource contract intact: a task declaring 8 GPUs receives 8
-    # GPUs and waits for capacity instead of being silently reduced to 1.
+    # Pack batches by aggregate effective GPU count when requested.  Without
+    # an override this is the task's declared count; an explicit override is
+    # honored so a smoke can intentionally reserve fewer GPUs and run in
+    # parallel without changing the task metadata recorded in the report.
     batches: list[list[tuple[int, TaskRecord]]] = []
     if args.resource == "gpu" and args.gpu_limit is not None:
         if args.gpu_limit < 1:
