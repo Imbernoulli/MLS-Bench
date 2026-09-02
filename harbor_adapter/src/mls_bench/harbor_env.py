@@ -430,6 +430,13 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         hold_value = self._kwargs.get("toolbox_hold_bad_placements", True)
         if isinstance(hold_value, str):
             hold_value = hold_value.strip().lower() in {"1", "true", "yes", "on"}
+        # Daytona places each request on the runner with the most free
+        # capacity, so keeping a dead placement alive ("decoy") forces the
+        # retry onto another runner — but only when the organization quota can
+        # still fit the decoy(s) plus the next attempt.  ``toolbox_quota``
+        # defaults to 10 (the current MLS-Bench org limit); a request that
+        # would exceed it deletes the placement immediately instead.
+        quota = self._int_kwarg("toolbox_quota") or 10
         decoys: list[Any] = []
         last_error: Exception | None = None
 
@@ -462,7 +469,11 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
                     )
                     if sandbox is None:
                         continue
-                    if hold_value and attempt < attempts:
+                    # gpu_count is the per-attempt reservation computed above.
+                    fits_retry = (
+                        (len(decoys) + 1) * gpu_count + gpu_count <= quota
+                    )
+                    if hold_value and attempt < attempts and fits_retry:
                         decoys.append(sandbox)
                     else:
                         await _delete_quietly(sandbox)
