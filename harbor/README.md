@@ -25,7 +25,9 @@ PYTHONPATH=. harbor run -c run.yaml
 ```bash
 uv tool install "harbor[daytona]"
 export DAYTONA_API_KEY="<your-daytona-key>"
-PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona.yaml
+export PYTHONPATH=.:../harbor_adapter/src
+harbor run -c run-daytona-lite.yaml      # the 30 MLS-Bench-Lite tasks
+harbor run -c run-daytona.yaml           # all 138 non-API tasks
 ```
 
 `harbor_env:DaytonaEnvironment` routes all 140 tasks through Daytona's direct
@@ -46,8 +48,9 @@ harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
 `--ek KEY=VALUE` the Daytona environment. For an environment-only check use
 `--agent nop --disable-verification`; the 140 tasks share 65 base images, so one task
 per image covers every environment. `--path` takes one task *or* a dataset
-directory and cannot be repeated — select a subset with `task_names` /
-`exclude_task_names` under the config's `datasets:` block.
+directory and cannot be repeated; a directory replaces the config's
+`datasets:` block, exclude list included. `run-daytona-lite.yaml` selects the
+30 MLS-Bench-Lite tasks by `task_names`; copy it for any other subset.
 
 ### The 5-hour agent budget
 
@@ -69,7 +72,7 @@ eval cost — and is deliberately not flattened to one value.
 | --- | --- | --- |
 | `gpu_type` | `H100` | Daytona's pool also holds Blackwell cards the pinned CUDA wheels cannot run. Use `H200` only for tasks with a native `h200` profile. |
 | `spot` | `false` | Spot capacity is cheaper but frequently unavailable. |
-| `gpu_memory_gb` / `gpu_cpus` | `64` / `16` | Floors. Daytona enforces `task.toml` resources as hard cgroup limits, which local Docker effectively does not. verl RL validation needs `128`. |
+| `gpu_memory_gb` / `gpu_cpus` | `64` / `16` | Floors. Daytona enforces `task.toml` resources as hard cgroup limits, which local Docker effectively does not. The verl `llm-rl-*` tasks are raised to `128` automatically; their validation step is OOM-killed at 64. |
 | `toolbox_ready_retries` | `3` | Recreates a sandbox whose toolbox never answers. |
 | `snapshot_salt` | unset | Appends a no-op `RUN` layer, forcing a fresh snapshot. Use when retries keep landing on the same bad runner — Daytona prefers whichever runner already caches the snapshot, and a cached copy can be broken. |
 
@@ -83,7 +86,9 @@ where both NCCL paths fail with `cudaErrorIllegalState`.
 lower them with `--override-gpus`: that changes the parallelism the task was
 calibrated for. Reserve `--override-*` for an organization whose per-sandbox
 limits genuinely cannot hold the request; CPU sandboxes cap at 8 GB RAM and
-10 GB disk.
+10 GB disk. A run interrupted while its snapshot builds leaves the sandbox,
+and its share of the GPU quota, allocated until you delete it in the Daytona
+dashboard.
 
 H200 is defined by the native MLS-Bench configs, not by the provider layer: 15
 `llm-pretrain-*`/`llm-rl-*` tasks declare validated `h200` command/compute/env
@@ -102,6 +107,8 @@ authenticates the sandbox provider.
 .
 ├── README.md          this file
 ├── run.yaml           reference Harbor config (GPU-enabled environment + oracle agent)
+├── run-daytona.yaml   the same run on Daytona sandboxes (138 non-API tasks)
+├── run-daytona-lite.yaml  Daytona, restricted to the 30 MLS-Bench-Lite tasks
 ├── harbor_env.py      DockerGPUEnvironment — Harbor's docker env with the GPU flag flipped
 └── tasks/             140 rendered task directories + dataset.toml manifest
     ├── dataset.toml

@@ -493,3 +493,86 @@ def test_daytona_run_configs_select_custom_environment():
             "mls-bench__agent-tool-reasoning",
             "mls-bench__mas-topology",
         }
+
+
+def test_verl_bundles_get_the_128g_memory_floor_automatically(tmp_path: Path):
+    """A rendered verl task is raised to 128 GiB even when the kwarg says 64.
+
+    verl's validation generation OOM-killed the ray worker in a 64 GiB sandbox
+    and completed only at 128 GiB; the floor is keyed on the ``task.toml``
+    package metadata so no flag is needed.  Other packages keep the kwarg.
+    """
+    module = _module()
+    from daytona import CreateSandboxFromImageParams, Image, Resources
+
+    for package, expected_memory in (("verl", 128), ("nanoGPT", 64), (None, 64)):
+        task_dir = tmp_path / f"task-{package}"
+        env_dir = task_dir / "environment"
+        env_dir.mkdir(parents=True)
+        (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+        (env_dir / "docker-compose.yaml").write_text(_compose(2))
+        if package is not None:
+            (task_dir / "task.toml").write_text(
+                f'[metadata]\nmls_bench_package = "{package}"\n'
+            )
+        trial_paths = TrialPaths(task_dir / "trial")
+        trial_paths.mkdir()
+        env = module.DaytonaEnvironment(
+            environment_dir=env_dir,
+            environment_name=f"floor-{package}",
+            session_id=f"floor-{package}.1",
+            trial_paths=trial_paths,
+            task_env_config=EnvironmentConfig(
+                cpus=4, memory_mb=16384, storage_mb=61440, gpus=2
+            ),
+            gpu_memory_gb="64",
+            gpu_cpus="16",
+        )
+        captured = []
+
+        async def fake_parent_create_sandbox(self, params, *args, **kwargs):
+            captured.append(params)
+            self._sandbox = object()
+
+        monkeypatch = pytest.MonkeyPatch()
+        try:
+            monkeypatch.setattr(
+                module._HarborDaytonaEnvironment,
+                "_create_sandbox",
+                fake_parent_create_sandbox,
+            )
+            params = CreateSandboxFromImageParams(
+                image=Image.base("ubuntu:22.04"),
+                resources=Resources(cpu=4, memory=16, disk=60, gpu=2),
+            )
+            asyncio.run(env._create_sandbox(params))
+        finally:
+            monkeypatch.undo()
+        assert captured[0].resources.memory == expected_memory, package
+
+
+def test_lite_config_lists_exactly_the_readme_lite_tasks():
+    """harbor/run-daytona-lite.yaml is the README's 30-task table, verbatim.
+
+    Users select MLS-Bench-Lite with ``-c run-daytona-lite.yaml``; this keeps
+    the file, the README table and the rendered dataset from drifting apart.
+    """
+    import re
+
+    readme = Path("README.md").read_text()
+    section = re.search(r"## MLS-Bench-Lite(.*?)</details>", readme, re.S).group(1)
+    table = {f"mls-bench__{tid}" for tid in re.findall(r"\]\(tasks/([a-z0-9\-]+)\)", section)}
+    assert len(table) == 30
+
+    lite = yaml.safe_load(Path("harbor/run-daytona-lite.yaml").read_text())
+    full = yaml.safe_load(Path("harbor/run-daytona.yaml").read_text())
+    (dataset,) = lite["datasets"]
+    assert dataset["path"] == "tasks"
+    names = dataset["task_names"]
+    assert len(names) == len(set(names)) == 30
+    assert set(names) == table
+    for name in names:
+        assert (Path("harbor/tasks") / name / "task.toml").is_file(), name
+    # Same provider settings as the full-dataset config, so the two cannot drift.
+    assert lite["environment"] == full["environment"]
+    assert lite["n_concurrent_trials"] == full["n_concurrent_trials"]

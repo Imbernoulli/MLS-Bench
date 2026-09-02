@@ -263,7 +263,8 @@ uv tool install "harbor[daytona]"
 export DAYTONA_API_KEY="<your-daytona-key>"
 export PYTHONPATH=.:../harbor_adapter/src
 
-harbor run -c run-daytona.yaml                        # all tasks
+harbor run -c run-daytona-lite.yaml                   # the 30 MLS-Bench-Lite tasks
+harbor run -c run-daytona.yaml                        # all 138 non-API tasks
 harbor run -c run-daytona.yaml \
   --path tasks/mls-bench__robo-diffusion-policy \
   --agent oracle                                      # one task, strongest baseline
@@ -278,11 +279,12 @@ the other 138 do not.
 
 `run-daytona.yaml` defaults to `gpu_type: H100`, `spot: false`,
 `gpu_memory_gb: 64` and `gpu_cpus: 16`; any `--ek`
-overrides the file for one invocation. H100 is the default because Daytona's
-pool also holds Blackwell (sm_120) cards that the pinned CUDA wheels have no
-kernels for. Unlike local Docker, Daytona enforces `task.toml` resources as
-hard cgroup limits, hence the RAM/CPU floors and the thread caps the adapter
-injects.
+overrides the file for one invocation. The four verl `llm-rl-*` tasks are
+raised to 128 GB automatically; their validation step is OOM-killed at 64.
+H100 is the default because Daytona's pool also holds Blackwell (sm_120)
+cards that the pinned CUDA wheels have no kernels for. Unlike local Docker,
+Daytona enforces `task.toml` resources as hard cgroup limits, hence the
+RAM/CPU floors and the thread caps the adapter injects.
 
 GPU counts come from each task's own declaration; size `--n-concurrent`
 against those, and don't lower them with `--override-gpus`.
@@ -293,7 +295,9 @@ count, batch/TP env — in their native config. `--ek gpu_type=H200` forwards
 `MLSBENCH_GPU_TYPE` so the verifier materializes that existing block; the
 adapter invents nothing, and tasks without the block keep their H100 baseline.
 Native (non-Harbor) runs select the same path with `compute_scale: 0.5` in
-`configs/react.yaml`.
+`configs/react.yaml`; local Harbor Docker runs (`run.yaml`) with
+`--ve MLSBENCH_GPU_TYPE=H200`, while their Compose overlay still reserves the
+declared H100 GPU count. Without either, H200 hardware runs the H100 profile.
 
 ### Evaluating an agent
 
@@ -311,25 +315,17 @@ harbor run -c run-daytona.yaml --path tasks/mls-bench__ts-classification \
   --agent claude-code --model anthropic/claude-opus-4-7 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 
-# every task in the dataset directory
-harbor run -c run-daytona.yaml --path tasks \
+# the 30 MLS-Bench-Lite tasks
+harbor run -c run-daytona-lite.yaml \
   --agent codex --model openai/gpt-5.6 \
   --agent-env OPENAI_API_KEY="$OPENAI_API_KEY"
 ```
 
-`--path` takes a single task *or* a dataset directory; it cannot be repeated.
-To run a specific subset — there is no separate Lite dataset, `harbor/tasks/`
-is the full 140 — select it in the config's `datasets:` block instead.
-`task_names` and `exclude_task_names` both accept globs:
-
-```yaml
-datasets:
-  - path: tasks
-    task_names:                     # the MLS-Bench-Lite 30
-      - mls-bench__cv-vae-loss
-      - mls-bench__rl-value-discrete
-      # ... the remaining 28
-```
+`--path` takes a single task *or* a dataset directory; it cannot be repeated,
+and a directory replaces the config's `datasets:` block, its exclude list
+included. There is no separate Lite dataset — `harbor/tasks/` is the full
+140 — so `run-daytona-lite.yaml` names the 30 in `task_names`; copy it for
+any other subset (`task_names` and `exclude_task_names` accept globs).
 
 `harbor run --help` lists the built-in harnesses (`claude-code`, `codex`,
 `aider`, `swe-agent`, `opencode`, `openhands`, `gemini-cli`, `goose`, ...);

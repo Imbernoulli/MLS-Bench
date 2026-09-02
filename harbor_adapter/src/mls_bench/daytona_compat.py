@@ -1,4 +1,7 @@
-"""Daytona-only compatibility patches for rendered Harbor tasks.
+"""Provider compatibility patches for rendered Harbor tasks.
+
+Written for Daytona, but applied to every rendered bundle: the patches are
+harmless under local Docker, and one rendering must serve both providers.
 
 The native ``tasks/<task>/`` tree is the MLS-Bench source of truth and should
 not change just because a remote provider needs a different user-space

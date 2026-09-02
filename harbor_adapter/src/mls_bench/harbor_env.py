@@ -24,6 +24,7 @@ import importlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,28 @@ except AttributeError:  # pragma: no cover - provider-version diagnostic
 _GPU_CONTEXT: contextvars.ContextVar[int] = contextvars.ContextVar(
     "mlsbench_daytona_gpu_count", default=0
 )
+
+
+# Host-RAM floors (GiB) that a package needs on Daytona regardless of the
+# ``gpu_memory_gb`` kwarg.  verl's validation step launches vLLM generation
+# workers next to the trainer; in a 64 GiB sandbox the ray ``AgentLoopWorker``
+# was OOM-killed (``ActorDiedError``, SYSTEM_ERROR) and only a 128 GiB sandbox
+# completed the run.  Keyed by the ``mls_bench_package`` metadata every
+# rendered ``task.toml`` carries, so no native task config is consulted.
+PACKAGE_MEMORY_FLOOR_GB: dict[str, int] = {"verl": 128}
+
+_PACKAGE_RE = re.compile(r'^mls_bench_package\s*=\s*"([^"]*)"', re.MULTILINE)
+
+
+def _rendered_task_package(environment_dir: Path) -> str | None:
+    """Return the ``mls_bench_package`` of the rendered task, if present."""
+    task_toml = Path(environment_dir).parent / "task.toml"
+    try:
+        text = task_toml.read_text()
+    except OSError:
+        return None
+    match = _PACKAGE_RE.search(text)
+    return match.group(1) if match else None
 
 
 def _h200_gpu_count_from_rendered_task(environment_dir: Path, fallback: int) -> int:
@@ -367,7 +390,9 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             # limits, so GPU sandboxes may request a larger floor (for example
             # loading a 7B checkpoint needs more than 16 GiB of host RAM).
             if resources is not None:
-                min_memory = self._int_kwarg("gpu_memory_gb")
+                min_memory = self._int_kwarg("gpu_memory_gb") or 0
+                package = _rendered_task_package(self.environment_dir) or ""
+                min_memory = max(min_memory, PACKAGE_MEMORY_FLOOR_GB.get(package, 0))
                 if min_memory and (resources.memory or 0) < min_memory:
                     resources.memory = min_memory
                 min_cpus = self._int_kwarg("gpu_cpus")
