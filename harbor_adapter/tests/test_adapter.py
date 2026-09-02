@@ -607,6 +607,12 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
     re-renders. That is how `optimization-diagonal-net` kept `gpus = 3` after
     the GPU formula moved to 2, and how every task kept a verifier timeout that
     predated WAVE_GRACE_SEC being charged per wave.
+
+    The verifier timeout is checked as a floor, not an equality: a task owner
+    who measured a slow evaluation may raise it above the formula by hand (as
+    ai4sci-climate-emulation does), and extra headroom costs nothing. Only a
+    rendered value *below* what the formula asks for is a bug — that is the
+    direction that kills a wave mid-run and scores 0.
     """
     import json as _json
     import re as _re
@@ -642,8 +648,12 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
             if (m := _re.search(rf"^{k} = (\d+)", text, _re.M))
         }
         have["agent_timeout"] = int(_re.search(r"\[agent\]\ntimeout_sec = (\d+)", text).group(1))
-        have["verifier_timeout"] = int(_re.search(r"\[verifier\]\ntimeout_sec = (\d+)", text).group(1))
+        verifier_timeout = int(_re.search(r"\[verifier\]\ntimeout_sec = (\d+)", text).group(1))
         bad = {k: {"rendered": have[k], "adapter": want[k]} for k in have if have[k] != want[k]}
+        if verifier_timeout < want["verifier_timeout"]:
+            bad["verifier_timeout"] = {
+                "rendered": verifier_timeout, "adapter_minimum": want["verifier_timeout"]
+            }
 
         gpu_count = bundle / "tests" / "meta" / "gpu_count"
         if gpu_count.exists() and int(gpu_count.read_text().strip() or 0) != res["gpus"]:
