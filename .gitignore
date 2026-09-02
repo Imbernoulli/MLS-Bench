@@ -72,3 +72,6 @@ harbor/dataset.toml
 daytona-lite-retry-*/
 # verl source checkout fetched by vendor/packages.yaml (not vendored in git)
 vendor/verl/
+
+# Daytona smoke-validation scratch (reduced-scale task copies, run artifacts)
+harbor/.smoke/
