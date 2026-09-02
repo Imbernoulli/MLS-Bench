@@ -91,7 +91,7 @@ digest = "sha256:1e6a05794d6de619ba1d8c377e48ec2b4b0aada6ad79d09ae83e5f322e22fdd
 
 [[tasks]]
 name = "mls-bench/cv-dbm-sampler"
-digest = "sha256:52b3af3def1c847f11a95b31018484a377c65b536da4eef0c04a25ae5a1e5069"
+digest = "sha256:0f9cd429edcc0747e38af79bc2504fa2eed791ea2f1e39d26f53d2a4825e09ef"
 
 [[tasks]]
 name = "mls-bench/cv-dbm-scheduler"
