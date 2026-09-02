@@ -17,7 +17,7 @@ mls_bench_package = "epymarl"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 175680
+timeout_sec = 175980
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

@@ -17,7 +17,7 @@ mls_bench_package = "llm-qat-runtime"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 15660
+timeout_sec = 16560
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

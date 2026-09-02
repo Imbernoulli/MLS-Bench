@@ -11,6 +11,7 @@ if str(ADAPTER_SRC) not in sys.path:
     sys.path.insert(0, str(ADAPTER_SRC))
 
 from mls_bench.adapter import (  # noqa: E402
+    AGENT_TIMEOUT_SEC,
     MAX_PARALLEL_GPUS,
     WAVE_GRACE_SEC,
     MlsBenchRoot,
@@ -22,7 +23,9 @@ from mls_bench.adapter import (  # noqa: E402
     _group_gpu_jobs,
     _group_test_cmds,
     _load_ops_file,
+    _load_pkg_config,
     _peak_gpus,
+    _resolve_package,
     _read_sections,
     _resources,
     _seed_count,
@@ -594,3 +597,63 @@ def test_no_rendered_task_reserves_gpus_a_wave_cannot_fill():
                     "reserved": gpus, "per_wave_gpu_usage": usage
                 }
     assert not offenders, _json.dumps(offenders, indent=2)
+
+
+def test_rendered_bundles_match_what_the_adapter_would_render():
+    """No rendered task.toml may drift from the adapter that generates it.
+
+    The bundles under harbor/tasks/ are checked in, so a change to the resource
+    or timeout formulas silently leaves 140 stale files behind unless someone
+    re-renders. That is how `optimization-diagonal-net` kept `gpus = 3` after
+    the GPU formula moved to 2, and how every task kept a verifier timeout that
+    predated WAVE_GRACE_SEC being charged per wave.
+    """
+    import json as _json
+    import re as _re
+    from pathlib import Path as _Path
+
+    repo = _Path(__file__).resolve().parents[2]
+    mb = MlsBenchRoot(root=repo)
+    drift = {}
+    for cfg_path in sorted((repo / "tasks").glob("*/config.json")):
+        name = cfg_path.parent.name
+        bundle = repo / "harbor" / "tasks" / f"mls-bench__{name}"
+        toml = bundle / "task.toml"
+        if not toml.exists():
+            continue
+        config = _json.loads(cfg_path.read_text())
+        try:
+            pkg_config = _load_pkg_config(mb, _resolve_package(config))
+        except Exception:
+            pkg_config = {}
+        res = _resources(pkg_config, config)
+        text = toml.read_text()
+        want = {
+            "gpus": res["gpus"],
+            "cpus": res["cpus"],
+            "memory_mb": res["memory_mb"],
+            "storage_mb": res["storage_mb"],
+            "agent_timeout": AGENT_TIMEOUT_SEC,
+            "verifier_timeout": _verifier_timeout_sec(config, res["gpus"]),
+        }
+        have = {
+            k: int(m.group(1))
+            for k in ("gpus", "cpus", "memory_mb", "storage_mb")
+            if (m := _re.search(rf"^{k} = (\d+)", text, _re.M))
+        }
+        have["agent_timeout"] = int(_re.search(r"\[agent\]\ntimeout_sec = (\d+)", text).group(1))
+        have["verifier_timeout"] = int(_re.search(r"\[verifier\]\ntimeout_sec = (\d+)", text).group(1))
+        bad = {k: {"rendered": have[k], "adapter": want[k]} for k in have if have[k] != want[k]}
+
+        gpu_count = bundle / "tests" / "meta" / "gpu_count"
+        if gpu_count.exists() and int(gpu_count.read_text().strip() or 0) != res["gpus"]:
+            bad["meta/gpu_count"] = {
+                "rendered": int(gpu_count.read_text().strip() or 0), "adapter": res["gpus"]
+            }
+        compose = bundle / "environment" / "docker-compose.yaml"
+        if compose.exists() and (m := _re.search(r"^\s*count: (\d+)", compose.read_text(), _re.M)):
+            if int(m.group(1)) != res["gpus"]:
+                bad["compose count"] = {"rendered": int(m.group(1)), "adapter": res["gpus"]}
+        if bad:
+            drift[name] = bad
+    assert not drift, _json.dumps(drift, indent=2)

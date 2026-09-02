@@ -17,7 +17,7 @@ mls_bench_package = "alphaflow-main"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 66960
+timeout_sec = 67860
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

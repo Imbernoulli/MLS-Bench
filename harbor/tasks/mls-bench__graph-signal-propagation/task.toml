@@ -17,7 +17,7 @@ mls_bench_package = "ChebNetII"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 5820
+timeout_sec = 6120
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

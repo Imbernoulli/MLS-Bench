@@ -17,7 +17,7 @@ mls_bench_package = "CORL"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 38160
+timeout_sec = 38460
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

@@ -17,7 +17,7 @@ mls_bench_package = "easy-few-shot-learning"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 89279
+timeout_sec = 89579
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the
