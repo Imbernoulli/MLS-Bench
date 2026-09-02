@@ -280,6 +280,16 @@ def _is_gpu_reservation_only_compose(
 class DaytonaEnvironment(_HarborDaytonaEnvironment):
     """Daytona provider with MLS-Bench's GPU-only Compose compatibility."""
 
+    def _int_kwarg(self, name: str) -> int:
+        """Return an integer environment kwarg (``--ek name=value``) or 0."""
+        value = self._kwargs.get(name)
+        if value in (None, "", False):
+            return 0
+        try:
+            return max(0, int(value))
+        except (TypeError, ValueError):
+            raise ValueError(f"Daytona kwarg {name}={value!r} must be an integer")
+
     def _spot_requested(self) -> bool:
         """Return whether this run requested a Daytona spot sandbox.
 
@@ -296,16 +306,17 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         return bool(value)
 
     def _gpu_type_requested(self):  # type: ignore[no-untyped-def]
-        """Resolve an optional Daytona GPU type kwarg (e.g. ``H200``)."""
-        # Hopper is the portable default for the prebuilt MLS-Bench images:
-        # their CUDA wheels support H100/H200 (sm_90) but older images do not
-        # support Daytona's Blackwell RTX PRO 6000 (sm_120). H200-specific
-        # task variants must opt in explicitly; do not silently change every
-        # Spot task's device type.
-        value = self._kwargs.get(
-            "gpu_type", "H100" if self._spot_requested() else None
-        )
-        if value is None or _DaytonaGpuType is None:
+        """Resolve the Daytona GPU type kwarg (default ``H100``).
+
+        MLS-Bench images are built and validated for Hopper (H100/H200,
+        sm_90).  Without an explicit type Daytona may place a sandbox on an
+        RTX PRO 6000 Blackwell (sm_120), where the pinned CUDA wheels have no
+        kernels, so every GPU request defaults to H100.  H200 must be selected
+        explicitly and is only meaningful for tasks with a native ``h200``
+        profile.
+        """
+        value = self._kwargs.get("gpu_type") or "H100"
+        if _DaytonaGpuType is None:
             return None
         name = str(value).strip().upper().replace("-", "_")
         # Accept the SDK enum names and common CLI spellings while rejecting
@@ -335,22 +346,65 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         """
         gpu_count = int(self.task_env_config.gpus or 0)
         gpu_type = self._gpu_type_requested()
+        resources = getattr(params, "resources", None)
+        env_vars = dict(getattr(params, "env_vars", None) or {})
         if gpu_count > 0:
             if self._spot_requested() and hasattr(params, "spot"):
                 params.spot = True
-            resources = getattr(params, "resources", None)
             if resources is not None and gpu_type is not None:
                 resources.gpu_type = gpu_type
             # The verifier runs inside the Daytona sandbox (and, for GPU-only
             # overlays, the direct strategy). Propagate the selected device
-            # type explicitly so its H200-aware scheduler does not depend on
-            # whether the image happens to include nvidia-smi.
-            if gpu_type is not None and hasattr(params, "env_vars"):
-                env_vars = dict(getattr(params, "env_vars", None) or {})
+            # type explicitly; the verifier selects a task's native ``h200``
+            # profile only from this variable.
+            if gpu_type is not None:
                 env_vars["MLSBENCH_GPU_TYPE"] = getattr(
                     gpu_type, "value", str(gpu_type)
                 )
-                params.env_vars = env_vars
+            # task.toml resources are sized for local Docker, where memory is
+            # rarely the binding limit.  Daytona enforces them as hard cgroup
+            # limits, so GPU sandboxes may request a larger floor (for example
+            # loading a 7B checkpoint needs more than 16 GiB of host RAM).
+            if resources is not None:
+                min_memory = self._int_kwarg("gpu_memory_gb")
+                if min_memory and (resources.memory or 0) < min_memory:
+                    resources.memory = min_memory
+                min_cpus = self._int_kwarg("gpu_cpus")
+                if min_cpus and (resources.cpu or 0) < min_cpus:
+                    resources.cpu = min_cpus
+            if gpu_count > 1:
+                # NCCL >= 2.19 allocates communication buffers through the
+                # cuMem driver API by default; inside Daytona's GPU sandbox
+                # that path fails with ``cudaErrorIllegalState`` during the
+                # first collective.  Fall back to the classic allocator.
+                env_vars.setdefault("NCCL_CUMEM_ENABLE", "0")
+        # The sandbox cgroup grants only ``resources.cpu`` cores, but the
+        # container still reports every host core, so OpenMP/MKL/PyTorch
+        # would otherwise start hundreds of threads and thrash the quota.
+        cpu_quota = getattr(resources, "cpu", None) if resources is not None else None
+        if cpu_quota:
+            for name in (
+                "OMP_NUM_THREADS",
+                "MKL_NUM_THREADS",
+                "OPENBLAS_NUM_THREADS",
+                "NUMEXPR_NUM_THREADS",
+                "VECLIB_MAXIMUM_THREADS",
+            ):
+                env_vars.setdefault(name, str(int(cpu_quota)))
+        # ``test_cmds[].time`` budgets were calibrated on MLS-Bench's native
+        # hosts; a remote sandbox with a small CPU quota may need longer.
+        # ``--ek eval_time_scale=2`` scales the verifier's wall-clock budget.
+        time_scale = self._kwargs.get("eval_time_scale")
+        if time_scale not in (None, ""):
+            env_vars["MLSBENCH_EVAL_TIME_SCALE"] = str(time_scale)
+        # Free-form sandbox environment for provider-specific tuning (YAML
+        # ``kwargs.sandbox_env``; not expressible through ``--ek``).
+        extra_env = self._kwargs.get("sandbox_env") or {}
+        if isinstance(extra_env, dict):
+            for key, value in extra_env.items():
+                env_vars[str(key)] = str(value)
+        if hasattr(params, "env_vars"):
+            params.env_vars = env_vars
         # The smoke runner sets a per-invocation label so its optional orphan
         # cleanup can never delete another runner's organization sandbox.
         # Keep this best-effort for older Daytona SDKs that lack ``labels``.

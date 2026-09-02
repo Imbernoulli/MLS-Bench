@@ -20,8 +20,7 @@ FROM bohanlyu2022/mlsbench-harbor-verl:verl-fixes-20260901
 # image ships that file under /usr/local/cuda, but ldconfig only indexes its
 # SONAME (libcudart.so.12), so the fully-versioned lookup fails once Harbor's
 # verifier sanitizes LD_LIBRARY_PATH.  Install an ordinary system-library
-# alias for every full libcudart version present in the image.  This keeps the
-# real sleep/release path available; it is not a behavioral workaround.
+# alias for every full libcudart version present in the image.
 RUN set -eux; \
     found=0; \
     for runtime in /usr/local/cuda*/targets/x86_64-linux/lib/libcudart.so.[0-9]*.[0-9]*.[0-9]*; do \

@@ -113,6 +113,76 @@ def test_build_command_can_request_gpu_type_without_spot():
     assert "spot=true" not in " ".join(command)
 
 
+def test_daytona_compat_leaves_cleandiffuser_image_untouched(tmp_path: Path):
+    """H100/H200 run the published CleanDiffuser base as-is; no torch upgrade."""
+    from mls_bench.daytona_compat import apply_daytona_compatibility
+
+    dockerfile = tmp_path / "Dockerfile"
+    original = (
+        "FROM bohanlyu2022/mlsbench-harbor-cleandiffuser:latest\n"
+        "COPY _scaffold/ /workspace/\n"
+    )
+    dockerfile.write_text(original)
+    tests = tmp_path / "tests"
+    (tests / "eval/scripts").mkdir(parents=True)
+    assert not apply_daytona_compatibility(
+        "robo-diffusion-guidance", dockerfile=dockerfile, tests_dir=tests
+    )
+    assert dockerfile.read_text() == original
+
+
+def test_daytona_compat_leaves_unrelated_native_task_layer_untouched(tmp_path: Path):
+    from mls_bench.daytona_compat import apply_daytona_compatibility
+
+    dockerfile = tmp_path / "Dockerfile"
+    original = "FROM example:latest\nCOPY _scaffold/ /workspace/\n"
+    dockerfile.write_text(original)
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    assert not apply_daytona_compatibility(
+        "ts-imputation", dockerfile=dockerfile, tests_dir=tests
+    )
+    assert dockerfile.read_text() == original
+
+
+def test_daytona_compat_patches_only_rendered_verl_verifier(tmp_path: Path):
+    from mls_bench.daytona_compat import apply_daytona_compatibility
+
+    dockerfile = tmp_path / "Dockerfile"
+    dockerfile.write_text(
+        "FROM bohanlyu2022/mlsbench-harbor-verl:latest\n"
+        "COPY _scaffold/ /workspace/\n"
+    )
+    tests = tmp_path / "tests"
+    (tests / "eval/scripts").mkdir(parents=True)
+    (tests / "meta/scripts").mkdir(parents=True)
+    native = (
+        "python3 -m verl.trainer.main_ppo \\\n"
+        "    data.shuffle=False \\\n"
+        "    actor_rollout_ref.rollout.enforce_eager=True \\\n"
+        "    actor_rollout_ref.rollout.free_cache_engine=False \\\n"
+        "    actor_rollout_ref.ref.fsdp_config.param_offload=False \\\n"
+        "    trainer.total_epochs=1\n"
+    )
+    (tests / "eval/scripts/train.sh").write_text(native)
+    (tests / "meta/scripts/train.sh").write_text(native)
+    for _ in range(2):  # idempotent on re-render
+        assert apply_daytona_compatibility(
+            "llm-rl-importance-sampling", dockerfile=dockerfile, tests_dir=tests
+        )
+    rendered = dockerfile.read_text()
+    assert "mlsbench-harbor-verl:verl-fixes-20260901" in rendered
+    assert rendered.count('test "${found}" -eq 1;') == 1
+    for p in (tests / "eval/scripts/train.sh", tests / "meta/scripts/train.sh"):
+        text = p.read_text()
+        assert "free_cache_engine=False" not in text
+        assert text.count("data.dataloader_num_workers=0") == 1
+        assert text.count("rollout.agent.num_workers=${AGENT_NUM_WORKERS:-1}") == 1
+        assert text.count("reward.num_workers=${REWARD_NUM_WORKERS:-1}") == 1
+        # Arguments are inserted after their anchors, keeping the command valid.
+        assert text.index("data.shuffle=False") < text.index("dataloader_num_workers=0")
+
+
 def test_summarize_result_reads_harbor_exceptions(tmp_path: Path):
     module = _module()
     result = tmp_path / "result.json"

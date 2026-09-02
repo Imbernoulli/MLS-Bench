@@ -551,27 +551,33 @@ def _test_cmd_compute(tc: dict) -> float:
 def _running_gpu_is_h200() -> bool:
     """Return whether this verifier is running on an H200-class GPU.
 
-    MLS-Bench's native runner can select the H200-specific command block from
-    its host config.  Harbor runs the verifier directly inside the task
-    container, so there is no native ``compute_scale`` config to consult.  We
-    detect the actual attached device here instead; an explicit environment
-    override keeps the behavior deterministic in tests and for providers that
-    hide ``nvidia-smi`` during image setup.
+    MLS-Bench's native runner selects the H200-specific command block only
+    through an explicit host setting (``compute_scale: 0.5``); it never
+    auto-detects the device.  Harbor mirrors that: the provider (for example
+    the Daytona adapter, via ``--ek gpu_type=H200``) must export
+    ``MLSBENCH_GPU_TYPE=H200``.  Running the baseline command on an H200 host
+    without that variable keeps the H100 profile, exactly like native runs.
     """
     raw = os.environ.get("MLSBENCH_GPU_TYPE", "").strip()
-    if raw:
-        return "H200" in raw.upper()
+    return "H200" in raw.upper()
+
+
+def _eval_time_scale() -> float:
+    """Optional multiplier for per-eval wall-clock budgets.
+
+    ``test_cmds[].time`` was calibrated on MLS-Bench's native hosts.  A remote
+    provider with a smaller CPU quota (Daytona sandboxes enforce
+    ``task.toml`` cpus as a cgroup limit) can legitimately need longer; set
+    ``MLSBENCH_EVAL_TIME_SCALE`` (>= 1.0) in the verifier environment.  The
+    budget check of the agent's edit is unaffected.
+    """
+    raw = os.environ.get("MLSBENCH_EVAL_TIME_SCALE", "").strip()
+    if not raw:
+        return 1.0
     try:
-        probe = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            check=False,
-        )
-    except Exception:
-        return False
-    return "H200" in (probe.stdout or "").upper()
+        return max(1.0, float(raw))
+    except ValueError:
+        return 1.0
 
 
 def _effective_test_cmds(config: dict) -> list[dict]:
@@ -1019,9 +1025,12 @@ def _run_eval_wave(
     default_pkg: str,
     out_dir: Path,
 ) -> dict[tuple[int, int], dict]:
-    timeout_secs = max(
-        _parse_time_to_seconds(task["entry"]["tc"].get("time", "1:00:00"))
-        for task in tasks
+    timeout_secs = int(
+        max(
+            _parse_time_to_seconds(task["entry"]["tc"].get("time", "1:00:00"))
+            for task in tasks
+        )
+        * _eval_time_scale()
     ) + WAVE_GRACE_SEC
     deadline = time.time() + timeout_secs
     running: list[dict] = []

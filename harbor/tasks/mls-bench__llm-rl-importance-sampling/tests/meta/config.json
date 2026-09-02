@@ -1,6 +1,5 @@
 {
   "allow_create": false,
-  "harbor_base_image": "bohanlyu2022/mlsbench-harbor-verl:verl-fixes-20260901",
   "test_cmds": [
     {
       "cmd": "scripts/train.sh",
@@ -8,7 +7,7 @@
       "group": 1,
       "compute": 2,
       "mem": 200,
-      "time": "10:00:00",
+      "time": "6:00:00",
       "package": "verl",
       "h200": {
         "compute": 1,
@@ -45,51 +44,6 @@
         {
           "start": 17,
           "end": 72
-        }
-      ]
-    },
-    {
-      "filename": "verl/verl/trainer/main_ppo.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
-      ],
-      "edit": [
-        {
-          "start": 33,
-          "end": 34
-        }
-      ]
-    },
-    {
-      "filename": "verl/verl/workers/actor/dp_actor.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
-      ],
-      "edit": [
-        {
-          "start": 31,
-          "end": 32
-        }
-      ]
-    },
-    {
-      "filename": "verl/verl/workers/actor/megatron_actor.py",
-      "read": [
-        {
-          "start": -1,
-          "end": -1
-        }
-      ],
-      "edit": [
-        {
-          "start": 41,
-          "end": 42
         }
       ]
     }

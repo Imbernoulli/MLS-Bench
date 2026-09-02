@@ -60,3 +60,15 @@ tasks/agent-tool-reasoning/.openrouter_key
 tasks/agent-tool-reasoning/.deepseek_key
 tasks/agent-tool-reasoning/.dashscope_key
 tasks/agent-tool-reasoning/.sopr_work/
+
+# Daytona/Harbor run artifacts and scratch job directories
+harbor/jobs-*/
+harbor/daytona-*/
+harbor/oracle-runs/
+harbor/robo-humanoid-smoke-jobs/
+harbor/mls-bench__*/
+harbor/*.log
+harbor/dataset.toml
+daytona-lite-retry-*/
+# verl source checkout fetched by vendor/packages.yaml (not vendored in git)
+vendor/verl/

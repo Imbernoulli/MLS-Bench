@@ -21,6 +21,8 @@ from typing import Any
 import tomli_w
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
+from .daytona_compat import apply_daytona_compatibility
+
 
 # --------------------------------------------------------------------------- #
 # MLS-Bench paths
@@ -1182,6 +1184,15 @@ def render_task(
         mb, ctx, tests_dir, task_dir,
         scaffold_dir=env_dir / "_scaffold",
         config=effective_config,
+    )
+    # Provider-specific runtime workarounds belong to the rendered Harbor
+    # bundle.  Keep the native ``tasks/`` tree (and its original scale and
+    # scripts) untouched; Daytona compatibility may adjust only the image
+    # layer and verifier copies after all assets have been staged.
+    apply_daytona_compatibility(
+        ctx.task_id,
+        dockerfile=env_dir / "Dockerfile",
+        tests_dir=tests_dir,
     )
     (tests_dir / "meta" / "oracle_cmd_overrides.token").write_text(
         oracle_cmd_overrides_token + "\n"

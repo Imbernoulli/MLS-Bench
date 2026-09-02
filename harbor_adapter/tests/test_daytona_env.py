@@ -328,6 +328,64 @@ def test_h200_does_not_scale_tasks_without_native_profile(tmp_path: Path):
     assert env.task_env_config.gpus == 2
 
 
+def test_sandbox_environment_and_resource_floor(tmp_path: Path):
+    """Thread caps, NCCL fallback, RAM/CPU floors and time scale reach Daytona."""
+    module = _module()
+    env_dir = tmp_path / "environment"
+    env_dir.mkdir()
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(2))
+    trial_paths = TrialPaths(tmp_path / "trial")
+    trial_paths.mkdir()
+    config = EnvironmentConfig(cpus=4, memory_mb=16384, storage_mb=61440, gpus=2)
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="floor-task",
+        session_id="floor-task.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+        gpu_memory_gb="64",
+        gpu_cpus="16",
+        eval_time_scale="2",
+    )
+    # No explicit gpu_type and no spot: still Hopper, never Daytona's default.
+    assert env._gpu_type_requested().name == "H100"
+
+    captured = []
+
+    async def fake_parent_create_sandbox(self, params, *args, **kwargs):
+        captured.append(params)
+        self._sandbox = object()
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            module._HarborDaytonaEnvironment,
+            "_create_sandbox",
+            fake_parent_create_sandbox,
+        )
+        from daytona import CreateSandboxFromImageParams, Image, Resources
+
+        params = CreateSandboxFromImageParams(
+            image=Image.base("ubuntu:22.04"),
+            resources=Resources(cpu=4, memory=16, disk=60, gpu=2),
+        )
+        asyncio.run(env._create_sandbox(params))
+    finally:
+        monkeypatch.undo()
+
+    resources = captured[0].resources
+    assert (resources.cpu, resources.memory, resources.disk, resources.gpu) == (16, 64, 60, 2)
+    assert resources.gpu_type.name == "H100"
+    env_vars = captured[0].env_vars
+    assert env_vars["MLSBENCH_GPU_TYPE"] == "H100"
+    assert env_vars["OMP_NUM_THREADS"] == "16"
+    assert env_vars["MKL_NUM_THREADS"] == "16"
+    assert env_vars["NCCL_CUMEM_ENABLE"] == "0"
+    assert env_vars["MLSBENCH_EVAL_TIME_SCALE"] == "2"
+    assert captured[0].spot is not True
+
+
 def test_spot_defaults_to_h100_without_explicit_gpu_type(tmp_path: Path):
     module = _module()
     env_dir = tmp_path / "environment"

@@ -11,9 +11,6 @@ else
 fi
 echo "Detected $N_GPUS GPUs"
 
-# H200 has enough memory for the 0.5B colocated rollout.  Keep the standard
-# verl cache sleep/release path enabled; the task image installs the CUDA
-# runtime alias required by vLLM when that path is initialized.
 python3 -m verl.trainer.main_ppo \
     algorithm.adv_estimator=grpo \
     actor_rollout_ref.actor.policy_loss.loss_mode=custom \

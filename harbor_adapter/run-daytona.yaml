@@ -15,10 +15,14 @@ environment:
   import_path: mls_bench.harbor_env:DaytonaEnvironment
   force_build: true
   delete: true
-  # The adapter forwards spot=true only for GPU resources; CPU tasks are
-  # unchanged because Daytona rejects spot requests without a GPU.
   kwargs:
-    spot: true
+    # See harbor/run-daytona.yaml for the meaning of each option.
+    gpu_type: H100
+    spot: false
+    gpu_memory_gb: 64
+    gpu_cpus: 16
+    sandbox_env:
+      MLSBENCH_EVAL_TIME_SCALE: "2.0"
 
 agents:
   - name: oracle

@@ -18,7 +18,6 @@ import subprocess
 import sys
 import threading
 import time as _time
-import uuid
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
@@ -356,37 +355,6 @@ class WorkspaceTools:
         self.save_path = save_path
         self.seeds = seeds or [42]
         self.container_runtime = container_runtime
-        if container_runtime == "local" and self.config_task.get("ephemeral_inputs"):
-            # Fail fast at setup, BEFORE anything is staged. Tasks with
-            # ephemeral_inputs withhold data (labels / held-out targets /
-            # oracle tables) by staging blobs immediately before each
-            # serialized evaluation and unlinking them right after. Under
-            # container_runtime: local the agent-editable code executes
-            # directly on the host as the harness user, so it can spawn a
-            # detached process that OUTLIVES its own evaluation and reads the
-            # NEXT evaluation's blobs while they are staged — serialization
-            # and unlinking cannot withhold anything from a peer host process.
-            # (The stager's --no-cache flag alone does not close this; the
-            # only sound boundary is a container.)
-            raise RuntimeError(
-                f"Task '{task_name}' declares ephemeral_inputs (withheld "
-                "input blobs) and cannot be evaluated with "
-                "container_runtime: local — agent code running as the "
-                "harness user on the host could read the staged blobs of "
-                "subsequent evaluations. Use container_runtime: docker or "
-                "apptainer for this task."
-            )
-        # Trusted, agent-inaccessible snapshot of the task dir for the host-
-        # side input stager (ephemeral tasks only). The live task dir is
-        # bind-mounted read-WRITE into the eval container (docker/apptainer)
-        # and the package images run as root, so an editable module in a
-        # serialized eval could overwrite edits/mid_edit.py — which the NEXT
-        # entry's stager re-executes host-side (host RCE + attacker-chosen
-        # inputs). We snapshot the task dir to a private temp BEFORE any eval
-        # runs and point the stager there; the mount is also made read-only
-        # for these tasks (defense in depth). Created lazily on first stage
-        # (still before the first launch); see _ensure_ephemeral_task_snapshot.
-        self._ephemeral_snapshot_tasks_dir: Path | None = None
         self._use_cuda_override = use_cuda   # None = defer to pkg config
         self._platform = platform             # e.g. "linux/amd64" for Rosetta
         self.gpu_devices = gpu_devices
@@ -427,14 +395,6 @@ class WorkspaceTools:
             sanitized = re.sub(r'[/: ]', '_', model_name)
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.exp_name = f"{sanitized}_{ts}" if sanitized else ts
-
-        # Per-run token embedded in SLURM job NAMES so name-based cancellation
-        # (cancel_job_by_name on an id-less uncertain submission) can only ever
-        # target THIS run's own job — never a co-located agent/baseline or a
-        # parallel experiment that happens to share (task, group). exp_name is
-        # NOT reliably unique (baselines pass a bare exp_name with no
-        # timestamp), so we mint an explicit random token (R11-2).
-        self._run_token = uuid.uuid4().hex[:8]
 
         # Job scheduler executor (None = direct execution)
         self._recover_pending_slurm = False  # set by resume to recover orphaned SLURM jobs
@@ -1611,14 +1571,7 @@ class WorkspaceTools:
                     binds.append(f"{d.resolve()}:{pkg_workdir}")
                     pkg_dir = d
                     break
-        # Ephemeral-input tasks: bind the task dir READ-ONLY (its mid_edit.py
-        # is re-executed host-side by the stager before every eval; a writable
-        # bind + root container would let an editable module overwrite it,
-        # R10-1). The eval writes only OUT_DIR/SAVE_PATH and package-dir blobs.
-        if self.config_task.get("ephemeral_inputs"):
-            binds.append(f"{task_dir.resolve()}:{task_mount}:ro")
-        else:
-            binds.append(f"{task_dir.resolve()}:{task_mount}")
+        binds.append(f"{task_dir.resolve()}:{task_mount}")
 
         # Config-level data bind (with template expansion)
         from mlsbench.cli import resolve_data_binds
@@ -1723,13 +1676,7 @@ class WorkspaceTools:
                     pkg_workdir = f"{workdir}/{d.name}"
                     docker_cmd.extend(["-v", f"{d.resolve()}:{pkg_workdir}"])
                     break
-        # Ephemeral-input tasks: mount the task dir READ-ONLY. Its mid_edit.py
-        # is re-executed host-side by the input stager before every eval;
-        # a writable mount + root container would let an editable module
-        # overwrite it (R10-1). The eval writes only OUT_DIR/SAVE_PATH and
-        # the staged blobs (both in the package dir), never the task dir.
-        task_mount_ro = ":ro" if self.config_task.get("ephemeral_inputs") else ""
-        docker_cmd.extend(["-v", f"{task_dir.resolve()}:{task_mount}{task_mount_ro}"])
+        docker_cmd.extend(["-v", f"{task_dir.resolve()}:{task_mount}"])
         docker_cmd.extend(["-e", f"MLSBENCH_TASK_DIR={task_mount}"])
         if pkg:
             docker_cmd.extend(["-e", f"MLSBENCH_PKG_DIR={pkg_workdir}"])
@@ -2318,199 +2265,6 @@ class WorkspaceTools:
                 return container_cmd[:i] + ["bash", "-c", check_cmd]
         return container_cmd + ["bash", "-c", check_cmd]
 
-    def _ensure_ephemeral_task_snapshot(self) -> Path:
-        """Return a trusted tasks_dir the host-side stager can safely exec.
-
-        The live ``project_root/tasks/<task>`` is bind-mounted read-write into
-        the eval container as root, so an editable module could overwrite
-        ``edits/mid_edit.py`` (and anything it reads) between serialized
-        evals; the stager re-executes mid_edit host-side, which would then be
-        agent-authored code with attacker-chosen inputs. We copy the task dir
-        into a private temp (0700, system temp — never bind-mounted) ONCE,
-        before any eval runs, and hand the stager THAT copy. The holdout
-        generator lives outside the task dir and is never mounted, so it stays
-        trusted; we expose it to the snapshot via a sibling symlink so
-        mid_edit's ``parents[3]/holdout/<task>`` resolution still finds it.
-
-        Idempotent: the snapshot is captured on the first call (which happens
-        before the first launch) and reused for the life of this instance.
-        """
-        if self._ephemeral_snapshot_tasks_dir is not None:
-            return self._ephemeral_snapshot_tasks_dir
-        import tempfile as _tempfile
-
-        live_task_dir = self.project_root / "tasks" / self.task_name
-        priv_root = Path(_tempfile.mkdtemp(prefix="mlsb-tasksnap-"))
-        try:
-            os.chmod(priv_root, 0o700)
-        except OSError:
-            pass
-        snap_tasks = priv_root / "tasks"
-        snap_tasks.mkdir(parents=True, exist_ok=True)
-        # Copy the whole task dir (mid_edit + templates + config + scripts +
-        # anything else it reads), skipping caches. This is the pristine,
-        # host-only source of truth for staging.
-        shutil.copytree(
-            live_task_dir,
-            snap_tasks / self.task_name,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-        )
-        # Expose the (already agent-inaccessible) holdout provider at the
-        # relative location mid_edit resolves it from the snapshot:
-        # <priv_root>/holdout/<task>. A symlink to the real holdout keeps a
-        # single trusted source; if holdout is absent (self-contained
-        # mid_edit), nothing to link.
-        real_holdout = self.project_root / "holdout"
-        if real_holdout.is_dir():
-            try:
-                os.symlink(real_holdout.resolve(), priv_root / "holdout")
-            except OSError:
-                # Fall back to a copy if symlinks are unavailable.
-                shutil.copytree(
-                    real_holdout, priv_root / "holdout",
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-                )
-        self._ephemeral_snapshot_tasks_dir = snap_tasks
-        print(
-            f"[input-stager] snapshotted task '{self.task_name}' to a private "
-            "trusted copy for host-side staging (live task dir is a writable "
-            "container mount)"
-        )
-        return snap_tasks
-
-    def _restage_task_inputs(
-        self, cmd_entry: dict, seed: int, dry_run: bool = False
-    ) -> tuple[bool, list[str]]:
-        """Re-materialize this run's pre-generated input blobs before a test.
-
-        Tasks opt in via ``"ephemeral_inputs": true`` in config.json. Their
-        eval scripts export MLSBENCH_EPHEMERAL_INPUTS=1, so the FIXED runner
-        deletes the staged blobs right after loading them into memory — BEFORE
-        any agent-editable hook executes — keeping the withheld data (held-out
-        targets / hidden labels / lookup tables) unreadable from editable
-        code. Each evaluation therefore consumes its inputs, and they must be
-        re-staged immediately before every test command (the Harbor verifier
-        does the same via tests/eval/_inputgen/apply.py). Ephemeral entries
-        are additionally scheduled strictly one-at-a-time (see
-        _run_all_cmds_direct / _run_all_seeds_slurm), so a sibling entry's
-        blobs are never on disk while another entry's evaluation runs.
-
-        Runs host-side in a subprocess with ENV/SEED set: mid_edit needs the
-        non-published ``holdout/<task>/`` generator — the same precondition as
-        workspace setup — and, with ENV/SEED set, materializes only the active
-        run's blobs. Failures are logged rather than fatal; a missing input
-        then surfaces in the evaluation output itself.
-
-        Returns ``(ok, staged_paths)``. ``staged_paths`` is the stager's
-        incrementally-recorded superset of everything it (partially) installed
-        — the caller MUST pass it to _cleanup_staged_inputs after the run (or
-        immediately, when ``ok`` is False: a failed staging is fatal for the
-        entry and the evaluation must be skipped). This is the host-side
-        backstop scrub for evaluations that crash before their in-container
-        scrub, and for stager crashes that leave partial installs behind.
-
-        With ``dry_run=True`` the stager installs NOTHING and only records the
-        workspace destinations the entry's blobs resolve to — used to derive
-        the backstop-scrub scope for a recovered SLURM job whose blobs were
-        staged by a previous harness process (no recorded list exists).
-        """
-        if not self.config_task.get("ephemeral_inputs"):
-            return True, []
-        label = str(cmd_entry.get("label", "") or "")
-        run_env = os.environ.copy()
-        if label:
-            run_env["ENV"] = label
-        run_env["SEED"] = str(seed)
-        import mlsbench
-
-        src_root = str(Path(mlsbench.__file__).resolve().parent.parent)
-        existing = run_env.get("PYTHONPATH")
-        run_env["PYTHONPATH"] = (
-            src_root + os.pathsep + existing if existing else src_root
-        )
-        import tempfile as _tempfile
-
-        list_fd, list_path = _tempfile.mkstemp(prefix="mlsb-staged-", suffix=".txt")
-        os.close(list_fd)
-        # Stage from the trusted private snapshot, NOT the live (writable,
-        # container-mounted) task dir — an eval could have rewritten
-        # mid_edit.py there (R10-1).
-        trusted_tasks_dir = self._ensure_ephemeral_task_snapshot()
-        stager_cmd = [
-            sys.executable,
-            "-m",
-            "mlsbench.agent.input_stager",
-            self.task_name,
-            str(trusted_tasks_dir),
-            str(self.workspace_task_dir),
-            "--list-out",
-            list_path,
-        ]
-        if dry_run:
-            stager_cmd.append("--dry-run")
-        # container_runtime: local never reaches this point: the constructor
-        # rejects local + ephemeral_inputs outright (host-side agent code
-        # could read a later evaluation's staged blobs), and this method
-        # returns early for non-ephemeral tasks. Container modes keep the
-        # persistent .input_cache: it lives at
-        # <workspace_task_dir>/.input_cache, a sibling of the bind-mounted
-        # package dir, and the workspace_task_dir itself is never
-        # bind-mounted (verified: the three ephemeral tasks' pkg/task configs
-        # declare no data binds). The stager's --no-cache flag remains
-        # available as a standalone/defensive CLI option.
-        staged: list[str] = []
-        ok = False
-        try:
-            result = subprocess.run(
-                stager_cmd,
-                capture_output=True,
-                text=True,
-                timeout=1800,
-                env=run_env,
-            )
-            ok = result.returncode == 0
-            if not ok:
-                tail = ((result.stdout or "") + (result.stderr or ""))[-1500:]
-                print(
-                    f"[input-stager] ERROR: re-staging failed for "
-                    f"{label or cmd_entry.get('cmd', '?')} seed {seed} "
-                    f"(rc={result.returncode}) — evaluation will be skipped:\n{tail}"
-                )
-        except Exception as exc:
-            print(
-                f"[input-stager] ERROR: re-staging error for "
-                f"{label or cmd_entry.get('cmd', '?')} seed {seed}: {exc}"
-            )
-        finally:
-            # The stager appends+flushes each path BEFORE installing it, so
-            # even after a crash/kill the list is the authoritative superset
-            # of everything (partially) installed.
-            try:
-                with open(list_path) as fh:
-                    staged = [ln.strip() for ln in fh if ln.strip()]
-            except OSError:
-                staged = []
-            try:
-                os.unlink(list_path)
-            except OSError:
-                pass
-        return ok, staged
-
-    @staticmethod
-    def _cleanup_staged_inputs(staged_files: list[str]) -> None:
-        """Host-side backstop scrub of exactly the files the stager wrote.
-
-        The in-container runner normally deletes its blobs right after loading
-        them (MLSBENCH_EPHEMERAL_INPUTS=1), so this is usually a no-op; it
-        guarantees removal when the evaluation crashed or timed out before its
-        own scrub. Scoped to the stager's recorded file list — never a glob.
-        """
-        for path in staged_files:
-            try:
-                os.unlink(path)
-            except OSError:
-                pass
-
     def _run_budget_check(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> str | None:
         """Run budget_check.py before training. Returns error msg or None.
 
@@ -3050,25 +2804,11 @@ class WorkspaceTools:
         return batches
 
     def _run_single_cmd(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> tuple[str, dict, float]:
-        """Run a single test_cmd entry and return (feedback_str, metrics_dict, elapsed_sec).
-
-        Ordering matters for ephemeral-input tasks:
-          1. budget check FIRST — it executes agent-editable code (e.g. the
-             nas budget_check imports custom_nas_search.py and runs
-             search_step() twice against a MOCK API; it never needs the real
-             blobs), so no withheld blob may be on disk while it runs;
-          2. THEN stage this entry's blobs, immediately before the evaluation
-             launch itself (nothing that executes agent code sits between —
-             _run_single_cmd_impl only builds the command and launches it);
-          3. ALWAYS delete the staged blobs afterwards (host-side backstop for
-             an evaluation that crashed/timed out before its in-container
-             scrub). A failed staging is fatal for the entry: the evaluation
-             is skipped and whatever partial list the stager recorded is
-             scrubbed.
-        """
+        """Run a single test_cmd entry and return (feedback_str, metrics_dict, elapsed_sec)."""
         label = cmd_entry.get("label", "test")
-        cmd = cmd_entry.get("cmd", "")
-        # Budget check (executes agent code) BEFORE any blobs are staged.
+        cmd = cmd_entry["cmd"]
+
+        # Run budget check before training (fail fast)
         budget_err = self._run_budget_check(cmd_entry, seed, gpu_devices=gpu_devices)
         if budget_err:
             self._current_test_had_failures = True
@@ -3077,25 +2817,6 @@ class WorkspaceTools:
                 {},
                 0.0,
             )
-        stage_ok, staged_files = self._restage_task_inputs(cmd_entry, seed)
-        if not stage_ok:
-            self._cleanup_staged_inputs(staged_files)
-            self._current_test_had_failures = True
-            return (
-                f"### {label} ({cmd})\n[INPUT STAGING FAILED] could not "
-                "re-materialize this run's input blobs — evaluation skipped "
-                "(see harness console for the stager error)",
-                {},
-                0.0,
-            )
-        try:
-            return self._run_single_cmd_impl(cmd_entry, seed, gpu_devices=gpu_devices)
-        finally:
-            self._cleanup_staged_inputs(staged_files)
-
-    def _run_single_cmd_impl(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> tuple[str, dict, float]:
-        label = cmd_entry.get("label", "test")
-        cmd = cmd_entry["cmd"]
 
         if self.container_runtime == "local":
             local_cmd, cwd, run_env = self._build_local_exec_spec(cmd_entry, seed, gpu_devices=gpu_devices)
@@ -3310,29 +3031,6 @@ class WorkspaceTools:
 
         for group_key in sorted(grouped.keys()):
             entries = grouped[group_key]
-            if self.config_task.get("ephemeral_inputs") and len(entries) > 1:
-                # Ephemeral-input tasks execute strictly ONE-AT-A-TIME even
-                # within a parallel group: while an evaluation runs (its own
-                # blobs already loaded and scrubbed), no sibling entry's
-                # secret blobs may sit staged in the shared workspace where
-                # agent-editable code could read them. _run_single_cmd stages
-                # each entry's blobs immediately before launch and always
-                # deletes them afterwards.
-                results = [
-                    self._run_single_cmd(
-                        entry,
-                        seed,
-                        self._default_gpu_assignment(entry),
-                    )
-                    for entry in entries
-                ]
-                for (fb, met, elapsed), entry in zip(results, entries):
-                    feedback_parts.append(fb)
-                    hidden_flags.append(entry.get("hidden", False))
-                    all_metrics.update(met)
-                    label = entry.get("label", "test")
-                    all_metrics[f"elapsed_{label}"] = round(elapsed, 1)
-                continue
             if len(entries) == 1:
                 fb, met, elapsed = self._run_single_cmd(
                     entries[0],
@@ -3470,66 +3168,42 @@ class WorkspaceTools:
 
         return sub_jobs
 
-    def _probe_recoverability(self, candidate: Path) -> str:
-        """Classify a candidate group dir's SLURM job: "recoverable" (active or
-        COMPLETED), "not_recoverable" (confirmed terminal-other, or confirmed
-        gone from the queue), or "indeterminate" (queries FAILED so we could
-        neither confirm it stopped nor confirm it is recoverable).
+    def _find_recoverable_group_dir(self, group_key: int, suffix: str = "") -> Path | None:
+        """Find the latest group dir with a recoverable SLURM job (has job_id.txt).
 
-        The indeterminate case is the R10-3 hazard: it must NOT be collapsed
-        into "no prior job" — a prior job may still be running agent code.
+        First searches under the current ``exp_name``.  If nothing is found
+        (e.g. the exp_name changed on resume), falls back to scanning ALL
+        exp dirs for this task that share the same model prefix.
+
+        Only returns dirs whose SLURM job is still active (PENDING/RUNNING)
+        or already COMPLETED.  CANCELLED/FAILED jobs are skipped.
         """
-        try:
-            job_id = (candidate / "job_id.txt").read_text().strip()
-        except OSError:
-            return "indeterminate"
-        from mlsbench.agent.slurm import (
-            _is_terminal_slurm_state,
-            _normalize_slurm_state,
-            _run_slurm_query,
-        )
-        sq = _run_slurm_query(["squeue", "-j", job_id, "--noheader", "-o", "%T"])
-        if sq.returncode == 0:
-            # squeue SUCCEEDED — authoritative for active jobs.
-            if sq.stdout.strip():
-                # A job present in squeue with ANY non-terminal state
-                # (PENDING, RUNNING, CONFIGURING, COMPLETING, SUSPENDED,
-                # RESIZING, REQUEUED, unknown, ...) is STILL LIVE — it must be
-                # drained, never treated as absent (R11-3). Only a terminal
-                # state falls through to sacct.
-                state = sq.stdout.strip().splitlines()[0]
-                if not _is_terminal_slurm_state(state):
-                    return "recoverable"
-            # Not live per squeue (empty or terminal). Staging is safe;
-            # decide recoverable (COMPLETED — collect its output) vs
-            # not_recoverable.
-            sa = _run_slurm_query(
-                ["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
-            if sa.returncode == 0 and sa.stdout.strip():
-                st = _normalize_slurm_state(sa.stdout.strip().splitlines()[0])
-                if st == "COMPLETED":
-                    return "recoverable"
-            return "not_recoverable"
-        # squeue query FAILED — fall back to sacct to try to resolve.
-        sa = _run_slurm_query(
-            ["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
-        if sa.returncode == 0 and sa.stdout.strip():
-            raw = sa.stdout.strip().splitlines()[0]
-            if not _is_terminal_slurm_state(raw):
-                return "recoverable"      # sacct shows a LIVE (non-terminal) state — drain it
-            if _normalize_slurm_state(raw) == "COMPLETED":
-                return "recoverable"      # done, output collectable
-            return "not_recoverable"      # confirmed terminal-other
-        # Both squeue and sacct failed to resolve — liveness unknown.
-        return "indeterminate"
-
-    def _iter_recovery_candidates(self, group_key: int, suffix: str = ""):
-        """Yield candidate group dirs (newest-first) that hold a job_id.txt,
-        under the current exp_name then the model-prefix fallback."""
         if not self.slurm_executor:
-            return
+            return None
         target_name = f"group_{group_key}{suffix}"
         task_logs = self.slurm_executor.logs_dir / self.task_name
+
+        def _is_recoverable(candidate: Path) -> bool:
+            """Check that the SLURM job is still usable (not cancelled/failed)."""
+            job_id = (candidate / "job_id.txt").read_text().strip()
+            from mlsbench.agent.slurm import _run_slurm_query
+            # Quick squeue check (fast for active jobs)
+            sq = _run_slurm_query(["squeue", "-j", job_id, "--noheader", "-o", "%T"])
+            if sq.returncode == 0 and sq.stdout.strip():
+                state = sq.stdout.strip().split()[0].rstrip("+")
+                if state in ("PENDING", "RUNNING"):
+                    return True
+            # sacct check (for completed jobs) — use -X to get job-level
+            # state only; without -X, substeps like ".extern" may show
+            # COMPLETED even when the overall job was CANCELLED.
+            sa = _run_slurm_query(["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
+            if sa.returncode == 0 and sa.stdout.strip():
+                state = sa.stdout.strip().splitlines()[0].strip().split()[0].rstrip("+")
+                if state == "COMPLETED":
+                    return True
+            return False
+
+        # Phase 1: search under the current exp_name
         base = task_logs / self.exp_name
         if base.exists():
             for ts_dir in sorted(base.iterdir(), reverse=True):
@@ -3537,7 +3211,10 @@ class WorkspaceTools:
                     continue
                 candidate = ts_dir / target_name
                 if candidate.is_dir() and (candidate / "job_id.txt").exists():
-                    yield candidate
+                    if _is_recoverable(candidate):
+                        return candidate
+
+        # Phase 2 (fallback): search all exp dirs sharing the model prefix
         if task_logs.exists():
             model_prefix = self.exp_name.rsplit("_", 2)[0] if "_" in self.exp_name else self.exp_name
             for exp_dir in sorted(task_logs.iterdir(), reverse=True):
@@ -3550,49 +3227,10 @@ class WorkspaceTools:
                         continue
                     candidate = ts_dir / target_name
                     if candidate.is_dir() and (candidate / "job_id.txt").exists():
-                        yield candidate
+                        if _is_recoverable(candidate):
+                            print(f"[slurm-resume] Found job in older exp dir: {exp_dir.name}")
+                            return candidate
 
-    def _discover_recoverable(
-        self, group_key: int, suffix: str = ""
-    ) -> tuple[str, Path | None]:
-        """Tri-state recovery discovery for ephemeral scheduling.
-
-        Returns ("recoverable", dir) for the newest active/COMPLETED job,
-        ("indeterminate", dir) when a candidate exists but its liveness could
-        not be resolved (queries failing — a prior job may still be running),
-        or ("absent", None) when no candidate dir exists or all are confirmed
-        not-recoverable. The caller must treat "indeterminate" as a possible
-        running job (confirm terminal or abort), never as "no prior job".
-        """
-        first_indeterminate: Path | None = None
-        for candidate in self._iter_recovery_candidates(group_key, suffix):
-            state = self._probe_recoverability(candidate)
-            if state == "recoverable":
-                return "recoverable", candidate
-            if state == "indeterminate" and first_indeterminate is None:
-                first_indeterminate = candidate
-        if first_indeterminate is not None:
-            return "indeterminate", first_indeterminate
-        return "absent", None
-
-    def _find_recoverable_group_dir(self, group_key: int, suffix: str = "") -> Path | None:
-        """Find the latest group dir with a recoverable SLURM job (has job_id.txt).
-
-        First searches under the current ``exp_name``.  If nothing is found
-        (e.g. the exp_name changed on resume), falls back to scanning ALL
-        exp dirs for this task that share the same model prefix.
-
-        Only returns dirs whose SLURM job is still active (PENDING/RUNNING)
-        or already COMPLETED.  CANCELLED/FAILED jobs are skipped. Retained for
-        the NON-ephemeral path (ephemeral scheduling uses the tri-state
-        _discover_recoverable). An indeterminate probe maps to None here —
-        same as the pre-R10-3 behavior for that path.
-        """
-        if not self.slurm_executor:
-            return None
-        for candidate in self._iter_recovery_candidates(group_key, suffix):
-            if self._probe_recoverability(candidate) == "recoverable":
-                return candidate
         return None
 
     def _run_all_cmds_slurm(self, seed: int) -> tuple[list[str], dict, list[bool]]:
@@ -3618,194 +3256,6 @@ class WorkspaceTools:
         seed_metrics: dict[int, dict] = {s: {} for s in seeds}
         budget_script = self.project_root / "tasks" / self.task_name / "budget_check.py"
         budget_enabled = budget_script.exists()
-        # Ephemeral-input tasks: every (entry, seed) becomes its own single-
-        # command job, jobs are submitted-and-awaited strictly one-at-a-time,
-        # blobs are staged host-side immediately before each submission and
-        # backstop-scrubbed right after the job finishes. While one evaluation
-        # runs, no sibling (entry, seed)'s secret blobs exist in the shared
-        # workspace.
-        ephemeral = bool(self.config_task.get("ephemeral_inputs"))
-
-        # Wait results that do NOT establish the job actually stopped:
-        # FAILED_UNCONFIRMED = scheduler queries kept failing during the wait;
-        # TIMEOUT = the wait itself expired (local scheduler) — in both cases
-        # the job may still be pending or RUNNING agent code. For ephemeral
-        # tasks such a result must never unlock the next staging step.
-        unconfirmed_wait_states = {"FAILED_UNCONFIRMED", "TIMEOUT"}
-        # Submission failures that happen AFTER the scheduler command ran are
-        # the same liveness-uncertainty class at SUBMIT time: the job may
-        # have been accepted (an id-less orphan in the worst case) even
-        # though submit_group raised. Local-scheduler submission is atomic
-        # (queue transaction commits or nothing; the id is returned after),
-        # so only the SLURM executor raises this.
-        from mlsbench.agent.slurm import SubmitUncertainError
-        # Once set, no further ephemeral staging happens for this task in this
-        # call — every remaining fresh entry is recorded as failed instead.
-        ephemeral_abort: str | None = None
-
-        def _settle_uncertain_submit(exc: "SubmitUncertainError") -> bool:
-            """A submit failed post-acceptance. Cancel the possibly-accepted
-            job (by id when known, else best-effort by its unique-enough job
-            name) and CONFIRM nothing by that identity is still alive.
-            Returns True when liveness was resolved (safe to keep staging)."""
-            if exc.job_id:
-                return _settle_unconfirmed_wait(
-                    str(exc.job_id), "SUBMIT-UNCERTAIN"
-                ) is not None
-            if not exc.job_name:
-                return False
-            print(
-                f"[slurm] uncertain submission (no job id): cancelling by "
-                f"name '{exc.job_name}' and re-verifying"
-            )
-            cancel_n = getattr(self.slurm_executor, "cancel_job_by_name", None)
-            if cancel_n is not None:
-                try:
-                    cancel_n(exc.job_name)
-                except Exception as e:
-                    print(f"[slurm] cancel-by-name raised: {e}")
-            confirm_n = getattr(self.slurm_executor, "confirm_no_job_named", None)
-            if confirm_n is None:
-                return False
-            try:
-                return bool(confirm_n(exc.job_name))
-            except Exception as e:
-                print(f"[slurm] confirm-by-name raised: {e}")
-                return False
-
-        def _settle_unconfirmed_wait(job_id: str, status: str) -> str | None:
-            """A wait ended without confirming the job stopped. Cancel it and
-            re-verify termination with fresh queries. Returns the confirmed
-            terminal status, or None when liveness is still unknown."""
-            print(
-                f"[slurm] ephemeral job {job_id}: wait returned '{status}' "
-                "without confirming termination — cancelling and re-verifying"
-            )
-            cancel = getattr(self.slurm_executor, "cancel_job", None)
-            if cancel is not None:
-                try:
-                    cancel(job_id)
-                except Exception as exc:
-                    print(f"[slurm] cancel of job {job_id} raised: {exc}")
-            confirm = getattr(self.slurm_executor, "confirm_job_terminal", None)
-            if confirm is None:
-                return None
-            try:
-                return confirm(job_id)
-            except Exception as exc:
-                print(f"[slurm] confirmation probe for job {job_id} raised: {exc}")
-                return None
-
-        # TASK-WIDE recovery drain BEFORE any staging. Groups run
-        # sequentially, so a recovered job of a LATER group (e.g.
-        # optimization-diagonal-net keeps ephemeral entries in groups 1 AND
-        # 2) may still be running agent code from a previous harness process
-        # while an earlier group stages fresh blobs — which that job could
-        # read. Discover every recoverable job across ALL groups first, wait
-        # them ALL to termination, backstop-scrub their blobs, and only then
-        # enter the normal per-group stage->submit->wait sequence. Draining a
-        # later group's job "early" is correct: it is ALREADY running from
-        # the original submission; group ordering only sequences NEW work.
-        # Maps (group_key, suffix) -> (job_id, status, out_dir); status None
-        # means termination could not be confirmed (entry is failed and all
-        # remaining ephemeral staging aborts).
-        drained_recovered: dict[tuple[int, str], tuple[str, str | None, Path]] = {}
-        if ephemeral and self._recover_pending_slurm:
-            for g_key in sorted(grouped.keys()):
-                # One (entry, seed) per sub-job in ephemeral mode; this
-                # enumeration MUST mirror the all_tasks construction below
-                # (entry-first, then seeds) so the suffix indices line up.
-                combos = [(e, s) for e in grouped[g_key] for s in seeds]
-                for sub_idx, (r_entry, r_seed) in enumerate(combos):
-                    suffix = f"_{sub_idx}" if len(combos) > 1 else ""
-                    disc_state, rd = self._discover_recoverable(g_key, suffix)
-                    if disc_state == "absent":
-                        continue
-                    if disc_state == "indeterminate":
-                        # R10-3: a candidate prior job exists but its liveness
-                        # could NOT be resolved (queries failing) — it may
-                        # still be running agent code. NEVER assume "no prior
-                        # job" and stage fresh. Try a fresh confirmation; if
-                        # still unresolved, abort all fresh ephemeral staging.
-                        job_id = (rd / "job_id.txt").read_text().strip()
-                        print(
-                            f"[slurm-resume] INDETERMINATE recovery for group "
-                            f"{g_key}{suffix} (job {job_id}): discovery probes "
-                            "failed — confirming termination before any staging"
-                        )
-                        confirm = getattr(
-                            self.slurm_executor, "confirm_job_terminal", None)
-                        confirmed = None
-                        if confirm is not None:
-                            try:
-                                confirmed = confirm(job_id)
-                            except Exception as e:
-                                print(f"[slurm] confirmation probe raised: {e}")
-                        # Backstop-scrub the candidate's blobs either way
-                        # (denying a possibly-alive job its data is safe).
-                        try:
-                            _ok, _names = self._restage_task_inputs(
-                                r_entry, r_seed, dry_run=True)
-                            self._cleanup_staged_inputs(_names)
-                        except Exception:
-                            pass
-                        if confirmed is None:
-                            ephemeral_abort = (
-                                f"recovery discovery for group {g_key}{suffix} "
-                                f"(job {job_id}) was indeterminate and "
-                                "termination could not be confirmed — a prior "
-                                "job may still be running agent code"
-                            )
-                        # A confirmed-terminal indeterminate candidate is just
-                        # a dead prior job: NOT added to drained_recovered (no
-                        # result to collect), so the per-group loop stages a
-                        # fresh eval for this (entry, seed) — safe now.
-                        continue
-                    # disc_state == "recoverable"
-                    job_id = (rd / "job_id.txt").read_text().strip()
-                    print(
-                        f"[slurm-resume] Draining recovered job {job_id} "
-                        f"(group {g_key}{suffix}) task-wide before any staging"
-                    )
-                    try:
-                        status: str | None = self.slurm_executor.wait_for_job(job_id)
-                    except Exception as wait_exc:
-                        # The drain wait itself RAISED (scheduler-query /
-                        # filesystem fault) — the recovered job's liveness is
-                        # unknown. Settle via cancel + confirm exactly like an
-                        # unconfirmed wait status instead of letting the
-                        # exception tear down the whole run (R12).
-                        print(
-                            f"[slurm-resume] drain wait for recovered job "
-                            f"{job_id} RAISED ({wait_exc}) — treating liveness "
-                            "as unconfirmed"
-                        )
-                        status = None
-                    if status is None or status in unconfirmed_wait_states:
-                        status = _settle_unconfirmed_wait(
-                            job_id,
-                            status if status is not None else "WAIT-RAISED",
-                        )
-                        if status is None:
-                            ephemeral_abort = (
-                                f"recovered job {job_id} (group {g_key}{suffix}) "
-                                "may still be alive: wait unconfirmed and "
-                                "cancellation could not be verified"
-                            )
-                    # Backstop-scrub the recovered job's blobs (staged by the
-                    # previous, dead harness process — no recorded list
-                    # exists): dry-run the stager to enumerate the entry's
-                    # destinations, then unlink them. Also done when the
-                    # status is unconfirmed: denying the (possibly alive) job
-                    # its data is the safe direction.
-                    try:
-                        _ok, _names = self._restage_task_inputs(
-                            r_entry, r_seed, dry_run=True
-                        )
-                        self._cleanup_staged_inputs(_names)
-                    except Exception:
-                        pass
-                    drained_recovered[(g_key, suffix)] = (job_id, status, rd)
 
         for group_key in sorted(grouped.keys()):
             entries = grouped[group_key]
@@ -3831,19 +3281,12 @@ class WorkspaceTools:
                         "time": entry.get("time", "1:00:00"),
                         "use_cuda": entry_use_cuda,
                     }
-                    # Ephemeral-input tasks run their budget check HOST-side,
-                    # right before staging (see the submission loop below) —
-                    # NOT inside the job script. The in-job budget command
-                    # would execute agent-editable code (e.g. nas's
-                    # budget_check imports custom_nas_search.py and calls
-                    # search_step()) on the compute node AFTER the blobs were
-                    # staged at submit time, letting agent code read them.
                     if self.container_runtime == "local":
                         local_cmd, local_cwd, local_env = self._build_local_exec_spec(entry, seed)
                         task_info["local_cmd"] = local_cmd
                         task_info["local_cwd"] = local_cwd
                         task_info["local_env"] = local_env
-                        if budget_enabled and not ephemeral:
+                        if budget_enabled:
                             budget_cmd, budget_cwd, budget_env = self._build_local_budget_exec_spec(entry, seed)
                             task_info["budget_local_cmd"] = budget_cmd
                             task_info["budget_local_cwd"] = budget_cwd
@@ -3856,29 +3299,20 @@ class WorkspaceTools:
                             task_info["docker_container_name"] = container_result[1]
                         else:
                             task_info["apptainer_cmd"] = container_result
-                        if budget_enabled and not ephemeral:
+                        if budget_enabled:
                             task_info["budget_apptainer_cmd"] = self._build_container_budget_cmd(entry, seed)
                     if "mem" in entry:
                         task_info["mem"] = entry["mem"]
                     all_tasks.append(task_info)
 
             # Global bin-packing across all seeds
-            if ephemeral:
-                # One (entry, seed) per job — serialized below, never packed.
-                sub_jobs = [[t] for t in all_tasks]
-            else:
-                sub_jobs = self._split_into_sub_jobs(all_tasks)
+            sub_jobs = self._split_into_sub_jobs(all_tasks)
 
             # Submit all sub-jobs (or recover existing ones)
             submitted: list[tuple] = []
-            # Ephemeral jobs are waited to completion inline (serialization);
-            # their terminal status is preserved here so the collection loop
-            # below consumes it instead of re-polling (wait_for_job sleeps
-            # before its first query — re-waiting every finished job would add
-            # a guaranteed delay per job). Non-ephemeral jobs never enter it.
-            prewaited: dict[str, str] = {}
+            for sub_idx, sub_tasks in enumerate(sub_jobs):
+                suffix = f"_{sub_idx}" if len(sub_jobs) > 1 else ""
 
-            def _build_group_cmds(sub_tasks: list[dict]) -> list[dict]:
                 group_cmds = []
                 for t in sub_tasks:
                     cmd_dict = {
@@ -3901,239 +3335,26 @@ class WorkspaceTools:
                         if "budget_apptainer_cmd" in t:
                             cmd_dict["budget_apptainer_cmd"] = t["budget_apptainer_cmd"]
                     group_cmds.append(cmd_dict)
-                return group_cmds
 
-            # Recovery resolution: in ephemeral mode every recoverable job —
-            # across ALL groups — was already discovered, waited to
-            # termination and backstop-scrubbed by the TASK-WIDE drain
-            # prepass above (a recovered job of a later group may be running
-            # agent code while an earlier group would otherwise stage). Here
-            # we only look its result up; nothing is waited or scrubbed
-            # again. Non-ephemeral groups keep the per-group discovery.
-            prepared = []
-            for sub_idx, sub_tasks in enumerate(sub_jobs):
-                suffix = f"_{sub_idx}" if len(sub_jobs) > 1 else ""
+                # Recovery: reuse existing SLURM job instead of submitting
                 recovered_dir = None
                 if self._recover_pending_slurm:
-                    if ephemeral:
-                        rec = drained_recovered.get((group_key, suffix))
-                        recovered_dir = rec[2] if rec else None
-                    else:
-                        recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
-                prepared.append(
-                    (suffix, sub_tasks, _build_group_cmds(sub_tasks), recovered_dir)
-                )
-            # Pre-drained recovered jobs are consumed instantly below, so the
-            # old recovered-first ordering no longer matters.
-            ordered = prepared
+                    recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
 
-            for suffix, sub_tasks, group_cmds, recovered_dir in ordered:
-                # Ephemeral inputs (fresh submission only): budget check FIRST
-                # (it executes agent code and must never see staged blobs),
-                # then stage this single job's blobs host-side immediately
-                # before submission (each sub_job holds exactly one
-                # (entry, seed) in ephemeral mode). A failed check/staging is
-                # fatal for the entry: it is recorded as a failure and never
-                # submitted. Recovered jobs stage NOTHING here.
-                staged_files: list[str] = []
-                if ephemeral:
-                    _t0 = sub_tasks[0]
-
-                    def _record_entry_failure(message: str, _t0: dict = _t0) -> None:
-                        self._current_test_had_failures = True
-                        seed_feedback[_t0["seed"]].append(
-                            f"### {_t0['orig_label']} "
-                            f"({_t0['entry'].get('cmd', '?')})\n{message}"
-                        )
-                        seed_hidden[_t0["seed"]].append(
-                            _t0["entry"].get("hidden", False)
-                        )
-
-                if ephemeral and recovered_dir is not None:
-                    # Consumed from the TASK-WIDE drain prepass: this job was
-                    # already waited to termination and its blobs backstop-
-                    # scrubbed BEFORE any group staged anything. Hand its
-                    # terminal status to the collection loop (prewaited) so
-                    # it is never re-polled, and slot it into THIS group's
-                    # submitted list so its results are collected in place.
-                    job_id, drained_status, out_dir = drained_recovered[
-                        (group_key, suffix)
-                    ]
-                    if drained_status is None:
-                        _record_entry_failure(
-                            f"[SUBMIT/WAIT FAILED] recovered job {job_id}: "
-                            "termination could not be confirmed (scheduler "
-                            "queries failing; cancellation unverified) — "
-                            "evaluation skipped"
-                        )
-                        continue
-                    print(
-                        f"[slurm-resume] Recovering job {job_id} from {out_dir} "
-                        "(drained task-wide before staging)"
-                    )
-                    prewaited[job_id] = drained_status
-                    submitted.append((job_id, sub_tasks, group_cmds, out_dir))
-                    continue
-
-                if ephemeral:
-                    # A previous job's liveness is unknown (wait unconfirmed,
-                    # cancellation unverified) — never stage while an
-                    # unaccounted-for agent process may still be running.
-                    if ephemeral_abort:
-                        _record_entry_failure(
-                            "[EPHEMERAL ABORT] staging suspended for the "
-                            f"remaining entries: {ephemeral_abort}"
-                        )
-                        continue
-                    if budget_enabled:
-                        budget_err = self._run_budget_check(
-                            _t0["entry"], _t0["seed"]
-                        )
-                        if budget_err:
-                            _record_entry_failure(budget_err)
-                            continue
-                    stage_ok, staged_files = self._restage_task_inputs(
-                        _t0["entry"], _t0["seed"]
-                    )
-                    if not stage_ok:
-                        self._cleanup_staged_inputs(staged_files)
-                        _record_entry_failure(
-                            "[INPUT STAGING FAILED] could not re-materialize "
-                            "this run's input blobs — evaluation skipped "
-                            "(see harness console for the stager error)"
-                        )
-                        continue
-                    # Serialized stage->submit->wait->scrub lifecycle (fresh
-                    # submissions only — recovered jobs were consumed above).
-                    # The backstop scrub runs on EVERY exit path (finally):
-                    # a raising submit_group (controller outage, bad resource
-                    # request) or wait_for_job must not leave this entry's
-                    # freshly staged secrets in the shared workspace. Such
-                    # failures are contained per entry: recorded as a failure,
-                    # remaining entries proceed. The first wait's status is
-                    # preserved so the collection loop never re-polls a
-                    # finished job (SlurmExecutor.wait_for_job sleeps before
-                    # its first query). An UNCONFIRMED wait result (the job
-                    # may still be alive) is settled via cancel + fresh
-                    # confirmation probes; if termination still cannot be
-                    # confirmed, ALL remaining ephemeral staging is aborted.
-                    try:
-                        out_dir = (
-                            self.slurm_executor.logs_dir
-                            / self.task_name
-                            / self.exp_name
-                            / timestamp
-                            / f"group_{group_key}{suffix}"
-                        )
-                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}{suffix}"
-                        job_id = self.slurm_executor.submit_group(
-                            group_cmds, job_name, out_dir
-                        )
-                        # Serialize: block until THIS job finished before
-                        # staging / submitting the next one. While the job
-                        # queues, no sibling evaluation of this task runs.
-                        try:
-                            status: str | None = self.slurm_executor.wait_for_job(job_id)
-                        except Exception as wait_exc:
-                            # The job WAS accepted (its ID is known) but the
-                            # WAIT itself raised — an unexpected scheduler-
-                            # query / filesystem exception, NOT an
-                            # unconfirmed-status return. Same liveness-
-                            # uncertainty class as the round-9 status path:
-                            # settle via cancel + confirm below; never just
-                            # record-and-continue while the accepted job may
-                            # still be running agent code (R12).
-                            print(
-                                f"[slurm] ephemeral job {job_id}: wait_for_job "
-                                f"RAISED ({wait_exc}) — treating liveness as "
-                                "unconfirmed"
-                            )
-                            status = None
-                        if status is None or status in unconfirmed_wait_states:
-                            settled = _settle_unconfirmed_wait(
-                                job_id,
-                                status if status is not None else "WAIT-RAISED",
-                            )
-                            if settled is None:
-                                ephemeral_abort = (
-                                    f"job {job_id} ({_t0['orig_label']} seed "
-                                    f"{_t0['seed']}) may still be alive: wait "
-                                    "unconfirmed and cancellation could not "
-                                    "be verified"
-                                )
-                                _record_entry_failure(
-                                    f"[SUBMIT/WAIT FAILED] job {job_id}: "
-                                    + (
-                                        "wait_for_job raised an exception"
-                                        if status is None
-                                        else f"wait returned '{status}'"
-                                    )
-                                    + " without confirming the job stopped, "
-                                    "and cancellation could not be verified — "
-                                    "evaluation skipped; remaining ephemeral "
-                                    "staging aborted"
-                                )
-                                continue
-                            status = settled
-                        prewaited[job_id] = status
-                    except SubmitUncertainError as exc:
-                        # The scheduler command RAN before this failure: the
-                        # job may have been ACCEPTED and may start running
-                        # agent code. Cancel + confirm (by id when known,
-                        # else by job name); only a CONFIRMED stop lets
-                        # staging continue.
-                        if _settle_uncertain_submit(exc):
-                            _record_entry_failure(
-                                f"[SUBMIT/WAIT FAILED] {exc} — the possibly-"
-                                "accepted job was cancelled and confirmed "
-                                "stopped; evaluation skipped"
-                            )
-                            continue
-                        ephemeral_abort = (
-                            f"submission of {_t0['orig_label']} seed "
-                            f"{_t0['seed']} failed after the scheduler "
-                            f"command ran ({exc}) — an accepted job may be "
-                            "running "
-                            + ("and its termination could not be confirmed"
-                               if exc.job_id else "with no known job id")
-                        )
-                        _record_entry_failure(
-                            f"[SUBMIT/WAIT FAILED] {exc} — the job may have "
-                            "been ACCEPTED and could still run agent code "
-                            "(orphan risk); cancellation could not be "
-                            "confirmed — evaluation skipped; remaining "
-                            "ephemeral staging aborted"
-                        )
-                        continue
-                    except Exception as exc:
-                        _record_entry_failure(
-                            f"[SUBMIT/WAIT FAILED] {exc} — evaluation skipped"
-                        )
-                        continue
-                    finally:
-                        # No-op when the runner already scrubbed them
-                        # in-container; guarantees removal after a
-                        # crash/timeout, a raising submit/wait, or an
-                        # unconfirmed wait (denying the possibly-alive job
-                        # its data is the safe direction).
-                        self._cleanup_staged_inputs(staged_files)
+                if recovered_dir:
+                    out_dir = recovered_dir
+                    job_id = (recovered_dir / "job_id.txt").read_text().strip()
+                    print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
                 else:
-                    if recovered_dir:
-                        out_dir = recovered_dir
-                        job_id = (recovered_dir / "job_id.txt").read_text().strip()
-                        print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
-                    else:
-                        out_dir = (
-                            self.slurm_executor.logs_dir
-                            / self.task_name
-                            / self.exp_name
-                            / timestamp
-                            / f"group_{group_key}{suffix}"
-                        )
-                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}{suffix}"
-                        job_id = self.slurm_executor.submit_group(
-                            group_cmds, job_name, out_dir
-                        )
+                    out_dir = (
+                        self.slurm_executor.logs_dir
+                        / self.task_name
+                        / self.exp_name
+                        / timestamp
+                        / f"group_{group_key}{suffix}"
+                    )
+                    job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
+                    job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
 
                 submitted.append((job_id, sub_tasks, group_cmds, out_dir))
 
@@ -4141,13 +3362,9 @@ class WorkspaceTools:
             # groups (e.g. group_2) may also have recoverable jobs from a
             # previous resume attempt.  The flag is cleared after ALL groups.
 
-            # Wait for all sub-jobs and collect results (ephemeral jobs were
-            # already waited inline — consume the preserved status).
+            # Wait for all sub-jobs and collect results
             for job_id, sub_tasks, group_cmds, out_dir in submitted:
-                if job_id in prewaited:
-                    status = prewaited.pop(job_id)
-                else:
-                    status = self.slurm_executor.wait_for_job(job_id)
+                status = self.slurm_executor.wait_for_job(job_id)
 
                 # Auto-resubmit if job was externally cancelled
                 max_resubmit = 3 if getattr(
@@ -4155,90 +3372,12 @@ class WorkspaceTools:
                 ) else 0
                 resubmit_count = 0
                 while status == "CANCELLED" and resubmit_count < max_resubmit:
-                    if ephemeral and ephemeral_abort:
-                        # Resubmitting would STAGE — forbidden once a prior
-                        # job's liveness is unknown.
-                        print("[slurm] resubmit skipped: ephemeral staging "
-                              f"aborted ({ephemeral_abort})")
-                        break
                     resubmit_count += 1
                     print(f"[slurm] Job {job_id} was CANCELLED externally — "
                           f"resubmitting (attempt {resubmit_count}/{max_resubmit})")
-                    # The cancelled attempt may already have consumed its
-                    # ephemeral input blobs — re-stage just before resubmitting
-                    # and backstop-scrub once the retry finished. (No-op for
-                    # non-ephemeral tasks; in ephemeral mode all sibling jobs
-                    # have already completed, so nothing runs concurrently,
-                    # and the budget check already passed before the original
-                    # submission.) A failed re-staging aborts the retry.
-                    _staged_retry: list[str] = []
-                    _retry_ok = True
-                    for _t in sub_tasks:
-                        _ok, _paths = self._restage_task_inputs(_t["entry"], _t["seed"])
-                        _staged_retry.extend(_paths)
-                        _retry_ok = _retry_ok and _ok
-                    if not _retry_ok:
-                        self._cleanup_staged_inputs(_staged_retry)
-                        print("[slurm] resubmit aborted: input re-staging failed")
-                        break
-                    try:
-                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}"
-                        try:
-                            job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
-                        except SubmitUncertainError as exc:
-                            if not ephemeral:
-                                raise  # non-ephemeral: propagate as before
-                            # Post-acceptance resubmit failure: same orphan
-                            # risk as the fresh path. Confirmed stop -> treat
-                            # this attempt as failed and stop retrying;
-                            # unresolved -> also abort all further staging.
-                            if not _settle_uncertain_submit(exc):
-                                ephemeral_abort = (
-                                    f"resubmission failed after the scheduler "
-                                    f"command ran ({exc}) — an accepted job "
-                                    "may be running unaccounted for"
-                                )
-                            print(f"[slurm] resubmit uncertain: {exc}")
-                            status = "FAILED"
-                            break
-                        try:
-                            status = self.slurm_executor.wait_for_job(job_id)
-                        except Exception as wait_exc:
-                            if not ephemeral:
-                                raise  # non-ephemeral: propagate as before
-                            # The resubmitted job WAS accepted (id known) but
-                            # the WAIT raised — same liveness-uncertainty
-                            # class as an unconfirmed status: settle via
-                            # cancel + confirm (R12).
-                            print(
-                                f"[slurm] resubmitted job {job_id}: "
-                                f"wait_for_job RAISED ({wait_exc}) — treating "
-                                "liveness as unconfirmed"
-                            )
-                            status = None
-                        if ephemeral and (
-                            status is None or status in unconfirmed_wait_states
-                        ):
-                            settled = _settle_unconfirmed_wait(
-                                job_id,
-                                status if status is not None else "WAIT-RAISED",
-                            )
-                            if settled is None:
-                                # Liveness unknown — abort all further
-                                # ephemeral staging (incl. later groups) and
-                                # stop retrying; treat this attempt as failed.
-                                ephemeral_abort = (
-                                    f"resubmitted job {job_id} may still be "
-                                    "alive: wait unconfirmed and cancellation "
-                                    "could not be verified"
-                                )
-                                status = "FAILED"
-                            else:
-                                status = settled
-                    finally:
-                        # Scrub on every exit path — a raising resubmit/wait
-                        # must not leave the freshly staged blobs behind.
-                        self._cleanup_staged_inputs(_staged_retry)
+                    job_name = f"mls-{self.task_name}-g{group_key}"
+                    job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
+                    status = self.slurm_executor.wait_for_job(job_id)
 
                 labels = [cmd["label"] for cmd in group_cmds]
                 outputs = self.slurm_executor.read_outputs(out_dir, labels)

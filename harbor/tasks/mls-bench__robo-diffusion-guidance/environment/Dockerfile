@@ -15,11 +15,4 @@
 # reference before verification.
 FROM bohanlyu2022/mlsbench-harbor-cleandiffuser:latest
 
-# The Daytona GPU pool currently exposes RTX PRO 6000 Blackwell (sm_120).
-# The published CleanDiffuser base ships torch 2.5.1/cu121, which has no
-# sm_120 kernels and fails before the first training step.  Install the
-# matching CUDA 12.8 wheel in this task layer so Oracle/verifier runs exercise
-# the algorithm instead of returning an empty metric.
-RUN python -m pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu128 'torch==2.7.1'
-
 COPY _scaffold/ /workspace/

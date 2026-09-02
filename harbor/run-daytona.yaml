@@ -1,7 +1,7 @@
 # Daytona run configuration for the 138 non-API MLS-Bench tasks.
 #
 # Run from this directory with:
-#   DAYTONA_API_KEY=... PYTHONPATH=. harbor run -c run-daytona.yaml
+#   DAYTONA_API_KEY=... PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona.yaml
 #
 # The custom import path keeps local Docker's GPU-only Compose reservation
 # overlays compatible with Daytona.  Those overlays are treated as direct GPU
@@ -20,10 +20,23 @@ environment:
   import_path: harbor_env:DaytonaEnvironment
   force_build: true
   delete: true
-  # Spot sandboxes do not consume the organization's on-demand GPU quota.
-  # The adapter applies this only to GPU tasks; CPU tasks remain on-demand.
   kwargs:
-    spot: true
+    # GPU sandboxes are always requested as Hopper.  Override per invocation
+    # with `--ek gpu_type=H200` only for tasks that carry a native `h200`
+    # profile (the llm-pretrain-*/llm-rl-* families).
+    gpu_type: H100
+    # Spot sandboxes do not count against the organization's on-demand GPU
+    # quota, but capacity is not guaranteed.  Enable with `--ek spot=true`;
+    # the adapter applies it only to GPU tasks.
+    spot: false
+    # task.toml resources are sized for local Docker.  Daytona enforces them
+    # as hard cgroup limits, so GPU sandboxes get a larger RAM/CPU floor.
+    gpu_memory_gb: 64
+    gpu_cpus: 16
+    # Extra sandbox environment.  test_cmds[].time budgets were calibrated on
+    # MLS-Bench's native hosts; allow slower remote CPUs a longer wall clock.
+    sandbox_env:
+      MLSBENCH_EVAL_TIME_SCALE: "2.0"
 
 agents:
   - name: oracle
