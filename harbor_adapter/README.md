@@ -39,6 +39,15 @@ caps CPU sandboxes at 10 GiB and allows a larger disk override for GPU
 sandboxes; images that cannot be built by the provider are retained as
 explicit errors in the CSV report.
 
+H100/H200 behavior remains the native MLS-Bench behavior. The 15 supported
+`llm-pretrain-*`/`llm-rl-*` task configs already contain their H200
+`cmd`/`compute`/`env` overrides, including micro-batch and accumulation values
+where applicable. Passing `--ek gpu_type=H200` only selects the Daytona device
+and forwards `MLSBENCH_GPU_TYPE`; the verifier consumes the existing block and
+the environment derives its GPU reservation from the same metadata. The
+adapter does not add or rewrite training parameters. Leave the GPU type at
+H100 (the Spot default) for tasks without an H200 block.
+
 The only two tasks whose benchmark commands call external model APIs are
 `agent-tool-reasoning` and `mas-topology`; supply their DeepSeek/DashScope
 credentials separately if evaluating them. They are not used as Daytona smoke
@@ -79,6 +88,19 @@ Two-tier image build + verifier-side pristine baseline:
    `tests/meta/pristine/<rel>` + `tests/meta/pristine_manifest.json`. Harbor
    mounts `tests/` at `/tests/` only at verify time, so a root agent cannot
    tamper with the diff baseline before scoring.
+
+### Daytona-only compatibility layer
+
+`mls_bench.daytona_compat` runs at the end of `render_task()`, after verifier
+assets have been staged. It is intentionally outside `tasks/`: native
+MLS-Bench runs keep their original package versions, scripts,
+`free_cache_engine` behavior, and research scale. For Daytona, the layer may
+select a patched Harbor base image, install provider-required CUDA library
+aliases, or pin companion wheels (for example, CleanDiffuser's torch 2.7.1
+requires the matching torchvision 0.22.1 wheel). Only the rendered
+`environment/Dockerfile` and verifier copies are changed; editable source and
+native task scripts are not. The operation is idempotent, so re-rendering does
+not accumulate layers or verifier flags.
 
 Each rendered task directory:
 

@@ -221,6 +221,108 @@ def test_spot_h200_forwards_type_and_verifier_environment(tmp_path: Path):
     assert captured[0].env_vars["MLSBENCH_GPU_TYPE"] == "H200"
 
 
+def test_h200_uses_native_override_compute_for_daytona_reservation(tmp_path: Path):
+    """H200 capacity comes from the rendered task's existing config metadata."""
+    module = _module()
+    env_dir = tmp_path / "environment"
+    env_dir.mkdir()
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(2))
+    meta = tmp_path / "tests" / "meta"
+    meta.mkdir(parents=True)
+    (meta / "config.json").write_text(
+        json.dumps(
+            {
+                "test_cmds": [
+                    {
+                        "cmd": "scripts/train.sh",
+                        "compute": 2,
+                        "group": 1,
+                        "h200": {
+                            "compute": 1,
+                            "env": {"TP_SIZE": "1"},
+                        },
+                    }
+                ],
+                "seeds": [42],
+            }
+        )
+    )
+    trial_paths = TrialPaths(tmp_path / "trial")
+    trial_paths.mkdir()
+    config = EnvironmentConfig(cpus=2, memory_mb=4096, storage_mb=10240, gpus=2)
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="native-h200-resource-task",
+        session_id="native-h200-resource-task.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+        spot=True,
+        gpu_type="H200",
+    )
+
+    # The verifier still reads the same h200 block; only Daytona's resource
+    # request is reduced from the H100 baseline of two cards to one.
+    assert env.task_env_config.gpus == 1
+
+
+def test_h100_keeps_native_baseline_reservation_with_h200_metadata(tmp_path: Path):
+    module = _module()
+    env_dir = tmp_path / "environment"
+    env_dir.mkdir()
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(2))
+    meta = tmp_path / "tests" / "meta"
+    meta.mkdir(parents=True)
+    (meta / "config.json").write_text(
+        json.dumps(
+            {
+                "test_cmds": [
+                    {
+                        "cmd": "scripts/train.sh",
+                        "compute": 2,
+                        "h200": {"compute": 1},
+                    }
+                ]
+            }
+        )
+    )
+    trial_paths = TrialPaths(tmp_path / "trial")
+    trial_paths.mkdir()
+    config = EnvironmentConfig(cpus=2, memory_mb=4096, storage_mb=10240, gpus=2)
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="native-h100-resource-task",
+        session_id="native-h100-resource-task.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+        spot=True,
+        gpu_type="H100",
+    )
+    assert env.task_env_config.gpus == 2
+
+
+def test_spot_defaults_to_h100_without_explicit_gpu_type(tmp_path: Path):
+    module = _module()
+    env_dir = tmp_path / "environment"
+    env_dir.mkdir()
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(1))
+    trial_paths = TrialPaths(tmp_path / "trial")
+    trial_paths.mkdir()
+    config = EnvironmentConfig(cpus=2, memory_mb=4096, storage_mb=10240, gpus=1)
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="spot-default-task",
+        session_id="spot-default-task.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+        spot=True,
+    )
+
+    assert env._gpu_type_requested().name == "H100"
+
+
 def test_spot_rejects_genuine_gpu_compose(tmp_path: Path):
     module = _module()
     env_dir = tmp_path / "environment"

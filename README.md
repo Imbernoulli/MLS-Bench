@@ -278,6 +278,97 @@ DAYTONA_API_KEY="<your-daytona-key>" \
   --resource gpu --gpu-limit 10 --spot --gpu-type H100 --concurrency 10
 ```
 
+#### Run one task (Oracle or an Agent)
+
+Harbor's `--path` selects exactly one rendered task. The Oracle replays the
+strongest declared MLS-Bench baseline and is useful for validating the image
+and verifier before spending an Agent run:
+
+```bash
+cd harbor
+export DAYTONA_API_KEY="<your-daytona-key>"
+export PYTHONPATH=.:../harbor_adapter/src
+
+# One task, Oracle, Daytona Spot H100 (the default Spot GPU type)
+harbor run -c run-daytona.yaml \
+  --path tasks/mls-bench__robo-diffusion-policy \
+  --agent oracle --n-concurrent 1
+```
+
+To request an H200 explicitly, pass an environment kwarg. H200 is not an
+implicit fallback: use it only for a task whose task/config and upstream code
+support H200. Tasks that support both can be selected either way:
+
+```bash
+# Explicit on-demand H100
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent oracle --ek spot=false --ek gpu_type=H100
+
+# Explicit H200 Spot
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent oracle --ek spot=true --ek gpu_type=H200
+```
+
+The H200 settings are already part of MLS-Bench's native task configs: the 15
+`llm-pretrain-*`/`llm-rl-*` tasks that support H200 carry an `h200` block with
+the validated command, GPU count, and (where needed) batch/TP environment. The
+Daytona adapter does not create or replace those values. It forwards the
+selected hardware as `MLSBENCH_GPU_TYPE=H200`; the Harbor verifier then
+materializes the task's existing block and Daytona derives its reservation from
+that block (for example, RL 2→1 GPUs and pretraining 4→2 GPUs). Tasks without
+an `h200` block keep their H100 baseline even when the provider is Daytona.
+
+For native MLS-Bench runs, the same support is selected by the existing
+`configs/react.yaml` setting `compute_scale: 0.5` (H200; leave it at `1.0` for
+H100). This is the repository's original H200 path, not a Daytona-specific
+training configuration.
+
+`run-daytona.yaml` already sets `spot: true` for GPU tasks. An explicit
+`--ek` value overrides that file for the invocation. CPU tasks remain
+on-demand because Daytona rejects Spot requests without a GPU.
+
+Replace `oracle` with any Harbor Agent. The Agent name selects Harbor's
+harness; `--model` selects the provider/model:
+
+```bash
+# Codex/OpenAI-compatible endpoint
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent codex --model openai/gpt-5.6 \
+  --agent-env OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --agent-env OPENAI_BASE_URL="https://api.openai.com/v1"
+
+# Claude Code/Anthropic endpoint
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent claude-code --model anthropic/claude-opus-4-7 \
+  --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+```
+
+Use `--agent-import-path package.module:AgentClass` for a custom Harbor Agent,
+and repeat `--agent-kwarg KEY=VALUE` for harness-specific constructor options.
+`--agent-env KEY=VALUE` is visible to the Agent process; `--verifier-env
+KEY=VALUE` is visible only while the task verifier runs; `--ek KEY=VALUE`
+(`--environment-env`) configures the Daytona environment (`spot`,
+`gpu_type`, or provider-specific options). For example, a verifier that calls
+an OpenAI-compatible endpoint needs its endpoint/key passed with
+`--verifier-env`, not only `--agent-env`.
+
+The task's `task.toml` fixes its name, editable workspace, resource request and
+timeouts; `instruction.md` is the Agent prompt; and `tests/eval/scripts/` plus
+`tests/meta/{parser.py,score_spec.py}` are the Harbor verifier harness. These
+files are generated from native `tasks/<task>/` by the adapter, so edit the
+native task when changing a benchmark rather than hand-editing a rendered
+bundle.
+
+For multiple tasks, use `--n-concurrent N` only when the aggregate declared GPU
+requirements fit your quota. The quota-aware helper is preferable for Daytona:
+it queues by GPU count and keeps the normal 10-card limit:
+
+```bash
+python scripts/daytona_smoke.py --scope task --resource gpu \
+  --gpu-limit 10 --concurrency 10 --spot --gpu-type H100 \
+  --agent oracle --verify
+```
+
 By default `--scope environment` selects one representative task per package
 (63 environments for the 138 non-API tasks; the GPU-only example above selects
 the 53 GPU environments). Use `--scope task` for all 138 non-API tasks,

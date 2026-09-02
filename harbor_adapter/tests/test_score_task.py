@@ -3,9 +3,12 @@ from __future__ import annotations
 import importlib.util
 import hashlib
 import json
+import re
 import sys
 import argparse
 from pathlib import Path
+
+import pytest
 
 
 def _load_score_task():
@@ -415,6 +418,83 @@ def test_h200_override_is_not_selected_on_h100(monkeypatch):
     }
     materialized = score_task._effective_test_cmds(config)
     assert materialized == config["test_cmds"]
+
+
+@pytest.mark.parametrize(
+    "task_id, expected_compute, expected_env",
+    [
+        (
+            "llm-pretrain-attention",
+            2.0,
+            {"BATCH_SIZE": "64", "GRAD_ACCUM": "8"},
+        ),
+        (
+            "llm-rl-advantage",
+            1.0,
+            {
+                "TP_SIZE": "1",
+                "MAX_TOKEN_LEN_PER_GPU": "20480",
+                "GPU_MEM_UTIL": "0.5",
+            },
+        ),
+    ],
+)
+def test_h200_materialization_preserves_native_microbatch_settings(
+    monkeypatch, task_id, expected_compute, expected_env
+):
+    """The Daytona verifier consumes the repository's original H200 metadata."""
+    score_task = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_GPU_TYPE", "H200")
+    config = json.loads(
+        (
+            Path(__file__).resolve().parents[2]
+            / "tasks"
+            / task_id
+            / "config.json"
+        ).read_text()
+    )
+    materialized = score_task._effective_test_cmds(config)
+    assert len(materialized) == len(config["test_cmds"])
+    entry = materialized[0]
+    assert entry["compute"] == expected_compute
+    assert entry.get("env") == expected_env
+    # H200 metadata remains in the source dictionary; materialization is a
+    # verifier-local copy and cannot rewrite the native task configuration.
+    assert "h200" in config["test_cmds"][0]
+
+
+def test_all_native_pretrain_h200_profiles_preserve_effective_microbatch():
+    """Every published pretraining H200 profile keeps its macro-batch fixed."""
+    root = Path(__file__).resolve().parents[2] / "tasks"
+    for config_path in sorted((root).glob("llm-pretrain-*/config.json")):
+        config = json.loads(config_path.read_text())
+        entry = next(
+            (tc for tc in config.get("test_cmds", []) if isinstance(tc.get("h200"), dict)),
+            None,
+        )
+        if entry is None:
+            continue
+        override_env = entry["h200"].get("env", {})
+        assert {"BATCH_SIZE", "GRAD_ACCUM"} <= set(override_env)
+        script = config_path.parent / "scripts" / "gpt_345m.sh"
+        script_text = script.read_text()
+        defaults = {}
+        for key in ("BATCH_SIZE", "GRAD_ACCUM"):
+            match = re.search(rf"{key}=\$\{{{key}:-([^}}]+)\}}", script_text)
+            assert match, f"missing H100 {key} default in {script}"
+            defaults[key] = int(match.group(1))
+        assert int(override_env["BATCH_SIZE"]) * int(override_env["GRAD_ACCUM"]) == (
+            defaults["BATCH_SIZE"] * defaults["GRAD_ACCUM"]
+        )
+
+
+def test_all_native_rl_h200_profiles_include_runtime_memory_settings():
+    root = Path(__file__).resolve().parents[2] / "tasks"
+    for config_path in sorted((root).glob("llm-rl-*/config.json")):
+        config = json.loads(config_path.read_text())
+        entry = next(tc for tc in config["test_cmds"] if "h200" in tc)
+        override_env = entry["h200"].get("env", {})
+        assert {"TP_SIZE", "MAX_TOKEN_LEN_PER_GPU", "GPU_MEM_UTIL"} <= set(override_env)
 
 
 def test_package_dir_matches_case_and_separators(tmp_path: Path):

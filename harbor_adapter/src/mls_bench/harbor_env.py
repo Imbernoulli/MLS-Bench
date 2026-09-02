@@ -20,6 +20,8 @@ from __future__ import annotations
 import contextvars
 import copy
 import importlib
+import json
+import math
 import os
 from pathlib import Path
 from typing import Any
@@ -76,6 +78,70 @@ except AttributeError:  # pragma: no cover - provider-version diagnostic
 _GPU_CONTEXT: contextvars.ContextVar[int] = contextvars.ContextVar(
     "mlsbench_daytona_gpu_count", default=0
 )
+
+
+def _h200_gpu_count_from_rendered_task(environment_dir: Path, fallback: int) -> int:
+    """Return the GPU reservation implied by the task's native ``h200`` blocks.
+
+    MLS-Bench keeps H200 command/resource overrides in each native task's
+    ``config.json``.  Harbor normally renders the H100 baseline into
+    ``task.toml`` before the provider sees it, so a Daytona H200 request would
+    otherwise reserve the baseline number of cards even though the verifier
+    correctly selects the smaller H200 command.  Read the rendered copy of
+    that *existing* config and derive the peak reservation; never invent batch,
+    tensor-parallel, or other training parameters here.
+
+    If the task has no H200 metadata (or the metadata is malformed), preserve
+    the declared baseline reservation.  This keeps non-H200 tasks byte-for-byte
+    compatible with the normal Harbor path.
+    """
+    config_path = environment_dir.parent / "tests" / "meta" / "config.json"
+    try:
+        config = json.loads(config_path.read_text())
+        entries = list(config.get("test_cmds", []) or [])
+        if not entries:
+            return fallback
+        seeds = config.get("seeds") or [42]
+        n_seeds = 1 if isinstance(seeds, int) else max(1, len(seeds))
+        grouped: dict[object, list[dict]] = {}
+        auto_group = 10000
+        for entry in entries:
+            group = entry.get("group")
+            if group is None:
+                group = auto_group
+                auto_group += 1
+            grouped.setdefault(group, []).append(entry)
+
+        def compute(entry: dict) -> float:
+            value = entry.get("compute", 1)
+            override = entry.get("h200")
+            if isinstance(override, dict) and "compute" in override:
+                value = override["compute"]
+            try:
+                return float(value or 1)
+            except (TypeError, ValueError):
+                return 1.0
+
+        def fractional_bins(values: list[float]) -> int:
+            bins: list[float] = []
+            for value in sorted(values, reverse=True):
+                for index, remaining in enumerate(bins):
+                    if remaining >= value:
+                        bins[index] = remaining - value
+                        break
+                else:
+                    bins.append(1.0 - value)
+            return len(bins)
+
+        peak = 0
+        for group_entries in grouped.values():
+            computes = [compute(entry) for entry in group_entries for _ in range(n_seeds)]
+            whole = sum(max(1, math.ceil(value)) for value in computes if value >= 1.0)
+            fractional = fractional_bins([value for value in computes if 0.0 < value < 1.0])
+            peak = max(peak, whole + fractional)
+        return max(1, min(fallback, peak)) if peak else fallback
+    except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+        return fallback
 # Strategies may be re-exported by a package even though their globals (and
 # therefore ``Resources``) live in a different implementation module.
 _RESOURCES_IMPL = importlib.import_module(_DaytonaDirect.__module__)
@@ -228,9 +294,11 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         """Resolve an optional Daytona GPU type kwarg (e.g. ``H200``)."""
         # Hopper is the portable default for the prebuilt MLS-Bench images:
         # their CUDA wheels support H100/H200 (sm_90) but older images do not
-        # support Daytona's Blackwell RTX PRO 6000 (sm_120).
+        # support Daytona's Blackwell RTX PRO 6000 (sm_120). H200-specific
+        # task variants must opt in explicitly; do not silently change every
+        # Spot task's device type.
         value = self._kwargs.get(
-            "gpu_type", "H200" if self._spot_requested() else None
+            "gpu_type", "H100" if self._spot_requested() else None
         )
         if value is None or _DaytonaGpuType is None:
             return None
@@ -311,9 +379,22 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
     ):
         declared_gpus = int(getattr(task_env_config, "gpus", 0) or 0)
         override_gpus = kwargs.get("override_gpus")
-        requested_gpus = (
-            int(override_gpus) if override_gpus is not None else declared_gpus
-        )
+        if override_gpus is not None:
+            # An explicit Harbor override always wins, including zero.
+            requested_gpus = int(override_gpus)
+        else:
+            requested_gpus = declared_gpus
+            # The native task config is the sole source of H200 training
+            # parameters.  Use its existing ``h200.compute`` values to avoid
+            # reserving idle baseline cards on Daytona; no task config is
+            # modified and H100 requests retain the declared reservation.
+            gpu_type = kwargs.get("gpu_type")
+            gpu_type_name = str(getattr(gpu_type, "name", gpu_type or "")).upper()
+            if "H200" in gpu_type_name and declared_gpus > 0:
+                requested_gpus = _h200_gpu_count_from_rendered_task(
+                    environment_dir,
+                    declared_gpus,
+                )
         extra_compose = kwargs.get("extra_docker_compose")
         gpu_only = (
             not extra_compose

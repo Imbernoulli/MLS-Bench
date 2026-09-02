@@ -90,6 +90,79 @@ Pick specific tasks:
 PYTHONPATH=. harbor run -c run.yaml -p tasks/mls-bench__causal-observational-linear-gaussian
 ```
 
+### Single-task Oracle and Agent commands
+
+`--path` accepts a rendered task directory, so this command runs one task only
+and uses Harbor's Oracle harness (the strongest declared baseline):
+
+```bash
+export DAYTONA_API_KEY="<your-daytona-key>"
+export PYTHONPATH=.
+harbor run -c run-daytona.yaml \
+  --path tasks/mls-bench__robo-diffusion-policy \
+  --agent oracle --n-concurrent 1
+```
+
+GPU selection is explicit. Spot GPU requests default to H100 in the adapter;
+request H200 only when the task has an H200-compatible configuration. For a
+task that supports both, either command is valid:
+
+```bash
+# H100 Spot
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent oracle --ek spot=true --ek gpu_type=H100
+
+# H200 Spot
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent oracle --ek spot=true --ek gpu_type=H200
+
+# H100 on-demand (does count against the normal GPU quota)
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent oracle --ek spot=false --ek gpu_type=H100
+```
+
+H200 is implemented by the native MLS-Bench configs, not by a second Daytona
+configuration: the 15 supported `llm-pretrain-*`/`llm-rl-*` tasks declare their
+validated `h200` command/compute/env blocks in native `tasks/*/config.json`.
+When `gpu_type=H200` is requested, the adapter passes `MLSBENCH_GPU_TYPE` to the
+verifier, which selects those existing blocks, and derives the Daytona GPU
+reservation from their existing `compute` values. No batch size, TP size, or
+training command is invented by the provider layer. H100 requests retain the
+original baseline values; tasks without an `h200` block are never scaled.
+
+The standard Agent harnesses use `--agent` and `--model`; credentials and
+OpenAI-compatible endpoints are passed to the Agent process with repeated
+`--agent-env` options:
+
+```bash
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent codex --model openai/gpt-5.6 \
+  --agent-env OPENAI_API_KEY="$OPENAI_API_KEY" \
+  --agent-env OPENAI_BASE_URL="https://api.openai.com/v1"
+
+harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+  --agent claude-code --model anthropic/claude-opus-4-7 \
+  --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+```
+
+Use `--agent-import-path package.module:AgentClass` for a custom Harbor Agent
+and repeat `--agent-kwarg KEY=VALUE` for its constructor. `--agent-env` reaches
+the Agent; `--verifier-env KEY=VALUE` reaches only the verifier (needed when a
+verifier itself calls an API); and `--ek KEY=VALUE` (`--environment-env`) is
+forwarded to Daytona (`spot`, `gpu_type`, and provider-specific options).
+The task's `task.toml`, `instruction.md`, `tests/eval/scripts/`, and
+`tests/meta/{parser.py,score_spec.py}` together define the Harbor harness.
+
+For all tasks, use the quota-aware runner rather than launching an unbounded
+set of Harbor processes. It queues by declared GPU count and can keep ten
+available GPUs full:
+
+```bash
+python scripts/daytona_smoke.py --scope task --resource gpu \
+  --gpu-limit 10 --concurrency 10 --spot --gpu-type H100 \
+  --agent oracle --verify
+```
+
 `PYTHONPATH=.` is needed because `harbor_env.py` (the GPU-enabled
 `DockerEnvironment` subclass) lives next to `run.yaml`. Drop it if you
 replace the `environment` block in `run.yaml` with `type: docker` and run
