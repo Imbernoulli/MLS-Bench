@@ -28,7 +28,7 @@ import sys
 import threading
 import time
 import uuid
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable
@@ -731,10 +731,19 @@ def main() -> int:
         current: list[tuple[int, TaskRecord]] = []
         used_gpus = 0
         for index, record in enumerate(records, start=1):
-            requested = int(record.gpus)
+            # The provider receives the override as the effective reservation.
+            # Use that same count for local batching; otherwise a 1-GPU smoke
+            # of a task declared at 3/8 GPUs is needlessly serialized and can
+            # even trigger the "exceeding --gpu-limit" path.
+            requested = (
+                int(args.override_gpus)
+                if args.override_gpus is not None and record.gpus > 0
+                else int(record.gpus)
+            )
+            requested = max(0, requested)
             if requested > args.gpu_limit:
                 print(
-                    f"{record.task_id} requests {requested} GPUs, exceeding "
+                    f"{record.task_id} requests {requested} effective GPUs, exceeding "
                     f"--gpu-limit={args.gpu_limit}; running it alone",
                     file=sys.stderr,
                 )
@@ -771,8 +780,20 @@ def main() -> int:
             batch_rows = [run_record(*batch[0])]
         else:
             pool = ThreadPoolExecutor(max_workers=len(batch))
+            batch_rows = []
             try:
-                batch_rows = list(pool.map(lambda item: run_record(*item), batch))
+                futures = {
+                    pool.submit(run_record, *item): item for item in batch
+                }
+                for future in as_completed(futures):
+                    row = future.result()
+                    if row is not None:
+                        batch_rows.append(row)
+                        # Persist each completed child immediately.  If a
+                        # sibling later hangs or the runner is interrupted,
+                        # completed results remain resumable instead of being
+                        # lost in an uncommitted ``pool.map`` list.
+                        write_report(report_path, [*rows, *batch_rows])
             except BaseException:
                 # Signals are delivered to the main thread while workers are
                 # waiting in pool.map.  Do not let the executor's implicit
