@@ -1457,12 +1457,25 @@ def cmd_score(args: argparse.Namespace) -> int:
         from mlsbench.scoring.anchors import BaselineAnchors  # type: ignore[import-not-found]
         import mlsbench.agent.parsers  # ensures the task parser inherits this version
 
-        import importlib.util
-        parser_spec = importlib.util.spec_from_file_location(
-            "task_parser", task_meta / "parser.py"
+        import __future__
+        import types
+
+        # Compile with PEP 563 (postponed annotation evaluation) so a task
+        # parser written with PEP 585 generics (``-> tuple[str, dict]``,
+        # ``list[float] = []``) also runs on the older container Pythons that
+        # cannot subscript builtins at definition time (for example the
+        # cleanrl image's Python 3.8).  Native scoring runs the parser in the
+        # host's Python, so this difference only shows up inside Harbor.
+        parser_path = task_meta / "parser.py"
+        task_parser = types.ModuleType("task_parser")
+        task_parser.__file__ = str(parser_path)
+        code = compile(
+            parser_path.read_text(),
+            str(parser_path),
+            "exec",
+            flags=__future__.annotations.compiler_flag,
         )
-        task_parser = importlib.util.module_from_spec(parser_spec)
-        parser_spec.loader.exec_module(task_parser)
+        exec(code, task_parser.__dict__)
     except Exception as exc:
         reward_out.write_text("0\n")
         (out_dir / "score_error.txt").write_text(f"import failed: {exc}\n")
