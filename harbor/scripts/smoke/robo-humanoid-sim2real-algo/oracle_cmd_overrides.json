@@ -1,0 +1,6 @@
+[
+  {"label": "train", "cmd": "scripts/smoke_train.sh"},
+  {"label": "diverse-commands", "cmd": "scripts/smoke_eval_diverse.sh"},
+  {"label": "forward-only", "cmd": "scripts/smoke_eval_forward.sh"},
+  {"label": "high-speed", "cmd": "scripts/smoke_eval_highspeed.sh"}
+]

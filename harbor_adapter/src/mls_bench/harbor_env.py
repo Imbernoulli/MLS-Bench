@@ -419,28 +419,27 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             labels = dict(getattr(params, "labels", None) or {})
             labels["mlsbench-run-id"] = run_id
             params.labels = labels
-        # A sandbox occasionally lands on a runner whose in-sandbox toolbox
-        # never answers ("Failed to create session" / "Failed to execute
-        # command" for the same image that works elsewhere).  Recreate it a
-        # few times before giving up; the same image on another placement is
-        # fine.
+        # A cached snapshot on one Daytona runner can be broken: the sandbox
+        # reports STARTED but its in-sandbox toolbox never answers ("Failed to
+        # create session" / "Failed to execute command"), while the same
+        # Dockerfile works on every other runner.  Daytona prefers the runner
+        # that already caches the snapshot, so plain retries return to the
+        # broken one.  Two escape hatches:
+        #   * ``--ek snapshot_salt=<any string>`` appends a no-op ``RUN`` layer
+        #     so Daytona builds a fresh snapshot (which lands on a healthy
+        #     runner).  This is the reliable fix.
+        #   * ``--ek toolbox_hold_bad_placements=1`` keeps unusable sandboxes
+        #     alive as decoys so the next attempt cannot fit on the same
+        #     runner.  Off by default: it burns quota and did not help against
+        #     a large runner.  ``toolbox_quota`` (default 10) bounds the decoys.
+        salt = self._kwargs.get("snapshot_salt")
+        image = getattr(params, "image", None)
+        if salt not in (None, "") and hasattr(image, "run_commands"):
+            params.image = image.run_commands(f"true # mlsbench snapshot salt {salt}")
         attempts = max(1, self._int_kwarg("toolbox_ready_retries") or 3)
-        # Daytona places a request on whichever runner has the most free
-        # capacity, so deleting an unusable sandbox and retrying tends to land
-        # on the very same broken runner.  Keep the unusable sandboxes alive
-        # ("decoys") until a usable placement exists, so the scheduler must
-        # pick another runner; they are deleted before returning.  Set
-        # ``--ek toolbox_hold_bad_placements=0`` to release them immediately
-        # (cheaper on quota, but the retry may be pointless).
-        hold_value = self._kwargs.get("toolbox_hold_bad_placements", True)
+        hold_value = self._kwargs.get("toolbox_hold_bad_placements", False)
         if isinstance(hold_value, str):
             hold_value = hold_value.strip().lower() in {"1", "true", "yes", "on"}
-        # Daytona places each request on the runner with the most free
-        # capacity, so keeping a dead placement alive ("decoy") forces the
-        # retry onto another runner — but only when the organization quota can
-        # still fit the decoy(s) plus the next attempt.  ``toolbox_quota``
-        # defaults to 10 (the current MLS-Bench org limit); a request that
-        # would exceed it deletes the placement immediately instead.
         quota = self._int_kwarg("toolbox_quota") or 10
         decoys: list[Any] = []
         last_error: Exception | None = None

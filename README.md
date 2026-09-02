@@ -397,11 +397,13 @@ to GPU sandboxes; CPU tasks remain on-demand. Results and provider errors are
 written to `harbor/jobs-daytona-smoke/report.csv`.
 
 To validate an environment quickly, run a reduced-scale copy of the task:
-copy the rendered task directory, shorten the epoch/step counts in its
-`tests/eval/scripts/*.sh` (or point `solution/oracle_cmd_overrides.json` at
-shorter scripts), and run that copy with `--path`. The image, workspace, edit
-guard, verifier and scorer are exercised unchanged; only the resulting reward
-is not a benchmark score.
+`harbor/scripts/make_smoke_copy.py <out_dir> <task-id>` shortens the
+epoch/step counts in the verifier's eval scripts (or swaps in shorter scripts
+through `solution/oracle_cmd_overrides.json`); run that copy with `--path`.
+The image, workspace, edit guard, verifier and scorer are exercised unchanged;
+only the resulting reward is not a benchmark score. If a sandbox repeatedly
+reports "toolbox not ready", add `--ek snapshot_salt=<string>` to force a fresh
+snapshot on another runner.
 
 ### Recommended exploration budget
 

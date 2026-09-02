@@ -128,7 +128,31 @@ cgroup limits (local Docker effectively does not), so GPU sandboxes get a
 RAM/CPU floor, the adapter caps OpenMP/MKL threads at the CPU quota (the
 container reports every host core and would otherwise oversubscribe it ~20x),
 and the verifier's per-eval wall-clock budgets are stretched for the slower
-remote CPUs. `--ek eval_time_scale=1` restores the native budgets.
+remote CPUs. `--ek eval_time_scale=1` restores the native budgets. Multi-GPU
+sandboxes also get `NCCL_CUMEM_ENABLE=0` and `NCCL_NVLS_ENABLE=0`; both NCCL
+paths fail with `cudaErrorIllegalState` inside the sandbox.
+
+Two provider failure modes are handled automatically. The adapter waits for
+the in-sandbox toolbox before Harbor's first exec and recreates the sandbox
+(`--ek toolbox_ready_retries=3`) when a placement never answers. If every
+retry lands on the same runner (Daytona prefers the runner that already
+caches the snapshot, and one cached copy can be broken), pass
+`--ek snapshot_salt=<any string>`: it appends a no-op `RUN` layer so Daytona
+builds a fresh snapshot on a healthy runner. CPU sandboxes are capped at 8 GB
+RAM and 10 GB disk by the provider; use `--override-memory-mb 8192
+--override-storage-mb 10240` for CPU-only runs of GPU-declared tasks.
+
+To validate an environment quickly, `scripts/make_smoke_copy.py` writes a
+reduced-scale copy of a rendered task (fewer epochs/steps/samples in the
+verifier's eval scripts; image, workspace, guard and scorer unchanged):
+
+```bash
+python scripts/make_smoke_copy.py /tmp/smoke rl-value-discrete robo-humanoid-sim2real-algo
+harbor run -c run-daytona.yaml --path /tmp/smoke/mls-bench__rl-value-discrete --agent oracle
+```
+
+Its reward proves only that build, oracle, guard, training, evaluation and
+scoring all run; it is not a benchmark score.
 
 H200 is implemented by the native MLS-Bench configs, not by a second Daytona
 configuration: the 15 supported `llm-pretrain-*`/`llm-rl-*` tasks declare their

@@ -386,6 +386,51 @@ def test_sandbox_environment_and_resource_floor(tmp_path: Path):
     assert captured[0].spot is not True
 
 
+def test_snapshot_salt_appends_noop_layer_and_decoys_default_off(tmp_path: Path):
+    """``snapshot_salt`` forces a fresh Daytona snapshot; decoys stay opt-in."""
+    module = _module()
+    env_dir = tmp_path / "environment"
+    env_dir.mkdir()
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(1))
+    trial_paths = TrialPaths(tmp_path / "trial")
+    trial_paths.mkdir()
+    config = EnvironmentConfig(cpus=4, memory_mb=16384, storage_mb=61440, gpus=1)
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="salt-task",
+        session_id="salt-task.1",
+        trial_paths=trial_paths,
+        task_env_config=config,
+        snapshot_salt="rebuild-1",
+    )
+    captured = []
+
+    async def fake_parent_create_sandbox(self, params, *args, **kwargs):
+        captured.append(params)
+        self._sandbox = object()
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(
+            module._HarborDaytonaEnvironment,
+            "_create_sandbox",
+            fake_parent_create_sandbox,
+        )
+        from daytona import CreateSandboxFromImageParams, Image, Resources
+
+        params = CreateSandboxFromImageParams(
+            image=Image.base("ubuntu:22.04"),
+            resources=Resources(cpu=4, memory=16, disk=60, gpu=1),
+        )
+        asyncio.run(env._create_sandbox(params))
+    finally:
+        monkeypatch.undo()
+
+    assert "mlsbench snapshot salt rebuild-1" in captured[0].image.dockerfile()
+    assert env._kwargs.get("toolbox_hold_bad_placements", False) is False
+
+
 def test_spot_defaults_to_h100_without_explicit_gpu_type(tmp_path: Path):
     module = _module()
     env_dir = tmp_path / "environment"
