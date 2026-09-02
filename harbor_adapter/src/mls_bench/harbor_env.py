@@ -636,6 +636,19 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             # 0.6.x, whose strategy omitted ``Resources.gpu``.
             self._strategy = _GpuAwareDirect(self)
 
+        # task.toml's build_timeout_sec (30 min) was sized for a local Docker
+        # layer on top of an already-pulled base image.  Daytona builds the
+        # snapshot server-side, which includes pulling the base image; the
+        # largest MLS-Bench bases (dbim-codebase, 36 GB compressed) need well
+        # over 30 min, and Harbor cancels the build at the timeout ("context
+        # canceled").  Give remote builds a larger floor; ``--ek
+        # min_build_timeout_sec=`` adjusts it.
+        min_build = self._int_kwarg("min_build_timeout_sec") or 5400
+        if not gpu_only:
+            self.task_env_config = copy.deepcopy(self.task_env_config)
+        if (self.task_env_config.build_timeout_sec or 0) < min_build:
+            self.task_env_config.build_timeout_sec = min_build
+
 
 __all__ = [
     "DaytonaEnvironment",
