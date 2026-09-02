@@ -17,6 +17,7 @@ provider already builds the resource object correctly and the shim is a no-op.
 
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import copy
 import importlib
@@ -413,7 +414,43 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             labels = dict(getattr(params, "labels", None) or {})
             labels["mlsbench-run-id"] = run_id
             params.labels = labels
-        return await super()._create_sandbox(params, *args, **kwargs)
+        result = await super()._create_sandbox(params, *args, **kwargs)
+        await self._wait_for_sandbox_toolbox()
+        return result
+
+    async def _wait_for_sandbox_toolbox(self) -> None:
+        """Block until the sandbox accepts exec sessions.
+
+        ``daytona.create()`` returns once the sandbox is STARTED, but for large
+        images the in-sandbox toolbox can still be unreachable for a while and
+        the very first ``create_session`` fails with ``DaytonaBadGatewayError``
+        ("Failed to create session").  Harbor treats that as a trial error and
+        deletes the sandbox, so poll a trivial command first.
+        """
+        sandbox = getattr(self, "_sandbox", None)
+        process = getattr(sandbox, "process", None)
+        if process is None:
+            return
+        timeout = float(self._kwargs.get("toolbox_ready_timeout_sec") or 600)
+        deadline = asyncio.get_running_loop().time() + timeout
+        attempt = 0
+        while True:
+            attempt += 1
+            try:
+                await process.exec("true", timeout=30)
+                return
+            except Exception as exc:  # noqa: BLE001 - provider transport errors
+                if asyncio.get_running_loop().time() >= deadline:
+                    raise RuntimeError(
+                        f"Daytona sandbox toolbox not ready after {timeout:g}s "
+                        f"({attempt} attempts): {exc}"
+                    ) from exc
+                self.logger.warning(
+                    "Daytona sandbox not ready for exec yet (attempt %d): %s",
+                    attempt,
+                    str(exc)[:200],
+                )
+                await asyncio.sleep(10)
 
     @property
     def capabilities(self) -> EnvironmentCapabilities:
