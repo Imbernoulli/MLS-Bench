@@ -6,8 +6,8 @@
 jobs_dir: jobs-daytona
 n_attempts: 1
 timeout_multiplier: 1.0
-# Keep remote environment allocation serial; use harbor/scripts/daytona_smoke.py
-# for a fresh Harbor process per environment.
+# Keep remote environment allocation serial. Raise n_concurrent_trials only when
+# the aggregate *declared* GPU counts of the concurrent tasks fit your quota.
 n_concurrent_trials: 1
 quiet: false
 

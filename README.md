@@ -252,158 +252,48 @@ self-contained per-task layout.
 
 ### Running Harbor tasks on Daytona
 
-The repository also includes a Daytona provider adapter. It forwards each
-task's declared GPU count and optional GPU type to Daytona, uses direct GPU
-sandboxes for the GPU-only Compose overlays emitted by MLS-Bench, and keeps
-Harbor's normal DinD path for genuine multi-container CPU tasks. The default
-configuration excludes the two tasks whose evaluators call DeepSeek/DashScope;
-the other 138 tasks do not need model-provider credentials.
+The Daytona provider adapter forwards each task's declared GPU count and type
+to Daytona and uses direct GPU sandboxes for the GPU-only Compose overlays
+MLS-Bench emits. See [harbor/README.md](harbor/README.md#run-on-daytona) for
+the full option reference.
 
 ```bash
 cd harbor
 uv tool install "harbor[daytona]"
 export DAYTONA_API_KEY="<your-daytona-key>"
-PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona.yaml
-```
-
-For a quick environment-only check, use the isolated runner. It starts one
-Harbor process per selected task and can batch independent sandboxes while
-respecting a GPU quota:
-
-```bash
-cd harbor
-DAYTONA_API_KEY="<your-daytona-key>" \
-  PYTHONPATH=.:../harbor_adapter/src \
-  python scripts/daytona_smoke.py --scope environment \
-  --resource gpu --gpu-limit 10 --spot --gpu-type H100 --concurrency 10
-```
-
-#### Run one task (Oracle or an Agent)
-
-Harbor's `--path` selects exactly one rendered task. The Oracle replays the
-strongest declared MLS-Bench baseline and is useful for validating the image
-and verifier before spending an Agent run:
-
-```bash
-cd harbor
-export DAYTONA_API_KEY="<your-daytona-key>"
 export PYTHONPATH=.:../harbor_adapter/src
 
-# One task, Oracle, on-demand H100 (the default GPU type)
+harbor run -c run-daytona.yaml                        # all tasks
 harbor run -c run-daytona.yaml \
   --path tasks/mls-bench__robo-diffusion-policy \
-  --agent oracle --n-concurrent 1
-```
-
-Every GPU request is placed on H100 unless you say otherwise: Daytona's
-default pool also contains RTX PRO 6000 Blackwell (sm_120) cards, and the
-pinned CUDA wheels in the MLS-Bench images have no kernels for them. H200 is
-not an implicit fallback either: use it only for a task whose native config
-carries an `h200` profile. Tasks that support both can be selected either way:
-
-```bash
-# Explicit on-demand H100 (the default)
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek gpu_type=H100
-
-# H200 on Spot capacity (does not count against the on-demand GPU quota)
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek spot=true --ek gpu_type=H200
-```
-
-The H200 settings are already part of MLS-Bench's native task configs: the 15
-`llm-pretrain-*`/`llm-rl-*` tasks that support H200 carry an `h200` block with
-the validated command, GPU count, and (where needed) batch/TP environment. The
-Daytona adapter does not create or replace those values. It forwards the
-selected hardware as `MLSBENCH_GPU_TYPE=H200`; the Harbor verifier then
-materializes the task's existing block and Daytona derives its reservation from
-that block (for example, RL 2→1 GPUs and pretraining 4→2 GPUs). Tasks without
-an `h200` block keep their H100 baseline even when the provider is Daytona.
-
-For native MLS-Bench runs, the same support is selected by the existing
-`configs/react.yaml` setting `compute_scale: 0.5` (H200; leave it at `1.0` for
-H100). This is the repository's original H200 path, not a Daytona-specific
-training configuration.
-
-`run-daytona.yaml` sets the Daytona defaults (`gpu_type: H100`, `spot:
-false`, `gpu_memory_gb: 64`, `gpu_cpus: 16`, `MLSBENCH_EVAL_TIME_SCALE=2`);
-an explicit `--ek` value overrides the file for one invocation. Spot is
-opt-in because capacity is not guaranteed, and it is applied only to GPU
-tasks (Daytona rejects Spot requests without a GPU).
-
-Daytona enforces `task.toml` resources as hard cgroup limits, unlike local
-Docker. Two consequences are handled by the adapter: GPU sandboxes get a
-RAM/CPU floor (`gpu_memory_gb`, `gpu_cpus`; the 16 GiB default OOM-kills a
-7B checkpoint load), and the sandbox exports `OMP_NUM_THREADS`-style caps
-equal to its CPU quota (the container still reports every host core, so
-PyTorch would otherwise start hundreds of threads and run ~20x slower).
-`eval_time_scale` stretches the per-eval wall-clock budgets from
-`test_cmds[].time` for the slower remote CPUs; the agent budget check is
-unaffected.
-
-Replace `oracle` with any Harbor Agent. The Agent name selects Harbor's
-harness; `--model` selects the provider/model:
-
-```bash
-# Codex/OpenAI-compatible endpoint
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent codex --model openai/gpt-5.6 \
-  --agent-env OPENAI_API_KEY="$OPENAI_API_KEY" \
-  --agent-env OPENAI_BASE_URL="https://api.openai.com/v1"
-
-# Claude Code/Anthropic endpoint
+  --agent oracle                                      # one task, strongest baseline
 harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
   --agent claude-code --model anthropic/claude-opus-4-7 \
-  --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
+  --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"   # one task, agent
 ```
 
-Use `--agent-import-path package.module:AgentClass` for a custom Harbor Agent,
-and repeat `--agent-kwarg KEY=VALUE` for harness-specific constructor options.
-`--agent-env KEY=VALUE` is visible to the Agent process; `--verifier-env
-KEY=VALUE` is visible only while the task verifier runs; `--ek KEY=VALUE`
-(`--environment-env`) configures the Daytona environment (`spot`,
-`gpu_type`, or provider-specific options). For example, a verifier that calls
-an OpenAI-compatible endpoint needs its endpoint/key passed with
-`--verifier-env`, not only `--agent-env`.
+`--agent nop --no-verifier` checks only that the image builds and the sandbox
+starts. The two tasks whose evaluators call DeepSeek/DashScope need those keys;
+the other 138 do not.
 
-The task's `task.toml` fixes its name, editable workspace, resource request and
-timeouts; `instruction.md` is the Agent prompt; and `tests/eval/scripts/` plus
-`tests/meta/{parser.py,score_spec.py}` are the Harbor verifier harness. These
-files are generated from native `tasks/<task>/` by the adapter, so edit the
-native task when changing a benchmark rather than hand-editing a rendered
-bundle.
+`run-daytona.yaml` defaults to `gpu_type: H100`, `spot: false`,
+`gpu_memory_gb: 64`, `gpu_cpus: 16` and `eval_time_scale: 2.0`; any `--ek`
+overrides the file for one invocation. H100 is the default because Daytona's
+pool also holds Blackwell (sm_120) cards that the pinned CUDA wheels have no
+kernels for. Unlike local Docker, Daytona enforces `task.toml` resources as
+hard cgroup limits, hence the RAM/CPU floors and the thread caps the adapter
+injects.
 
-For multiple tasks, use `--n-concurrent N` only when the aggregate declared GPU
-requirements fit your quota. The quota-aware helper is preferable for Daytona:
-it queues by GPU count and keeps the normal 10-card limit:
+GPU counts come from each task's own declaration; size `--n-concurrent`
+against those, and don't lower them with `--override-gpus`.
 
-```bash
-python scripts/daytona_smoke.py --scope task --resource gpu \
-  --gpu-limit 10 --concurrency 10 --spot --gpu-type H100 \
-  --agent oracle --verify
-```
-
-By default `--scope environment` selects one representative task per package
-(63 environments for the 138 non-API tasks; the GPU-only example above selects
-the 53 GPU environments). Use `--scope task` for all 138 non-API tasks,
-`--verify --agent oracle` for a real baseline/verifier run, and `--dry-run` to
-inspect the exact Harbor commands without contacting Daytona. All 30
-MLS-Bench-Lite task declarations request at most eight GPUs. The full suite can
-contain an indivisible job above that limit; the adapter preserves such a
-request and Daytona must provide the required capacity. Pass `--override-gpus`,
-`--override-memory-mb`, or `--override-storage-mb` when your Daytona
-organization has tighter per-sandbox limits. Spot (`--spot`) is applied only
-to GPU sandboxes; CPU tasks remain on-demand. Results and provider errors are
-written to `harbor/jobs-daytona-smoke/report.csv`.
-
-To validate an environment quickly, run a reduced-scale copy of the task:
-`harbor/scripts/make_smoke_copy.py <out_dir> <task-id>` shortens the
-epoch/step counts in the verifier's eval scripts (or swaps in shorter scripts
-through `solution/oracle_cmd_overrides.json`); run that copy with `--path`.
-The image, workspace, edit guard, verifier and scorer are exercised unchanged;
-only the resulting reward is not a benchmark score. If a sandbox repeatedly
-reports "toolbox not ready", add `--ek snapshot_salt=<string>` to force a fresh
-snapshot on another runner.
+H200 is not a Daytona-specific configuration. The 15 `llm-pretrain-*` /
+`llm-rl-*` tasks that support it carry a validated `h200` block — command, GPU
+count, batch/TP env — in their native config. `--ek gpu_type=H200` forwards
+`MLSBENCH_GPU_TYPE` so the verifier materializes that existing block; the
+adapter invents nothing, and tasks without the block keep their H100 baseline.
+Native (non-Harbor) runs select the same path with `compute_scale: 0.5` in
+`configs/react.yaml`.
 
 ### Recommended exploration budget
 

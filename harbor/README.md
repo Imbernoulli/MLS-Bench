@@ -22,184 +22,66 @@ PYTHONPATH=. harbor run -c run.yaml
 
 ## Run on Daytona
 
-Harbor's built-in Daytona provider is wired into the rendered tasks. Install
-the provider extra, export a Daytona API key on the host, and use the
-dedicated configuration:
-
 ```bash
 uv tool install "harbor[daytona]"
 export DAYTONA_API_KEY="<your-daytona-key>"
-PYTHONPATH=. harbor run -c run-daytona.yaml
+PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona.yaml
 ```
 
-The repository's `harbor_env:DaytonaEnvironment` compatibility layer handles
-the 116 GPU tasks whose Compose file is only a local-Docker NVIDIA reservation:
-Daytona receives the declared GPU count through its direct GPU sandbox API.
-The 24 CPU tasks use the same direct Daytona path. A genuine CPU-only
-multi-container Compose task, if added later, can remain delegated to Harbor's
-Daytona DinD implementation; Daytona does not support GPU+DinD/Compose.
+`harbor_env:DaytonaEnvironment` routes all 140 tasks through Daytona's direct
+GPU sandbox API, including the 116 GPU tasks whose Compose file is only a
+local-Docker NVIDIA reservation. Daytona does not support GPU + DinD/Compose.
 
-Daytona resource limits are provider/account specific. The task files request
-up to 4 CPUs, 16 GiB RAM, 60 GiB disk, and 8 GPUs; use Harbor's
-`--override-*` flags when your Daytona organization has lower limits. The
-smoke helper automatically caps CPU sandboxes at 10 GiB (the limit of the
-current Daytona organization) and can use a larger disk for GPU sandboxes.
-Some published base images are larger than Daytona can build within the
-available limits; those environments are recorded as provider errors rather
-than reported as passes.
-
-Two tasks intentionally call model APIs during evaluation:
-`mls-bench/agent-tool-reasoning` (DeepSeek/DashScope) and
-`mls-bench/mas-topology` (DeepSeek/DashScope). They also require their
-corresponding model API keys; `DAYTONA_API_KEY` only authenticates the sandbox
-provider and is not a substitute. The remaining 138 tasks use local/offline
-evaluation inputs and are suitable for a Daytona smoke run without additional
-model-provider credentials.
-
-To test environments independently, use the smoke-test helper from this
-directory. Its default `--scope environment` runs one representative task per
-package image (63 environments after excluding the two API tasks), with a
-`nop` agent and verification disabled. Set `--concurrency N` to match the
-available Daytona GPU quota (for example, `--concurrency 10`):
+Select one task with `--path`, and an agent with `--agent`:
 
 ```bash
-DAYTONA_API_KEY="<your-daytona-key>" \
-  python scripts/daytona_smoke.py --scope environment --concurrency 10
-```
-
-By default `--scope environment` selects one representative task for each of
-the 63 remaining package environments. With `--resource gpu`, 53 GPU
-environments are selected; use `--resource cpu` for the remaining CPU
-environments. Use `--scope task` to run all 138 non-API task environments one by
-one. Each invocation creates its own Harbor job and Daytona sandbox; results
-are written to `jobs-daytona-smoke/report.csv`. Add `--verify --agent oracle`
-when the objective is a full baseline/verifier run rather than an environment
-startup smoke test. `--dry-run` prints the exact commands without contacting
-Daytona.
-
-Replace the agent with a real one by editing `run.yaml` or via CLI:
-
-```bash
-PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
-PYTHONPATH=. harbor run -c run.yaml -a codex       -m openai/gpt-5
-```
-
-Pick specific tasks:
-
-```bash
-PYTHONPATH=. harbor run -c run.yaml -p tasks/mls-bench__causal-observational-linear-gaussian
-```
-
-### Single-task Oracle and Agent commands
-
-`--path` accepts a rendered task directory, so this command runs one task only
-and uses Harbor's Oracle harness (the strongest declared baseline):
-
-```bash
-export DAYTONA_API_KEY="<your-daytona-key>"
-export PYTHONPATH=.
-harbor run -c run-daytona.yaml \
-  --path tasks/mls-bench__robo-diffusion-policy \
-  --agent oracle --n-concurrent 1
-```
-
-GPU selection is explicit. Every GPU request defaults to H100 (Daytona's
-pool also contains Blackwell cards the pinned CUDA wheels cannot run on);
-request H200 only when the task has a native `h200` profile. For a task that
-supports both, either command is valid:
-
-```bash
-# H100 on-demand (the default; counts against the normal GPU quota)
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek gpu_type=H100
-
-# H200 on-demand
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek gpu_type=H200
-
-# Spot capacity (H100 or H200); not guaranteed to be available
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent oracle --ek spot=true --ek gpu_type=H100
-```
-
-`run-daytona.yaml` also sets `gpu_memory_gb: 64`, `gpu_cpus: 16` and
-`MLSBENCH_EVAL_TIME_SCALE=2`. Daytona enforces `task.toml` resources as hard
-cgroup limits (local Docker effectively does not), so GPU sandboxes get a
-RAM/CPU floor, the adapter caps OpenMP/MKL threads at the CPU quota (the
-container reports every host core and would otherwise oversubscribe it ~20x),
-and the verifier's per-eval wall-clock budgets are stretched for the slower
-remote CPUs. `--ek eval_time_scale=1` restores the native budgets. Multi-GPU
-sandboxes also get `NCCL_CUMEM_ENABLE=0` and `NCCL_NVLS_ENABLE=0`; both NCCL
-paths fail with `cudaErrorIllegalState` inside the sandbox.
-
-Two provider failure modes are handled automatically. The adapter waits for
-the in-sandbox toolbox before Harbor's first exec and recreates the sandbox
-(`--ek toolbox_ready_retries=3`) when a placement never answers. If every
-retry lands on the same runner (Daytona prefers the runner that already
-caches the snapshot, and one cached copy can be broken), pass
-`--ek snapshot_salt=<any string>`: it appends a no-op `RUN` layer so Daytona
-builds a fresh snapshot on a healthy runner. CPU sandboxes are capped at 8 GB
-RAM and 10 GB disk by the provider; use `--override-memory-mb 8192
---override-storage-mb 10240` for CPU-only runs of GPU-declared tasks.
-
-To validate an environment quickly, `scripts/make_smoke_copy.py` writes a
-reduced-scale copy of a rendered task (fewer epochs/steps/samples in the
-verifier's eval scripts; image, workspace, guard and scorer unchanged):
-
-```bash
-python scripts/make_smoke_copy.py /tmp/smoke rl-value-discrete robo-humanoid-sim2real-algo
-harbor run -c run-daytona.yaml --path /tmp/smoke/mls-bench__rl-value-discrete --agent oracle
-```
-
-Its reward proves only that build, oracle, guard, training, evaluation and
-scoring all run; it is not a benchmark score.
-
-H200 is implemented by the native MLS-Bench configs, not by a second Daytona
-configuration: the 15 supported `llm-pretrain-*`/`llm-rl-*` tasks declare their
-validated `h200` command/compute/env blocks in native `tasks/*/config.json`.
-When `gpu_type=H200` is requested, the adapter passes `MLSBENCH_GPU_TYPE` to the
-verifier, which selects those existing blocks, and derives the Daytona GPU
-reservation from their existing `compute` values. No batch size, TP size, or
-training command is invented by the provider layer. H100 requests retain the
-original baseline values; tasks without an `h200` block are never scaled.
-
-The standard Agent harnesses use `--agent` and `--model`; credentials and
-OpenAI-compatible endpoints are passed to the Agent process with repeated
-`--agent-env` options:
-
-```bash
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
-  --agent codex --model openai/gpt-5.6 \
-  --agent-env OPENAI_API_KEY="$OPENAI_API_KEY" \
-  --agent-env OPENAI_BASE_URL="https://api.openai.com/v1"
-
+harbor run -c run-daytona.yaml --path tasks/mls-bench__robo-diffusion-policy \
+  --agent oracle                    # strongest declared baseline
 harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
   --agent claude-code --model anthropic/claude-opus-4-7 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 ```
 
-Use `--agent-import-path package.module:AgentClass` for a custom Harbor Agent
-and repeat `--agent-kwarg KEY=VALUE` for its constructor. `--agent-env` reaches
-the Agent; `--verifier-env KEY=VALUE` reaches only the verifier (needed when a
-verifier itself calls an API); and `--ek KEY=VALUE` (`--environment-env`) is
-forwarded to Daytona (`spot`, `gpu_type`, and provider-specific options).
-The task's `task.toml`, `instruction.md`, `tests/eval/scripts/`, and
-`tests/meta/{parser.py,score_spec.py}` together define the Harbor harness.
+`--agent-env` reaches the agent, `--verifier-env` only the verifier, and
+`--ek KEY=VALUE` the Daytona environment. For an environment-only check use
+`--agent nop --no-verifier`; the 140 tasks share 65 base images, so one task
+per image covers every environment.
 
-For all tasks, use the quota-aware runner rather than launching an unbounded
-set of Harbor processes. It queues by declared GPU count and can keep ten
-available GPUs full:
+### Options
 
-```bash
-python scripts/daytona_smoke.py --scope task --resource gpu \
-  --gpu-limit 10 --concurrency 10 --spot --gpu-type H100 \
-  --agent oracle --verify
-```
+`--ek` keys, with the defaults `run-daytona.yaml` already sets:
 
-`PYTHONPATH=.` is needed because `harbor_env.py` (the GPU-enabled
-`DockerEnvironment` subclass) lives next to `run.yaml`. Drop it if you
-replace the `environment` block in `run.yaml` with `type: docker` and run
-only CPU tasks.
+| Key | Default | Purpose |
+| --- | --- | --- |
+| `gpu_type` | `H100` | Daytona's pool also holds Blackwell cards the pinned CUDA wheels cannot run. Use `H200` only for tasks with a native `h200` profile. |
+| `spot` | `false` | Spot capacity is cheaper but frequently unavailable. |
+| `gpu_memory_gb` / `gpu_cpus` | `64` / `16` | Floors. Daytona enforces `task.toml` resources as hard cgroup limits, which local Docker effectively does not. verl RL validation needs `128`. |
+| `eval_time_scale` | `2.0` | Multiplies the verifier's per-eval budgets for the slower remote CPUs. `1` restores native budgets. |
+| `toolbox_ready_retries` | `3` | Recreates a sandbox whose toolbox never answers. |
+| `snapshot_salt` | unset | Appends a no-op `RUN` layer, forcing a fresh snapshot. Use when retries keep landing on the same bad runner — Daytona prefers whichever runner already caches the snapshot, and a cached copy can be broken. |
+
+The adapter also caps `OMP_NUM_THREADS` and friends at the CPU quota (the
+container reports every host core and would otherwise oversubscribe ~20x), and
+sets `NCCL_CUMEM_ENABLE=0` and `NCCL_NVLS_ENABLE=0` on multi-GPU sandboxes,
+where both NCCL paths fail with `cudaErrorIllegalState`.
+
+**GPU counts come from each task's own declaration** (up to 8). Size
+`--n-concurrent` against those counts, not against the trial count. Do not
+lower them with `--override-gpus`: that changes the parallelism the task was
+calibrated for. Reserve `--override-*` for an organization whose per-sandbox
+limits genuinely cannot hold the request; CPU sandboxes cap at 8 GB RAM and
+10 GB disk.
+
+H200 is defined by the native MLS-Bench configs, not by the provider layer: 15
+`llm-pretrain-*`/`llm-rl-*` tasks declare validated `h200` command/compute/env
+blocks in `tasks/*/config.json`. `gpu_type=H200` passes `MLSBENCH_GPU_TYPE` to
+the verifier, which selects those blocks and derives the GPU reservation from
+their `compute` values. No batch size, TP size, or command is invented here,
+and tasks without an `h200` block are never scaled.
+
+`mls-bench/agent-tool-reasoning` and `mls-bench/mas-topology` call DeepSeek /
+DashScope during evaluation and need those keys too; `DAYTONA_API_KEY` only
+authenticates the sandbox provider.
 
 ## What's in this directory
 
@@ -207,7 +89,6 @@ only CPU tasks.
 .
 ├── README.md          this file
 ├── run.yaml           reference Harbor config (GPU-enabled environment + oracle agent)
-├── scripts/daytona_smoke.py  isolated per-environment Daytona smoke runner
 ├── harbor_env.py      DockerGPUEnvironment — Harbor's docker env with the GPU flag flipped
 └── tasks/             140 rendered task directories + dataset.toml manifest
     ├── dataset.toml

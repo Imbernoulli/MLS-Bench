@@ -20,8 +20,7 @@ PYTHONPATH=src python3 -m mls_bench.main \
 harbor run -c run_mls-bench.yaml
 ```
 
-To run the rendered tasks on Daytona (the default config selects the 138
-non-API tasks):
+To run the rendered tasks on Daytona:
 
 ```bash
 uv tool install "harbor[daytona]"
@@ -29,45 +28,14 @@ export DAYTONA_API_KEY="<your-daytona-key>"
 PYTHONPATH=src harbor run -c run-daytona.yaml
 ```
 
-`run-daytona.yaml` uses `mls_bench.harbor_env:DaytonaEnvironment`. The
-adapter recognises its GPU-only Docker Compose overlays and sends those GPU
-counts to Daytona's direct sandbox resource request; this avoids Daytona's
-unsupported GPU+DinD combination while leaving CPU-only real multi-container
-tasks untouched (Daytona rejects GPU+Compose). The provider key must be set in the host environment and is never
-embedded in task files. Daytona account limits still apply: the smoke runner
-caps CPU sandboxes at 10 GiB and allows a larger disk override for GPU
-sandboxes; images that cannot be built by the provider are retained as
-explicit errors in the CSV report.
-
-H100/H200 behavior remains the native MLS-Bench behavior. The 15 supported
-`llm-pretrain-*`/`llm-rl-*` task configs already contain their H200
-`cmd`/`compute`/`env` overrides, including micro-batch and accumulation values
-where applicable. Passing `--ek gpu_type=H200` only selects the Daytona device
-and forwards `MLSBENCH_GPU_TYPE`; the verifier consumes the existing block and
-the environment derives its GPU reservation from the same metadata. The
-adapter does not add or rewrite training parameters. Leave the GPU type at
-H100 (the Spot default) for tasks without an H200 block.
-
-The only two tasks whose benchmark commands call external model APIs are
-`agent-tool-reasoning` and `mas-topology`; supply their DeepSeek/DashScope
-credentials separately if evaluating them. They are not used as Daytona smoke
-tests.
-
-For isolated environment checks, run the helper in the sibling `harbor`
-directory (from the repository root):
-
-```bash
-DAYTONA_API_KEY="<your-daytona-key>" \
-  python harbor/scripts/daytona_smoke.py --scope environment
-```
-
-This selects one representative (GPU-preferred) task for each of the 63
-remaining package environments and launches a fresh Harbor process/sandbox for
-each. `--resource gpu` selects the 53 GPU environments, while `--resource cpu`
-selects the remaining CPU environments. `--scope task` instead covers all 138
-non-API tasks. The default uses a
-`nop` agent with verification disabled; add `--verify --agent oracle` for full
-verifier runs. A CSV report is written under `harbor/jobs-daytona-smoke/`.
+`run-daytona.yaml` uses `mls_bench.harbor_env:DaytonaEnvironment`, which sends
+each task's GPU-only Compose overlay to Daytona's direct sandbox resource
+request — Daytona rejects GPU+Compose. Real CPU-only multi-container tasks are
+untouched. The provider key comes from the host environment and is never
+embedded in task files. See
+[harbor/README.md](../harbor/README.md#run-on-daytona) for the option
+reference; `agent-tool-reasoning` and `mas-topology` additionally need
+DeepSeek/DashScope credentials.
 
 Per-package base images are already on Docker Hub
 (`bohanlyu2022/mlsbench-harbor-<pkg>:latest`, 65 packages). The per-task
