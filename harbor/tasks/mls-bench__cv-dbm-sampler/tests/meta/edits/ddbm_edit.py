@@ -9,9 +9,14 @@ def sample_dbim(
     diffusion,
     x,
     ts,
-    churn_step_ratio=0.0,
+    eta=1.0,
+    mask=None,
+    seed=None,
     **kwargs,
 ):
+    # The task protects the sample_dbim signature (only the body is
+    # editable); the reference sets churn_step_ratio below anyway.
+    churn_step_ratio = kwargs.get("churn_step_ratio", 0.0)
     x_T = x
     path = []
     pred_x0 = []
