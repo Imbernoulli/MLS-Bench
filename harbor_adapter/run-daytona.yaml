@@ -21,8 +21,6 @@ environment:
     spot: false
     gpu_memory_gb: 64
     gpu_cpus: 16
-    sandbox_env:
-      MLSBENCH_EVAL_TIME_SCALE: "2.0"
 
 agents:
   - name: oracle

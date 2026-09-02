@@ -44,7 +44,7 @@ harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
 
 `--agent-env` reaches the agent, `--verifier-env` only the verifier, and
 `--ek KEY=VALUE` the Daytona environment. For an environment-only check use
-`--agent nop --no-verifier`; the 140 tasks share 65 base images, so one task
+`--agent nop --disable-verification`; the 140 tasks share 65 base images, so one task
 per image covers every environment. `--path` takes one task *or* a dataset
 directory and cannot be repeated — select a subset with `task_names` /
 `exclude_task_names` under the config's `datasets:` block.
@@ -70,7 +70,6 @@ eval cost — and is deliberately not flattened to one value.
 | `gpu_type` | `H100` | Daytona's pool also holds Blackwell cards the pinned CUDA wheels cannot run. Use `H200` only for tasks with a native `h200` profile. |
 | `spot` | `false` | Spot capacity is cheaper but frequently unavailable. |
 | `gpu_memory_gb` / `gpu_cpus` | `64` / `16` | Floors. Daytona enforces `task.toml` resources as hard cgroup limits, which local Docker effectively does not. verl RL validation needs `128`. |
-| `eval_time_scale` | `2.0` | Multiplies the verifier's per-eval budgets for the slower remote CPUs. `1` restores native budgets. |
 | `toolbox_ready_retries` | `3` | Recreates a sandbox whose toolbox never answers. |
 | `snapshot_salt` | unset | Appends a no-op `RUN` layer, forcing a fresh snapshot. Use when retries keep landing on the same bad runner — Daytona prefers whichever runner already caches the snapshot, and a cached copy can be broken. |
 

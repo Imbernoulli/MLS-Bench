@@ -272,12 +272,12 @@ harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"   # one task, agent
 ```
 
-`--agent nop --no-verifier` checks only that the image builds and the sandbox
+`--agent nop --disable-verification` checks only that the image builds and the sandbox
 starts. The two tasks whose evaluators call DeepSeek/DashScope need those keys;
 the other 138 do not.
 
 `run-daytona.yaml` defaults to `gpu_type: H100`, `spot: false`,
-`gpu_memory_gb: 64`, `gpu_cpus: 16` and `eval_time_scale: 2.0`; any `--ek`
+`gpu_memory_gb: 64` and `gpu_cpus: 16`; any `--ek`
 overrides the file for one invocation. H100 is the default because Daytona's
 pool also holds Blackwell (sm_120) cards that the pinned CUDA wheels have no
 kernels for. Unlike local Docker, Daytona enforces `task.toml` resources as
@@ -336,7 +336,7 @@ datasets:
 `--agent-import-path pkg.mod:Class` with `--agent-kwarg key=value` takes a
 custom one. Two agents are worth running first: `oracle` replays the task's
 strongest declared baseline through the same guard and verifier, and `nop`
-with `--no-verifier` checks only that the image builds and the sandbox starts.
+with `--disable-verification` checks only that the image builds and the sandbox starts.
 Sanity-check a new harness on a CPU task like `ml-clustering-algorithm` — a
 failure there is a credential or harness problem, not a task problem.
 

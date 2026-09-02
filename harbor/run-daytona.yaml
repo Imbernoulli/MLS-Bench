@@ -33,10 +33,6 @@ environment:
     # as hard cgroup limits, so GPU sandboxes get a larger RAM/CPU floor.
     gpu_memory_gb: 64
     gpu_cpus: 16
-    # Extra sandbox environment.  test_cmds[].time budgets were calibrated on
-    # MLS-Bench's native hosts; allow slower remote CPUs a longer wall clock.
-    sandbox_env:
-      MLSBENCH_EVAL_TIME_SCALE: "2.0"
 
 agents:
   - name: oracle

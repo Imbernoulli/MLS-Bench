@@ -562,24 +562,6 @@ def _running_gpu_is_h200() -> bool:
     return "H200" in raw.upper()
 
 
-def _eval_time_scale() -> float:
-    """Optional multiplier for per-eval wall-clock budgets.
-
-    ``test_cmds[].time`` was calibrated on MLS-Bench's native hosts.  A remote
-    provider with a smaller CPU quota (Daytona sandboxes enforce
-    ``task.toml`` cpus as a cgroup limit) can legitimately need longer; set
-    ``MLSBENCH_EVAL_TIME_SCALE`` (>= 1.0) in the verifier environment.  The
-    budget check of the agent's edit is unaffected.
-    """
-    raw = os.environ.get("MLSBENCH_EVAL_TIME_SCALE", "").strip()
-    if not raw:
-        return 1.0
-    try:
-        return max(1.0, float(raw))
-    except ValueError:
-        return 1.0
-
-
 def _effective_test_cmds(config: dict) -> list[dict]:
     """Materialize hardware-specific test command overrides.
 
@@ -1080,7 +1062,6 @@ def _run_eval_wave(
             _parse_time_to_seconds(task["entry"]["tc"].get("time", "1:00:00"))
             for task in tasks
         )
-        * _eval_time_scale()
     ) + WAVE_GRACE_SEC
     deadline = time.time() + timeout_secs
     running: list[dict] = []

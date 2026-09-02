@@ -397,12 +397,6 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
                 "VECLIB_MAXIMUM_THREADS",
             ):
                 env_vars.setdefault(name, str(int(cpu_quota)))
-        # ``test_cmds[].time`` budgets were calibrated on MLS-Bench's native
-        # hosts; a remote sandbox with a small CPU quota may need longer.
-        # ``--ek eval_time_scale=2`` scales the verifier's wall-clock budget.
-        time_scale = self._kwargs.get("eval_time_scale")
-        if time_scale not in (None, ""):
-            env_vars["MLSBENCH_EVAL_TIME_SCALE"] = str(time_scale)
         # Free-form sandbox environment for provider-specific tuning (YAML
         # ``kwargs.sandbox_env``; not expressible through ``--ek``).
         extra_env = self._kwargs.get("sandbox_env") or {}
