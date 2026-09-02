@@ -228,6 +228,53 @@ def _is_workspace_guard_exempt(rel: Path) -> bool:
     return bool(rel.parts and rel.parts[0] in _EXEMPT_TOP_LEVEL_DIRS)
 
 
+def purge_workspace_bytecode(workspace_root: Path) -> list[str]:
+    """Delete every `__pycache__` / `*.pyc` / `*.pyo` under the workspace.
+
+    `_SKIP_DIR_PARTS` / `_SKIP_SUFFIXES` above keep bytecode out of the
+    guard's walk, and the adapter keeps it out of `pristine_manifest.json`
+    for the same reason: a manifest entry the walk cannot see is reported as
+    a deleted file and rejects every submission. The unavoidable consequence
+    is that the integrity guard is blind to bytecode -- so a submission can
+    leave a sourceless `<pkg>/json.pyc` (Python imports a `.pyc` with no
+    `.py` beside it), or a `__pycache__` entry whose header forges the
+    source's mtime and size, and it executes in place of the read-only module
+    it shadows. An eval script that starts its evaluator as
+    `python <pkg>/<eval>.py` puts that agent-writable directory on
+    sys.path[0], which is a live path to a forged metric.
+
+    test.sh purges once before the guard; this runs again before every eval
+    wave, so bytecode written by one wave cannot be imported by the next.
+    Deleting is safe: bytecode with a source beside it is regenerated on
+    import, and bytecode without one is exactly what must not run.
+    """
+    removed: list[str] = []
+    if not workspace_root.exists():
+        return removed
+    for path in sorted(workspace_root.rglob("__pycache__"), reverse=True):
+        if path.is_dir() and not path.is_symlink():
+            removed.append(str(path))
+            shutil.rmtree(path, ignore_errors=True)
+    for path in sorted(workspace_root.rglob("*")):
+        if path.suffix in (".pyc", ".pyo") and not path.is_dir():
+            removed.append(str(path))
+            try:
+                path.unlink()
+            except OSError:
+                pass
+    return removed
+
+
+def _log_bytecode_purge(workspace_root: Path, out_dir: Path, when: str) -> None:
+    removed = purge_workspace_bytecode(workspace_root)
+    if not removed:
+        return
+    with (out_dir / "bytecode_purge.txt").open("a") as fh:
+        fh.write(f"=== {when} ===\n")
+        for entry in removed:
+            fh.write(entry + "\n")
+
+
 def _walk_workspace(workspace_root: Path) -> set[Path]:
     out: set[Path] = set()
     if not workspace_root.exists():
@@ -461,6 +508,10 @@ def _eval_env(
         env["ENV"] = label
     env["MLSBENCH_TASK_DIR"] = str(task_meta)
     env["MLSBENCH_PKG_DIR"] = str(pkg_dir)
+    # No eval process writes .pyc into the workspace: a cache written by one
+    # setting is a file the next setting's interpreter would import, and the
+    # integrity guard cannot see it.
+    env["PYTHONDONTWRITEBYTECODE"] = "1"
     env.setdefault("DATA_ROOT", "/data")
     env["MLSBENCH_LOCAL_PATH_MAP_JSON"] = json.dumps({
         "/workspace": str(workspace_root),
@@ -801,7 +852,11 @@ def _run_budget_check(
             budget_env["TMPDIR"] = str(scratch_dir)
             budget_env["MLSBENCH_TASK_DIR"] = str(scratch_dir)
             proc = subprocess.run(
-                [python_bin, str(scratch_dir / "budget_check.py")],
+                # -B: never write bytecode. NOT -I/-E/-s: budget_check.py may
+                # legitimately need PYTHONPATH from the package env. Its own
+                # script dir is the verifier-owned scratch copy, not the
+                # workspace, so sys.path[0] is already out of reach.
+                [python_bin, "-B", str(scratch_dir / "budget_check.py")],
                 cwd=str(pkg_dir),
                 env=budget_env,
                 stdout=fh,
@@ -877,6 +932,11 @@ def _run_eval_wave(
     deadline = time.time() + timeout_secs
     running: list[dict] = []
     results: dict[tuple[int, int], dict] = {}
+
+    # Waves within a group are sequential, so nothing is running right now:
+    # drop any bytecode the previous wave's (agent-authored) code produced
+    # before the next evaluator is started.
+    _log_bytecode_purge(workspace_root, out_dir, "before eval wave")
 
     for task, gpu_devices in zip(tasks, assignments):
         entry = task["entry"]
@@ -1009,6 +1069,9 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
     eval_root = Path(args.eval_root)
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
+    # test.sh purges before the guard; repeat it here so the protection
+    # survives score_task.py being invoked on its own.
+    _log_bytecode_purge(workspace_root, out_dir, "before run-evals")
 
     config = _load_task_config(task_meta)
     test_cmds = list(config.get("test_cmds", []))
