@@ -1,0 +1,86 @@
+# Daytona run configuration for the 30-task MLS-Bench-Lite subset.
+#
+# Run from this directory with:
+#   DAYTONA_API_KEY=... PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona-lite.yaml
+#
+# Identical to run-daytona.yaml except for the `datasets:` block, which names
+# the 30 tasks of the README's "MLS-Bench-Lite" table.  Neither API-backed
+# evaluator (agent-tool-reasoning, mas-topology) is part of Lite, so no model
+# keys are needed beyond the agent's own.  See run-daytona.yaml for what each
+# option means.  Copy this file and edit `task_names` (globs accepted) for any
+# other subset; do not pass `--path tasks` with it, which would replace this
+# block with the whole dataset.
+
+jobs_dir: jobs-daytona-lite
+n_attempts: 1
+timeout_multiplier: 1.0
+# Keep remote environment allocation serial.  Raise this only when the
+# aggregate *declared* GPU counts of the concurrent tasks fit your quota
+# (Lite tasks declare 0-8 GPUs each; see each task.toml).
+n_concurrent_trials: 1
+quiet: false
+
+environment:
+  import_path: harbor_env:DaytonaEnvironment
+  force_build: true
+  delete: true
+  kwargs:
+    gpu_type: H100
+    spot: false
+    gpu_memory_gb: 64
+    gpu_cpus: 16
+
+agents:
+  - name: oracle
+
+# Replace the oracle block with a real Harbor agent when running evaluations,
+# or pass `--agent ... --model ... --agent-env KEY=...` on the command line.
+# agents:
+#   - name: claude-code
+#     model_name: anthropic/claude-opus-4-7
+
+datasets:
+  - path: tasks
+    task_names:
+      # LM
+      - mls-bench__llm-dllm-demask-strategy
+      - mls-bench__llm-pretrain-optimizer
+      - mls-bench__llm-rl-importance-sampling
+      # Robotics
+      - mls-bench__jepa-planning
+      - mls-bench__robo-diffusion-guidance
+      - mls-bench__robo-diffusion-policy
+      - mls-bench__robo-humanoid-sim2real-algo
+      - mls-bench__robomimic-bc-loss
+      # RL
+      - mls-bench__rl-value-discrete
+      # Vision & Generation
+      - mls-bench__cv-3dgs-densification
+      - mls-bench__cv-dbm-sampler
+      - mls-bench__cv-vae-loss
+      # Systems
+      - mls-bench__llm-ptq-algorithm
+      - mls-bench__llm-qat-algorithm
+      - mls-bench__mlsys-sparse-attention-inference
+      # AI for Science
+      - mls-bench__ai4bio-mutation-effect-prediction
+      - mls-bench__ai4sci-inverse-diffusion-algo
+      - mls-bench__ai4sci-pla-binding-affinity
+      # Optimization
+      - mls-bench__optimization-multi-objective
+      - mls-bench__optimization-variance-reduction
+      # Classical ML
+      - mls-bench__ml-clustering-algorithm
+      - mls-bench__ml-dimensionality-reduction
+      # Deep learning
+      - mls-bench__cv-pooling-aggregation
+      - mls-bench__dl-activation-function
+      # Time series
+      - mls-bench__quant-concept-drift
+      - mls-bench__ts-exogenous-forecast
+      - mls-bench__ts-imputation
+      # Structured / causal
+      - mls-bench__causal-discovery-discrete
+      - mls-bench__graph-generation
+      # Trustworthy learning
+      - mls-bench__security-membership-inference-defense

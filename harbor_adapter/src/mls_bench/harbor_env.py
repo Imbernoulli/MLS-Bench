@@ -24,12 +24,14 @@ import importlib
 import json
 import math
 import os
+import re
 from pathlib import Path
 from typing import Any
 
 import yaml
 
 from harbor.environments.capabilities import EnvironmentCapabilities
+from harbor.environments.docker.docker import DockerEnvironment
 
 try:  # Daytona >=0.205 exposes explicit GPU type selection.
     from daytona import GpuType as _DaytonaGpuType
@@ -79,6 +81,95 @@ except AttributeError:  # pragma: no cover - provider-version diagnostic
 _GPU_CONTEXT: contextvars.ContextVar[int] = contextvars.ContextVar(
     "mlsbench_daytona_gpu_count", default=0
 )
+
+# Some Daytona GPU runners report a process's mapped files by their *host*
+# overlay path: ``/proc/self/maps`` lists ``/var/lib/docker/overlay2/<id>/
+# merged/usr/local/cuda-12.9/.../libcudart.so.12.9.79`` instead of the
+# container path.  vLLM's CuMemAllocator (verl's rollout sleep/wake path)
+# reads that line back and ``dlopen``s it verbatim, which fails inside the
+# sandbox with "cannot open shared object file"; the H100 runners used so far
+# report container paths and never hit it.  Aliasing ``<prefix>/merged`` to
+# ``/`` makes every such path resolve, for the agent's own runs and for the
+# verifier alike.  A no-op wherever the kernel reports container paths.
+_LOADER_PATH_REPAIR = r"""python3 - <<'PY'
+import ctypes, os, re
+try:
+    ctypes.CDLL("libcudart.so.12")
+except OSError:
+    raise SystemExit(0)
+for line in open("/proc/self/maps"):
+    if "libcudart" not in line or "/" not in line:
+        continue
+    path = line[line.index("/"):].strip()
+    if os.path.exists(path):
+        raise SystemExit(0)
+    match = re.match(r"^(.*/merged)/", path)
+    if match is None:
+        print("unresolvable loader path: " + path)
+        raise SystemExit(0)
+    prefix = match.group(1)
+    os.makedirs(os.path.dirname(prefix), exist_ok=True)
+    if not os.path.lexists(prefix):
+        os.symlink("/", prefix)
+    print("aliased " + prefix + " -> /")
+    raise SystemExit(0)
+PY
+"""
+
+
+# Host-RAM floors (GiB) that a package needs on Daytona regardless of the
+# ``gpu_memory_gb`` kwarg.  verl's validation step launches vLLM generation
+# workers next to the trainer; in a 64 GiB sandbox the ray ``AgentLoopWorker``
+# was OOM-killed (``ActorDiedError``, SYSTEM_ERROR) and only a 128 GiB sandbox
+# completed the run.  Keyed by the ``mls_bench_package`` metadata every
+# rendered ``task.toml`` carries, so no native task config is consulted.
+PACKAGE_MEMORY_FLOOR_GB: dict[str, int] = {"verl": 128}
+
+_PACKAGE_RE = re.compile(r'^mls_bench_package\s*=\s*"([^"]*)"', re.MULTILINE)
+
+
+def _rendered_task_package(environment_dir: Path) -> str | None:
+    """Return the ``mls_bench_package`` of the rendered task, if present."""
+    task_toml = Path(environment_dir).parent / "task.toml"
+    try:
+        text = task_toml.read_text()
+    except OSError:
+        return None
+    match = _PACKAGE_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _h200_profile_env(environment_dir: Path) -> dict[str, str]:
+    """Env of the task's native ``h200`` blocks, merged across its test_cmds."""
+    config_path = Path(environment_dir).parent / "tests" / "meta" / "config.json"
+    try:
+        entries = json.loads(config_path.read_text()).get("test_cmds", []) or []
+    except (OSError, ValueError, AttributeError):
+        return {}
+    merged: dict[str, str] = {}
+    for entry in entries:
+        override = entry.get("h200") if isinstance(entry, dict) else None
+        if isinstance(override, dict):
+            for key, value in (override.get("env") or {}).items():
+                merged.setdefault(str(key), str(value))
+    return merged
+
+
+def gpu_profile_env(environment_dir: Path, gpu_type: str) -> dict[str, str]:
+    """Container variables that select a task's GPU profile.
+
+    ``MLSBENCH_GPU_TYPE`` is what the verifier reads to materialize a native
+    ``h200`` block.  For H200 the block's ``env`` is exported as well, so the
+    agent's own runs of the eval command during exploration use the settings
+    the verifier will score with -- the native runner applies the block to the
+    agent's runs the same way.  Tasks without an ``h200`` block get only the
+    type variable, which the verifier ignores for them.
+    """
+    name = str(gpu_type).strip().upper()
+    env = {"MLSBENCH_GPU_TYPE": name}
+    if "H200" in name:
+        env.update(_h200_profile_env(environment_dir))
+    return env
 
 
 def _h200_gpu_count_from_rendered_task(environment_dir: Path, fallback: int) -> int:
@@ -359,15 +450,20 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             # type explicitly; the verifier selects a task's native ``h200``
             # profile only from this variable.
             if gpu_type is not None:
-                env_vars["MLSBENCH_GPU_TYPE"] = getattr(
-                    gpu_type, "value", str(gpu_type)
+                profile = gpu_profile_env(
+                    self.environment_dir, getattr(gpu_type, "value", str(gpu_type))
                 )
+                env_vars["MLSBENCH_GPU_TYPE"] = profile.pop("MLSBENCH_GPU_TYPE")
+                for key, value in profile.items():
+                    env_vars.setdefault(key, value)
             # task.toml resources are sized for local Docker, where memory is
             # rarely the binding limit.  Daytona enforces them as hard cgroup
             # limits, so GPU sandboxes may request a larger floor (for example
             # loading a 7B checkpoint needs more than 16 GiB of host RAM).
             if resources is not None:
-                min_memory = self._int_kwarg("gpu_memory_gb")
+                min_memory = self._int_kwarg("gpu_memory_gb") or 0
+                package = _rendered_task_package(self.environment_dir) or ""
+                min_memory = max(min_memory, PACKAGE_MEMORY_FLOOR_GB.get(package, 0))
                 if min_memory and (resources.memory or 0) < min_memory:
                     resources.memory = min_memory
                 min_cpus = self._int_kwarg("gpu_cpus")
@@ -397,12 +493,6 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
                 "VECLIB_MAXIMUM_THREADS",
             ):
                 env_vars.setdefault(name, str(int(cpu_quota)))
-        # ``test_cmds[].time`` budgets were calibrated on MLS-Bench's native
-        # hosts; a remote sandbox with a small CPU quota may need longer.
-        # ``--ek eval_time_scale=2`` scales the verifier's wall-clock budget.
-        time_scale = self._kwargs.get("eval_time_scale")
-        if time_scale not in (None, ""):
-            env_vars["MLSBENCH_EVAL_TIME_SCALE"] = str(time_scale)
         # Free-form sandbox environment for provider-specific tuning (YAML
         # ``kwargs.sandbox_env``; not expressible through ``--ek``).
         extra_env = self._kwargs.get("sandbox_env") or {}
@@ -454,11 +544,22 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
                     str(delete_exc)[:200],
                 )
 
+        if resources is not None:
+            self.logger.info(
+                "Daytona sandbox request: cpu=%s memory=%sGiB disk=%sGiB gpu=%s type=%s",
+                getattr(resources, "cpu", None),
+                getattr(resources, "memory", None),
+                getattr(resources, "disk", None),
+                getattr(resources, "gpu", None),
+                getattr(getattr(resources, "gpu_type", None), "name", None),
+            )
         try:
             for attempt in range(1, attempts + 1):
                 result = await super()._create_sandbox(params, *args, **kwargs)
                 try:
                     await self._wait_for_sandbox_toolbox()
+                    if gpu_count > 0:
+                        await self._repair_loader_paths()
                     return result
                 except RuntimeError as exc:
                     last_error = exc
@@ -488,6 +589,25 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         finally:
             for sandbox in decoys:
                 await _delete_quietly(sandbox)
+
+    async def _repair_loader_paths(self) -> None:
+        """Make host-overlay library paths resolvable (see _LOADER_PATH_REPAIR).
+
+        Best effort: a failure here is logged, never fatal, because the repair
+        only matters on runners that report host paths.
+        """
+        sandbox = getattr(self, "_sandbox", None)
+        process = getattr(sandbox, "process", None)
+        if process is None:
+            return
+        try:
+            response = await process.exec(_LOADER_PATH_REPAIR, timeout=120)
+        except Exception as exc:  # noqa: BLE001 - provider transport errors
+            self.logger.warning("Loader path repair skipped: %s", str(exc)[:200])
+            return
+        output = str(getattr(response, "result", "") or "").strip()
+        if output:
+            self.logger.info("Daytona sandbox loader paths: %s", output[:300])
 
     async def _wait_for_sandbox_toolbox(self) -> None:
         """Block until the sandbox accepts exec sessions.
@@ -650,8 +770,58 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             self.task_env_config.build_timeout_sec = min_build
 
 
+class DockerGPUEnvironment(DockerEnvironment):
+    """Harbor's ``docker`` environment with GPU capability declared.
+
+    The stock environment reports ``capabilities.gpus = False`` and rejects
+    tasks with ``[environment].gpus > 0``; a host with the NVIDIA Container
+    Toolkit runs them through the per-task Compose overlay.  ``--ek
+    gpu_type=H200`` selects the H200 profile exactly as it does on Daytona:
+    ``MLSBENCH_GPU_TYPE`` and the task's native ``h200`` env reach every exec,
+    agent and verifier alike.  The Compose overlay still reserves the declared
+    (H100) device count; the verifier schedules by the block's ``compute``.
+    """
+
+    def __init__(
+        self,
+        environment_dir: Path,
+        environment_name: str,
+        session_id: str,
+        trial_paths: Any,
+        task_env_config: Any,
+        *args: Any,
+        gpu_type: Any = None,
+        **kwargs: Any,
+    ):
+        super().__init__(
+            environment_dir=environment_dir,
+            environment_name=environment_name,
+            session_id=session_id,
+            trial_paths=trial_paths,
+            task_env_config=task_env_config,
+            *args,
+            **kwargs,
+        )
+        if gpu_type not in (None, ""):
+            profile = gpu_profile_env(self.environment_dir, str(gpu_type))
+            # The task's own ``[environment].env`` keeps precedence.
+            self._persistent_env = {**profile, **self._persistent_env}
+
+    @property
+    def capabilities(self) -> EnvironmentCapabilities:
+        base = super().capabilities
+        return EnvironmentCapabilities(
+            gpus=True,
+            disable_internet=base.disable_internet,
+            windows=base.windows,
+            mounted=base.mounted,
+        )
+
+
 __all__ = [
     "DaytonaEnvironment",
     "DaytonaClientManager",
+    "DockerGPUEnvironment",
+    "gpu_profile_env",
     "is_gpu_reservation_only_compose",
 ]
