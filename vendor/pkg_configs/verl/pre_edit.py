@@ -252,4 +252,25 @@ OPS = [
             "            micro_batches, batch_idx_list = prepare_dynamic_batch(data, max_token_len=max_token_len, dp_group=_dp_group)\n"
         ),
     },
+    # ── validation metrics: tolerate None extra-info values ────────────────
+    # The agent_loop.py op above aggregates reward_extra_info over the union of
+    # keys and fills None where a scorer did not emit a key.  The Lite/RL
+    # validation set mixes float scorers (gsm8k, MATH-500 -> only "acc") with a
+    # dict scorer (amc23 -> "score"/"acc"/"pred"), so every gsm8k/MATH-500
+    # sample carries pred=None and process_validation_metrics crashed with
+    # `unsupported operand type(s) for +: 'NoneType' and 'NoneType'` at the
+    # first validation.  Drop None entries before reducing (~L596-598).
+    {
+        "op": "replace",
+        "file": "verl/verl/trainer/ppo/metric_utils.py",
+        "start_line": 596,
+        "end_line": 598,
+        "content": (
+            "                # skip empty, string, or missing values (the agent-loop reward\n"
+            "                # aggregation fills None for keys a scorer did not emit)\n"
+            "                var_vals = [v for v in var_vals if v is not None]\n"
+            "                if not var_vals or isinstance(var_vals[0], str):\n"
+            "                    continue\n"
+        ),
+    },
 ]

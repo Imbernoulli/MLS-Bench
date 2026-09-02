@@ -1202,6 +1202,8 @@ def render_task(
         ctx.task_id,
         dockerfile=env_dir / "Dockerfile",
         tests_dir=tests_dir,
+        scaffold_dir=env_dir / "_scaffold",
+        package_source=_materialized_package_source(mb, ctx.package),
     )
     (tests_dir / "meta" / "oracle_cmd_overrides.token").write_text(
         oracle_cmd_overrides_token + "\n"

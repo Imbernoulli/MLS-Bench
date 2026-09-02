@@ -14,6 +14,7 @@ duplicate script arguments.
 from __future__ import annotations
 
 import re
+import shutil
 from pathlib import Path
 
 
@@ -73,6 +74,18 @@ _VERL_TRAIN_SCRIPTS = (
     Path("meta/scripts/train.sh"),
 )
 
+# Package files whose package-level pre_edit fix postdates the pinned base
+# image.  They are copied from the pre-edited package source into the task
+# scaffold (``COPY _scaffold/ /workspace/``) so the workspace matches the
+# rendered pristine manifest without rebuilding the 36 GB image.  Drop an
+# entry once the base image has been rebuilt with the fix.
+VERL_OVERLAY_FILES = (
+    # process_validation_metrics: skip None extra-info values (mixed scorers)
+    "verl/verl/trainer/ppo/metric_utils.py",
+    # verl #2490 dynamic_bsz DP-group ops (image predates them)
+    "verl/verl/workers/actor/dp_actor.py",
+)
+
 
 def _patch_verl_dockerfile(docker_text: str) -> str:
     docker_text = re.sub(
@@ -108,14 +121,36 @@ def apply_daytona_compatibility(
     *,
     dockerfile: Path,
     tests_dir: Path,
+    scaffold_dir: Path | None = None,
+    package_source: Path | None = None,
 ) -> bool:
     """Apply provider-only fixes to one rendered Harbor task.
 
-    Returns ``True`` when a Daytona compatibility patch applies to the task.
+    ``scaffold_dir``/``package_source`` enable the package-file overlay for
+    fixes that are not yet baked into the pinned base image.  Returns ``True``
+    when a Daytona compatibility patch applies to the task.
     """
 
     if task_id not in VERL_TASKS:
         return False
+
+    if scaffold_dir is not None and package_source is not None:
+        for relative in VERL_OVERLAY_FILES:
+            # Scaffold paths are workspace-relative (``<package dir>/...``);
+            # the materialized package source is that package dir itself.
+            source = package_source / Path(*Path(relative).parts[1:])
+            if not source.is_file():
+                raise FileNotFoundError(
+                    f"{task_id}: overlay source missing from package source: {source}"
+                )
+            target = scaffold_dir / relative
+            if target.exists():
+                # The task's own mid_edit already ships a (task-specific)
+                # version of this file; it was derived from the pre-edited
+                # source, so keep it.
+                continue
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, target)
 
     docker_text = dockerfile.read_text()
     patched = _patch_verl_dockerfile(docker_text)

@@ -267,19 +267,19 @@ digest = "sha256:64db18b3c4ad1d222eff5c2012e8dcbaf2ed98647cdba66f04c7b08a5f691d3
 
 [[tasks]]
 name = "mls-bench/llm-rl-advantage"
-digest = "sha256:19f678e8deafdad1fb9b1cfb75f79f54157c9366b29a0c8f6498213266dc1b46"
+digest = "sha256:8babf4dc3e5934b5794bc5fd81bf638f8294be1d65c02dbb0f2c92f0eeb0e334"
 
 [[tasks]]
 name = "mls-bench/llm-rl-importance-sampling"
-digest = "sha256:bce1e33d749cbc1b5a62647fbdde0cb704b97f234e967edfd4459e579c306b3c"
+digest = "sha256:bad5e1e287ddae875429838d76ae421deba54c20e006b1b19933acac487ae940"
 
 [[tasks]]
 name = "mls-bench/llm-rl-kl-estimator"
-digest = "sha256:402c999366e099e3b2a03c483118765eddcd15ab47622634f91ed4afef0b9f8d"
+digest = "sha256:8a2e0db22b957146906287d29f22810e079a820c2c59ca2a1561cbb1d2194a33"
 
 [[tasks]]
 name = "mls-bench/llm-rl-reward-normalization"
-digest = "sha256:b269ab84429a9456e96b1d2f20dd9f7795db85910eca30eb994ccdf314940edf"
+digest = "sha256:a4d3c97ff8022c6a6fb887481b52a08a5944868ee8f7c32abbb8feac958f76c8"
 
 [[tasks]]
 name = "mls-bench/llm-scaling-law-discovery"
