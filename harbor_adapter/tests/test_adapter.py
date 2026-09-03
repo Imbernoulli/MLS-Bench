@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTER_SRC = ROOT / "harbor_adapter" / "src"
@@ -223,6 +225,74 @@ def test_ops_loader_isolates_custom_template_imports(tmp_path: Path):
 
     assert _load_ops_file(first / "mid_edit.py")[0]["content"] == "FIRST"
     assert _load_ops_file(second / "mid_edit.py")[0]["content"] == "SECOND"
+
+
+def test_ops_loader_isolates_dgp_imports(tmp_path: Path):
+    """Same hazard as custom_template, but for the A-pattern's held-out dgp.
+
+    Each A-pattern task ships its own ``holdout/<task>/dgp.py`` and its
+    mid_edit puts that directory on sys.path. Restoring sys.path is not enough
+    because the import is cached, so rendering task A then task B in one run
+    made B's ``import dgp`` return A's module -- and B staged A's DATA into its
+    own bundle. It renders, builds, runs and scores against the wrong instance
+    without printing anything.
+    """
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    for directory, value in ((first, "FIRST"), (second, "SECOND")):
+        (directory / "dgp.py").write_text(
+            f'def opaque_label(env):\n    return "{value}"\n'
+        )
+        (directory / "mid_edit.py").write_text(
+            "import sys\n"
+            "from pathlib import Path\n"
+            "sys.path.insert(0, str(Path(__file__).parent))\n"
+            "import dgp\n"
+            'OPS = [{"op": "create", "file": "pkg/f.py", "content": dgp.opaque_label("e")}]\n'
+        )
+
+    assert _load_ops_file(first / "mid_edit.py")[0]["content"] == "FIRST"
+    assert _load_ops_file(second / "mid_edit.py")[0]["content"] == "SECOND"
+
+
+def test_ops_loader_allows_a_pattern_import_roots(tmp_path: Path):
+    """An A-pattern mid_edit needs numpy/base64/io/os to stage its inputs.
+
+    Blocking any one of them makes every leak-closed task unrenderable, which
+    is how the whole family sat broken on this branch: the loader raised
+    "import of 'base64' is not allowed while loading edit ops".
+    """
+    d = tmp_path / "t"
+    d.mkdir()
+    (d / "mid_edit.py").write_text(
+        "from __future__ import annotations\n"
+        "import base64, io, os, sys\n"
+        "import numpy as np\n"
+        "buf = io.BytesIO()\n"
+        "np.save(buf, np.arange(3))\n"
+        "OPS = [{\n"
+        '    "op": "create",\n'
+        '    "file": "pkg/inputs.b64",\n'
+        '    "content": base64.b64encode(buf.getvalue()).decode("ascii"),\n'
+        "}]\n"
+    )
+
+    ops = _load_ops_file(d / "mid_edit.py")
+
+    assert ops[0]["file"] == "pkg/inputs.b64"
+    assert ops[0]["content"]
+
+
+def test_ops_loader_still_blocks_unlisted_imports(tmp_path: Path):
+    """Widening the allowlist must not turn it into "anything goes"."""
+    d = tmp_path / "t"
+    d.mkdir()
+    (d / "mid_edit.py").write_text("import socket\nOPS = []\n")
+
+    with pytest.raises(ImportError):
+        _load_ops_file(d / "mid_edit.py")
 
 
 def test_apply_ops_delete_line_form_and_replace_to_eof():

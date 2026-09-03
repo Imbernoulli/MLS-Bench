@@ -203,7 +203,38 @@ class MlsBenchAdapter:
 
 _TIME_RE = re.compile(r"^(\d+):(\d+):(\d+)$")
 
-_ALLOWED_OP_IMPORT_ROOTS = {"custom_template", "importlib", "json", "math", "pathlib", "sys"}
+# The A-pattern (public PR #54, and every task rebuilt on it since) keeps the
+# generator, the reference answer and the metric in a host-only
+# ``holdout/<task>/dgp.py`` and has ``mid_edit.py`` import it to stage ONLY the
+# observable inputs into the workspace. That import chain needs numpy to build
+# the arrays, base64+io to encode them, os/sys.path to reach the holdout module,
+# and ``dgp`` itself. Without these roots the adapter cannot render any
+# leak-closed task -- it dies at "import of 'base64' is not allowed" -- and that
+# is 35 tasks today.
+#
+# ``__future__`` is separate and duller: ``from __future__ import annotations``
+# opens a large share of this repo's Python files, and blocking it stopped
+# gfx-mesh-pooling-criterion rendering for a reason unrelated to what the module
+# goes on to do.
+
+# Module names that are task-LOCAL: each task ships its own file under these
+# names, so neither may survive between two op files in one render run.
+_TASK_LOCAL_OP_MODULES = ("custom_template", "dgp")
+
+_ALLOWED_OP_IMPORT_ROOTS = {
+    "__future__",
+    "base64",
+    "custom_template",
+    "dgp",
+    "importlib",
+    "io",
+    "json",
+    "math",
+    "numpy",
+    "os",
+    "pathlib",
+    "sys",
+}
 
 
 def _warn(message: str) -> None:
@@ -437,16 +468,25 @@ def _load_ops_file(ops_py: Path) -> list[dict]:
     }
     old_sys_path = list(sys.path)
     sentinel = object()
-    saved_custom_template = sys.modules.pop("custom_template", sentinel)
+    # Every task has its own module under these names -- ``custom_template`` in
+    # its edits/ dir, and ``dgp`` in the host-only holdout/<task>/ dir that an
+    # A-pattern mid_edit puts on sys.path. Restoring sys.path is not enough,
+    # because the import is cached: render task A then task B in one run and
+    # B's ``import dgp`` returns A's module, so B stages A's DATA. That surfaced
+    # once as "too many values to unpack" only because the two tasks' gen_input
+    # arities differed -- two tasks with matching signatures would render,
+    # build, run and score against the wrong instance in complete silence.
+    saved = {name: sys.modules.pop(name, sentinel) for name in _TASK_LOCAL_OP_MODULES}
     try:
         exec(compile(ops_py.read_text(), str(ops_py), "exec"), ns, ns)
         return _validate_ops(ns.get("OPS"), ops_py)
     finally:
         sys.path[:] = old_sys_path
-        if saved_custom_template is sentinel:
-            sys.modules.pop("custom_template", None)
-        else:
-            sys.modules["custom_template"] = saved_custom_template
+        for name, prev in saved.items():
+            if prev is sentinel:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prev
 
 
 def _assert_python_syntax(
@@ -1609,6 +1649,29 @@ def _stage_verifier_assets(
     )
     if (task_dir / "budget_check.py").exists():
         shutil.copy2(task_dir / "budget_check.py", meta / "budget_check.py")
+    # A-pattern tasks keep the generator, the reference answer and the metric in
+    # a host-only ``holdout/<task>/dgp.py``. The parser imports it at scoring
+    # time and looks for it beside itself in the Harbor layout, so it has to be
+    # staged here -- NOT into the workspace, which is the whole point of the
+    # pattern. Without this the bundle renders, builds and runs, and then scores
+    # nothing because the parser cannot import dgp: reward 0, no error anyone
+    # sees.
+    #
+    # The whole holdout dir is staged, not just dgp.py: a dgp may need
+    # verifier-only assets to rebuild the reference, and tests/ is mounted at
+    # /tests ONLY at verification time, so this is the one place an asset can
+    # live that the scorer can read and the agent cannot. gfx-inr-* keeps its
+    # Kodak plates here for exactly that reason -- baking them into /data would
+    # let the agent's own code correlate its staged pixels against a plate and
+    # recover the crop offset that task hides.
+    holdout_dir = task_dir.parent.parent / "holdout" / ctx.task_id
+    if (holdout_dir / "dgp.py").exists():
+        for src in sorted(holdout_dir.rglob("*")):
+            if src.is_dir() or "__pycache__" in src.parts or src.suffix in {".pyc", ".pyo"}:
+                continue
+            dst = meta / src.relative_to(holdout_dir)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
     (meta / "task_id").write_text(ctx.task_id + "\n")
     (meta / "package").write_text(ctx.package + "\n")
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
