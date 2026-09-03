@@ -208,7 +208,17 @@ _TIME_RE = re.compile(r"^(\d+):(\d+):(\d+)$")
 # and ``dgp`` itself. Without these roots the adapter cannot render any
 # leak-closed task -- it fails at "import of 'base64' is not allowed" -- which
 # is a quarter of the benchmark and rising.
+#
+# ``__future__`` is separate and even duller: `from __future__ import
+# annotations` opens a large share of the repo's Python files, and blocking it
+# stopped gfx-mesh-pooling-criterion rendering for a reason that has nothing to
+# do with what the module goes on to do.
+# Module names that are task-LOCAL: each task ships its own file under these
+# names, so they must never survive between two op files in one render run.
+_TASK_LOCAL_OP_MODULES = ("custom_template", "dgp")
+
 _ALLOWED_OP_IMPORT_ROOTS = {
+    "__future__",
     "base64",
     "custom_template",
     "dgp",
@@ -454,16 +464,25 @@ def _load_ops_file(ops_py: Path) -> list[dict]:
     }
     old_sys_path = list(sys.path)
     sentinel = object()
-    saved_custom_template = sys.modules.pop("custom_template", sentinel)
+    # Every task has its own module under these names -- `custom_template` in
+    # its edits/ dir, and `dgp` in the host-only holdout/<task>/ dir that an
+    # A-pattern mid_edit puts on sys.path. Restoring sys.path is not enough,
+    # because the import is cached: render task A then task B in one run and
+    # B's `import dgp` returns A's module, so B stages A's DATA. Here that
+    # surfaced as "too many values to unpack" only because the two tasks'
+    # gen_input arities differ -- two tasks with matching signatures would
+    # render, build, run and score against the wrong instance in silence.
+    saved = {name: sys.modules.pop(name, sentinel) for name in _TASK_LOCAL_OP_MODULES}
     try:
         exec(compile(ops_py.read_text(), str(ops_py), "exec"), ns, ns)
         return _validate_ops(ns.get("OPS"), ops_py)
     finally:
         sys.path[:] = old_sys_path
-        if saved_custom_template is sentinel:
-            sys.modules.pop("custom_template", None)
-        else:
-            sys.modules["custom_template"] = saved_custom_template
+        for name, prev in saved.items():
+            if prev is sentinel:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = prev
 
 
 def _assert_python_syntax(
