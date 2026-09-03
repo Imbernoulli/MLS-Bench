@@ -200,7 +200,27 @@ class MlsBenchAdapter:
 
 _TIME_RE = re.compile(r"^(\d+):(\d+):(\d+)$")
 
-_ALLOWED_OP_IMPORT_ROOTS = {"custom_template", "importlib", "json", "math", "pathlib", "sys"}
+# The A-pattern (public PR #54, and every task rebuilt on it since) keeps the
+# generator, the reference answer and the metric in a host-only
+# ``holdout/<task>/dgp.py`` and has ``mid_edit.py`` import it to stage ONLY the
+# observable inputs into the workspace. That import chain needs numpy to build
+# the arrays, base64+io to encode them, os/sys.path to reach the holdout module,
+# and ``dgp`` itself. Without these roots the adapter cannot render any
+# leak-closed task -- it fails at "import of 'base64' is not allowed" -- which
+# is a quarter of the benchmark and rising.
+_ALLOWED_OP_IMPORT_ROOTS = {
+    "base64",
+    "custom_template",
+    "dgp",
+    "importlib",
+    "io",
+    "json",
+    "math",
+    "numpy",
+    "os",
+    "pathlib",
+    "sys",
+}
 
 
 def _warn(message: str) -> None:
@@ -1406,6 +1426,16 @@ def _stage_verifier_assets(
     )
     if (task_dir / "budget_check.py").exists():
         shutil.copy2(task_dir / "budget_check.py", meta / "budget_check.py")
+    # A-pattern tasks (public PR #54 and everything rebuilt on it) keep the
+    # generator, the reference answer and the metric in a host-only
+    # ``holdout/<task>/dgp.py``. The parser imports it at scoring time and looks
+    # for it beside itself in the Harbor layout, so it has to be staged here --
+    # NOT into the workspace, which is the whole point of the pattern. Without
+    # this the bundle renders, builds and runs, then scores nothing because the
+    # parser cannot import dgp, and reward is 0 with no error anyone sees.
+    _holdout = task_dir.parent.parent / "holdout" / ctx.task_id / "dgp.py"
+    if _holdout.exists():
+        shutil.copy2(_holdout, meta / "dgp.py")
     (meta / "task_id").write_text(ctx.task_id + "\n")
     (meta / "package").write_text(ctx.package + "\n")
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
