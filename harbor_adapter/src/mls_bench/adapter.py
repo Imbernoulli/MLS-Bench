@@ -1452,9 +1452,21 @@ def _stage_verifier_assets(
     # NOT into the workspace, which is the whole point of the pattern. Without
     # this the bundle renders, builds and runs, then scores nothing because the
     # parser cannot import dgp, and reward is 0 with no error anyone sees.
-    _holdout = task_dir.parent.parent / "holdout" / ctx.task_id / "dgp.py"
-    if _holdout.exists():
-        shutil.copy2(_holdout, meta / "dgp.py")
+    # The whole holdout directory is staged, not just dgp.py: a dgp may need
+    # verifier-only assets to reconstruct the reference, and tests/ is mounted
+    # at /tests ONLY at verification time, so this is the one place an asset can
+    # live without the agent seeing it. gfx-inr-* keeps its four Kodak plates
+    # here for exactly that reason -- baking them into /data would let the
+    # agent's own code correlate its staged pixels against a plate and recover
+    # the crop offset the task hides.
+    _holdout_dir = task_dir.parent.parent / "holdout" / ctx.task_id
+    if (_holdout_dir / "dgp.py").exists():
+        for src in sorted(_holdout_dir.rglob("*")):
+            if src.is_dir() or "__pycache__" in src.parts or src.suffix in {".pyc", ".pyo"}:
+                continue
+            dst = meta / src.relative_to(_holdout_dir)
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(src, dst)
     (meta / "task_id").write_text(ctx.task_id + "\n")
     (meta / "package").write_text(ctx.package + "\n")
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
