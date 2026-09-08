@@ -958,16 +958,37 @@ def _kill_process_group(pgid: int, timeout: float = 30.0) -> None:
 def _copy_task_meta_for_budget(
     task_meta: Path, scratch_dir: Path,
     effective_test_cmds: list[dict] | None = None,
-) -> None:
-    scratch_dir.mkdir(parents=True, exist_ok=True)
+    eval_root: Path | None = None,
+) -> Path:
+    """Stage a private copy of the task for budget_check.py; return its task dir.
+
+    The copy keeps the native checkout's relative layout,
+    ``<scratch>/tasks/<task_id>/`` beside ``<scratch>/holdout/<task_id>/``,
+    because ``edits/mid_edit.py`` resolves the verifier-only input generator
+    as ``parents[3] / "holdout" / <task_id>`` (native runs the budget check of
+    ephemeral-input tasks host-side against exactly such a snapshot).  The
+    holdout copy is ``<eval_root>/_inputgen/holdout/<task_id>`` when the bundle
+    ships one, the same files apply.py imports at eval time.  A flat scratch
+    dir made that path ``/holdout/<task_id>``, so optimization-nas's check
+    died on import and every eval failed with rc=1.
+    """
+    task_id = _read_meta_text(task_meta, "task_id", "task")
+    task_dir = scratch_dir / "tasks" / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
     for name in ("config.json", "budget_check.py"):
         src = task_meta / name
         if src.exists():
-            shutil.copy2(src, scratch_dir / name)
+            shutil.copy2(src, task_dir / name)
     for name in ("edits", "scripts"):
         src = task_meta / name
         if src.exists():
-            shutil.copytree(src, scratch_dir / name, dirs_exist_ok=True)
+            shutil.copytree(src, task_dir / name, dirs_exist_ok=True)
+    if eval_root is not None:
+        holdout_src = eval_root / "_inputgen" / "holdout" / task_id
+        if holdout_src.is_dir():
+            shutil.copytree(
+                holdout_src, scratch_dir / "holdout" / task_id, dirs_exist_ok=True
+            )
     # budget_check.py derives the agent model's hyperparameters from this
     # config.json's test_cmds (active_test_cmd -> cmd -> expand_script_argv). For
     # an oracle run the eval cmd is replaced by the strongest baseline's cmd, and
@@ -977,11 +998,12 @@ def _copy_task_meta_for_budget(
     # oracle). Native MLSBench runs the budget check against the
     # baseline-substituted task config; mirror that.
     if effective_test_cmds is not None:
-        cfg_path = scratch_dir / "config.json"
+        cfg_path = task_dir / "config.json"
         if cfg_path.exists():
             cfg = json.loads(cfg_path.read_text())
             cfg["test_cmds"] = effective_test_cmds
             cfg_path.write_text(json.dumps(cfg, indent=2))
+    return task_dir
 
 
 def _install_budget_legacy_links(scratch_dir: Path, workspace_root: Path) -> list[Path]:
@@ -1037,6 +1059,7 @@ def _run_budget_check(
     seed: int,
     env: dict[str, str],
     effective_test_cmds: list[dict] | None = None,
+    eval_root: Path | None = None,
 ) -> dict | None:
     if not (task_meta / "budget_check.py").exists():
         return None
@@ -1054,13 +1077,15 @@ def _run_budget_check(
     legacy_links: list[Path] = []
     with log_path.open("w") as fh:
         try:
-            _copy_task_meta_for_budget(task_meta, scratch_dir, effective_test_cmds)
-            legacy_links = _install_budget_legacy_links(scratch_dir, workspace_root)
+            task_dir = _copy_task_meta_for_budget(
+                task_meta, scratch_dir, effective_test_cmds, eval_root=eval_root
+            )
+            legacy_links = _install_budget_legacy_links(task_dir, workspace_root)
             budget_env = env.copy()
             budget_env["TMPDIR"] = str(scratch_dir)
-            budget_env["MLSBENCH_TASK_DIR"] = str(scratch_dir)
+            budget_env["MLSBENCH_TASK_DIR"] = str(task_dir)
             proc = subprocess.run(
-                [python_bin, str(scratch_dir / "budget_check.py")],
+                [python_bin, str(task_dir / "budget_check.py")],
                 cwd=str(pkg_dir),
                 env=budget_env,
                 stdout=fh,
@@ -1425,6 +1450,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     seed=seed,
                     env=env,
                     effective_test_cmds=test_cmds,
+                    eval_root=eval_root,
                 )
                 if budget and budget["rc"] != 0:
                     records[(entry["idx"], seed)] = _write_error_record(

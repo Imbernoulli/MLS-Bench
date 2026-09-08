@@ -531,16 +531,63 @@ def test_budget_scratch_config_reflects_oracle_override(tmp_path: Path):
 
     override = [{"label": "PSM", "cmd": "scripts/timesnet.sh"}]
     scratch = tmp_path / "scratch"
-    score_task._copy_task_meta_for_budget(task_meta, scratch, override)
-    cfg = json.loads((scratch / "config.json").read_text())
+    task_dir = score_task._copy_task_meta_for_budget(task_meta, scratch, override)
+    cfg = json.loads((task_dir / "config.json").read_text())
     assert cfg["test_cmds"] == override, "override must reach the budget config"
     assert "baselines" in cfg and "files" in cfg, "other config fields preserved"
 
     # No override (agent run) → original test_cmds preserved unchanged.
     scratch2 = tmp_path / "scratch2"
-    score_task._copy_task_meta_for_budget(task_meta, scratch2)
-    cfg2 = json.loads((scratch2 / "config.json").read_text())
+    task_dir2 = score_task._copy_task_meta_for_budget(task_meta, scratch2)
+    cfg2 = json.loads((task_dir2 / "config.json").read_text())
     assert cfg2["test_cmds"][0]["cmd"] == "scripts/psm.sh"
+
+
+def test_budget_scratch_keeps_the_native_layout_so_mid_edit_finds_holdout(tmp_path: Path):
+    """optimization-nas's edits/mid_edit.py loads the verifier-only generator
+    from ``parents[3] / "holdout" / <task_id>`` (native snapshots
+    ``tasks/<task>`` beside ``holdout/<task>``).  A flat budget scratch dir
+    resolved that to ``/holdout/optimization-nas/dgp.py``, so the budget check
+    crashed and all 15 evals were rc=1 (Daytona oracle sweep, 2026-09-08).
+    The scratch copy must keep the layout and ship the bundle's
+    ``tests/eval/_inputgen/holdout/<task_id>`` next to it."""
+    score_task = _load_score_task()
+    task_meta = tmp_path / "meta"
+    (task_meta / "edits").mkdir(parents=True)
+    (task_meta / "task_id").write_text("optimization-nas\n")
+    (task_meta / "config.json").write_text(json.dumps({"test_cmds": []}))
+    (task_meta / "budget_check.py").write_text("# noop\n")
+    (task_meta / "edits" / "mid_edit.py").write_text(
+        "from pathlib import Path\n"
+        "_HERE = Path(__file__).resolve()\n"
+        "TASK_DIR = _HERE.parents[1]\n"
+        "DGP = _HERE.parents[3] / 'holdout' / 'optimization-nas' / 'dgp.py'\n"
+    )
+    eval_root = tmp_path / "eval"
+    holdout = eval_root / "_inputgen" / "holdout" / "optimization-nas"
+    holdout.mkdir(parents=True)
+    (holdout / "dgp.py").write_text("TABLES = 1\n")
+    (holdout / "nb201_tables.json.gz").write_bytes(b"gz")
+
+    scratch = tmp_path / "scratch"
+    task_dir = score_task._copy_task_meta_for_budget(
+        task_meta, scratch, None, eval_root=eval_root
+    )
+    assert task_dir == scratch / "tasks" / "optimization-nas"
+    assert (task_dir / "budget_check.py").exists()
+    ns: dict = {}
+    exec((task_dir / "edits" / "mid_edit.py").read_text(),
+         {"__file__": str(task_dir / "edits" / "mid_edit.py")}, ns)
+    assert ns["TASK_DIR"] == task_dir
+    assert ns["DGP"].exists(), "mid_edit's parents[3]/holdout resolution must hit the staged copy"
+    assert (scratch / "holdout" / "optimization-nas" / "nb201_tables.json.gz").exists()
+
+    # Bundles without an _inputgen holdout (the other 49 budget_check tasks)
+    # stage exactly as before, just one level deeper.
+    plain = tmp_path / "plain"
+    task_dir_plain = score_task._copy_task_meta_for_budget(task_meta, plain, None, eval_root=tmp_path / "nope")
+    assert task_dir_plain == plain / "tasks" / "optimization-nas"
+    assert not (plain / "holdout").exists()
 
 
 def test_infer_reserved_gpu_count_balances_waves_at_the_cap():
