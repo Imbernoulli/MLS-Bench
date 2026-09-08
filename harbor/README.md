@@ -9,7 +9,9 @@ evaluated on the suite with a single command.
 
 Prerequisites:
 - [Harbor](https://github.com/harbor-framework/harbor) installed. The bundles
-  need nothing beyond stock Harbor; `harbor_env.py` is optional (see below).
+  need nothing beyond stock Harbor; `harbor_env.py` is optional (see below)
+  and is exercised on Harbor 0.6.6 and 0.22.0 (what `uv tool install`
+  gives today).
 - Docker with the [NVIDIA Container Toolkit](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/install-guide.html)
   (for GPU tasks; about half the suite). CPU-only mode also works.
 - ≥ 80 GB free disk for harbor base images (pulled on demand from Docker Hub).
@@ -137,11 +139,6 @@ hard-coded here. Local Docker
 refuses a `--cpus` above the host's core count, so `DockerGPUEnvironment`
 clamps to it. In both cases the thread budget follows the cores actually
 granted, and evals sized for the declared budget run closer to their deadline.
-The one place that margin is thin: `causal-discovery-discrete` runs five
-single-threaded structure learners at once and its Hailfinder eval finishes
-at 83–87 % of its 59-minute deadline on a 4-CPU Daytona sandbox (two runs;
-native and local Docker give it 8). A solution slower than the baseline there can time
-out on Daytona while passing elsewhere.
 
 Task images pin `OMP_NUM_THREADS` and friends to that CPU budget, because a
 container reports every core the *host* has while its cgroup grants only the
