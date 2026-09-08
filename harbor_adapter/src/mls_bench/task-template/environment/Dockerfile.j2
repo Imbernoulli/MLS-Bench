@@ -42,6 +42,12 @@ ENV OMP_NUM_THREADS={{ cpus }} \
 ENV NCCL_CUMEM_ENABLE=0 \
     NCCL_NVLS_ENABLE=0
 {% endif %}
+{% if image_setup -%}
+# Package-level first-use initialization, done at build time so the evals a
+# wave starts together cannot race on it (see PACKAGE_IMAGE_SETUP).
+{% for cmd in image_setup %}RUN {{ cmd }}
+{% endfor %}
+{% endif -%}
 {% if scaffold_files -%}
 COPY _scaffold/ {{ workdir }}/
 {%- endif %}

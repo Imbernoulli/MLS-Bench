@@ -843,6 +843,32 @@ PACKAGE_MEMORY_GB: dict[str, int] = {
     "verl": 128,
 }
 
+# Image-build steps a package needs so that the concurrent evals of one wave
+# do not race on first-use initialization inside the shared workspace.
+# Rendered into the per-task Dockerfile as `RUN` lines (after the ENV block,
+# before the scaffold COPY) and run on every provider that builds the image.
+PACKAGE_IMAGE_SETUP: dict[str, list[str]] = {
+    # qlib's MLflowExpManager opens a file store at /workspace/qlib/mlruns;
+    # mlflow's FileStore creates `mlruns/0/meta.yaml` only when `mlruns/` is
+    # absent and does so without locking, so three evals started together
+    # race and one dies with "Yaml file '.../mlruns/0/meta.yaml' exists"
+    # (quant-concept-drift on Modal, 2026-09-08). Creating the default
+    # experiment at build time takes that path away from every eval.
+    "qlib": [
+        "cd /workspace/qlib && python -W ignore -c "
+        "\"import mlflow; mlflow.tracking.MlflowClient('file:///workspace/qlib/mlruns').search_experiments()\"",
+    ],
+}
+
+
+def _package_image_setup(package: str) -> list[str]:
+    wanted = _normalize_pkg_name(package)
+    for name, steps in PACKAGE_IMAGE_SETUP.items():
+        if _normalize_pkg_name(name) == wanted:
+            return list(steps)
+    return []
+
+
 # Ceiling for a `test_cmds[].mem` declaration. The four verl RL tasks declare
 # `mem = 200` for SLURM; 128 GB is the largest GPU sandbox validated on
 # Daytona, and asking a provider for more than that has not been tested.
@@ -1301,6 +1327,7 @@ def render_task(
         env.get_template("environment/Dockerfile.j2").render(
             **template_ctx,
             scaffold_files=scaffold_files,
+            image_setup=_package_image_setup(ctx.package),
         )
     )
 

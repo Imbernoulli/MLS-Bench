@@ -743,3 +743,22 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
         if bad:
             drift[f"{variant}/{name}"] = bad
     assert not drift, _json.dumps(drift, indent=2)
+
+
+def test_dockerfile_carries_package_image_setup_for_qlib_only():
+    """mlflow's FileStore creates mlruns/0/meta.yaml without locking, so three
+    qlib evals started together raced on it and one died (quant-concept-drift
+    on Modal, 2026-09-08). The qlib images create the default experiment at
+    build time; other packages get no RUN line."""
+    from jinja2 import Environment, FileSystemLoader, StrictUndefined
+    import mls_bench.adapter as adapter
+
+    tmpl_dir = Path(adapter.__file__).resolve().parent / "task-template"
+    env = Environment(loader=FileSystemLoader(str(tmpl_dir)), undefined=StrictUndefined, keep_trailing_newline=True)
+    base = dict(base_image="x:latest", cpus=4, gpu_count=0, workdir="/workspace", scaffold_files=["a"])
+    qlib = env.get_template("environment/Dockerfile.j2").render(**base, image_setup=adapter._package_image_setup("qlib"))
+    assert "RUN cd /workspace/qlib && python -W ignore -c" in qlib and "mlruns" in qlib
+    assert qlib.index("RUN cd /workspace/qlib") < qlib.index("COPY _scaffold/")
+    other = env.get_template("environment/Dockerfile.j2").render(**base, image_setup=adapter._package_image_setup("scikit-learn"))
+    assert "RUN " not in other and "COPY _scaffold/ /workspace/" in other
+    assert adapter._package_image_setup("QLIB") == adapter._package_image_setup("qlib")
