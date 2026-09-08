@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_fid_small,best_fid_medium,best_fid_large
+2026-04-14T00:00:00.000000+00:00,baseline:mse_base,true,42,22.33,21.91,18.363
+2026-04-14T00:00:00.000000+00:00,baseline:lpips_grad,true,42,17.79,17.19,14.49
+2026-04-14T00:00:00.000000+00:00,baseline:lpips_spectral,true,42,17.38,15.82,13.63

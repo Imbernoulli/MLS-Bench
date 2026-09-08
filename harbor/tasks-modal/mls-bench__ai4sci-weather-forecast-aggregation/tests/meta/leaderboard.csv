@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,w_rmse_geopotential_500_z500-3day,w_rmse_temperature_850_t850-5day,w_rmse_10m_u_component_of_wind_wind10m-7day,elapsed_z500-3day,elapsed_t850-5day,elapsed_wind10m-7day
+2026-05-03T22:34:00.315691+00:00,baseline:cross_attention,true,42,255.8458,2.1214,3.1455,14362,13470,12769
+2026-05-03T21:19:15.970445+00:00,baseline:mean_pooling,true,42,353.5033,2.6032,3.3991,16094,12748,8263
+2026-05-03T21:45:59.556248+00:00,baseline:learned_weighted_sum,true,42,345.7938,2.5934,3.4245,18601,13412,9709

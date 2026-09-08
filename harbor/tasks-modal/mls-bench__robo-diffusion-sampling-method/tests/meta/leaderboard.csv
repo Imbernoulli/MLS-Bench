@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,hopper_normalized_score,walker2d_normalized_score,halfcheetah_normalized_score,hopper_sampling_steps,walker2d_sampling_steps,halfcheetah_sampling_steps,elapsed_train_hopper,elapsed_train_walker2d,elapsed_train_halfcheetah
+2026-04-27T11:44:24.610741+00:00,baseline:default,true,42,0.7841,0.8337,0.4424,100,100,100,60843,20259,20541
+2026-04-28T05:32:33.693713+00:00,baseline:ddim,true,42,1.0045,0.8598,0.4754,20,20,20,13371,4281,4322
+2026-04-27T23:19:21.816652+00:00,baseline:dpm_solver,true,42,1.0081,0.8779,0.5037,10,10,10,8137,2814,2835

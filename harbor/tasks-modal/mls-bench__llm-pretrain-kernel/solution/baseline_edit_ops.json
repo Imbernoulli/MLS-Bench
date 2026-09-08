@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 33,
+    "end_line": 48,
+    "content": "def fused_mlp_forward(x, w_fc, w_proj):\n    \"\"\"MLP forward with ReLU^2 activation via custom autograd.\"\"\"\n\n    class ReLUSquaredMLP(torch.autograd.Function):\n        @staticmethod\n        def forward(ctx, x, w_fc, w_proj):\n            h = x @ w_fc.t()\n            relu_h = F.relu(h)\n            act = relu_h * relu_h  # ReLU^2\n            out = act @ w_proj.t()\n            ctx.save_for_backward(x, w_fc, w_proj, h, relu_h)\n            return out\n\n        @staticmethod\n        def backward(ctx, grad_output):\n            x, w_fc, w_proj, h, relu_h = ctx.saved_tensors\n            dtype = grad_output.dtype\n            # grad through second linear\n            d_act = grad_output @ w_proj.to(dtype)\n            # grad through ReLU^2: d/dx[relu(x)^2] = 2*relu(x) * (x > 0)\n            d_h = 2 * relu_h.to(dtype) * d_act\n            # weight grads\n            act_sq = (relu_h * relu_h).to(dtype)\n            grad_w_proj = grad_output.t() @ act_sq\n            grad_w_fc = d_h.t() @ x.to(dtype)\n            grad_x = d_h @ w_fc.to(dtype)\n            return grad_x, grad_w_fc, grad_w_proj\n\n    return ReLUSquaredMLP.apply(x, w_fc, w_proj)\n"
+  }
+]

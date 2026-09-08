@@ -1,0 +1,67 @@
+{
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/breast_cancer.sh",
+      "label": "breast_cancer",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:15:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/wine.sh",
+      "label": "wine",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:15:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/california.sh",
+      "label": "california",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:15:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "mean_impute": {
+      "edit_ops": "edits/mean_impute.edit.py"
+    },
+    "knn": {
+      "edit_ops": "edits/knn.edit.py"
+    },
+    "mice": {
+      "edit_ops": "edits/mice.edit.py"
+    },
+    "missforest": {
+      "edit_ops": "edits/missforest.edit.py"
+    },
+    "gain": {
+      "edit_ops": "edits/gain.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_imputation.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 36,
+          "end": 131
+        }
+      ]
+    }
+  ]
+}

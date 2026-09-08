@@ -1,0 +1,82 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/tutankham.sh",
+      "label": "tutankham-v5",
+      "group": 1,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/frostbite.sh",
+      "label": "frostbite-v5",
+      "group": 1,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/privateeye.sh",
+      "label": "private-eye-v5",
+      "group": 1,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "hidden": true,
+      "package": "cleanrl"
+    }
+  ],
+  "baselines": {
+    "ppo": {
+      "edit_ops": "edits/ppo.edit.py"
+    },
+    "rnd": {
+      "edit_ops": "edits/rnd.edit.py"
+    },
+    "icm": {
+      "edit_ops": "edits/icm.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "cleanrl/cleanrl/custom_intrinsic_exploration.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 179,
+          "end": 219
+        }
+      ]
+    },
+    {
+      "filename": "cleanrl/cleanrl/ppo_rnd_envpool.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "cleanrl/cleanrl/ppo_atari_envpool.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

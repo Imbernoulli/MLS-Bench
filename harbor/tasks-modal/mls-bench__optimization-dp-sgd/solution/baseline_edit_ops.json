@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "opacus/custom_dpsgd.py",
+    "start_line": 152,
+    "end_line": 233,
+    "content": "class DPMechanism:\n    \"\"\"Standard DP-SGD (Abadi et al., 2016).\n\n    Fixed per-sample gradient clipping + constant Gaussian noise.\n    \"\"\"\n\n    def __init__(self, max_grad_norm, noise_multiplier, n_params,\n                 dataset_size, batch_size, epochs, target_epsilon, target_delta):\n        self.max_grad_norm = max_grad_norm\n        self.noise_multiplier = noise_multiplier\n        self.n_params = n_params\n        self.dataset_size = dataset_size\n        self.batch_size = batch_size\n        self.epochs = epochs\n        self.target_epsilon = target_epsilon\n        self.target_delta = target_delta\n\n    def clip_and_noise(self, per_sample_grads, step, epoch):\n        batch_size = per_sample_grads[0].shape[0]\n\n        # Compute per-sample gradient norms (flat norm across all parameters)\n        flat = torch.cat([g.reshape(batch_size, -1) for g in per_sample_grads], dim=1)\n        norms = flat.norm(2, dim=1)  # [B]\n\n        # Clip per-sample gradients\n        clip_factor = (self.max_grad_norm / norms.clamp(min=1e-8)).clamp(max=1.0)  # [B]\n\n        noised_grads = []\n        for g in per_sample_grads:\n            shape = [batch_size] + [1] * (g.dim() - 1)\n            clipped = g * clip_factor.reshape(shape)\n\n            # Average over batch\n            avg = clipped.mean(dim=0)\n\n            # Add calibrated Gaussian noise\n            noise = torch.randn_like(avg) * (\n                self.noise_multiplier * self.max_grad_norm / batch_size\n            )\n            noised_grads.append(avg + noise)\n\n        return noised_grads\n\n    def get_effective_sigma(self, step, epoch):\n        return self.noise_multiplier\n"
+  }
+]

@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/mutag.sh",
+      "label": "MUTAG",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric"
+    },
+    {
+      "cmd": "scripts/proteins.sh",
+      "label": "PROTEINS",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric"
+    },
+    {
+      "cmd": "scripts/nci1.sh",
+      "label": "NCI1",
+      "group": 1,
+      "compute": 0.33,
+      "time": "03:00:00",
+      "package": "pytorch-geometric",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "gin_sum": {
+      "edit_ops": "edits/gin_sum.edit.py"
+    },
+    "sagpool": {
+      "edit_ops": "edits/sagpool.edit.py"
+    },
+    "diffpool": {
+      "edit_ops": "edits/diffpool.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-geometric/custom_graph_cls.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 41,
+          "end": 81
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

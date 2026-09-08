@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,success_rate_horizon-30,mean_dist_horizon-30,mean_steps_to_success_horizon-30,success_rate_horizon-60,mean_dist_horizon-60,mean_steps_to_success_horizon-60,success_rate_horizon-90,mean_dist_horizon-90,mean_steps_to_success_horizon-90
+2026-03-26T17:37:39+00:00,baseline:random,true,42,0.55,12.582,64.09,0.7,9.6064,81.64,0.7,8.2038,112.36
+2026-03-26T17:40:45+00:00,baseline:cem,true,42,0.7,9.5209,23.79,0.85,6.4698,23.47,0.95,3.4398,46.37
+2026-03-26T18:06:32+00:00,baseline:mppi,true,42,0.75,8.8324,18.0,0.95,3.274,22.53,0.95,3.2826,38.84
+2026-05-02T19:37:13.580735+00:00,baseline:icem,true,42,0.8,5.7089,24.75,0.9,4.1002,25.22,0.85,4.8471,38.53

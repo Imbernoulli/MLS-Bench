@@ -1,0 +1,75 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet20_cifar10_class0.sh",
+      "label": "resnet20-cifar10-class0",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:30:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg16bn_cifar100_class0.sh",
+      "label": "vgg16bn-cifar100-class0",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:30:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/mobilenetv2_fmnist_class0.sh",
+      "label": "mobilenetv2-fmnist-class0",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:30:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "retain_finetune": {
+      "edit_ops": "edits/retain_finetune.edit.py"
+    },
+    "negative_gradient": {
+      "edit_ops": "edits/negative_gradient.edit.py"
+    },
+    "bad_teacher": {
+      "edit_ops": "edits/bad_teacher.edit.py"
+    },
+    "scrub": {
+      "edit_ops": "edits/scrub.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/bench/unlearning/custom_unlearning.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "pytorch-vision/bench/unlearning/run_unlearning.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "diffusers-main/custom_train.py",
+    "start_line": 83,
+    "end_line": 118,
+    "content": "def compute_training_target(x_0, noise, timesteps, schedule):\n    # Epsilon prediction: model learns to predict the added noise\n    return noise\n\n\ndef predict_x0(model_output, x_t, timesteps, schedule):\n    # Recover x_0 from epsilon prediction:\n    # x_t = sqrt(alpha) * x_0 + sqrt(1-alpha) * eps\n    # => x_0 = (x_t - sqrt(1-alpha) * eps) / sqrt(alpha)\n    sqrt_alpha = schedule[\"sqrt_alpha\"][timesteps].view(-1, 1, 1, 1)\n    sqrt_one_minus_alpha = schedule[\"sqrt_one_minus_alpha\"][timesteps].view(-1, 1, 1, 1)\n    return (x_t - sqrt_one_minus_alpha * model_output) / sqrt_alpha.clamp(min=1e-8)\n"
+  }
+]

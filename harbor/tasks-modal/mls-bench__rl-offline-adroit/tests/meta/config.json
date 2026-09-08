@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/pen.sh",
+      "label": "pen-human-v1",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "CORL"
+    },
+    {
+      "cmd": "scripts/hammer.sh",
+      "label": "hammer-human-v1",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "CORL"
+    },
+    {
+      "cmd": "scripts/door_cloned.sh",
+      "label": "door-cloned-v1",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "CORL",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "iql": {
+      "edit_ops": "edits/iql.edit.py"
+    },
+    "awac": {
+      "edit_ops": "edits/awac.edit.py"
+    },
+    "rebrac": {
+      "edit_ops": "edits/rebrac.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "CORL/algorithms/offline/custom_adroit.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 214,
+          "end": 416
+        }
+      ]
+    }
+  ]
+}

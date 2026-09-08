@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 22,
+    "end_line": 31,
+    "content": "class LayerNorm(nn.Module):\n    \"\"\"RMSNorm \u2014 Root Mean Square Layer Normalization.\"\"\"\n    def __init__(self, ndim, bias):\n        super().__init__()\n        self.weight = nn.Parameter(torch.ones(ndim))\n        self.eps = 1e-5\n\n    def forward(self, input):\n        rms = input.float().pow(2).mean(-1, keepdim=True).add(self.eps).rsqrt()\n        return (input * rms).type_as(input) * self.weight\n"
+  }
+]

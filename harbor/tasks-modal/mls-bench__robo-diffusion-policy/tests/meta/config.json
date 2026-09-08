@@ -1,0 +1,76 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train_hopper.sh",
+      "label": "train_hopper",
+      "group": 1,
+      "compute": 1,
+      "time": "6:00:00",
+      "package": "CleanDiffuser"
+    },
+    {
+      "cmd": "scripts/train_walker2d.sh",
+      "label": "train_walker2d",
+      "group": 2,
+      "compute": 1,
+      "time": "6:00:00",
+      "package": "CleanDiffuser"
+    },
+    {
+      "cmd": "scripts/train_halfcheetah.sh",
+      "label": "train_halfcheetah",
+      "hidden": true,
+      "group": 3,
+      "compute": 1,
+      "time": "6:00:00",
+      "package": "CleanDiffuser"
+    }
+  ],
+  "baselines": {
+    "default": {},
+    "idql": {
+      "edit_ops": "edits/idql.edit.py"
+    },
+    "diffusion_policy": {
+      "edit_ops": "edits/diffusion_policy.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "CleanDiffuser/pipelines/custom_policy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 1,
+          "end": 20
+        },
+        {
+          "start": 38,
+          "end": 165
+        },
+        {
+          "start": 169,
+          "end": 176
+        },
+        {
+          "start": 182,
+          "end": 182
+        },
+        {
+          "start": 188,
+          "end": 207
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

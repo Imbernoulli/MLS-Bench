@@ -1,0 +1,80 @@
+{
+  "allow_create": false,
+  "requires_network": true,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/run_humaneval_4_deepseek.sh",
+      "label": "humaneval-4-deepseek",
+      "group": 1,
+      "compute": 1,
+      "time": "4:00:00",
+      "package": "chatdev-macnet"
+    },
+    {
+      "cmd": "scripts/run_humaneval_4_qwen.sh",
+      "label": "humaneval-4-qwen",
+      "group": 2,
+      "compute": 1,
+      "time": "4:00:00",
+      "package": "chatdev-macnet"
+    },
+    {
+      "cmd": "scripts/run_srdd_4_deepseek.sh",
+      "label": "srdd-4-deepseek",
+      "group": 3,
+      "compute": 1,
+      "time": "8:00:00",
+      "package": "chatdev-macnet",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "chain": {
+      "edit_ops": "edits/chain.edit.py"
+    },
+    "star": {
+      "edit_ops": "edits/star.edit.py"
+    },
+    "layered": {
+      "edit_ops": "edits/layered.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "chatdev-macnet/custom_topology.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 16,
+          "end": 42
+        }
+      ]
+    },
+    {
+      "filename": "chatdev-macnet/generate_graph.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "chatdev-macnet/graph.py",
+      "read": [
+        {
+          "start": 224,
+          "end": 298
+        }
+      ],
+      "edit": []
+    }
+  ]
+}

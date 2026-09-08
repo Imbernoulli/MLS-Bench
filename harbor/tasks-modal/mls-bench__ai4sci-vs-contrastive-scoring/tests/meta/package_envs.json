@@ -1,0 +1,9 @@
+{
+  "HypSeek": {
+    "PYTHONPATH": "/workspace:/workspace/unimol:${PYTHONPATH}",
+    "HOME": "/root",
+    "HF_HOME": "/data/hf_cache",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_HUB_OFFLINE": "1"
+  }
+}

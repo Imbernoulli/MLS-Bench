@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet56-cifar100,test_acc_vgg16bn-cifar100,test_acc_mobilenetv2-fmnist,elapsed_resnet56-cifar100,elapsed_vgg16bn-cifar100,elapsed_mobilenetv2-fmnist
+2026-03-28T02:28:18.488248+00:00,baseline:global_max,true,42,69.96,74.43,94.27,,,
+2026-04-03T12:14:20.847209+00:00,baseline:gem,true,42,72.39,74.02,94.81,0,0,0
+2026-03-28T02:01:04.764155+00:00,baseline:avg_max,true,42,71.06,72.55,94.52,,,7289

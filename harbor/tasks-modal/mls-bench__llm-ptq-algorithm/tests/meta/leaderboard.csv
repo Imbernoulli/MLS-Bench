@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,wikitext2_ppl_ptq-7b-int4,degradation_ptq-7b-int4,wikitext2_ppl_ptq-7b-int3,degradation_ptq-7b-int3,wikitext2_ppl_ptq-7b-int4-g64,degradation_ptq-7b-int4-g64,elapsed_ptq-7b-int4,elapsed_ptq-7b-int3,elapsed_ptq-7b-int4-g64
+2026-04-12T07:09:41.204583+00:00,baseline:round_to_nearest,true,42,5.1343,0.2271,6.7341,1.827,5.089,0.1819,95,87,94
+2026-04-12T07:09:41.204583+00:00,baseline:gptq,true,42,5.0711,0.164,6.1011,1.194,5.0435,0.1363,293,289,288
+2026-04-28T17:47:02.911117+00:00,baseline:awq,true,42,5.0647,0.1577,5.7776,0.8706,5.0454,0.1383,176,176,177

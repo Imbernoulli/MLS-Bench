@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,accuracy_Cora,macro_f1_Cora,accuracy_CiteSeer,macro_f1_CiteSeer,accuracy_PubMed,macro_f1_PubMed,elapsed_Cora,elapsed_CiteSeer,elapsed_PubMed
+2026-04-07T10:18:22.738385+00:00,baseline:gcn,true,42,0.821,0.8068,0.712,0.6804,0.784,0.7826,12,14,12
+2026-03-25T09:31:22.467715+00:00,baseline:gat,true,42,0.838,0.8251,0.711,0.6577,0.777,0.7711,,,
+2026-04-07T10:19:21.870939+00:00,baseline:graphsage,true,42,0.793,0.7845,0.679,0.6475,0.776,0.772,12,12,14

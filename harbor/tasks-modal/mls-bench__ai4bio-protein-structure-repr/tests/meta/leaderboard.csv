@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,accuracy_EC,test_loss_EC,f1_max_GO-BP,test_loss_GO-BP,accuracy_Fold,test_loss_Fold,elapsed_EC,elapsed_GO-BP,elapsed_Fold
+2026-04-27T09:17:14.876592+00:00,baseline:schnet,true,42,0.588954,2.428347,0.245145,0.166494,0.183844,6.597278,3301,6962,2571
+2026-04-27T19:37:19.871012+00:00,baseline:egnn,true,42,0.746681,1.7266,0.238065,0.175841,0.331476,5.709033,21920,6498,15644
+2026-04-27T10:15:10.242233+00:00,baseline:gearnet,true,42,0.773942,2.145516,0.306491,0.161822,0.314763,8.821301,3686,7866,2890

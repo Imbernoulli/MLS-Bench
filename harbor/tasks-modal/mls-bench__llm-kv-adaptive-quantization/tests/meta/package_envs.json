@@ -1,0 +1,14 @@
+{
+  "transformers-kv-lab": {
+    "HF_HOME": "/data/huggingface",
+    "HF_HUB_CACHE": "/data/huggingface/hub",
+    "HUGGINGFACE_HUB_CACHE": "/data/huggingface/hub",
+    "TRANSFORMERS_CACHE": "/data/huggingface/hub",
+    "HF_DATASETS_CACHE": "/data/huggingface/datasets",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "HF_DATASETS_OFFLINE": "1",
+    "TORCH_HOME": "/data/huggingface/torch",
+    "XDG_CACHE_HOME": "/data/huggingface"
+  }
+}

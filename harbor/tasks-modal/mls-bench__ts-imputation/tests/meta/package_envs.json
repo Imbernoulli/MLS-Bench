@@ -1,0 +1,6 @@
+{
+  "Time-Series-Library": {
+    "PYTHONPATH": "/workspace/Time-Series-Library:${PYTHONPATH}",
+    "HOME": "/root"
+  }
+}

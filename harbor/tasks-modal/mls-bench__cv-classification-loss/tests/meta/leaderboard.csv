@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet56-cifar100,test_acc_vgg16bn-cifar100,test_acc_mobilenetv2-fmnist,elapsed_mobilenetv2-fmnist
+2026-03-25T11:55:29.112615+00:00,baseline:label_smoothing,true,42,71.36,74.67,94.82,
+2026-03-28T03:41:34.465179+00:00,baseline:focal_loss,true,42,71.67,74.18,94.14,7138
+2026-03-28T02:01:38.029778+00:00,baseline:poly_loss,true,42,71.56,74.06,94.74,7161

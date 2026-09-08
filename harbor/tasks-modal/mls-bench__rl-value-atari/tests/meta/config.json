@@ -1,0 +1,59 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/breakout.sh",
+      "label": "breakout-v4",
+      "group": 1,
+      "compute": 0.4,
+      "time": "24:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/seaquest.sh",
+      "label": "seaquest-v4",
+      "group": 1,
+      "compute": 0.4,
+      "time": "24:00:00",
+      "package": "cleanrl"
+    },
+    {
+      "cmd": "scripts/pong.sh",
+      "label": "pong-v4",
+      "group": 1,
+      "compute": 0.4,
+      "time": "24:00:00",
+      "package": "cleanrl",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "qr_dqn": {
+      "edit_ops": "edits/qr_dqn.edit.py"
+    },
+    "c51": {
+      "edit_ops": "edits/c51.edit.py"
+    },
+    "double_dqn": {
+      "edit_ops": "edits/double_dqn.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "cleanrl/cleanrl/custom_value_atari.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 186,
+          "end": 249
+        }
+      ]
+    }
+  ]
+}

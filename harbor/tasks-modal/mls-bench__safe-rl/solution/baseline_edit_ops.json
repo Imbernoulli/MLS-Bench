@@ -1,0 +1,16 @@
+[
+  {
+    "op": "replace",
+    "file": "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/custom_lag.py",
+    "start_line": 48,
+    "end_line": 70,
+    "content": "    def _init(self) -> None:\n        super()._init()\n        self._cost_limit: float = self._cfgs.lagrange_cfgs.cost_limit\n        init_value = max(self._cfgs.lagrange_cfgs.lagrangian_multiplier_init, 0.0)\n        self._lagrangian_multiplier = torch.nn.Parameter(\n            torch.as_tensor(init_value), requires_grad=True,\n        )\n        self._lambda_optimizer = torch.optim.Adam(\n            [self._lagrangian_multiplier],\n            lr=self._cfgs.lagrange_cfgs.lambda_lr,\n        )\n\n    def _init_log(self) -> None:\n        super()._init_log()\n        self._logger.register_key('Metrics/LagrangeMultiplier', min_and_max=True)\n\n    def _update(self) -> None:\n        Jc = self._logger.get_stats('Metrics/EpCost')[0]\n        assert not np.isnan(Jc), 'cost is nan'\n        # Lagrange multiplier update via Adam\n        self._lambda_optimizer.zero_grad()\n        lambda_loss = -self._lagrangian_multiplier * (Jc - self._cost_limit)\n        lambda_loss.backward()\n        self._lambda_optimizer.step()\n        self._lagrangian_multiplier.data.clamp_(0.0)\n        super()._update()\n        self._logger.store({'Metrics/LagrangeMultiplier': self._lagrangian_multiplier.item()})\n\n    def _compute_adv_surrogate(self, adv_r: torch.Tensor, adv_c: torch.Tensor) -> torch.Tensor:\n        \"\"\"PPOLag: penalize cost advantage using Lagrange multiplier.\"\"\"\n        penalty = self._lagrangian_multiplier.item()\n        return (adv_r - penalty * adv_c) / (1 + penalty)\n"
+  },
+  {
+    "op": "replace",
+    "file": "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/custom_lag.py",
+    "start_line": 20,
+    "end_line": 20,
+    "content": "\n"
+  }
+]

@@ -1,0 +1,86 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/niah_8k.sh",
+      "label": "niah_8k",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "sparse-attn-eval"
+    },
+    {
+      "cmd": "scripts/longbench_qasper.sh",
+      "label": "longbench_qasper",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "sparse-attn-eval"
+    },
+    {
+      "cmd": "scripts/longbench_multifieldqa_en.sh",
+      "label": "longbench_multifieldqa_en",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "sparse-attn-eval",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "dense": {
+      "edit_ops": "edits/dense.edit.py",
+      "env": {
+        "ALLOW_DENSE_FLAG": "1"
+      }
+    },
+    "streaming_llm": {
+      "edit_ops": "edits/streaming_llm.edit.py"
+    },
+    "bigbird": {
+      "edit_ops": "edits/bigbird.edit.py"
+    },
+    "block_topk": {
+      "edit_ops": "edits/block_topk.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "sparse-attn-eval/custom_sparse_attn.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 31,
+          "end": 103
+        }
+      ]
+    },
+    {
+      "filename": "sparse-attn-eval/harness.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "sparse-attn-eval/run_llm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

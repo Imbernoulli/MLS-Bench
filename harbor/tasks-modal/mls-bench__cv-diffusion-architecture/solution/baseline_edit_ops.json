@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "diffusers-main/custom_train.py",
+    "start_line": 31,
+    "end_line": 58,
+    "content": "\ndef build_model(device):\n    \"\"\"Full-attention: self-attention at every resolution.\"\"\"\n    channels = (128, 256, 256, 256)\n    if os.environ.get('BLOCK_OUT_CHANNELS'):\n        channels = tuple(int(x) for x in os.environ['BLOCK_OUT_CHANNELS'].split(','))\n    layers = int(os.environ.get('LAYERS_PER_BLOCK', 2))\n\n    return UNet2DModel(\n        sample_size=32,\n        in_channels=3,\n        out_channels=3,\n        block_out_channels=channels,\n        down_block_types=(\"AttnDownBlock2D\", \"AttnDownBlock2D\", \"AttnDownBlock2D\", \"AttnDownBlock2D\"),\n        up_block_types=(\"AttnUpBlock2D\", \"AttnUpBlock2D\", \"AttnUpBlock2D\", \"AttnUpBlock2D\"),\n        layers_per_block=layers,\n        norm_num_groups=32,\n        norm_eps=1e-6,\n        act_fn=\"silu\",\n        time_embedding_type=\"positional\",\n        flip_sin_to_cos=False,\n        freq_shift=1,\n        downsample_padding=0,\n    ).to(device)\n"
+  }
+]

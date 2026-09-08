@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,val_loss_gpt-345m,wikitext2_ppl_gpt-345m,lambada_ppl_gpt-345m,arc_easy_lm-eval-345m,hellaswag_lm-eval-345m,piqa_lm-eval-345m,winogrande_lm-eval-345m,elapsed_gpt-345m,elapsed_lm-eval-345m
+2026-04-11T02:43:53.922672+00:00,baseline:vanilla,true,42,2.2763,44.28,70.09,54.12,33.82,64.25,50.99,20027,385
+2026-04-13T00:32:56.219227+00:00,baseline:prores,true,42,2.2707,44.11,67.21,55.35,33.91,64.09,50.2,23365,388
+2026-04-13T00:05:57.471989+00:00,baseline:learned_scaling,true,42,2.268,43.91,68.76,55.85,33.9,64.69,53.2,21161,444
+2026-04-09T22:38:06.856081+00:00,baseline:full_attnres,true,42,2.2544,41.82,64.32,55.01,34.05,63.44,50.2,21916,467
