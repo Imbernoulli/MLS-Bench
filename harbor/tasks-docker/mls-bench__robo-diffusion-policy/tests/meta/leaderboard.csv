@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,hopper_normalized_score,walker2d_normalized_score,halfcheetah_normalized_score,elapsed_train_hopper,elapsed_train_walker2d,elapsed_train_halfcheetah
+2026-04-26T01:38:15.990909+00:00,baseline:default,true,42,0.9966,0.9042,0.5132,16776,16673,16696
+2026-04-27T01:08:21.639654+00:00,baseline:idql,true,42,0.6301,0.8256,0.4747,5792,5828,5820
+2026-04-26T21:12:55.941952+00:00,baseline:diffusion_policy,true,42,0.4817,0.6669,0.42,2622,2661,2654

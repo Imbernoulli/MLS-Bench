@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "tdmpc2/tdmpc2/common/custom_simnorm.py",
+    "start_line": 16,
+    "end_line": 43,
+    "content": "class CustomSimNorm(nn.Module):\n    \"\"\"L2 normalization baseline -- projects latent vectors onto a hypersphere.\"\"\"\n\n    def __init__(self, cfg):\n        super().__init__()\n        self.dim = cfg.simnorm_dim\n        self.eps = 1e-8\n        # Learnable scale parameter\n        self.scale = nn.Parameter(torch.ones(1))\n\n    def forward(self, x):\n        # L2 normalize across the last dimension and apply learnable scale\n        norm = torch.norm(x, p=2, dim=-1, keepdim=True).clamp(min=self.eps)\n        return self.scale * x / norm\n\n    def __repr__(self):\n        return f\"CustomSimNorm(dim={self.dim}, type=L2Norm)\"\n"
+  }
+]

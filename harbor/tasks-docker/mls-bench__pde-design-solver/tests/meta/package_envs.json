@@ -1,0 +1,6 @@
+{
+  "Neural-Solver-Library": {
+    "PYTHONPATH": "/workspace/Neural-Solver-Library:${PYTHONPATH}",
+    "HOME": "/root"
+  }
+}

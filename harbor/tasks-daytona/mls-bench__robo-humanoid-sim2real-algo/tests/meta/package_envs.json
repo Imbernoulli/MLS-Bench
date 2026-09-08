@@ -1,0 +1,12 @@
+{
+  "humanoid-gym": {
+    "PYTHONPATH": "/workspace/humanoid-gym:${PYTHONPATH}",
+    "LD_LIBRARY_PATH": "/usr/local/nvidia/lib:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}",
+    "VK_ICD_FILENAMES": "/usr/share/vulkan/icd.d/nvidia_icd.json",
+    "VK_LAYER_PATH": "",
+    "NVIDIA_DRIVER_CAPABILITIES": "all",
+    "NVIDIA_VISIBLE_DEVICES": "all",
+    "DISPLAY": ":0",
+    "PYTORCH_JIT": "0"
+  }
+}

@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,smape_m4_monthly,mape_m4_monthly,smape_m4_quarterly,mape_m4_quarterly,smape_m4_yearly,mape_m4_yearly,elapsed_m4_monthly,elapsed_m4_quarterly,elapsed_m4_yearly
+2026-03-02T17:13:03.299847+00:00,baseline:dlinear,true,42,13.39475,0.16284,10.500537,0.122051,14.358028,0.167752,,,
+2026-04-04T10:01:30.754913+00:00,baseline:timesnet,true,42,12.803044,0.148797,10.089292,0.113766,13.4421,0.163668,1634,1634,1634
+2026-04-12T04:03:08.185548+00:00,baseline:patchtst,true,42,12.967651,0.153743,10.219109,0.117616,13.678909,0.167351,306,306,306
+2026-03-03T07:46:17.423409+00:00,baseline:timemixer,true,42,12.802117,0.150131,10.209378,0.116704,13.378583,0.163137,,,

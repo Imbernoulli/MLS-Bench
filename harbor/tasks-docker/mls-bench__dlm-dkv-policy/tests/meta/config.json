@@ -1,0 +1,65 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/math.sh",
+      "label": "math",
+      "group": 1,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "dLLM-cache"
+    },
+    {
+      "cmd": "scripts/humaneval.sh",
+      "label": "humaneval",
+      "group": 2,
+      "compute": 1.0,
+      "time": "03:00:00",
+      "package": "dLLM-cache"
+    },
+    {
+      "cmd": "scripts/lm_eval.sh",
+      "label": "lm-eval",
+      "group": 3,
+      "compute": 1.0,
+      "time": "02:00:00",
+      "package": "dLLM-cache",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "vanilla_uncached": {
+      "edit_ops": "edits/vanilla_uncached.edit.py"
+    },
+    "dllm_cache": {
+      "edit_ops": "edits/dllm_cache.edit.py"
+    },
+    "d2cache": {
+      "edit_ops": "edits/d2cache.edit.py"
+    },
+    "elastic_cache": {
+      "edit_ops": "edits/elastic_cache.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "dLLM-cache/custom_dlm_eval.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 53,
+          "end": 113
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

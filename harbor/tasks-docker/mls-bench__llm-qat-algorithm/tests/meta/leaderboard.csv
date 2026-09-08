@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,wikitext2_ppl_qat-1b-int4,wikitext2_ppl_qat-1b-int3,wikitext2_ppl_qat-1b-int2,elapsed_qat-1b-int4,elapsed_qat-1b-int3,elapsed_qat-1b-int2
+2026-04-26T22:03:08.027369+00:00,baseline:no_qat,true,42,15.0101,42.54,104422.6562,122,121,121
+2026-04-27T00:32:13.938669+00:00,baseline:ste,true,42,11.7044,13.7471,72.5517,3090,3052,3051
+2026-04-27T00:39:19.882663+00:00,baseline:lsq,true,42,12.167,13.4947,19.4969,3134,3132,3148
+2026-04-27T00:28:28.121495+00:00,baseline:finetune_then_ptq,true,42,12.6094,31.4101,94034.5078,2821,2821,2875

@@ -1,0 +1,8 @@
+{
+  "RAIN/README.md": "f7effe25d0e6991175aafd81b343afc56ef03e0bed4ed5d7c840e9c94f91d0ec",
+  "RAIN/optimization_convex_concave/custom_strategy.py": "294660267ba4bf78d249b11146b0261a21c612dfee796d198e9750cebf9cd173",
+  "RAIN/optimization_convex_concave/fixed_benchmark.py": "f1d6963af6c31e344215e1eeb5cd55aab66981aeea5b68c689b6e4859f03dc2e",
+  "RAIN/src/bilinear_func/exp_gnorm.m": "bc97b89d3d88724636d3656f7654d852d006e28fe1dca31f67793514ed52d3fd",
+  "RAIN/src/delta_func/exp_gnorm.m": "8730cf4d8309e2e59fb90033f75b38625e24607c64a81f624c7105e2aed884df",
+  "RAIN/src/rho_func/exp_gnorm.m": "35179d767ec482c6e82bcbf402b72cbaa8c7fd18396d5b91a14a77afeb4accb8"
+}

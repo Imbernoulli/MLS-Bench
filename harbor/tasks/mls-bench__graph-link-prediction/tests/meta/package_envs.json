@@ -1,6 +1,0 @@
-{
-  "pytorch-geometric-lp": {
-    "PYTHONPATH": "/workspace/pytorch-geometric-lp:${PYTHONPATH}",
-    "DATA_DIR": "/data"
-  }
-}

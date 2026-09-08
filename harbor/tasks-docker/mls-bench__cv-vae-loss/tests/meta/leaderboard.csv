@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_rfid_small,best_rfid_medium,best_rfid_large
+2026-04-14T00:00:00.000000+00:00,baseline:l2-kl,true,42,53.00,15.75,5.35
+2026-04-14T00:00:00.000000+00:00,baseline:perceptual,true,42,19.64,10.69,3.84
+2026-04-14T00:00:00.000000+00:00,baseline:vqgan,true,42,14.75,7.13,3.38

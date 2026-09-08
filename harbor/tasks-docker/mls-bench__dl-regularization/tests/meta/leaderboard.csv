@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet56-cifar100,test_acc_vgg16bn-cifar100,test_acc_mobilenetv2-fmnist,elapsed_resnet56-cifar100,elapsed_vgg16bn-cifar100,elapsed_mobilenetv2-fmnist
+2026-04-13T17:11:51.539676+00:00,baseline:dropblock,true,42,72.45,73.37,94.69,2132,931,2430
+2026-03-28T02:02:35.388979+00:00,baseline:confidence_penalty,true,42,72.66,74.31,94.9,,,
+2026-03-28T04:21:00.059211+00:00,baseline:orthogonal_reg,true,42,73.16,74.03,94.85,,,8459

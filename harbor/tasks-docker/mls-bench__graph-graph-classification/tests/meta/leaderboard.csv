@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_MUTAG,macro_f1_MUTAG,test_acc_PROTEINS,macro_f1_PROTEINS,test_acc_NCI1,macro_f1_NCI1,elapsed_MUTAG,elapsed_PROTEINS,elapsed_NCI1
+2026-04-22T05:57:25.218421+00:00,baseline:gin_sum,true,42,82.98,80.56,75.2,73.97,78.13,77.97,221,1191,3972
+2026-04-22T04:32:47.259778+00:00,baseline:sagpool,true,42,86.17,84.82,74.4,72.02,66.76,63.29,335,1690,4569
+2026-04-22T04:12:55.898441+00:00,baseline:diffpool,true,42,85.64,83.25,70.98,68.83,79.25,79.23,241,1167,3374

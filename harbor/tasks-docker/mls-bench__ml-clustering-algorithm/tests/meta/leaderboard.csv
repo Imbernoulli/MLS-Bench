@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,ari_blobs,nmi_blobs,silhouette_blobs,ari_moons,nmi_moons,silhouette_moons,ari_digits,nmi_digits,silhouette_digits,elapsed_blobs,elapsed_moons,elapsed_digits
+2026-04-08T02:58:21.538063+00:00,baseline:kmeans,true,42,0.935391,0.936106,0.667177,0.481117,0.382784,0.493661,0.534407,0.671244,0.139377,3,3,3
+2026-04-24T07:31:42.301882+00:00,baseline:dbscan,true,42,0.775527,0.89628,0.709261,0.996012,0.990682,0.171293,0.000382,0.012192,-1.0,2,2,2
+2026-04-08T02:58:21.525893+00:00,baseline:hdbscan,true,42,0.773204,0.890391,0.711202,1.0,1.0,0.385298,0.22904,0.576458,0.019672,3,3,3

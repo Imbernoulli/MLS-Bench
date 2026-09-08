@@ -1,7 +1,0 @@
-{
-  "gsplat": {
-    "DATA_DIR": "/data/360_v2",
-    "OUTPUT_DIR": "/tmp/output",
-    "TORCH_HOME": "/data/torch_cache"
-  }
-}

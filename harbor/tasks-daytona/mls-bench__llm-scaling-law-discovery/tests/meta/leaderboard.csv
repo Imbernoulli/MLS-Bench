@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,r2_sld_vocab,mae_sld_vocab,rmse_sld_vocab,nmae_sld_vocab,r2_sld_lrbsz,mae_sld_lrbsz,rmse_sld_lrbsz,nmae_sld_lrbsz,r2_sld_dataconstrained,mae_sld_dataconstrained,rmse_sld_dataconstrained,nmae_sld_dataconstrained,elapsed_sld-vocab,elapsed_sld-lrbsz,elapsed_sld-dataconstrained
+2026-04-24T07:31:49.384350+00:00,baseline:human_exact,true,42,0.928503,0.168489,0.226109,0.199251,-0.04977,0.033359,0.039111,0.873888,0.54993,0.302833,0.372012,0.546117,11,5,2
+2026-04-21T12:16:18.566979+00:00,baseline:sldagent_style,true,42,0.928527,0.1698,0.226071,0.200801,-3.051903,0.062853,0.076839,1.646534,0.929155,0.134619,0.147595,0.242767,3,11,2
+2026-04-21T12:16:09.596017+00:00,baseline:kernel_ridge,true,42,-0.567249,1.038254,1.058624,1.22781,-413.696844,0.619399,0.777352,16.22626,-13.419349,1.616057,2.105668,2.914336,3,3,3
+2026-04-21T12:16:10.488991+00:00,baseline:xgboost,true,42,0.981425,0.090724,0.11525,0.107287,-1.404599,0.053722,0.059193,1.407332,0.856767,0.183343,0.209865,0.330634,3,3,3

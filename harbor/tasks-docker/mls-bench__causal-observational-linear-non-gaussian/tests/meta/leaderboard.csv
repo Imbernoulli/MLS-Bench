@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,shd_ER30,f1_ER30,precision_ER30,recall_ER30,shd_ER50,f1_ER50,precision_ER50,recall_ER50,shd_SF100,f1_SF100,precision_SF100,recall_SF100,elapsed_ER30,elapsed_ER50,elapsed_SF100
+2026-04-03T11:18:24.724590+00:00,baseline:icalingam,true,42,1,0.9953,0.9907,1.0,3,0.9941,0.9882,1.0,107,0.8202,0.7225,0.9485,4,4,7
+2026-03-21T13:28:01.706641+00:00,baseline:directlingam,true,42,2,0.9907,0.9815,1.0,3,0.9941,0.9882,1.0,6,0.9898,0.9798,1.0,,,
+2026-04-23T06:44:12.220474+00:00,baseline:notears,true,42,9,0.9484,0.9439,0.9528,82,0.8273,0.834,0.8207,131,0.7161,0.9337,0.5808,24,330,772

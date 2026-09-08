@@ -1,0 +1,3 @@
+services:
+  main:
+    shm_size: 16gb

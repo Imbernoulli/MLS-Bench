@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,fid_sd15,fid_sd20,fid_sdxl
+2026-04-14T00:00:00.000000+00:00,baseline:cfg,true,42,23.6473,24.2928,25.7426
+2026-04-14T00:00:00.000000+00:00,baseline:cfgpp,true,42,23.9904,24.8937,25.8774
+2026-04-14T00:00:00.000000+00:00,baseline:zeroinit,true,42,22.7559,23.3120,25.4935

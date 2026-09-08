@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "ClimaX/custom_forecast.py",
+    "start_line": 310,
+    "end_line": 351,
+    "content": "class VariableAggregator(nn.Module):\n    \"\"\"Cross-attention variable aggregation (ClimaX default).\n\n    A learnable query token attends to all V variable tokens at each spatial\n    location via multi-head cross-attention, producing one token per location.\n\n    Args:\n        embed_dim (int): Embedding dimension D.\n        num_heads (int): Number of attention heads.\n        num_vars (int): Number of input variables V.\n    \"\"\"\n\n    def __init__(self, embed_dim, num_heads, num_vars):\n        super().__init__()\n        self.embed_dim = embed_dim\n        self.num_heads = num_heads\n        self.num_vars = num_vars\n        self.var_query = nn.Parameter(torch.zeros(1, 1, embed_dim), requires_grad=True)\n        self.var_agg = nn.MultiheadAttention(embed_dim, num_heads, batch_first=True)\n\n    def forward(self, x):\n        \"\"\"\n        Args:\n            x: [B, V, L, D] \u2014 per-variable patch embeddings.\n        Returns:\n            [B, L, D] \u2014 aggregated representation.\n        \"\"\"\n        b, v, l, d = x.shape\n        x = x.permute(0, 2, 1, 3)   # B, L, V, D\n        x = x.reshape(b * l, v, d)  # B*L, V, D\n\n        query = self.var_query.expand(b * l, -1, -1)  # B*L, 1, D\n        out, _ = self.var_agg(query, x, x)             # B*L, 1, D\n        out = out.squeeze(1)                            # B*L, D\n\n        out = out.reshape(b, l, d)  # B, L, D\n        return out\n"
+  }
+]

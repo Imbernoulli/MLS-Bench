@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_reg.py",
+    "start_line": 246,
+    "end_line": 273,
+    "content": "def compute_regularization(model, inputs, outputs, targets, config):\n    \"\"\"Orthogonal regularization on convolutional weights.\n\n    Penalizes deviation from orthogonality: ||W^T W - I||_F^2 for each\n    4D conv weight reshaped to [out_channels, in*k*k]. Coefficient=1e-4.\n    \"\"\"\n    reg = torch.tensor(0.0, device=outputs.device)\n    for name, p in model.named_parameters():\n        if 'conv' in name and 'weight' in name and p.dim() == 4:\n            W = p.view(p.size(0), -1)  # [out, in*k*k]\n            WtW = W @ W.t()\n            I = torch.eye(W.size(0), device=W.device)\n            reg = reg + ((WtW - I) ** 2).sum()\n    return 1e-4 * reg\n"
+  }
+]

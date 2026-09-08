@@ -1,0 +1,122 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/cheetah_vel.sh",
+      "label": "cheetah-vel",
+      "group": 1,
+      "compute": 0.33,
+      "time": "1:00:00",
+      "package": "oyster"
+    },
+    {
+      "cmd": "scripts/sparse_point_robot.sh",
+      "label": "sparse-point-robot",
+      "hidden": true,
+      "group": 1,
+      "compute": 0.33,
+      "time": "0:59:00",
+      "package": "oyster"
+    },
+    {
+      "cmd": "scripts/point_robot.sh",
+      "label": "point-robot",
+      "group": 1,
+      "compute": 0.33,
+      "time": "0:59:00",
+      "package": "oyster"
+    }
+  ],
+  "baselines": {
+    "mlp_encoder": {
+      "edit_ops": "edits/mlp_encoder.edit.py"
+    },
+    "recurrent_encoder": {
+      "edit_ops": "edits/recurrent_encoder.edit.py"
+    },
+    "attention_encoder": {
+      "edit_ops": "edits/attention_encoder.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "oyster/custom_encoder.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 21,
+          "end": 23
+        },
+        {
+          "start": 27,
+          "end": 53
+        }
+      ]
+    },
+    {
+      "filename": "oyster/launch_custom.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "oyster/rlkit/torch/networks.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "oyster/rlkit/torch/sac/agent.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "oyster/rlkit/torch/sac/sac.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "oyster/rlkit/core/rl_algorithm.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "oyster/configs/default.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

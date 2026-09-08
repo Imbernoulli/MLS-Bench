@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet56_cifar100.sh",
+      "label": "resnet56-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg16bn_cifar100.sh",
+      "label": "vgg16bn-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/mobilenetv2_fmnist.sh",
+      "label": "mobilenetv2-fmnist",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "global_max": {
+      "edit_ops": "edits/global_max.edit.py"
+    },
+    "gem": {
+      "edit_ops": "edits/gem.edit.py"
+    },
+    "avg_max": {
+      "edit_ops": "edits/avg_max.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/custom_pool.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 31,
+          "end": 48
+        }
+      ]
+    }
+  ]
+}

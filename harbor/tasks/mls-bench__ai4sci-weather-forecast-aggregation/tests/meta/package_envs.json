@@ -1,7 +1,0 @@
-{
-  "ClimaX": {
-    "PYTHONPATH": "/workspace/ClimaX/src:${PYTHONPATH}",
-    "DATA_DIR": "/data/era5_5.625deg",
-    "WEIGHT_DIR": "/data/climax_weights"
-  }
-}

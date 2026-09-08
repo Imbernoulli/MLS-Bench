@@ -1,0 +1,6 @@
+{
+  "easy-few-shot-learning": {
+    "PYTHONPATH": "/workspace/easy-few-shot-learning:${PYTHONPATH}",
+    "HOME": "/root"
+  }
+}

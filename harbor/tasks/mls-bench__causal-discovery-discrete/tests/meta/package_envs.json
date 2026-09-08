@@ -1,5 +1,0 @@
-{
-  "causal-bnlearn": {
-    "PYTHONPATH": "/workspace/causal-bnlearn:${PYTHONPATH}"
-  }
-}

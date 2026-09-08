@@ -1,0 +1,95 @@
+{
+  "allow_create": false,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/point_goal.sh",
+      "label": "SafetyPointGoal1-v0",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "omnisafe"
+    },
+    {
+      "cmd": "scripts/car_goal.sh",
+      "label": "SafetyCarGoal1-v0",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "omnisafe"
+    },
+    {
+      "cmd": "scripts/point_button.sh",
+      "label": "SafetyPointButton1-v0",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "omnisafe",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "naive": {
+      "edit_ops": "edits/naive.edit.py"
+    },
+    "ppo_lag": {
+      "edit_ops": "edits/ppo_lag.edit.py"
+    },
+    "pid_lag": {
+      "edit_ops": "edits/pid_lag.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/custom_lag.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 20,
+          "end": 20
+        },
+        {
+          "start": 48,
+          "end": 70
+        }
+      ]
+    },
+    {
+      "filename": "omnisafe/omnisafe/common/lagrange.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "omnisafe/omnisafe/common/pid_lagrange.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "omnisafe/omnisafe/algorithms/on_policy/base/ppo.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

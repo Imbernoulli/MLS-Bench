@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,retain_acc_vgg16bn_cifar100_class0,forget_acc_vgg16bn_cifar100_class0,unlearn_score_vgg16bn_cifar100_class0,retain_acc_resnet20_cifar10_class0,forget_acc_resnet20_cifar10_class0,unlearn_score_resnet20_cifar10_class0,retain_acc_mobilenetv2_fmnist_class0,forget_acc_mobilenetv2_fmnist_class0,unlearn_score_mobilenetv2_fmnist_class0,elapsed_resnet20-cifar10-class0,elapsed_vgg16bn-cifar100-class0,elapsed_mobilenetv2-fmnist-class0
+2026-04-07T09:43:29.868246+00:00,baseline:retain_finetune,true,42,0.5345,0.0,0.686,0.8758,0.0,0.8082,0.9373,0.0,0.8185,334.0,257.9,625.2
+2026-04-07T09:47:16.530688+00:00,baseline:negative_gradient,true,42,0.0101,0.0,0.5489,0.1726,0.0,0.6822,0.1111,0.0,0.691,347.6,239.3,636.1
+2026-04-24T07:04:34.040268+00:00,baseline:bad_teacher,true,42,0.5246,0.0,0.6895,0.8902,0.0,0.8031,0.0,1.0,0.1009,241,222,630
+2026-04-24T07:01:27.200236+00:00,baseline:scrub,true,42,0.5394,0.0,0.6915,0.8787,0.005,0.8115,0.8834,0.0,0.8198,240,223,807

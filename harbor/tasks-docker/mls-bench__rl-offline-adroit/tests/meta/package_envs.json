@@ -1,0 +1,8 @@
+{
+  "CORL": {
+    "LD_LIBRARY_PATH": "/root/.mujoco/mujoco210/bin:${LD_LIBRARY_PATH}",
+    "MUJOCO_PY_MUJOCO_PATH": "/root/.mujoco/mujoco210",
+    "MUJOCO_GL": "osmesa",
+    "HOME": "/root"
+  }
+}

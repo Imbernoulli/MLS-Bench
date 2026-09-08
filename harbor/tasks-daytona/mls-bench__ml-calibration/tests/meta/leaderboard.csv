@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,ECE_rf-mnist,Brier_rf-mnist,NLL_rf-mnist,ECE_mlp-fashion_mnist,Brier_mlp-fashion_mnist,NLL_mlp-fashion_mnist,ECE_svm-breast_cancer,Brier_svm-breast_cancer,NLL_svm-breast_cancer,ECE_gbm-madelon,Brier_gbm-madelon,NLL_gbm-madelon,elapsed_rf-mnist,elapsed_mlp-fashion_mnist,elapsed_gbm-madelon,elapsed_svm-breast_cancer
+2026-04-08T02:58:26.714844+00:00,baseline:platt_scaling,true,42,0.025314,0.07754,0.17028,0.009051,0.182132,0.369057,0.059499,0.032844,0.123195,0.030624,0.152134,0.469615,2,2,,2
+2026-04-21T13:02:31.859738+00:00,baseline:temperature_scaling,true,42,0.012242,0.074941,0.162236,0.009478,0.187667,0.382465,0.030495,0.025011,0.086363,0.030549,0.15199,0.469187,6,15,35,2
+2026-04-21T13:02:31.912080+00:00,baseline:isotonic_regression,true,42,0.014427,0.078758,0.223328,0.012344,0.182667,0.400997,0.018848,0.033275,0.095497,0.016128,0.151974,0.581668,6,15,35,2

@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,val_loss_gpt-345m,wikitext2_ppl_gpt-345m,lambada_ppl_gpt-345m,arc_easy_lm-eval-345m,hellaswag_lm-eval-345m,piqa_lm-eval-345m,winogrande_lm-eval-345m,elapsed_gpt-345m,elapsed_lm-eval-345m
+2026-04-15T17:05:58.134869+00:00,baseline:retnet,true,42,2.4795,66.67,82.36,51.47,31.12,62.4,52.01,27106,7
+2026-04-15T17:05:58.134869+00:00,baseline:deltanet,true,42,2.3481,49.88,70.48,53.58,32.77,62.95,49.17,28265,10
+2026-05-08T12:08:29.066817+00:00,baseline:gla,true,42,2.4482,64.32,84.73,53.11,31.1,62.4,49.88,27219,1242

@@ -1,0 +1,58 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/blobs.sh",
+      "label": "blobs",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:10:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/moons.sh",
+      "label": "moons",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:10:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/digits.sh",
+      "label": "digits",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:15:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "kmeans": {
+      "edit_ops": "edits/kmeans.edit.py"
+    },
+    "dbscan": {
+      "edit_ops": "edits/dbscan.edit.py"
+    },
+    "hdbscan": {
+      "edit_ops": "edits/hdbscan.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_clustering.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 36,
+          "end": 109
+        }
+      ]
+    }
+  ]
+}

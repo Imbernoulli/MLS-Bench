@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,best_fid_edges2handbags,best_fid_Imagenet,best_fid_DIODE,elapsed_DIODE
+2026-04-19T00:00:00.000000+00:00,baseline:karras,true,42,4.416,12.025,8.772,280.7
+2026-04-19T00:00:00.000000+00:00,baseline:uniform,true,42,5.180,6.070,15.002,284.5
+2026-04-19T00:00:00.000000+00:00,baseline:cosine,true,42,4.905,5.438,11.966,281.0
+2026-04-19T00:00:00.000000+00:00,baseline:loglinear,true,42,5.634,13.748,17.048,279.0

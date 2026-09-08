@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,pass_at_1_deepseek,pass_at_1_qwen,srdd_exec_rate,elapsed_humaneval-4-deepseek,elapsed_humaneval-4-qwen,elapsed_srdd-4-deepseek
+2026-04-22T05:38:50.692554+00:00,baseline:chain,true,42,0.6667,0.6061,0.05,4632.7,3471.1,9393.2
+2026-04-22T12:28:24.504185+00:00,baseline:star,true,42,0.7576,0.7576,0.15,7384.0,6847.5,10247.0
+2026-04-22T13:56:24.125527+00:00,baseline:layered,true,42,0.697,0.697,0.05,9125.9,9341.5,11285.8

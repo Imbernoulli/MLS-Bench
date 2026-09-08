@@ -1,0 +1,98 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/train.sh",
+      "label": "mmm",
+      "group": 1,
+      "compute": 0.4,
+      "time": "24:00:00",
+      "package": "epymarl"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "label": "2s3z",
+      "group": 1,
+      "compute": 0.4,
+      "time": "12:00:00",
+      "package": "epymarl"
+    },
+    {
+      "cmd": "scripts/train.sh",
+      "label": "3s5z",
+      "group": 1,
+      "compute": 0.4,
+      "time": "48:00:00",
+      "package": "epymarl",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "ippo_critic": {
+      "edit_ops": "edits/ippo_critic.edit.py"
+    },
+    "mappo_critic": {
+      "edit_ops": "edits/mappo_critic.edit.py"
+    },
+    "mat_critic": {
+      "edit_ops": "edits/mat_critic.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "epymarl/src/modules/critics/custom_critic.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 7,
+          "end": 8
+        },
+        {
+          "start": 13,
+          "end": 69
+        }
+      ]
+    },
+    {
+      "filename": "epymarl/src/modules/critics/centralV.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "epymarl/src/modules/critics/ac.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": []
+    },
+    {
+      "filename": "epymarl/src/learners/ppo_learner.py",
+      "read": [
+        {
+          "start": 162,
+          "end": 211
+        }
+      ],
+      "edit": []
+    }
+  ]
+}

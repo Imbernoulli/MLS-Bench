@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,mmd_avg_community_small,mmd_avg_ego_small,mmd_avg_enzymes,mmd_clustering_community_small,mmd_clustering_ego_small,mmd_clustering_enzymes,mmd_degree_community_small,mmd_degree_ego_small,mmd_degree_enzymes,mmd_orbit_community_small,mmd_orbit_ego_small,mmd_orbit_enzymes,elapsed_community_small,elapsed_ego_small,elapsed_enzymes
+2026-04-21T22:09:52.365649+00:00,baseline:graphvae,true,42,0.230851,0.169336,0.6467,0.1,0.09125,0.354306,0.188233,0.314982,1.36785,0.40432,0.101778,0.217945,11,16,36
+2026-04-22T07:44:13.683628+00:00,baseline:gran,true,42,0.219016,0.81882,0.814274,0.1,0.11625,0.037487,0.162538,1.215348,1.435592,0.394509,1.124861,0.969744,18,27,263
+2026-04-21T22:12:24.447962+00:00,baseline:digress,true,42,0.218921,0.082194,0.786477,0.1,0.105,0.700365,0.101257,0.133545,1.374443,0.455506,0.008038,0.284623,24,35,102

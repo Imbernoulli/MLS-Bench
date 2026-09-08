@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,final_score_math,reuse_ratio_math,tokens_per_s_math,final_score_humaneval,reuse_ratio_humaneval,tokens_per_s_humaneval,final_score_lm-eval,reuse_ratio_lm-eval,tokens_per_s_lm-eval,elapsed_math,elapsed_humaneval,elapsed_lm-eval
+2026-05-01T11:51:02.632050+00:00,baseline:vanilla_uncached,true,42,38.4,0.0,19.54,43.9024,0.0,11.46,83.959,0.0,35.72,6734.7,7504.3,2262.1
+2026-05-01T11:26:24.943250+00:00,baseline:dllm_cache,true,42,35.2,0.6328,20.84,46.3415,0.6562,15.58,84.0444,0.4922,25.95,6342.9,5577.0,3103.4
+2026-05-01T11:09:03.810581+00:00,baseline:d2cache,true,42,25.0,0.8655,20.97,40.2439,0.8976,19.84,84.215,0.8102,22.66,6234.4,4341.9,3405.9
+2026-05-01T08:21:31.172834+00:00,baseline:elastic_cache,true,42,36.8,0.8833,62.25,46.9512,0.8675,69.86,83.7884,0.5030,535.04,2240.8,1386.5,302.3

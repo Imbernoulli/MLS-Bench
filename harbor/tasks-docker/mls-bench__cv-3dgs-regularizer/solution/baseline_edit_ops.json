@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "gsplat/custom_regularizer.py",
+    "start_line": 37,
+    "end_line": 51,
+    "content": "\n# scale_opa (full strength) + erank log-barrier (warmup at step 7000).\nSCALE_REG = 1e-2\nOPACITY_REG = 1e-2\nERANK_REG = 1e-2\nERANK_WARMUP = 7000\nERANK_EPS = 1e-5\n\ndef compute_regularizer(splats, step, scene_scale):\n    \"\"\"Compactness L1 (always on) + erank log-barrier (after warmup).\"\"\"\n    s = torch.exp(splats[\"scales\"])                                # [N, 3]\n    a = torch.sigmoid(splats[\"opacities\"])                         # [N]\n\n    loss = SCALE_REG * s.mean() + OPACITY_REG * a.mean()\n\n    if step >= ERANK_WARMUP:\n        s_sq = s * s\n        q = s_sq / (s_sq.sum(dim=-1, keepdim=True) + 1e-12)\n        H = -(q * (q + 1e-12).log()).sum(dim=-1)\n        erank = H.exp()\n        barrier = torch.clamp(-torch.log(erank - 1.0 + ERANK_EPS), min=0.0)\n        s_min = s.min(dim=-1).values\n        loss = loss + ERANK_REG * (barrier.mean() + s_min.mean())\n\n    return loss\n"
+  }
+]

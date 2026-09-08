@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_test_accuracy_logistic,final_test_accuracy_logistic,best_test_accuracy_mlp,final_test_accuracy_mlp,best_test_mse_conditioned,final_test_mse_conditioned,elapsed_logistic,elapsed_mlp,elapsed_conditioned
+2026-04-23T07:08:29.911431+00:00,baseline:svrg,true,42,92.58,92.58,53.44,49.72,2582.674063,85157854838.784,36,69,69
+2026-04-23T07:07:09.044118+00:00,baseline:storm,true,42,92.55,92.35,53.67,52.56,3.505524,3.908639,65,113,113
+2026-04-23T07:07:19.201878+00:00,baseline:storm_plus,true,42,92.62,92.54,54.17,52.69,0.014749,0.019557,50,99,99

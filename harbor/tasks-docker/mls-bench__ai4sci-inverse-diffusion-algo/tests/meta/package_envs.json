@@ -1,0 +1,6 @@
+{
+  "InverseBench": {
+    "PYTHONPATH": "/pip_packages:/workspace/InverseBench:${PYTHONPATH}",
+    "TORCH_HOME": "/workspace/InverseBench/cache/torch"
+  }
+}

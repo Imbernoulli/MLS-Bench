@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,gsm8k_accuracy,math500_accuracy,amc_accuracy,elapsed_deepmath-3bench-1gpu
+2026-04-24T10:51:08.290123+00:00,baseline:token_level,false,42,0.4652,0.2985,0.1084,32139
+2026-04-24T13:17:03.851649+00:00,baseline:sequence_level,false,42,0.4557,0.3028,0.0979,40356
+2026-04-24T14:19:28.741966+00:00,baseline:first_k_tokens,false,42,0.4277,0.2667,0.0723,43245

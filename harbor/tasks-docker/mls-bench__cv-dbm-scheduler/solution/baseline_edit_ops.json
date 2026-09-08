@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "dbim-codebase/ddbm/karras_diffusion.py",
+    "start_line": 310,
+    "end_line": 321,
+    "content": "def get_sigmas_uniform(n, t_min, t_max, device=\"cpu\"):\n    import math\n    ramp = torch.linspace(0, 1, n + 1)\n    cosine_ramp = (1 - torch.cos(ramp * math.pi)) / 2\n    sigmas = t_max + (t_min - t_max) * cosine_ramp\n    return sigmas.to(device)\n"
+  }
+]

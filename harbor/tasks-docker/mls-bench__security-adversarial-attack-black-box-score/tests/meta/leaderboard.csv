@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,asr_ResNet20_C10,avg_queries_ResNet20_C10,asr_VGG11BN_C10,avg_queries_VGG11BN_C10,asr_MobileNetV2_C10,avg_queries_MobileNetV2_C10,asr_ResNet20_C100,avg_queries_ResNet20_C100,asr_MobileNetV2_C100,avg_queries_MobileNetV2_C100,elapsed_ResNet20-C10,elapsed_VGG11BN-C10,elapsed_MobileNetV2-C10,elapsed_ResNet20-C100,elapsed_MobileNetV2-C100
+2026-04-02T16:53:51.682754+00:00,baseline:square,true,42,0.995,121.0,0.91,212.34,0.975,139.21,0.985,72.5,0.99,86.19,25.9,32.5,44.8,24.4,48.6
+2026-04-02T14:33:49.265502+00:00,baseline:spsa,true,42,0.955,768.0,0.605,768.0,0.92,768.0,0.91,768.0,0.885,768.0,,402.2,15.4,11.1,15.7
+2026-04-02T14:26:43.289522+00:00,baseline:random_search,true,42,0.565,65.0,0.255,65.0,0.52,65.0,0.615,65.0,0.59,65.0,,1268.0,,,

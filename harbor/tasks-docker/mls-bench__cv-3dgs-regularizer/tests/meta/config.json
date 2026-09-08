@@ -1,0 +1,71 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "mid_edit": "edits/mid_edit.py",
+  "test_cmds": [
+    {
+      "cmd": "scripts/train_garden.sh",
+      "label": "garden",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "gsplat"
+    },
+    {
+      "cmd": "scripts/train_bicycle.sh",
+      "label": "bicycle",
+      "group": 2,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "gsplat"
+    },
+    {
+      "cmd": "scripts/train_bonsai.sh",
+      "label": "bonsai",
+      "group": 3,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "gsplat"
+    },
+    {
+      "cmd": "scripts/train_stump.sh",
+      "label": "stump",
+      "group": 4,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "gsplat",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "none": {
+      "edit_ops": "edits/none.edit.py"
+    },
+    "scale_opa": {
+      "edit_ops": "edits/scale_opa.edit.py"
+    },
+    "erank_opa": {
+      "edit_ops": "edits/erank_opa.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "gsplat/custom_regularizer.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 37,
+          "end": 51
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

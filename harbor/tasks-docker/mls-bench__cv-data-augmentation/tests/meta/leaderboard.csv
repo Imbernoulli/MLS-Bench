@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet20-cifar10,test_acc_resnet56-cifar100,test_acc_mobilenetv2-fmnist,elapsed_mobilenetv2-fmnist
+2026-03-25T14:56:03.657991+00:00,baseline:cutout,true,42,93.72,74.54,94.72,7142
+2026-03-25T11:40:24.171105+00:00,baseline:randaugment,true,42,93.51,74.35,94.43,
+2026-03-25T14:38:57.420385+00:00,baseline:trivialaugment,true,42,93.36,74.71,94.24,7146

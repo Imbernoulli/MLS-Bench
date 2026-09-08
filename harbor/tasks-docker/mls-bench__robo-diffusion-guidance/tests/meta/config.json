@@ -1,0 +1,75 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/train_hopper.sh",
+      "label": "train_hopper",
+      "group": 1,
+      "compute": 1,
+      "time": "4:00:00",
+      "package": "CleanDiffuser"
+    },
+    {
+      "cmd": "scripts/train_walker2d.sh",
+      "label": "train_walker2d",
+      "group": 2,
+      "compute": 1,
+      "time": "4:00:00",
+      "package": "CleanDiffuser"
+    },
+    {
+      "cmd": "scripts/train_halfcheetah.sh",
+      "label": "train_halfcheetah",
+      "hidden": true,
+      "group": 3,
+      "compute": 1,
+      "time": "4:00:00",
+      "package": "CleanDiffuser"
+    }
+  ],
+  "baselines": {
+    "default": {},
+    "cfg": {
+      "edit_ops": "edits/cfg.edit.py"
+    },
+    "no_guidance": {
+      "edit_ops": "edits/no_guidance.edit.py"
+    },
+    "decision_diffuser": {
+      "edit_ops": "edits/decision_diffuser.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "CleanDiffuser/pipelines/custom_guidance.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 1,
+          "end": 28
+        },
+        {
+          "start": 38,
+          "end": 136
+        },
+        {
+          "start": 145,
+          "end": 152
+        },
+        {
+          "start": 164,
+          "end": 183
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

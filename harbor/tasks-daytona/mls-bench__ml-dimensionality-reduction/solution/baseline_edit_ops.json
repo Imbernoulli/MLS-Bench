@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "scikit-learn/bench/custom_dimred.py",
+    "start_line": 15,
+    "end_line": 59,
+    "content": "class CustomDimReduction:\n    \"\"\"t-SNE dimensionality reduction.\"\"\"\n\n    def __init__(self, n_components: int = 2, random_state: int | None = None):\n        self.n_components = n_components\n        self.random_state = random_state\n\n    def fit_transform(self, X: NDArray[np.float64]) -> NDArray[np.float64]:\n        from sklearn.manifold import TSNE\n        tsne = TSNE(\n            n_components=self.n_components,\n            perplexity=30.0,\n            learning_rate=\"auto\",\n            init=\"pca\",\n            random_state=self.random_state,\n            n_iter=1000,\n        )\n        return tsne.fit_transform(X)\n"
+  }
+]

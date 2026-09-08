@@ -1,6 +1,0 @@
-{
-  "imitation": {
-    "MUJOCO_GL": "egl",
-    "PYOPENGL_PLATFORM": "egl"
-  }
-}

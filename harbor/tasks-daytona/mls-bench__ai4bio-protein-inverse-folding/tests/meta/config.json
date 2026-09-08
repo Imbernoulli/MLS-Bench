@@ -1,0 +1,66 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/cath42.sh",
+      "label": "CATH4.2",
+      "group": 1,
+      "compute": 1.0,
+      "time": "04:00:00",
+      "package": "ProteinInvBench"
+    },
+    {
+      "cmd": "scripts/cath43.sh",
+      "label": "CATH4.3",
+      "group": 1,
+      "compute": 1.0,
+      "time": "04:00:00",
+      "package": "ProteinInvBench"
+    },
+    {
+      "cmd": "scripts/ts50.sh",
+      "label": "TS50",
+      "group": 2,
+      "compute": 1.0,
+      "time": "08:00:00",
+      "package": "ProteinInvBench",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "proteinmpnn": {
+      "edit_ops": "edits/proteinmpnn.edit.py"
+    },
+    "pifold": {
+      "edit_ops": "edits/pifold.edit.py"
+    },
+    "gvp": {
+      "edit_ops": "edits/gvp.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ProteinInvBench/custom_invfold.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 86,
+          "end": 238
+        },
+        {
+          "start": 401,
+          "end": 403
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

@@ -1,6 +1,0 @@
-{
-  "tdmpc2": {
-    "MUJOCO_GL": "egl",
-    "LAZY_LEGACY_OP": "0"
-  }
-}

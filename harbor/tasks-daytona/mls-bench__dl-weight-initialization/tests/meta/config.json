@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet56_cifar100.sh",
+      "label": "resnet56-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg16bn_cifar100.sh",
+      "label": "vgg16bn-cifar100",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/mobilenetv2_fmnist.sh",
+      "label": "mobilenetv2-fmnist",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "kaiming_normal": {
+      "edit_ops": "edits/kaiming_normal.edit.py"
+    },
+    "fixup": {
+      "edit_ops": "edits/fixup.edit.py"
+    },
+    "orthogonal": {
+      "edit_ops": "edits/orthogonal.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/custom_init.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 228,
+          "end": 261
+        }
+      ]
+    }
+  ]
+}

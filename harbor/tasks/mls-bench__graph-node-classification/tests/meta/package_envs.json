@@ -1,5 +1,0 @@
-{
-  "pytorch-geometric": {
-    "PYTHONPATH": "/workspace:${PYTHONPATH}"
-  }
-}

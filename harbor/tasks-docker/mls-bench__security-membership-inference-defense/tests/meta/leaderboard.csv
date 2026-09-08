@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,test_acc_resnet20_cifar10,privacy_gap_resnet20_cifar10,privacy_score_resnet20_cifar10,test_acc_vgg16bn_cifar100,privacy_gap_vgg16bn_cifar100,privacy_score_vgg16bn_cifar100,test_acc_mobilenetv2_fmnist,privacy_gap_mobilenetv2_fmnist,privacy_score_mobilenetv2_fmnist,elapsed_resnet20-cifar10,elapsed_vgg16bn-cifar100,elapsed_mobilenetv2-fmnist
+2026-04-24T19:08:26.829846+00:00,baseline:erm,true,42,0.7972,0.0924,0.5697,0.5045,0.1479,0.1368,0.926,0.0211,0.8685,568,607,1242
+2026-04-24T20:23:20.798244+00:00,baseline:label_smoothing,true,42,0.7878,0.1377,0.52,0.5258,0.2866,0.1572,0.927,0.0216,0.846,594,606,1435
+2026-04-24T19:59:20.531351+00:00,baseline:confidence_penalty,true,42,0.7974,0.1012,0.5844,0.01,0.0,0.01,0.9273,0.0258,0.8671,703,464,1327
+2026-04-24T06:09:46.560470+00:00,baseline:relaxloss,true,42,0.7949,0.0075,0.7857,0.6226,0.166,0.4736,0.7904,-0.0012,0.7904,161,152,394

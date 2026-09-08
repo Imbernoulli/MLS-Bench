@@ -1,0 +1,75 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet20_cifar10_labelflip.sh",
+      "label": "resnet20-cifar10-labelflip",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg16bn_cifar100_labelflip.sh",
+      "label": "vgg16bn-cifar100-labelflip",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/mobilenetv2_fmnist_labelflip.sh",
+      "label": "mobilenetv2-fmnist-labelflip",
+      "group": 2,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "cross_entropy": {
+      "edit_ops": "edits/cross_entropy.edit.py"
+    },
+    "generalized_ce": {
+      "edit_ops": "edits/generalized_ce.edit.py"
+    },
+    "symmetric_ce": {
+      "edit_ops": "edits/symmetric_ce.edit.py"
+    },
+    "bootstrap": {
+      "edit_ops": "edits/bootstrap.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/bench/poison/custom_robust_loss.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "pytorch-vision/bench/poison/run_poison_robust.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

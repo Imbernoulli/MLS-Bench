@@ -1,0 +1,9 @@
+{
+  "oyster": {
+    "MUJOCO_PY_MUJOCO_PATH": "/root/.mujoco/mujoco210",
+    "LD_LIBRARY_PATH": "/root/.mujoco/mujoco210/bin:/usr/local/nvidia/lib64:${LD_LIBRARY_PATH}",
+    "MUJOCO_GL": "osmesa",
+    "PYTHONPATH": "/workspace/oyster:${PYTHONPATH}",
+    "HOME": "/root"
+  }
+}

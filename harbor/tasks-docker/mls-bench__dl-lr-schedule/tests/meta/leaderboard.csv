@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet20-cifar10,test_acc_resnet56-cifar100,test_acc_mobilenetv2-fmnist,elapsed_resnet20-cifar10,elapsed_resnet56-cifar100,elapsed_mobilenetv2-fmnist
+2026-03-28T04:08:37.970899+00:00,baseline:cosine,true,42,93.03,71.07,94.7,0,,
+2026-03-28T03:34:57.373709+00:00,baseline:warmup_cosine,true,42,92.71,72.43,94.83,0,,7141
+2026-04-03T11:43:26.114339+00:00,baseline:one_cycle,true,42,92.31,71.57,93.93,0,0,0

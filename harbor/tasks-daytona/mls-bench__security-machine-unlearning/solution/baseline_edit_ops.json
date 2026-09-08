@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/bench/unlearning/custom_unlearning.py",
+    "start_line": 8,
+    "end_line": 22,
+    "content": "class UnlearningMethod:\n    \"\"\"Continue training on retained data only.\"\"\"\n\n    def __init__(self):\n        pass\n\n    def unlearn_step(self, model, retain_batch, forget_batch, optimizer, step, epoch):\n        retain_x, retain_y = retain_batch\n        logits = model(retain_x)\n        loss = F.cross_entropy(logits, retain_y)\n        optimizer.zero_grad()\n        loss.backward()\n        optimizer.step()\n        return {\"loss\": loss.item()}\n"
+  }
+]

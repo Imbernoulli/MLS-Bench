@@ -1,0 +1,80 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/mnist_fcn.sh",
+      "label": "mnist-fcn",
+      "group": 1,
+      "compute": 0.33,
+      "time": "0:59:00",
+      "package": "PBB"
+    },
+    {
+      "cmd": "scripts/mnist_cnn.sh",
+      "label": "mnist-cnn",
+      "group": 1,
+      "compute": 0.33,
+      "time": "0:59:00",
+      "package": "PBB"
+    },
+    {
+      "cmd": "scripts/fmnist_cnn.sh",
+      "label": "fmnist-cnn",
+      "group": 1,
+      "compute": 0.33,
+      "time": "0:59:00",
+      "package": "PBB",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "mcallester": {
+      "edit_ops": "edits/mcallester.edit.py"
+    },
+    "catoni": {
+      "edit_ops": "edits/catoni.edit.py"
+    },
+    "quadratic": {
+      "edit_ops": "edits/quadratic.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "PBB/custom_pac_bayes.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 460,
+          "end": 604
+        }
+      ]
+    },
+    {
+      "filename": "PBB/pbb/models.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "PBB/pbb/utils.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

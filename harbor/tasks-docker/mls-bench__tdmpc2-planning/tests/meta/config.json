@@ -1,0 +1,108 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/walker_walk.sh",
+      "label": "walker-walk",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "tdmpc2"
+    },
+    {
+      "cmd": "scripts/cheetah_run.sh",
+      "label": "cheetah-run",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "tdmpc2"
+    },
+    {
+      "cmd": "scripts/cartpole_swingup.sh",
+      "label": "cartpole-swingup",
+      "group": 1,
+      "compute": 0.33,
+      "time": "6:00:00",
+      "package": "tdmpc2",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "cem": {
+      "edit_ops": "edits/cem.edit.py"
+    },
+    "icem": {
+      "edit_ops": "edits/icem.edit.py"
+    },
+    "mppi": {
+      "edit_ops": "edits/mppi.edit.py"
+    }
+  },
+  "leaderboard": {
+    "mppi": {
+      "episode_reward_walker_walk": 978.31,
+      "episode_reward_cheetah_run": 889.9,
+      "episode_reward_cartpole_swingup": 877.21
+    },
+    "cem": {
+      "episode_reward_walker_walk": 976.96,
+      "episode_reward_cheetah_run": 833.48,
+      "episode_reward_cartpole_swingup": 867.26
+    },
+    "icem": {
+      "episode_reward_walker_walk": 978.3,
+      "episode_reward_cheetah_run": 796.46,
+      "episode_reward_cartpole_swingup": 881.23
+    }
+  },
+  "files": [
+    {
+      "filename": "tdmpc2/tdmpc2/common/custom_planner.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 15,
+          "end": 120
+        }
+      ]
+    },
+    {
+      "filename": "tdmpc2/tdmpc2/tdmpc2.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "tdmpc2/tdmpc2/common/world_model.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "tdmpc2/tdmpc2/common/math.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

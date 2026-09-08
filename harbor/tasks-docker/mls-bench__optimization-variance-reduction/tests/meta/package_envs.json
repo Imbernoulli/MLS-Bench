@@ -1,0 +1,7 @@
+{
+  "opt-vr-bench": {
+    "PYTHONPATH": "/workspace/opt-vr-bench:${PYTHONPATH}",
+    "MNIST_DATA": "/data/mnist",
+    "CIFAR_DATA": "/data/cifar"
+  }
+}
