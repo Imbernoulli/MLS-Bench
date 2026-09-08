@@ -689,6 +689,11 @@ MAX_PARALLEL_GPUS = 8
 # charges the same amount per wave, so the outer verifier budget can never be
 # tighter than the deadlines this runner hands out.
 WAVE_GRACE_SEC = 300
+# Gap between the launches of one wave's commands. They share a workspace and
+# a first-use initialization (an mlflow store, a compile cache, a font cache)
+# that is not always locked; a second between starts keeps those from
+# landing in the same instant without changing the wave's deadline.
+WAVE_LAUNCH_STAGGER_SEC = 1.0
 
 
 def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
@@ -1167,7 +1172,9 @@ def _run_eval_wave(
     # CPU quota rather than all of it.
     threads = _thread_budget(len(tasks))
 
-    for task, gpu_devices in zip(tasks, assignments):
+    for launch_index, (task, gpu_devices) in enumerate(zip(tasks, assignments)):
+        if launch_index:
+            time.sleep(WAVE_LAUNCH_STAGGER_SEC)
         entry = task["entry"]
         seed = int(task["seed"])
         log_path = _eval_log_path(out_dir, entry["label"], seed)

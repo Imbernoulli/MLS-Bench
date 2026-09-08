@@ -42,4 +42,8 @@ ENV OMP_NUM_THREADS=36 \
 ENV NCCL_CUMEM_ENABLE=0 \
     NCCL_NVLS_ENABLE=0
 
+# Package-level first-use initialization, done at build time so the evals a
+# wave starts together cannot race on it (see PACKAGE_IMAGE_SETUP).
+RUN cd /workspace/qlib && python -W ignore -c "import mlflow; mlflow.tracking.MlflowClient('file:///workspace/qlib/mlruns').search_experiments()"
+
 COPY _scaffold/ /workspace/
