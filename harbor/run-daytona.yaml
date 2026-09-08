@@ -29,10 +29,9 @@ environment:
     # quota, but capacity is not guaranteed.  Enable with `--ek spot=true`;
     # the adapter applies it only to GPU tasks.
     spot: false
-    # task.toml resources are sized for local Docker.  Daytona enforces them
-    # as hard cgroup limits, so GPU sandboxes get a larger RAM/CPU floor.
-    gpu_memory_gb: 64
-    gpu_cpus: 16
+    # Sandbox CPU/RAM come straight from each task's `task.toml`, which states
+    # what the task really needs.  `--ek gpu_cpus=<n>` / `--ek gpu_memory_gb=<n>`
+    # raise that floor for a one-off run.
 
 agents:
   - name: oracle
@@ -43,7 +42,7 @@ agents:
 #     model_name: openai/gpt-5
 
 datasets:
-  - path: tasks
+  - path: tasks-daytona
     # These two verifiers call DeepSeek/DashScope. Keep the default Daytona
     # smoke/evaluation credential-free; opt in explicitly when model keys are
     # available (or remove these two patterns).

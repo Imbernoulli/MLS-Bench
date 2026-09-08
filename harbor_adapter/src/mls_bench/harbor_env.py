@@ -22,6 +22,7 @@ import contextvars
 import copy
 import importlib
 import json
+import logging
 import math
 import os
 import re
@@ -115,28 +116,6 @@ for line in open("/proc/self/maps"):
     raise SystemExit(0)
 PY
 """
-
-
-# Host-RAM floors (GiB) that a package needs on Daytona regardless of the
-# ``gpu_memory_gb`` kwarg.  verl's validation step launches vLLM generation
-# workers next to the trainer; in a 64 GiB sandbox the ray ``AgentLoopWorker``
-# was OOM-killed (``ActorDiedError``, SYSTEM_ERROR) and only a 128 GiB sandbox
-# completed the run.  Keyed by the ``mls_bench_package`` metadata every
-# rendered ``task.toml`` carries, so no native task config is consulted.
-PACKAGE_MEMORY_FLOOR_GB: dict[str, int] = {"verl": 128}
-
-_PACKAGE_RE = re.compile(r'^mls_bench_package\s*=\s*"([^"]*)"', re.MULTILINE)
-
-
-def _rendered_task_package(environment_dir: Path) -> str | None:
-    """Return the ``mls_bench_package`` of the rendered task, if present."""
-    task_toml = Path(environment_dir).parent / "task.toml"
-    try:
-        text = task_toml.read_text()
-    except OSError:
-        return None
-    match = _PACKAGE_RE.search(text)
-    return match.group(1) if match else None
 
 
 def _h200_profile_env(environment_dir: Path) -> dict[str, str]:
@@ -288,6 +267,65 @@ class _GpuAwareDinD(_GpuAwareStrategyMixin, _DaytonaDinD):
     pass
 
 
+# Thread-pool knobs every scientific-Python stack reads at import time; the
+# task image bakes them in at `task.toml`'s `cpus`, and both environment
+# classes below re-pin them whenever a provider grants fewer cores than that.
+_THREAD_ENV_KEYS = (
+    "OMP_NUM_THREADS",
+    "OMP_THREAD_LIMIT",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "NUMEXPR_MAX_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+)
+
+
+def _pin_thread_env(env: dict[str, str], cpus: int, keep: set[str] | None = None) -> None:
+    """Set every thread-pool key to ``cpus`` except those in ``keep``."""
+    for name in _THREAD_ENV_KEYS:
+        if keep and name in keep:
+            continue
+        env[name] = str(int(cpus))
+
+
+# Daytona rejects a request above the organization's per-sandbox ceiling with
+# e.g. "CPU request 96 exceeds maximum allowed per sandbox (16)"; the number
+# in parentheses is the ceiling to clamp to.
+_DAYTONA_LIMIT_RE = re.compile(
+    r"(CPU|Memory|Disk) request (\d+)\s*\w* exceeds maximum allowed per sandbox \((\d+)"
+)
+_DAYTONA_LIMIT_FIELD = {"CPU": "cpu", "Memory": "memory", "Disk": "disk"}
+
+
+def is_shm_only_compose(environment_dir: Path) -> bool:
+    """Return whether ``docker-compose.yaml`` only sizes ``/dev/shm``.
+
+    CPU-only bundles carry this overlay for local Docker.  It defines no
+    service, image or device, so on Daytona the task is still a plain direct
+    sandbox and must not be routed through Docker-in-Docker.
+    """
+    path = environment_dir / "docker-compose.yaml"
+    if not path.is_file():
+        return False
+    try:
+        document = yaml.safe_load(path.read_text())
+    except (OSError, yaml.YAMLError):
+        return False
+    if not isinstance(document, dict):
+        return False
+    services = document.get("services")
+    if not isinstance(services, dict) or set(services) != {"main"}:
+        return False
+    main = services.get("main")
+    return (
+        isinstance(main, dict)
+        and set(main) == {"shm_size"}
+        and isinstance(main["shm_size"], (str, int))
+    )
+
+
 def is_gpu_reservation_only_compose(
     environment_dir: Path,
     *,
@@ -336,7 +374,14 @@ def _is_gpu_reservation_only_compose(
     if not isinstance(services, dict) or set(services) != {"main"}:
         return False
     main = services.get("main")
-    if not isinstance(main, dict) or set(main) != {"deploy"}:
+    # ``shm_size`` is a scalar sizing knob with no service semantics — the
+    # overlay stays a pure device reservation with it, and Daytona sandboxes
+    # come with a large /dev/shm anyway.
+    if not isinstance(main, dict) or not set(main) <= {"deploy", "shm_size"}:
+        return False
+    if "deploy" not in main:
+        return False
+    if "shm_size" in main and not isinstance(main["shm_size"], (str, int)):
         return False
     deploy = main.get("deploy")
     if not isinstance(deploy, dict) or set(deploy) != {"resources"}:
@@ -456,49 +501,40 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
                 env_vars["MLSBENCH_GPU_TYPE"] = profile.pop("MLSBENCH_GPU_TYPE")
                 for key, value in profile.items():
                     env_vars.setdefault(key, value)
-            # task.toml resources are sized for local Docker, where memory is
-            # rarely the binding limit.  Daytona enforces them as hard cgroup
-            # limits, so GPU sandboxes may request a larger floor (for example
-            # loading a 7B checkpoint needs more than 16 GiB of host RAM).
+            # ``task.toml`` already states each task's real CPU/RAM needs and
+            # Harbor's Daytona provider provisions them verbatim, so these two
+            # kwargs are opt-in overrides, not the normal path — raise them
+            # only when a specific task needs more than it declares.
             if resources is not None:
-                min_memory = self._int_kwarg("gpu_memory_gb") or 0
-                package = _rendered_task_package(self.environment_dir) or ""
-                min_memory = max(min_memory, PACKAGE_MEMORY_FLOOR_GB.get(package, 0))
+                min_memory = self._int_kwarg("gpu_memory_gb")
                 if min_memory and (resources.memory or 0) < min_memory:
                     resources.memory = min_memory
                 min_cpus = self._int_kwarg("gpu_cpus")
                 if min_cpus and (resources.cpu or 0) < min_cpus:
                     resources.cpu = min_cpus
             if gpu_count > 1:
-                # NCCL >= 2.19 allocates communication buffers through the
-                # cuMem driver API by default; inside Daytona's GPU sandbox
-                # that path fails with ``cudaErrorIllegalState`` during the
-                # first collective.  Fall back to the classic allocator.
+                # Multi-GPU task images carry these as ``ENV`` defaults, since
+                # NCCL's cuMem allocator and NVLink SHARP both fail with
+                # ``cudaErrorIllegalState`` inside a GPU sandbox.  Repeat them
+                # on the sandbox so a bundle rendered before that change (or a
+                # prebuilt image) still gets them.
                 env_vars.setdefault("NCCL_CUMEM_ENABLE", "0")
-                # NVLink SHARP (``transport/nvls.cc``) hits the same
-                # ``cudaErrorIllegalState`` (Cuda failure 401) in the sandbox
-                # on multi-GPU DDP jobs; NVLS is optional, so fall back to the
-                # ring/tree transports.
                 env_vars.setdefault("NCCL_NVLS_ENABLE", "0")
-        # The sandbox cgroup grants only ``resources.cpu`` cores, but the
-        # container still reports every host core, so OpenMP/MKL/PyTorch
-        # would otherwise start hundreds of threads and thrash the quota.
+        # The sandbox cgroup grants only ``resources.cpu`` cores while the
+        # container still reports every host core, so OpenMP/MKL/PyTorch would
+        # otherwise start hundreds of threads and thrash the quota.  Task
+        # images bake in the same budget; this keeps the sandbox correct when
+        # the kwargs above raised the CPU count past what the image assumed.
         cpu_quota = getattr(resources, "cpu", None) if resources is not None else None
         if cpu_quota:
-            for name in (
-                "OMP_NUM_THREADS",
-                "MKL_NUM_THREADS",
-                "OPENBLAS_NUM_THREADS",
-                "NUMEXPR_NUM_THREADS",
-                "VECLIB_MAXIMUM_THREADS",
-            ):
-                env_vars.setdefault(name, str(int(cpu_quota)))
+            _pin_thread_env(env_vars, int(cpu_quota))
         # Free-form sandbox environment for provider-specific tuning (YAML
         # ``kwargs.sandbox_env``; not expressible through ``--ek``).
         extra_env = self._kwargs.get("sandbox_env") or {}
         if isinstance(extra_env, dict):
             for key, value in extra_env.items():
                 env_vars[str(key)] = str(value)
+        self._user_env_keys = set(map(str, extra_env)) if isinstance(extra_env, dict) else set()
         if hasattr(params, "env_vars"):
             params.env_vars = env_vars
         # The smoke runner sets a per-invocation label so its optional orphan
@@ -555,7 +591,7 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             )
         try:
             for attempt in range(1, attempts + 1):
-                result = await super()._create_sandbox(params, *args, **kwargs)
+                result = await self._create_sandbox_within_limits(params, *args, **kwargs)
                 try:
                     await self._wait_for_sandbox_toolbox()
                     if gpu_count > 0:
@@ -589,6 +625,44 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         finally:
             for sandbox in decoys:
                 await _delete_quietly(sandbox)
+
+    async def _create_sandbox_within_limits(self, params, *args: Any, **kwargs: Any):  # type: ignore[no-untyped-def]
+        """Create the sandbox, clamping to the organization's ceiling on refusal.
+
+        ``task.toml`` states what a task was calibrated on (up to 96 CPUs for
+        an 8-GPU task); Daytona answers a request above its per-sandbox limit
+        with "CPU request 96 exceeds maximum allowed per sandbox (16)" instead
+        of provisioning what it can.  Parse that ceiling, clamp, re-pin the
+        thread budget to the cores actually granted, and retry — and say so,
+        because the task's eval deadlines were sized for the declared budget.
+        The ceilings are not hard-coded: whatever the organization's limits
+        are, the request converges on them in at most one retry per resource.
+        """
+        resources = getattr(params, "resources", None)
+        for _ in range(len(_DAYTONA_LIMIT_FIELD) + 1):
+            try:
+                return await super()._create_sandbox(params, *args, **kwargs)
+            except Exception as exc:  # noqa: BLE001 - provider error types vary by SDK
+                match = _DAYTONA_LIMIT_RE.search(str(exc))
+                if match is None or resources is None:
+                    raise
+                field = _DAYTONA_LIMIT_FIELD[match.group(1)]
+                ceiling = int(match.group(3))
+                requested = int(getattr(resources, field, None) or 0)
+                if requested <= ceiling:
+                    raise
+                self.logger.warning(
+                    "Daytona caps %s at %d per sandbox; the task declares %d. "
+                    "Clamping — evals sized for the declared budget may run "
+                    "closer to their deadline here.",
+                    field, ceiling, requested,
+                )
+                setattr(resources, field, ceiling)
+                if field == "cpu" and hasattr(params, "env_vars"):
+                    env_vars = dict(getattr(params, "env_vars", None) or {})
+                    _pin_thread_env(env_vars, ceiling, keep=getattr(self, "_user_env_keys", set()))
+                    params.env_vars = env_vars
+        raise RuntimeError("Daytona kept rejecting the sandbox request after clamping every resource")
 
     async def _repair_loader_paths(self) -> None:
         """Make host-overlay library paths resolvable (see _LOADER_PATH_REPAIR).
@@ -683,6 +757,11 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
                     declared_gpus,
                 )
         extra_compose = kwargs.get("extra_docker_compose")
+        shm_only = (
+            not extra_compose
+            and declared_gpus == 0
+            and is_shm_only_compose(environment_dir)
+        )
         gpu_only = (
             not extra_compose
             and declared_gpus > 0
@@ -751,6 +830,11 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             # model property, so restoring the model is sufficient.
             self._compose_mode = False
             self._strategy = _GpuAwareDirect(self)
+        elif shm_only:
+            # The overlay only sizes /dev/shm for local Docker; a Daytona
+            # sandbox already has a large one, so run the task directly.
+            self._compose_mode = False
+            self._strategy = _GpuAwareDirect(self)
         elif not getattr(self, "_compose_mode", False) and requested_gpus > 0:
             # Covers direct GPU tasks authored outside this adapter on Harbor
             # 0.6.x, whose strategy omitted ``Resources.gpu``.
@@ -770,17 +854,70 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
             self.task_env_config.build_timeout_sec = min_build
 
 
+def _clamp_cpus_to_host(task_env_config: Any) -> bool:
+    """Lower a task's CPU request to what this host can actually grant.
+
+    ``task.toml`` states the CPU budget a GPU task needs (16), and docker
+    refuses outright to start a container whose ``--cpus`` exceeds the host's
+    core count ("range of CPUs is from 0.01 to N"). On a smaller box the task
+    should run slowly, not fail to launch, so clamp — and say so, because the
+    eval deadlines were sized for the declared budget.
+    """
+    requested = int(getattr(task_env_config, "cpus", 0) or 0)
+    host = os.cpu_count() or requested
+    if requested > host > 0:
+        logging.getLogger(__name__).warning(
+            "task requests %d CPUs but this host has %d; clamping. Evals sized "
+            "for %d CPUs may exceed their deadline here.",
+            requested, host, requested,
+        )
+        task_env_config.cpus = host
+        return True
+    return False
+
+
 class DockerGPUEnvironment(DockerEnvironment):
     """Harbor's ``docker`` environment with GPU capability declared.
 
     The stock environment reports ``capabilities.gpus = False`` and rejects
-    tasks with ``[environment].gpus > 0``; a host with the NVIDIA Container
-    Toolkit runs them through the per-task Compose overlay.  ``--ek
-    gpu_type=H200`` selects the H200 profile exactly as it does on Daytona:
-    ``MLSBENCH_GPU_TYPE`` and the task's native ``h200`` env reach every exec,
-    agent and verifier alike.  The Compose overlay still reserves the declared
-    (H100) device count; the verifier schedules by the block's ``compute``.
+    tasks with ``[environment].gpus > 0``.  This subclass lifts that and owns
+    the Compose overlay a local run needs — the NVIDIA device reservation for
+    ``[environment].gpus`` and a 16 GB ``/dev/shm``.  It writes that overlay
+    per trial and uses it *instead of* any ``environment/docker-compose.yaml``
+    the bundle ships, so ``harbor/tasks-docker`` (which carries the same
+    overlay for consumers with their own GPU-capable environment) and
+    ``harbor/tasks-daytona`` (which carries none) behave identically here,
+    and ``--ek gpu_ids=2,3`` can pin devices on a shared host without
+    double-reserving.  ``--ek gpu_type=H200`` selects the H200 profile
+    exactly as it does on Daytona: ``MLSBENCH_GPU_TYPE`` and the task's
+    native ``h200`` env reach every exec, agent and verifier alike.  The
+    reservation is still the declared (H100) device count; the verifier
+    schedules by the block's ``compute``.
     """
+
+    _MLSBENCH_COMPOSE_OVERLAY = "docker-compose-mlsbench.yaml"
+
+    @property
+    def _docker_compose_paths(self) -> list[Path]:
+        # A property in every Harbor release this adapter has met (0.6.6 and
+        # 0.22.0). The bundle's own overlay is dropped — Compose appends
+        # ``devices`` lists on merge, so keeping both would reserve twice —
+        # and ours goes last so its scalars win.
+        bundle_overlay = self._environment_docker_compose_path
+        paths = [p for p in super()._docker_compose_paths if p != bundle_overlay]
+        paths.append(self._write_mlsbench_compose_overlay())
+        return paths
+
+    def _write_mlsbench_compose_overlay(self) -> Path:
+        """Device reservation + /dev/shm for this trial, next to Harbor's own
+        per-trial mounts overlay (``docker-compose-mounts.json``)."""
+        from mls_bench.adapter import compose_overlay_text
+
+        gpus = int(getattr(self.task_env_config, "gpus", 0) or 0)
+        path = Path(self.trial_paths.trial_dir) / self._MLSBENCH_COMPOSE_OVERLAY
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(compose_overlay_text(gpus, self._gpu_ids))
+        return path
 
     def __init__(
         self,
@@ -791,8 +928,15 @@ class DockerGPUEnvironment(DockerEnvironment):
         task_env_config: Any,
         *args: Any,
         gpu_type: Any = None,
+        gpu_ids: Any = None,
         **kwargs: Any,
     ):
+        # ``--ek gpu_ids=2,3`` pins the reservation to specific host devices on
+        # a shared box; the default reserves ``[environment].gpus`` of any.
+        self._gpu_ids = [
+            part.strip() for part in str(gpu_ids).split(",") if part.strip()
+        ] if gpu_ids not in (None, "") else []
+        clamped = _clamp_cpus_to_host(task_env_config)
         super().__init__(
             environment_dir=environment_dir,
             environment_name=environment_name,
@@ -802,6 +946,12 @@ class DockerGPUEnvironment(DockerEnvironment):
             *args,
             **kwargs,
         )
+        if clamped:
+            # The image's ENV still says the declared count; the verifier
+            # recomputes from the cgroup, but the agent's own runs read ENV.
+            pinned: dict[str, str] = {}
+            _pin_thread_env(pinned, int(task_env_config.cpus))
+            self._persistent_env = {**pinned, **self._persistent_env}
         if gpu_type not in (None, ""):
             profile = gpu_profile_env(self.environment_dir, str(gpu_type))
             # The task's own ``[environment].env`` keeps precedence.

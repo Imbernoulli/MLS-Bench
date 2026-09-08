@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -481,7 +482,7 @@ def test_spot_rejects_genuine_gpu_compose(tmp_path: Path):
 
 def test_daytona_run_configs_select_custom_environment():
     for path, expected_dataset in (
-        (Path("harbor/run-daytona.yaml"), "tasks"),
+        (Path("harbor/run-daytona.yaml"), "tasks-daytona"),
         (Path("harbor_adapter/run-daytona.yaml"), "datasets/mls-bench"),
     ):
         data = yaml.safe_load(path.read_text())
@@ -495,38 +496,94 @@ def test_daytona_run_configs_select_custom_environment():
         }
 
 
-def test_verl_bundles_get_the_128g_memory_floor_automatically(tmp_path: Path):
-    """A rendered verl task is raised to 128 GiB even when the kwarg says 64.
+def test_rendered_bundles_carry_their_own_cpu_ram_and_thread_settings():
+    """Everything a downstream harness needs is in the bundle, not in this repo.
 
-    verl's validation generation OOM-killed the ray worker in a 64 GiB sandbox
-    and completed only at 128 GiB; the floor is keyed on the ``task.toml``
-    package metadata so no flag is needed.  Other packages keep the kwarg.
+    Two variants ship. ``harbor/tasks-docker`` carries the native calibration
+    and the Compose overlay a local run needs; ``harbor/tasks-daytona`` carries
+    Daytona's CPU-sandbox shape for CPU-only tasks and no compose file at all,
+    because stock Harbor's Daytona provider refuses GPU tasks that have one.
+    A consumer copies exactly one of them and never imports
+    ``mls_bench.harbor_env``.
     """
+    module = _module()
+    thread_keys = (
+        "OMP_NUM_THREADS",
+        "OMP_THREAD_LIMIT",
+        "MKL_NUM_THREADS",
+        "OPENBLAS_NUM_THREADS",
+        "NUMEXPR_NUM_THREADS",
+        "NUMEXPR_MAX_THREADS",
+        "VECLIB_MAXIMUM_THREADS",
+        "BLIS_NUM_THREADS",
+    )
+    for variant, cpu_shape in (("tasks-docker", (8, 32 * 1024)), ("tasks-daytona", (4, 8 * 1024))):
+        tasks = sorted(p for p in (Path("harbor") / variant).iterdir() if (p / "task.toml").is_file())
+        assert len(tasks) == 140, variant
+        verl = gpu = cpu = 0
+        for task_dir in tasks:
+            toml = (task_dir / "task.toml").read_text()
+            cpus = int(re.search(r"(?m)^cpus = (\d+)$", toml).group(1))
+            memory_mb = int(re.search(r"(?m)^memory_mb = (\d+)$", toml).group(1))
+            gpus = int(re.search(r"(?m)^gpus = (\d+)$", toml).group(1))
+            package = re.search(r'(?m)^mls_bench_package = "([^"]*)"$', toml).group(1)
+            gpu_types = re.search(r'(?m)^gpu_types = (.*)$', toml)
+
+            if gpus == 0:
+                cpu += 1
+                assert cpus == cpu_shape[0] and memory_mb >= cpu_shape[1], (variant, task_dir.name)
+                assert gpu_types is None, (variant, task_dir.name)
+            elif package == "verl":
+                verl += 1
+                assert (cpus, memory_mb) == (max(16, 12 * gpus), 128 * 1024), (variant, task_dir.name)
+            else:
+                gpu += 1
+                assert (cpus, memory_mb) == (max(16, 12 * gpus), 64 * 1024), (variant, task_dir.name)
+            if gpus > 0:
+                # Newer Harbor's Daytona provider maps this to a placement
+                # constraint; the images' CUDA wheels have no Blackwell kernels.
+                assert gpu_types is not None and gpu_types.group(1) == '["h100"]', (variant, task_dir.name)
+
+            dockerfile = (task_dir / "environment" / "Dockerfile").read_text()
+            for key in thread_keys:
+                assert f"{key}={cpus}" in dockerfile, (variant, task_dir.name, key)
+            expected_nccl = gpus > 1
+            assert ("NCCL_CUMEM_ENABLE=0" in dockerfile) is expected_nccl, (variant, task_dir.name)
+            assert ("NCCL_NVLS_ENABLE=0" in dockerfile) is expected_nccl, (variant, task_dir.name)
+
+            compose = task_dir / "environment" / "docker-compose.yaml"
+            if variant == "tasks-docker":
+                overlay = yaml.safe_load(compose.read_text())
+                assert overlay["services"]["main"]["shm_size"] == "16gb", task_dir.name
+                if gpus > 0:
+                    assert module.is_gpu_reservation_only_compose(task_dir / "environment", gpu_count=gpus), task_dir.name
+                else:
+                    assert module.is_shm_only_compose(task_dir / "environment"), task_dir.name
+            else:
+                assert not compose.exists(), (variant, task_dir.name)
+        assert (verl, gpu, cpu) == (4, 112, 24), variant
+def test_gpu_cpu_and_memory_kwargs_stay_opt_in(tmp_path: Path):
+    """The floors are overrides now: unset leaves `task.toml`'s numbers alone."""
     module = _module()
     from daytona import CreateSandboxFromImageParams, Image, Resources
 
-    for package, expected_memory in (("verl", 128), ("nanoGPT", 64), (None, 64)):
-        task_dir = tmp_path / f"task-{package}"
+    for kwargs, expected in (({}, (16, 64)), ({"gpu_cpus": "32", "gpu_memory_gb": "96"}, (32, 96))):
+        task_dir = tmp_path / f"task-{len(kwargs)}"
         env_dir = task_dir / "environment"
         env_dir.mkdir(parents=True)
         (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
         (env_dir / "docker-compose.yaml").write_text(_compose(2))
-        if package is not None:
-            (task_dir / "task.toml").write_text(
-                f'[metadata]\nmls_bench_package = "{package}"\n'
-            )
         trial_paths = TrialPaths(task_dir / "trial")
         trial_paths.mkdir()
         env = module.DaytonaEnvironment(
             environment_dir=env_dir,
-            environment_name=f"floor-{package}",
-            session_id=f"floor-{package}.1",
+            environment_name=f"floor-{len(kwargs)}",
+            session_id=f"floor-{len(kwargs)}.1",
             trial_paths=trial_paths,
             task_env_config=EnvironmentConfig(
-                cpus=4, memory_mb=16384, storage_mb=61440, gpus=2
+                cpus=16, memory_mb=65536, storage_mb=61440, gpus=2
             ),
-            gpu_memory_gb="64",
-            gpu_cpus="16",
+            **kwargs,
         )
         captured = []
 
@@ -543,12 +600,14 @@ def test_verl_bundles_get_the_128g_memory_floor_automatically(tmp_path: Path):
             )
             params = CreateSandboxFromImageParams(
                 image=Image.base("ubuntu:22.04"),
-                resources=Resources(cpu=4, memory=16, disk=60, gpu=2),
+                resources=Resources(cpu=16, memory=64, disk=60, gpu=2),
             )
             asyncio.run(env._create_sandbox(params))
         finally:
             monkeypatch.undo()
-        assert captured[0].resources.memory == expected_memory, package
+        assert (captured[0].resources.cpu, captured[0].resources.memory) == expected
+        # Thread pools follow whatever CPU count the sandbox actually got.
+        assert captured[0].env_vars["OMP_NUM_THREADS"] == str(expected[0])
 
 
 def test_lite_config_lists_exactly_the_readme_lite_tasks():
@@ -567,12 +626,13 @@ def test_lite_config_lists_exactly_the_readme_lite_tasks():
     lite = yaml.safe_load(Path("harbor/run-daytona-lite.yaml").read_text())
     full = yaml.safe_load(Path("harbor/run-daytona.yaml").read_text())
     (dataset,) = lite["datasets"]
-    assert dataset["path"] == "tasks"
+    assert dataset["path"] == "tasks-daytona"
     names = dataset["task_names"]
     assert len(names) == len(set(names)) == 30
     assert set(names) == table
     for name in names:
-        assert (Path("harbor/tasks") / name / "task.toml").is_file(), name
+        assert (Path("harbor/tasks-daytona") / name / "task.toml").is_file(), name
+        assert (Path("harbor/tasks-docker") / name / "task.toml").is_file(), name
     # Same provider settings as the full-dataset config, so the two cannot drift.
     assert lite["environment"] == full["environment"]
     assert lite["n_concurrent_trials"] == full["n_concurrent_trials"]
@@ -747,3 +807,177 @@ def test_gpu_sandboxes_repair_host_overlay_loader_paths_after_toolbox_ready(tmp_
     assert ran[2][0] == "true"  # toolbox probe first
     assert any("/proc/self/maps" in c and "merged" in c for c in ran[2])
     assert ran[0] == ["true"]
+
+
+def test_local_docker_clamps_a_cpu_request_the_host_cannot_grant(tmp_path: Path, monkeypatch, caplog):
+    """A small host should run a GPU task slowly, not refuse to start it.
+
+    docker rejects a container whose ``--cpus`` exceeds the host core count
+    ("range of CPUs is from 0.01 to N"), and every GPU task declares 16.
+    """
+    module = _module()
+    env_dir = _h200_task(tmp_path, "clamp-task")
+    trial_paths = TrialPaths(env_dir.parent / "trial")
+    trial_paths.mkdir()
+
+    monkeypatch.setattr(module.os, "cpu_count", lambda: 8)
+    config = EnvironmentConfig(cpus=16, memory_mb=65536, storage_mb=61440, gpus=2)
+    with caplog.at_level("WARNING"):
+        clamped = module.DockerGPUEnvironment(
+            environment_dir=env_dir,
+            environment_name="clamp",
+            session_id="clamp.1",
+            trial_paths=trial_paths,
+            task_env_config=config,
+        )
+    assert config.cpus == 8
+    assert "clamping" in caplog.text
+    # The agent's shell must see the granted count, not the image's ENV.
+    assert clamped._merge_env({})["OMP_NUM_THREADS"] == "8"
+
+    monkeypatch.setattr(module.os, "cpu_count", lambda: 384)
+    roomy = EnvironmentConfig(cpus=16, memory_mb=65536, storage_mb=61440, gpus=2)
+    module.DockerGPUEnvironment(
+        environment_dir=env_dir,
+        environment_name="roomy",
+        session_id="roomy.1",
+        trial_paths=trial_paths,
+        task_env_config=roomy,
+    )
+    assert roomy.cpus == 16
+
+
+def test_daytona_clamps_to_the_org_ceiling_on_refusal(tmp_path: Path):
+    """`task.toml` declares the calibrated budget; Daytona names its ceiling.
+
+    "CPU request 96 exceeds maximum allowed per sandbox (16)" is the whole
+    contract: clamp to 16, re-pin the thread budget, retry. No org-specific
+    number is hard-coded in the adapter.
+    """
+    module = _module()
+    from daytona import CreateSandboxFromImageParams, Image, Resources
+
+    task_dir = tmp_path / "task"
+    env_dir = task_dir / "environment"
+    env_dir.mkdir(parents=True)
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text(_compose(8))
+    trial_paths = TrialPaths(task_dir / "trial")
+    trial_paths.mkdir()
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="clamp",
+        session_id="clamp.1",
+        trial_paths=trial_paths,
+        task_env_config=EnvironmentConfig(cpus=96, memory_mb=65536, storage_mb=61440, gpus=8),
+    )
+    seen: list[tuple[int, int]] = []
+
+    async def fake_parent_create_sandbox(self, params, *args, **kwargs):
+        seen.append((params.resources.cpu, params.resources.memory))
+        if params.resources.cpu > 16:
+            raise RuntimeError(
+                "Failed to create sandbox: CPU request 96 exceeds maximum allowed per sandbox (16).\n"
+                "Need higher resource limits per-sandbox? Contact us at support@daytona.io"
+            )
+        if params.resources.memory > 192:
+            raise RuntimeError("Failed to create sandbox: Memory request 256GB exceeds maximum allowed per sandbox (192GB).")
+        self._sandbox = object()
+        self._final_env = dict(params.env_vars)
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(module._HarborDaytonaEnvironment, "_create_sandbox", fake_parent_create_sandbox)
+        params = CreateSandboxFromImageParams(
+            image=Image.base("ubuntu:22.04"),
+            resources=Resources(cpu=96, memory=256, disk=60, gpu=8),
+        )
+        asyncio.run(env._create_sandbox(params))
+    finally:
+        monkeypatch.undo()
+    assert seen == [(96, 256), (16, 256), (16, 192)]
+    assert env._final_env["OMP_NUM_THREADS"] == "16"
+    assert env._final_env["BLIS_NUM_THREADS"] == "16"
+
+
+def test_shm_only_overlay_keeps_a_cpu_task_on_the_direct_path(tmp_path: Path):
+    """CPU bundles carry a /dev/shm-only overlay for local Docker.
+
+    Harbor's Daytona provider would route any compose file through
+    Docker-in-Docker; the adapter must recognise this one as a sizing knob
+    with no service in it and keep the direct sandbox.
+    """
+    module = _module()
+    task_dir = tmp_path / "cpu-task"
+    env_dir = task_dir / "environment"
+    env_dir.mkdir(parents=True)
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    (env_dir / "docker-compose.yaml").write_text("services:\n  main:\n    shm_size: 16gb\n")
+    assert module.is_shm_only_compose(env_dir)
+    assert not module.is_gpu_reservation_only_compose(env_dir, gpu_count=0)
+    trial_paths = TrialPaths(task_dir / "trial")
+    trial_paths.mkdir()
+    env = module.DaytonaEnvironment(
+        environment_dir=env_dir,
+        environment_name="cpu-direct",
+        session_id="cpu-direct.1",
+        trial_paths=trial_paths,
+        task_env_config=EnvironmentConfig(cpus=8, memory_mb=32768, storage_mb=30720, gpus=0),
+    )
+    assert env._compose_mode is False
+    assert isinstance(env._strategy, module._GpuAwareDirect)
+
+    # Anything with a real service stays a genuine Compose task.
+    (env_dir / "docker-compose.yaml").write_text(
+        "services:\n  main:\n    shm_size: 16gb\n    image: other:latest\n"
+    )
+    assert not module.is_shm_only_compose(env_dir)
+
+
+def test_local_docker_writes_the_gpu_and_shm_overlay_per_trial(tmp_path: Path):
+    """The bundle is Dockerfile-only; the local environment supplies the rest.
+
+    Stock Harbor's Daytona provider refuses a GPU task that ships a compose
+    file, and stock Harbor's docker provider cannot run GPU tasks at all, so
+    the NVIDIA reservation and the 16 GB /dev/shm live in a per-trial overlay
+    that only this class appends to Harbor's own compose file list.
+    """
+    module = _module()
+    task_dir = tmp_path / "gpu-task"
+    env_dir = task_dir / "environment"
+    env_dir.mkdir(parents=True)
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    trial_paths = TrialPaths(task_dir / "trial")
+    trial_paths.mkdir()
+    env = module.DockerGPUEnvironment(
+        environment_dir=env_dir,
+        environment_name="overlay",
+        session_id="overlay.1",
+        trial_paths=trial_paths,
+        task_env_config=EnvironmentConfig(cpus=36, memory_mb=65536, storage_mb=61440, gpus=3),
+    )
+    # A bundle overlay (tasks-docker ships one) must not be merged alongside
+    # ours: Compose appends `devices` lists, which would reserve twice.
+    (env_dir / "docker-compose.yaml").write_text("services:\n  main:\n    shm_size: 16gb\n")
+    paths = env._docker_compose_paths
+    assert env_dir / "docker-compose.yaml" not in paths
+    overlay = paths[-1]
+    assert overlay.parent == Path(trial_paths.trial_dir)
+    doc = yaml.safe_load(overlay.read_text())
+    main = doc["services"]["main"]
+    assert main["shm_size"] == "16gb"
+    device = main["deploy"]["resources"]["reservations"]["devices"][0]
+    assert (device["driver"], device["count"], device["capabilities"]) == ("nvidia", 3, ["gpu"])
+    # Harbor's own files come first so the overlay's scalars win.
+    assert any(p.name == "docker-compose-base.yaml" for p in paths[:-1])
+
+    cpu_env = module.DockerGPUEnvironment(
+        environment_dir=env_dir,
+        environment_name="overlay-cpu",
+        session_id="overlay-cpu.1",
+        trial_paths=trial_paths,
+        task_env_config=EnvironmentConfig(cpus=4, memory_mb=8192, storage_mb=10240, gpus=0),
+    )
+    cpu_main = yaml.safe_load(cpu_env._docker_compose_paths[-1].read_text())["services"]["main"]
+    assert cpu_main == {"shm_size": "16gb"}
+

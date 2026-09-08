@@ -157,7 +157,11 @@ class MlsBenchAdapter:
         task_ids: list[str] | None = None,
         mls_bench_root: Path | None = None,
         continue_on_error: bool = False,
+        provider: str = "docker",
     ):
+        if provider not in PROVIDERS:
+            raise ValueError(f"provider must be one of {PROVIDERS}, got {provider!r}")
+        self.provider = provider
         self.output_dir = output_dir
         self.limit = limit
         self.overwrite = overwrite
@@ -182,7 +186,7 @@ class MlsBenchAdapter:
         for task_id in wanted:
             try:
                 ctx = build_task_context(mb, task_id)
-                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite)
+                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite, provider=self.provider)
                 print(f"[ok] {task_id} -> {out}")
                 ok += 1
                 task_dirs.append(out)
@@ -774,6 +778,62 @@ MAX_PARALLEL_GPUS = 8
 WAVE_GRACE_SEC = 300
 
 
+# `task.toml`'s `cpus`/`memory_mb` are hard cgroup limits everywhere, not
+# hints. Harbor's local docker-compose base sets `deploy.resources.limits`
+# (a task rendered with 4 CPUs / 16 GiB lands in a cgroup with
+# `cpu.max = 400000 100000` and `memory.max = 17179869184`), and Harbor's
+# Daytona provider provisions exactly these numbers
+# (`Resources(cpu=cpus, memory=memory_mb // 1024, ...)`). They therefore have
+# to state what a task really needs — a downstream harness that consumes the
+# rendered bundles without the adapter's environment classes gets nothing else.
+#
+# Two rendered variants ship, one per provider, because the providers' hard
+# constraints do not intersect cleanly and a bundle that satisfies both would
+# be right for neither:
+#
+# * ``docker`` (harbor/tasks-docker): what the tasks were calibrated on.
+#   MLS-Bench's native SLURM path (src/mlsbench/agent/slurm.py) gives a GPU
+#   group `gpus * 12` CPUs and a CPU-only group 8 CPUs / 32 GB, and every
+#   eval's `time` deadline was measured under that. The bundle carries a
+#   Compose overlay with the NVIDIA device reservation and a 16 GB /dev/shm
+#   (native runs docker with `--shm-size=16g`).
+# * ``daytona`` (harbor/tasks-daytona): the same GPU numbers (Daytona's
+#   GPU-sandbox ceiling is 16 CPUs per card, 192 GB), but CPU-only tasks
+#   at Daytona's CPU-sandbox ceiling of 4 CPUs / 8 GB / 10 GB — stock
+#   Harbor cannot clamp, and all 24 pass at that shape — and no Compose file
+#   at all: stock Harbor's Daytona provider refuses GPU tasks that carry one
+#   ("only supported for Dockerfile-based tasks"), and its sandboxes come
+#   with a large /dev/shm anyway.
+#
+# GPU memory is not taken from SLURM (`max(mem, gpus * 100)` GB is cluster
+# generosity, not a measured need): 64 GB is the floor the Daytona validation
+# runs exercised for every GPU task, 128 GB the verl bundles.
+PROVIDERS = ("docker", "daytona")
+CPUS_PER_GPU = 12
+GPU_TASK_CPUS = 16
+GPU_TASK_MEMORY_GB = 64
+GPU_TASK_STORAGE_GB = 60
+CPU_TASK_SHAPE_GB: dict[str, tuple[int, int, int]] = {
+    # provider: (cpus, memory GB, storage GB)
+    "docker": (8, 32, 30),
+    "daytona": (4, 8, 10),
+}
+
+# Per-package floors for packages whose peak RSS is known to exceed the
+# generic GPU floor.
+PACKAGE_MEMORY_GB: dict[str, int] = {
+    # verl's validation step generates with vLLM while the FSDP actor is
+    # resident; 64 GB is OOM-killed (ray reports the AgentLoopWorker as
+    # SYSTEM_ERROR), 128 GB completes.
+    "verl": 128,
+}
+
+# Ceiling for a `test_cmds[].mem` declaration. The four verl RL tasks declare
+# `mem = 200` for SLURM; 128 GB is the largest GPU sandbox validated on
+# Daytona, and asking a provider for more than that has not been tested.
+MAX_TASK_MEMORY_GB = 128
+
+
 def _harbor_safe_name(task_id: str) -> str:
     safe = re.sub(r"[^a-z0-9_-]", "-", task_id.lower())
     return f"mls-bench__{safe}"
@@ -998,11 +1058,76 @@ def _verifier_timeout_sec(config: dict, gpus: int) -> int:
     return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
 
 
-def _resources(pkg_config: dict, config: dict) -> dict:
+# /dev/shm for a task container on local Docker, matching the `--shm-size=16g`
+# MLS-Bench's native docker path uses (src/mlsbench/agent/tools.py).
+SHM_SIZE_GB = 16
+
+
+def compose_overlay_text(gpus: int, gpu_ids: list[str] | None = None) -> str:
+    """The docker variant's Compose overlay: /dev/shm plus the device reservation."""
+    text = "services:\n  main:\n" f"    shm_size: {SHM_SIZE_GB}gb\n"
+    if gpus > 0:
+        text += (
+            "    deploy:\n"
+            "      resources:\n"
+            "        reservations:\n"
+            "          devices:\n"
+            "            - driver: nvidia\n"
+        )
+        if gpu_ids:
+            text += "              device_ids: [" + ", ".join(f'"{g}"' for g in gpu_ids[:gpus]) + "]\n"
+        else:
+            text += f"              count: {gpus}\n"
+        text += "              capabilities: [gpu]\n"
+    return text
+
+
+def _package_memory_gb(package: str) -> int:
+    """Memory floor (GB) for a package name, matched the way native does."""
+    wanted = _normalize_pkg_name(package)
+    for name, floor in PACKAGE_MEMORY_GB.items():
+        if _normalize_pkg_name(name) == wanted:
+            return floor
+    return 0
+
+
+def _declared_memory_gb(config: dict) -> int:
+    """Largest ``test_cmds[].mem`` (GB) the task declares, capped."""
+    declared = 0
+    for tc in config.get("test_cmds", []) or []:
+        if not isinstance(tc, dict):
+            continue
+        try:
+            declared = max(declared, int(tc.get("mem") or 0))
+        except (TypeError, ValueError):
+            continue
+    return min(declared, MAX_TASK_MEMORY_GB)
+
+
+def _resources(
+    pkg_config: dict, config: dict, package: str = "", provider: str = "docker"
+) -> dict:
+    if provider not in PROVIDERS:
+        raise ValueError(f"provider must be one of {PROVIDERS}, got {provider!r}")
     use_cuda = bool(config.get("use_cuda")) or bool(pkg_config.get("use_cuda"))
-    cpus = 4
-    memory_mb = 16 * 1024 if use_cuda else 8 * 1024
-    storage_mb = 60 * 1024 if use_cuda else 30 * 1024
+    cpu_cpus, cpu_memory_gb, cpu_storage_gb = CPU_TASK_SHAPE_GB[provider]
+    if use_cuda:
+        memory_gb = max(
+            GPU_TASK_MEMORY_GB,
+            _package_memory_gb(package),
+            _declared_memory_gb(config),
+        )
+        storage_gb = GPU_TASK_STORAGE_GB
+    else:
+        # A `mem` declaration (ml-active-learning says 64) raises the floor on
+        # docker, where it is only a cgroup limit; on Daytona it would push the
+        # sandbox past the CPU-sandbox ceiling, and the task passes at 8 GB.
+        memory_gb = cpu_memory_gb
+        if provider == "docker":
+            memory_gb = max(memory_gb, _declared_memory_gb(config))
+        storage_gb = cpu_storage_gb
+    memory_mb = memory_gb * 1024
+    storage_mb = storage_gb * 1024
     gpus = 0
     if use_cuda:
         n_seeds = _seed_count(config)
@@ -1037,6 +1162,7 @@ def _resources(pkg_config: dict, config: dict) -> dict:
                 f"MAX_PARALLEL_GPUS={MAX_PARALLEL_GPUS} cap; reserving "
                 f"{gpus} — this task needs a host with at least that many"
             )
+    cpus = max(GPU_TASK_CPUS, gpus * CPUS_PER_GPU) if use_cuda else cpu_cpus
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
@@ -1090,6 +1216,7 @@ def render_task(
     ctx: TaskContext,
     out_root: Path,
     overwrite: bool = False,
+    provider: str = "docker",
 ) -> Path:
     final_dir = out_root / _harbor_safe_name(ctx.task_id)
     if final_dir.exists() and not overwrite:
@@ -1109,7 +1236,7 @@ def render_task(
     task_dir = mb.tasks_dir / ctx.task_id
 
     pkg_workdir = ctx.pkg_config.get("workdir", "/workspace")
-    res = _resources(ctx.pkg_config, ctx.config)
+    res = _resources(ctx.pkg_config, ctx.config, ctx.package, provider)
     effective_config = _config_with_shifted_edit_ranges(mb, ctx)
 
     visible_test_cmds = list(effective_config.get("test_cmds", []))
@@ -1179,26 +1306,20 @@ def render_task(
         )
     )
 
-    # GPU reservation: Harbor's base docker-compose only sets cpu/memory
-    # limits, not GPU. Tasks that resolve to `gpus > 0` need a per-task
-    # compose override so docker actually attaches the nvidia runtime.
-    # Compose-merge with base happens via harbor/environments/docker/
-    # docker.py:292 picking up this file when present. `res["gpus"]`
-    # comes from `_resources()` which honors both task config's `use_cuda`
-    # and the package config's `use_cuda` flag.
+    # The docker variant ships the Compose overlay a local run needs: the
+    # NVIDIA device reservation and a 16 GB /dev/shm (PyTorch DataLoader
+    # workers pass batches through /dev/shm; docker's 64 MB default kills them
+    # mid-eval with "Bus error ... out of shared memory"; native runs docker
+    # with `--shm-size=16g`). The daytona variant ships none: stock Harbor's
+    # Daytona provider refuses GPU tasks that carry any compose file, and its
+    # sandboxes get their GPUs from `[environment].gpus` and have a large
+    # /dev/shm already.
     gpus_int = int(res.get("gpus") or 0)
-    if gpus_int > 0:
-        (env_dir / "docker-compose.yaml").write_text(
-            "services:\n"
-            "  main:\n"
-            "    deploy:\n"
-            "      resources:\n"
-            "        reservations:\n"
-            "          devices:\n"
-            "            - driver: nvidia\n"
-            f"              count: {gpus_int}\n"
-            "              capabilities: [gpu]\n"
-        )
+    overlay_path = env_dir / "docker-compose.yaml"
+    if provider == "docker":
+        overlay_path.write_text(compose_overlay_text(gpus_int))
+    elif overlay_path.exists():
+        overlay_path.unlink()
 
     # solution/ — Harbor mounts this at /solution/ only when the oracle agent runs.
     sol_dir = out_dir / "solution"
@@ -1613,7 +1734,7 @@ def _stage_verifier_assets(
     (meta / "package").write_text(ctx.package + "\n")
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
     (meta / "gpu_count").write_text(
-        str(_resources(ctx.pkg_config, config if config is not None else ctx.config)["gpus"]) + "\n"
+        str(_resources(ctx.pkg_config, config if config is not None else ctx.config, ctx.package)["gpus"]) + "\n"
     )
     package_envs: dict[str, dict] = {}
     for tc in ctx.config.get("test_cmds", []):

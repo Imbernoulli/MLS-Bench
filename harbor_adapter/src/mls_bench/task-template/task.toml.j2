@@ -31,4 +31,7 @@ memory_mb = {{ memory_mb }}
 storage_mb = {{ storage_mb }}
 {% for line in gpu_serialization_note %}# {{ line }}
 {% endfor %}gpus = {{ gpus }}
-allow_internet = true
+{% if gpus > 0 %}# The images pin CUDA wheels built for Hopper (sm_90); a provider that
+# also offers Blackwell cards (Daytona does) must not place the task there.
+gpu_types = ["h100"]
+{% endif %}allow_internet = true

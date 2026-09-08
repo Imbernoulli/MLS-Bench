@@ -606,15 +606,17 @@ def test_rendered_bundles_match_the_verifier_template():
     guard fix initially shipped as a no-op). Fail loudly on drift.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    tasks_root = repo_root / "harbor" / "tasks"
-    if not tasks_root.is_dir():
+    tasks_roots = [repo_root / "harbor" / v for v in ("tasks-docker", "tasks-daytona")]
+    tasks_roots = [r for r in tasks_roots if r.is_dir()]
+    if not tasks_roots:
         return  # adapter-only checkout: nothing rendered to compare against
 
     template_dir = Path(__file__).resolve().parents[1] / "src" / "mls_bench" / "task-template" / "tests"
     for name in ("score_task.py", "test.sh"):
         expected = (template_dir / name).read_bytes()
         drifted = [
-            p.parents[1].name
+            f"{tasks_root.name}/{p.parents[1].name}"
+            for tasks_root in tasks_roots
             for p in sorted(tasks_root.glob(f"*/tests/{name}"))
             if p.read_bytes() != expected
         ]
@@ -624,3 +626,108 @@ def test_rendered_bundles_match_the_verifier_template():
             f"{' …' if len(drifted) > 5 else ''}. Re-sync the copies — a template-only "
             "change does not reach any shipped task."
         )
+
+
+def test_thread_budget_follows_the_cgroup_quota_not_nproc(monkeypatch, tmp_path):
+    """A container reports every host core; only the cgroup quota is real.
+
+    Sizing thread pools from ``os.cpu_count()`` inside a 4-CPU cgroup on a
+    384-core host starts ~192 BLAS threads and makes a fixed matmul benchmark
+    13x slower, which is what pushed CPU-bound evals past their deadline.
+    """
+    module = _load_score_task()
+    monkeypatch.delenv("MLSBENCH_LOCAL_THREADS", raising=False)
+    monkeypatch.setattr(module.os, "sched_getaffinity", lambda _pid: set(range(384)))
+
+    cgroup_v2 = tmp_path / "cpu.max"
+    cgroup_v2.write_text("400000 100000\n")
+    real_read = module.Path.read_text
+
+    def fake_read(self, *args, **kwargs):
+        if self.as_posix() == "/sys/fs/cgroup/cpu.max":
+            return cgroup_v2.read_text()
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(module.Path, "read_text", fake_read)
+    assert module._available_cpus() == 4
+    # A wave of three concurrent commands splits the quota instead of each
+    # claiming all of it.
+    assert module._thread_budget() == 4
+    assert module._thread_budget(3) == 1
+    assert module._thread_budget(0) == 4
+
+
+def test_thread_budget_is_unlimited_without_a_quota(monkeypatch):
+    """Outside a limited cgroup the affinity mask is the honest answer."""
+    module = _load_score_task()
+    monkeypatch.delenv("MLSBENCH_LOCAL_THREADS", raising=False)
+    monkeypatch.setattr(module.os, "sched_getaffinity", lambda _pid: set(range(12)))
+    monkeypatch.setattr(module, "_cgroup_cpu_quota", lambda: None)
+    assert module._available_cpus() == 12
+    assert module._thread_budget(4) == 3
+
+
+def test_mlsbench_local_threads_overrides_the_budget(monkeypatch):
+    """Same escape hatch native runs use (`mlsbench/cli.py::local_thread_limit`)."""
+    module = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_LOCAL_THREADS", "7")
+    monkeypatch.setattr(module, "_available_cpus", lambda: 64)
+    assert module._thread_budget(8) == 7
+    monkeypatch.setenv("MLSBENCH_LOCAL_THREADS", "not-a-number")
+    assert module._thread_budget(8) == 8
+
+
+def test_eval_env_pins_thread_pools_but_lets_a_task_override(tmp_path, monkeypatch):
+    """The budget lands in the eval subprocess; task/package env still wins."""
+    module = _load_score_task()
+    monkeypatch.setenv("OMP_NUM_THREADS", "384")
+    task_meta = tmp_path / "meta"
+    task_meta.mkdir()
+    (task_meta / "package").write_text("demo\n")
+    (task_meta / "task_id").write_text("demo-task\n")
+    (task_meta / "package_envs.json").write_text(json.dumps({"demo": {}}))
+
+    env = module._eval_env(
+        task_meta=task_meta,
+        out_dir=tmp_path / "out",
+        workspace_root=tmp_path / "ws",
+        pkg_dir=tmp_path / "ws" / "demo",
+        tc={"label": "a"},
+        seed=42,
+        threads=5,
+    )
+    assert env["OMP_NUM_THREADS"] == "5"
+    assert env["MKL_NUM_THREADS"] == env["BLIS_NUM_THREADS"] == "5"
+
+    override = module._eval_env(
+        task_meta=task_meta,
+        out_dir=tmp_path / "out",
+        workspace_root=tmp_path / "ws",
+        pkg_dir=tmp_path / "ws" / "demo",
+        tc={"label": "a", "env": {"OMP_NUM_THREADS": "1"}},
+        seed=42,
+        threads=5,
+    )
+    assert override["OMP_NUM_THREADS"] == "1"
+
+
+def test_eval_failures_name_timeouts_and_their_deadline():
+    """A reader must be able to tell a harness timeout from an empty model run."""
+    module = _load_score_task()
+    config = {"test_cmds": [
+        {"label": "Weather", "cmd": "w.sh", "group": 1, "compute": 0.33, "time": "00:59:00"},
+        {"label": "ECL", "cmd": "e.sh", "group": 1, "compute": 0.33, "time": "00:59:00"},
+        {"label": "ETTh1", "cmd": "t.sh", "group": 1, "compute": 0.33, "time": "00:59:00"},
+    ]}
+    summary = [
+        {"label": "Weather", "logs": [{"seed": 42, "rc": 124, "elapsed": 3870.2}]},
+        {"label": "ECL", "logs": [{"seed": 42, "rc": 1, "elapsed": 12.0}]},
+        {"label": "ETTh1", "logs": [{"seed": 42, "rc": 0, "elapsed": 49.0}]},
+    ]
+    lines = module._eval_failures(summary, config)
+    assert lines == [
+        "Weather seed 42: timed out after 3870s (its own deadline is 3840s incl. 300s grace; a wave shares its slowest member's)",
+        "ECL seed 42: exited rc=1 after 12s",
+    ]
+    assert module._eval_failures([{"label": "ETTh1", "logs": [{"seed": 42, "rc": 0, "elapsed": 1.0}]}], config) == []
+

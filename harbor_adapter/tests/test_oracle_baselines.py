@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
-TASKS = REPO / "harbor" / "tasks"
+TASKS = REPO / "harbor" / "tasks-docker"
 TEMPLATE = REPO / "harbor_adapter" / "src" / "mls_bench" / "task-template" / "tests" / "score_task.py"
 
 # Known task-definition bugs that are tracked but not fixed in this branch.

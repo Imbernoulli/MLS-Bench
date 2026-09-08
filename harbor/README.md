@@ -37,9 +37,9 @@ local-Docker NVIDIA reservation. Daytona does not support GPU + DinD/Compose.
 Select one task with `--path`, and an agent with `--agent`:
 
 ```bash
-harbor run -c run-daytona.yaml --path tasks/mls-bench__robo-diffusion-policy \
+harbor run -c run-daytona.yaml --path tasks-daytona/mls-bench__robo-diffusion-policy \
   --agent oracle                    # strongest declared baseline
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+harbor run -c run-daytona.yaml --path tasks-daytona/mls-bench__TASK \
   --agent claude-code --model anthropic/claude-opus-4-7 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 ```
@@ -72,14 +72,88 @@ eval cost — and is deliberately not flattened to one value.
 | --- | --- | --- |
 | `gpu_type` | `H100` | Daytona's pool also holds Blackwell cards the pinned CUDA wheels cannot run. Use `H200` only for tasks with a native `h200` profile. |
 | `spot` | `false` | Spot capacity is cheaper but frequently unavailable. |
-| `gpu_memory_gb` / `gpu_cpus` | `64` / `16` | Floors. Daytona enforces `task.toml` resources as hard cgroup limits, which local Docker effectively does not. The verl `llm-rl-*` tasks are raised to `128` automatically; their validation step is OOM-killed at 64. |
+| `gpu_memory_gb` / `gpu_cpus` | unset | Opt-in floors. Sandbox CPU/RAM normally come straight from `task.toml`; set these only when a task needs more than it declares. |
 | `toolbox_ready_retries` | `3` | Recreates a sandbox whose toolbox never answers. |
 | `snapshot_salt` | unset | Appends a no-op `RUN` layer, forcing a fresh snapshot. Use when retries keep landing on the same bad runner — Daytona prefers whichever runner already caches the snapshot, and a cached copy can be broken. |
 
-The adapter also caps `OMP_NUM_THREADS` and friends at the CPU quota (the
-container reports every host core and would otherwise oversubscribe ~20x), and
-sets `NCCL_CUMEM_ENABLE=0` and `NCCL_NVLS_ENABLE=0` on multi-GPU sandboxes,
-where both NCCL paths fail with `cudaErrorIllegalState`.
+### Container resources
+
+Two rendered variants ship, one per provider, because the providers' hard
+constraints do not intersect cleanly and a single bundle would be right for
+neither:
+
+| | `tasks-docker/` (local Docker, `run.yaml`) | `tasks-daytona/` (Daytona, `run-daytona*.yaml`) |
+| --- | --- | --- |
+| GPU task | 12 CPUs per GPU (16 min), 64 GB (128 GB verl) — the native SLURM calibration | same |
+| CPU-only task | 8 CPUs / 32 GB / 30 GB — native | 4 CPUs / 8 GB / 10 GB — Daytona's CPU-sandbox ceiling; stock Harbor cannot clamp, and all 24 pass at this shape |
+| `environment/docker-compose.yaml` | NVIDIA device reservation + `shm_size: 16gb` | none — stock Harbor's Daytona provider refuses GPU tasks that carry one |
+
+Everything else — Dockerfile, `tests/`, `solution/`, `instruction.md` — is
+byte-identical between the two (git stores each blob once). Both providers
+treat `task.toml` as hard limits: Daytona provisions the numbers, local Docker
+applies them through Compose's `deploy.resources.limits`. GPU tasks in both
+variants declare `gpu_types = ["h100"]`, which newer Harbor's Daytona provider
+turns into a placement constraint (the images' CUDA wheels have no Blackwell
+kernels). Render with `python -m mls_bench.main --provider docker|daytona`.
+
+A provider that cannot supply the declared amount clamps to its own ceiling
+and logs a warning rather than the bundle understating the need. Daytona
+answers an oversized request with `CPU request 96 exceeds maximum allowed per
+sandbox (16)`; the adapter reads the ceiling out of that message, clamps, and
+retries, so the organization's limits (currently 16 CPUs per GPU on a GPU
+sandbox — so the native 12 per card fits and only single-GPU tasks are
+clamped — and 4 CPUs / 8 GB / 10 GB on a CPU sandbox) are never hard-coded
+here. Local Docker
+refuses a `--cpus` above the host's core count, so `DockerGPUEnvironment`
+clamps to it. In both cases the thread budget follows the cores actually
+granted, and evals sized for the declared budget run closer to their deadline.
+The one place that margin is thin: `causal-discovery-discrete` runs five
+single-threaded structure learners at once and its Hailfinder eval finishes
+at ~87 % of its 59-minute deadline on a 4-CPU Daytona sandbox (native and
+local Docker give it 8). A solution slower than the baseline there can time
+out on Daytona while passing elsewhere.
+
+Task images pin `OMP_NUM_THREADS` and friends to that CPU budget, because a
+container reports every core the *host* has while its cgroup grants only the
+task's own. Unpinned, a 4-CPU task on a 384-core host runs 192 BLAS threads and
+a fixed matmul benchmark takes 34.3 s instead of 2.6 s — enough to push a
+CPU-bound eval past its deadline. `tests/score_task.py` recomputes the budget
+from the live cgroup at verify time and splits it across the commands a wave
+runs concurrently; `MLSBENCH_LOCAL_THREADS` overrides it, as it does natively.
+
+Multi-GPU images also set `NCCL_CUMEM_ENABLE=0` and `NCCL_NVLS_ENABLE=0`, since
+both NCCL paths fail with `cudaErrorIllegalState` inside a GPU sandbox.
+
+The `shm_size: 16gb` in the docker variant's overlay matches the
+`--shm-size=16g` MLS-Bench's own docker path uses: PyTorch DataLoader workers
+pass batches through `/dev/shm`, and docker's 64 MB default kills them mid-eval
+with `Bus error ... out of shared memory`. `DockerGPUEnvironment` writes its
+own copy of that overlay per trial (so `--ek gpu_ids=2,3` can pin devices on a
+shared host) and uses it instead of the bundle's; pointing `run.yaml` at
+`tasks-daytona/` therefore also works locally. Daytona sandboxes get their
+GPUs from `[environment].gpus` and come with a 64 GB `/dev/shm`.
+
+When an eval command does not exit 0 the verifier writes `eval_failures.txt`
+next to `reward.txt` and repeats it in `score_error.txt` and `metrics.json`,
+naming the command, its exit code and — for rc=124 — the deadline it missed,
+so a harness timeout is never mistaken for a model that produced nothing.
+
+### Using the bundles from another harness
+
+Everything a task needs travels in its bundle; nothing in this repository's
+environment classes is required to run one. Copy the variant for your
+provider — `harbor/tasks-daytona/` for Daytona, `harbor/tasks-docker/` for
+local Docker — and honour `task.toml`'s `cpus` / `memory_mb` / `storage_mb` /
+`gpus` / `gpu_types` as the container's resources and the `[agent]` /
+`[verifier]` timeouts; the image's `ENV` carries the thread pinning and NCCL
+settings, and the docker variant's compose overlay carries the device
+reservation and `/dev/shm` size. Verified: **stock Harbor 0.22.0's `daytona`
+environment runs `tasks-daytona/` as it ships**, and its `docker` environment
+runs the CPU-only tasks of `tasks-docker/` as they ship (it reports no GPU
+capability and refuses tasks with `gpus > 0` — `harbor/harbor_env.py:
+DockerGPUEnvironment` is what lifts that). H200 is opt-in
+(`MLSBENCH_GPU_TYPE=H200` in the environment, see below); without it every
+task runs its H100 profile.
 
 **GPU counts come from each task's own declaration** (up to 8). Size
 `--n-concurrent` against those counts, not against the trial count. Do not
@@ -113,7 +187,8 @@ authenticates the sandbox provider.
 ├── run-daytona.yaml   the same run on Daytona sandboxes (138 non-API tasks)
 ├── run-daytona-lite.yaml  Daytona, restricted to the 30 MLS-Bench-Lite tasks
 ├── harbor_env.py      DockerGPUEnvironment — Harbor's docker env with the GPU flag flipped
-└── tasks/             140 rendered task directories + dataset.toml manifest
+├── tasks-docker/      140 rendered bundles for local Docker (+ dataset.toml)
+└── tasks-daytona/     the same 140 for Daytona: Daytona CPU-sandbox shape, no compose file
     ├── dataset.toml
     ├── mls-bench__causal-observational-linear-gaussian/
     ├── mls-bench__ts-classification/

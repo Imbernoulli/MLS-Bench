@@ -8,7 +8,7 @@
 # evaluator (agent-tool-reasoning, mas-topology) is part of Lite, so no model
 # keys are needed beyond the agent's own.  See run-daytona.yaml for what each
 # option means.  Copy this file and edit `task_names` (globs accepted) for any
-# other subset; do not pass `--path tasks` with it, which would replace this
+# other subset; do not pass `--path tasks-daytona` with it, which would replace this
 # block with the whole dataset.
 
 jobs_dir: jobs-daytona-lite
@@ -27,8 +27,6 @@ environment:
   kwargs:
     gpu_type: H100
     spot: false
-    gpu_memory_gb: 64
-    gpu_cpus: 16
 
 agents:
   - name: oracle
@@ -40,7 +38,7 @@ agents:
 #     model_name: anthropic/claude-opus-4-7
 
 datasets:
-  - path: tasks
+  - path: tasks-daytona
     task_names:
       # LM
       - mls-bench__llm-dllm-demask-strategy

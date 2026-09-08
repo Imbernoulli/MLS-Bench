@@ -479,6 +479,71 @@ def _normalize_pkg_name(name: str) -> str:
     return str(name).lower().replace("-", "").replace("_", "")
 
 
+# Thread-pool knobs every scientific-Python stack reads at import time.
+# Mirrors ``_LOCAL_THREAD_ENV_KEYS`` in ``mlsbench/cli.py`` so a Harbor run and
+# a native local run size their thread pools the same way.
+_THREAD_ENV_KEYS = (
+    "OMP_NUM_THREADS",
+    "OMP_THREAD_LIMIT",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "NUMEXPR_MAX_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+)
+
+
+def _cgroup_cpu_quota() -> float | None:
+    """CPUs this container's cgroup actually grants, or None if unlimited."""
+    try:
+        fields = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if len(fields) == 2 and fields[0] != "max":
+            period = int(fields[1])
+            if period > 0:
+                return int(fields[0]) / period
+    except (OSError, ValueError):
+        pass
+    try:
+        quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text())
+        period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text())
+        if quota > 0 and period > 0:
+            return quota / period
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _available_cpus() -> int:
+    """Cores usable here — the cgroup quota, not what ``nproc`` advertises.
+
+    Harbor turns ``task.toml``'s ``cpus`` into a hard cgroup limit (local
+    Docker via ``deploy.resources.limits``, Daytona via the sandbox's
+    resources), but ``/proc/cpuinfo`` still lists every host core.  Libraries
+    that size their pools from ``os.cpu_count()`` therefore start one thread
+    per host core and burn the quota on context switches.
+    """
+    try:
+        affinity = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity = os.cpu_count() or 1
+    quota = _cgroup_cpu_quota()
+    if quota is None:
+        return max(1, affinity)
+    return max(1, min(affinity, int(quota)))
+
+
+def _thread_budget(concurrency: int = 1) -> int:
+    """Per-process thread budget, split across concurrently running commands."""
+    override = os.environ.get("MLSBENCH_LOCAL_THREADS", "").strip()
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    return max(1, _available_cpus() // max(1, concurrency))
+
+
 def _eval_env(
     *,
     task_meta: Path,
@@ -487,8 +552,15 @@ def _eval_env(
     pkg_dir: Path,
     tc: dict,
     seed: int,
+    threads: int | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
+    # Size the thread pools against the cgroup quota before the package and
+    # command environments are layered on, so a task that deliberately sets
+    # one of these keys still wins.
+    budget = str(threads if threads is not None else _thread_budget())
+    for key in _THREAD_ENV_KEYS:
+        env[key] = budget
     default_pkg = _read_meta_text(task_meta, "package", "")
     package_envs = _load_package_envs(task_meta)
     pkg_name = str(tc.get("package") or default_pkg)
@@ -1066,6 +1138,9 @@ def _run_eval_wave(
     deadline = time.time() + timeout_secs
     running: list[dict] = []
     results: dict[tuple[int, int], dict] = {}
+    # Everything in a wave runs at once, so each command gets a share of the
+    # CPU quota rather than all of it.
+    threads = _thread_budget(len(tasks))
 
     for task, gpu_devices in zip(tasks, assignments):
         entry = task["entry"]
@@ -1079,6 +1154,7 @@ def _run_eval_wave(
             pkg_dir=pkg_dir,
             tc=entry["tc"],
             seed=seed,
+            threads=threads,
         )
         if gpu_devices:
             env["CUDA_VISIBLE_DEVICES"] = gpu_devices
@@ -1464,6 +1540,40 @@ def _has_real_metrics(record: dict) -> bool:
 def _valid_seed_metric_records(per_seed_metrics: dict[int, dict]) -> list[dict]:
     return [metrics for _seed, metrics in sorted(per_seed_metrics.items()) if _has_real_metrics(metrics)]
 
+def _eval_failures(summary: list[dict], config: dict) -> list[str]:
+    """One line per (label, seed) whose eval command did not exit 0.
+
+    rc=124 is this runner's own deadline (the wave's longest ``time`` plus
+    WAVE_GRACE_SEC), so say so in words: a reader of ``score_error.txt``
+    otherwise sees only "no metrics extracted" and cannot tell a harness
+    timeout from a model that produced nothing.
+    """
+    own_deadline: dict[str, int] = {}
+    for tc in _effective_test_cmds(config):
+        label = str(tc.get("label", tc.get("cmd", "test")))
+        own_deadline[label] = (
+            _parse_time_to_seconds(tc.get("time", "1:00:00")) + WAVE_GRACE_SEC
+        )
+    lines: list[str] = []
+    for entry in summary:
+        label = str(entry.get("label", ""))
+        for log in entry.get("logs", []):
+            rc = log.get("rc")
+            if rc in (0, None):
+                continue
+            elapsed = float(log.get("elapsed") or 0.0)
+            where = f"{label} seed {log.get('seed')}"
+            if rc == 124:
+                lines.append(
+                    f"{where}: timed out after {elapsed:.0f}s "
+                    f"(its own deadline is {own_deadline.get(label, 0)}s incl. "
+                    f"{WAVE_GRACE_SEC}s grace; a wave shares its slowest member's)"
+                )
+            else:
+                lines.append(f"{where}: exited rc={rc} after {elapsed:.0f}s")
+    return lines
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     task_meta = Path(args.task_meta)
     out_dir = Path(args.out_dir)
@@ -1519,6 +1629,9 @@ def cmd_score(args: argparse.Namespace) -> int:
         (out_dir / "score_error.txt").write_text("eval_summary.json missing\n")
         return 0
     summary = json.loads(summary_path.read_text())
+    failures = _eval_failures(summary, config)
+    if failures:
+        (out_dir / "eval_failures.txt").write_text("".join(f"{line}\n" for line in failures))
 
     # Parse every log, aggregate per-seed metrics, then mean across seeds.
     test_cmd_by_label = {tc.get("label", tc["cmd"]): tc for tc in config.get("test_cmds", [])}
@@ -1557,7 +1670,12 @@ def cmd_score(args: argparse.Namespace) -> int:
     valid_metrics = _valid_seed_metric_records(per_seed_metrics)
     if not valid_metrics:
         reward_out.write_text("0\n")
-        (out_dir / "score_error.txt").write_text("no metrics extracted from logs\n")
+        detail = "no metrics extracted from logs\n"
+        if failures:
+            detail += "eval commands that did not finish cleanly:\n" + "".join(
+                f"  {line}\n" for line in failures
+            )
+        (out_dir / "score_error.txt").write_text(detail)
         return 0
 
     mean_metrics = _aggregate_metrics(valid_metrics)
@@ -1580,6 +1698,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     (out_dir / "metrics.json").write_text(json.dumps({
         "combined_score": combined,
         "reward": reward,
+        "eval_failures": failures,
         "mean_metrics": mean_metrics,
         "per_seed_metrics": per_seed_metrics,
     }, indent=2))

@@ -15,6 +15,33 @@
 # reference before verification.
 FROM {{ base_image }}
 
+# A container sees every core the host has (`nproc` reports the host count)
+# while its cgroup only grants `task.toml`'s `cpus`, so an unpinned
+# OpenMP/MKL/PyTorch process starts one thread per host core and spends the
+# quota on context switches — CPU-bound evals then run an order of magnitude
+# slower and trip their per-command deadline. Bake the task's own CPU budget
+# in as the default so the agent's development runs get it too;
+# `tests/score_task.py` recomputes it from the live cgroup at verify time and
+# divides it across the commands a wave runs concurrently.
+ENV OMP_NUM_THREADS={{ cpus }} \
+    OMP_THREAD_LIMIT={{ cpus }} \
+    MKL_NUM_THREADS={{ cpus }} \
+    OPENBLAS_NUM_THREADS={{ cpus }} \
+    NUMEXPR_NUM_THREADS={{ cpus }} \
+    NUMEXPR_MAX_THREADS={{ cpus }} \
+    VECLIB_MAXIMUM_THREADS={{ cpus }} \
+    BLIS_NUM_THREADS={{ cpus }}
+{% if gpu_count > 1 %}
+# NCCL >= 2.19 allocates communication buffers through the cuMem driver API
+# and uses NVLink SHARP where the fabric advertises it. Both paths fail with
+# `cudaErrorIllegalState` (Cuda failure 401) inside a GPU sandbox — cuMem on
+# the first collective, NVLS in `transport/nvls.cc` on multi-GPU DDP. The
+# ring/tree transports and the classic allocator work everywhere, so make
+# them the image default; a host that prefers the faster paths can override
+# either variable.
+ENV NCCL_CUMEM_ENABLE=0 \
+    NCCL_NVLS_ENABLE=0
+{% endif %}
 {% if scaffold_files -%}
 COPY _scaffold/ {{ workdir }}/
 {%- endif %}

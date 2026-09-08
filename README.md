@@ -266,9 +266,9 @@ export PYTHONPATH=.:../harbor_adapter/src
 harbor run -c run-daytona-lite.yaml                   # the 30 MLS-Bench-Lite tasks
 harbor run -c run-daytona.yaml                        # all 138 non-API tasks
 harbor run -c run-daytona.yaml \
-  --path tasks/mls-bench__robo-diffusion-policy \
+  --path tasks-daytona/mls-bench__robo-diffusion-policy \
   --agent oracle                                      # one task, strongest baseline
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+harbor run -c run-daytona.yaml --path tasks-daytona/mls-bench__TASK \
   --agent claude-code --model anthropic/claude-opus-4-7 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"   # one task, agent
 ```
@@ -277,14 +277,26 @@ harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
 starts. The two tasks whose evaluators call DeepSeek/DashScope need those keys;
 the other 138 do not.
 
-`run-daytona.yaml` defaults to `gpu_type: H100`, `spot: false`,
-`gpu_memory_gb: 64` and `gpu_cpus: 16`; any `--ek`
-overrides the file for one invocation. The four verl `llm-rl-*` tasks are
-raised to 128 GB automatically; their validation step is OOM-killed at 64.
-H100 is the default because Daytona's pool also holds Blackwell (sm_120)
-cards that the pinned CUDA wheels have no kernels for. Unlike local Docker,
-Daytona enforces `task.toml` resources as hard cgroup limits, hence the
-RAM/CPU floors and the thread caps the adapter injects.
+`run-daytona.yaml` defaults to `gpu_type: H100` and `spot: false`; any `--ek`
+overrides the file for one invocation. H100 is the default because Daytona's
+pool also holds Blackwell (sm_120) cards that the pinned CUDA wheels have no
+kernels for.
+
+Sandbox CPU and RAM come from each task's `task.toml`. Two rendered variants
+ship: `harbor/tasks-daytona/` (Dockerfile-only; CPU-only tasks at Daytona's
+4 CPU / 8 GB sandbox ceiling) and `harbor/tasks-docker/` (native calibration,
+8 CPUs / 32 GB for CPU-only tasks, plus the Compose overlay a local run
+needs). GPU tasks are sized the same in both: 12 CPUs per GPU (16 minimum) and
+64 GB, 128 GB for the four verl `llm-rl-*` tasks (their validation step is
+OOM-killed at 64).
+Both providers enforce those numbers — Daytona provisions them, local Docker
+applies them through Compose's `deploy.resources.limits` — and the task images
+pin `OMP_NUM_THREADS` and friends to the same budget, since a container reports
+every core the *host* has. Where a provider's ceiling is lower (Daytona allows
+16 CPUs per GPU, and 4 CPUs / 8 GB on a CPU-only sandbox), the adapter clamps
+to it and logs a warning.
+`--ek gpu_cpus=<n>` / `--ek gpu_memory_gb=<n>` raise the floor for a one-off
+run.
 
 GPU counts come from each task's own declaration; size `--n-concurrent`
 against those, and don't lower them with `--override-gpus`.
@@ -313,7 +325,7 @@ export DAYTONA_API_KEY="<your-daytona-key>"
 export PYTHONPATH=.:../harbor_adapter/src
 
 # one task, one agent
-harbor run -c run-daytona.yaml --path tasks/mls-bench__ts-classification \
+harbor run -c run-daytona.yaml --path tasks-daytona/mls-bench__ts-classification \
   --agent claude-code --model anthropic/claude-opus-4-7 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 
@@ -325,7 +337,7 @@ harbor run -c run-daytona-lite.yaml \
 
 `--path` takes a single task *or* a dataset directory; it cannot be repeated,
 and a directory replaces the config's `datasets:` block, its exclude list
-included. There is no separate Lite dataset — `harbor/tasks/` is the full
+included. There is no separate Lite dataset — `harbor/tasks-daytona/` (and its local-Docker twin `harbor/tasks-docker/`) is the full
 140 — so `run-daytona-lite.yaml` names the 30 in `task_names`; copy it for
 any other subset (`task_names` and `exclude_task_names` accept globs).
 

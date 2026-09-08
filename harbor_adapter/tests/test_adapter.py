@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTER_SRC = ROOT / "harbor_adapter" / "src"
@@ -449,6 +451,69 @@ def _gpu_config(test_cmds: list[dict], seeds: list[int] | None = None) -> dict:
     return config
 
 
+def test_resources_state_what_a_task_actually_needs():
+    """`task.toml` cpus/memory_mb are hard limits, so they must be real.
+
+    Harbor's Daytona provider provisions them verbatim and local Docker turns
+    them into cgroup limits via Compose's `deploy.resources.limits`, so a
+    downstream harness that consumes the rendered bundles without this repo's
+    environment classes gets exactly these numbers and nothing else.
+    """
+    gpu = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00"}]))
+    assert (gpu["cpus"], gpu["memory_mb"]) == (16, 64 * 1024)
+
+    # Native SLURM gives 12 CPUs per card; the 16 floor only matters below it.
+    two = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 2.0, "time": "1:00:00"}]))
+    assert (two["gpus"], two["cpus"]) == (2, 24)
+    eight = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 8.0, "time": "1:00:00"}]))
+    assert (eight["gpus"], eight["cpus"]) == (8, 96)
+
+    assert gpu["storage_mb"] == 60 * 1024
+    assert _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00"}]), provider="daytona") == gpu
+
+    # CPU-only tasks differ per variant: native's 8 CPUs / 32 GB for docker,
+    # Daytona's CPU-sandbox ceiling (4 / 8 GB / 10 GB) for daytona — stock
+    # Harbor cannot clamp, so a daytona bundle declaring 8 / 32 would fail at
+    # sandbox creation for a consumer without this repository's classes.
+    cpu_cfg = {"test_cmds": [{"label": "a", "group": 1, "compute": 0.0, "time": "1:00:00"}]}
+    docker = _resources({}, cpu_cfg, provider="docker")
+    assert (docker["cpus"], docker["memory_mb"], docker["storage_mb"], docker["gpus"]) == (8, 32 * 1024, 30 * 1024, 0)
+    daytona = _resources({}, cpu_cfg, provider="daytona")
+    assert (daytona["cpus"], daytona["memory_mb"], daytona["storage_mb"], daytona["gpus"]) == (4, 8 * 1024, 10 * 1024, 0)
+    with pytest.raises(ValueError):
+        _resources({}, cpu_cfg, provider="modal")
+
+
+def test_verl_bundles_declare_the_128g_floor_their_validation_needs():
+    """verl's validation generation is OOM-killed at 64 GB and completes at 128."""
+    config = _gpu_config([{"label": "a", "group": 1, "compute": 2.0, "time": "10:00:00"}])
+    assert _resources({}, config, "verl")["memory_mb"] == 128 * 1024
+    # Package matching is case/separator-insensitive, like native resolution.
+    assert _resources({}, config, "VERL")["memory_mb"] == 128 * 1024
+    assert _resources({}, config, "nanoGPT")["memory_mb"] == 64 * 1024
+
+
+def test_resources_honor_a_declared_mem_up_to_the_validated_ceiling():
+    """`test_cmds[].mem` is the task's own statement of need (SLURM `--mem`).
+
+    The four verl RL commands declare `mem = 200`; 128 GB is the largest GPU
+    sandbox validated on Daytona, so the declaration raises the floor only up
+    to that ceiling. A provider whose ceiling is lower clamps at request time.
+    """
+    modest = _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00", "mem": 96}])
+    assert _resources({}, modest)["memory_mb"] == 96 * 1024
+
+    huge = _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00", "mem": 200}])
+    assert _resources({}, huge)["memory_mb"] == 128 * 1024
+
+    # ml-active-learning declares mem = 64 for a CPU-only group: honored on
+    # docker (a cgroup limit costs nothing), not on daytona, where it would
+    # push the sandbox past the CPU-sandbox ceiling and the task passes at 8 GB.
+    cpu_only = {"test_cmds": [{"label": "a", "group": 1, "compute": 0.0, "time": "1:00:00", "mem": 64}]}
+    assert _resources({}, cpu_only, provider="docker")["memory_mb"] == 64 * 1024
+    assert _resources({}, cpu_only, provider="daytona")["memory_mb"] == 8 * 1024
+
+
 def test_resources_balances_waves_instead_of_clamping_to_the_cap():
     # cv-dbm-sampler: 3 whole-GPU jobs of 4 GPUs in one group = 12 concurrent.
     # Clamping to the cap would reserve 8 and run waves of 2 jobs then 1,
@@ -622,8 +687,9 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
     mb = MlsBenchRoot(root=repo)
     drift = {}
     for cfg_path in sorted((repo / "tasks").glob("*/config.json")):
+      for variant, provider in (("tasks-docker", "docker"), ("tasks-daytona", "daytona")):
         name = cfg_path.parent.name
-        bundle = repo / "harbor" / "tasks" / f"mls-bench__{name}"
+        bundle = repo / "harbor" / variant / f"mls-bench__{name}"
         toml = bundle / "task.toml"
         if not toml.exists():
             continue
@@ -632,7 +698,7 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
             pkg_config = _load_pkg_config(mb, _resolve_package(config))
         except Exception:
             pkg_config = {}
-        res = _resources(pkg_config, config)
+        res = _resources(pkg_config, config, provider=provider)
         text = toml.read_text()
         want = {
             "gpus": res["gpus"],
@@ -665,5 +731,5 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
             if int(m.group(1)) != res["gpus"]:
                 bad["compose count"] = {"rendered": int(m.group(1)), "adapter": res["gpus"]}
         if bad:
-            drift[name] = bad
+            drift[f"{variant}/{name}"] = bad
     assert not drift, _json.dumps(drift, indent=2)
