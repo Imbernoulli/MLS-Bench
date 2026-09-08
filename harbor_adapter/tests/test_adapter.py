@@ -480,8 +480,17 @@ def test_resources_state_what_a_task_actually_needs():
     assert (docker["cpus"], docker["memory_mb"], docker["storage_mb"], docker["gpus"]) == (8, 32 * 1024, 30 * 1024, 0)
     daytona = _resources({}, cpu_cfg, provider="daytona")
     assert (daytona["cpus"], daytona["memory_mb"], daytona["storage_mb"], daytona["gpus"]) == (4, 8 * 1024, 10 * 1024, 0)
+    # Modal has no small-sandbox ceiling, so CPU-only tasks keep the native
+    # shape there; its one hard limit is 64 CPUs per sandbox ("Function CPU
+    # request out of bounds. Must be between 0.125 and 64 cores."), which
+    # only the four 8-GPU tasks hit.
+    modal = _resources({}, cpu_cfg, provider="modal")
+    assert (modal["cpus"], modal["memory_mb"], modal["storage_mb"], modal["gpus"]) == (8, 32 * 1024, 30 * 1024, 0)
+    eight_modal = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 8.0, "time": "1:00:00"}]), provider="modal")
+    assert (eight_modal["gpus"], eight_modal["cpus"]) == (8, 64)
+    assert _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 2.0, "time": "1:00:00"}]), provider="modal")["cpus"] == 24
     with pytest.raises(ValueError):
-        _resources({}, cpu_cfg, provider="modal")
+        _resources({}, cpu_cfg, provider="beam")
 
 
 def test_verl_bundles_declare_the_128g_floor_their_validation_needs():
@@ -512,6 +521,7 @@ def test_resources_honor_a_declared_mem_up_to_the_validated_ceiling():
     cpu_only = {"test_cmds": [{"label": "a", "group": 1, "compute": 0.0, "time": "1:00:00", "mem": 64}]}
     assert _resources({}, cpu_only, provider="docker")["memory_mb"] == 64 * 1024
     assert _resources({}, cpu_only, provider="daytona")["memory_mb"] == 8 * 1024
+    assert _resources({}, cpu_only, provider="modal")["memory_mb"] == 64 * 1024
 
 
 def test_resources_balances_waves_instead_of_clamping_to_the_cap():
@@ -687,7 +697,7 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
     mb = MlsBenchRoot(root=repo)
     drift = {}
     for cfg_path in sorted((repo / "tasks").glob("*/config.json")):
-      for variant, provider in (("tasks-docker", "docker"), ("tasks-daytona", "daytona")):
+      for variant, provider in (("tasks-docker", "docker"), ("tasks-daytona", "daytona"), ("tasks-modal", "modal")):
         name = cfg_path.parent.name
         bundle = repo / "harbor" / variant / f"mls-bench__{name}"
         toml = bundle / "task.toml"

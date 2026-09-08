@@ -22,6 +22,7 @@ import tomli_w
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from .daytona_compat import apply_daytona_compatibility
+from .compose_overlay import SHM_SIZE_GB, compose_overlay_text  # noqa: F401  (re-exported)
 
 
 # --------------------------------------------------------------------------- #
@@ -787,9 +788,9 @@ WAVE_GRACE_SEC = 300
 # to state what a task really needs — a downstream harness that consumes the
 # rendered bundles without the adapter's environment classes gets nothing else.
 #
-# Two rendered variants ship, one per provider, because the providers' hard
-# constraints do not intersect cleanly and a bundle that satisfies both would
-# be right for neither:
+# Three rendered variants ship, one per provider, because the providers' hard
+# constraints do not intersect cleanly and a bundle that satisfies all of them
+# would be right for none:
 #
 # * ``docker`` (harbor/tasks-docker): what the tasks were calibrated on.
 #   MLS-Bench's native SLURM path (src/mlsbench/agent/slurm.py) gives a GPU
@@ -804,11 +805,18 @@ WAVE_GRACE_SEC = 300
 #   at all: stock Harbor's Daytona provider refuses GPU tasks that carry one
 #   ("only supported for Dockerfile-based tasks"), and its sandboxes come
 #   with a large /dev/shm anyway.
+# * ``modal`` (harbor/tasks-modal): the native calibration for CPU-only tasks
+#   too (Modal has no small-sandbox ceiling), no Compose file (Harbor's Modal
+#   provider builds the Dockerfile directly and its sandboxes have a large
+#   /dev/shm), and CPUs capped at Modal's 64 cores per sandbox ("Function CPU
+#   request out of bounds. Must be between 0.125 and 64 cores."), which only
+#   touches the four 8-GPU tasks (96 -> 64). Modal reports the granted cores
+#   as `nproc`, but the images pin the thread keys anyway.
 #
 # GPU memory is not taken from SLURM (`max(mem, gpus * 100)` GB is cluster
 # generosity, not a measured need): 64 GB is the floor the Daytona validation
 # runs exercised for every GPU task, 128 GB the verl bundles.
-PROVIDERS = ("docker", "daytona")
+PROVIDERS = ("docker", "daytona", "modal")
 CPUS_PER_GPU = 12
 GPU_TASK_CPUS = 16
 GPU_TASK_MEMORY_GB = 64
@@ -817,6 +825,13 @@ CPU_TASK_SHAPE_GB: dict[str, tuple[int, int, int]] = {
     # provider: (cpus, memory GB, storage GB)
     "docker": (8, 32, 30),
     "daytona": (4, 8, 10),
+    "modal": (8, 32, 30),
+}
+
+# Hard per-sandbox CPU ceilings a provider enforces at creation time. Modal
+# refuses anything above 64 cores, so its variant caps there (8-GPU tasks).
+PROVIDER_MAX_CPUS: dict[str, int] = {
+    "modal": 64,
 }
 
 # Per-package floors for packages whose peak RSS is known to exceed the
@@ -1058,28 +1073,8 @@ def _verifier_timeout_sec(config: dict, gpus: int) -> int:
     return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
 
 
-# /dev/shm for a task container on local Docker, matching the `--shm-size=16g`
-# MLS-Bench's native docker path uses (src/mlsbench/agent/tools.py).
-SHM_SIZE_GB = 16
-
-
-def compose_overlay_text(gpus: int, gpu_ids: list[str] | None = None) -> str:
-    """The docker variant's Compose overlay: /dev/shm plus the device reservation."""
-    text = "services:\n  main:\n" f"    shm_size: {SHM_SIZE_GB}gb\n"
-    if gpus > 0:
-        text += (
-            "    deploy:\n"
-            "      resources:\n"
-            "        reservations:\n"
-            "          devices:\n"
-            "            - driver: nvidia\n"
-        )
-        if gpu_ids:
-            text += "              device_ids: [" + ", ".join(f'"{g}"' for g in gpu_ids[:gpus]) + "]\n"
-        else:
-            text += f"              count: {gpus}\n"
-        text += "              capabilities: [gpu]\n"
-    return text
+# `SHM_SIZE_GB` / `compose_overlay_text` live in mls_bench.compose_overlay so
+# that harbor_env.py can write the overlay without the renderer's dependencies.
 
 
 def _package_memory_gb(package: str) -> int:
@@ -1123,7 +1118,7 @@ def _resources(
         # docker, where it is only a cgroup limit; on Daytona it would push the
         # sandbox past the CPU-sandbox ceiling, and the task passes at 8 GB.
         memory_gb = cpu_memory_gb
-        if provider == "docker":
+        if provider in ("docker", "modal"):
             memory_gb = max(memory_gb, _declared_memory_gb(config))
         storage_gb = cpu_storage_gb
     memory_mb = memory_gb * 1024
@@ -1163,6 +1158,9 @@ def _resources(
                 f"{gpus} — this task needs a host with at least that many"
             )
     cpus = max(GPU_TASK_CPUS, gpus * CPUS_PER_GPU) if use_cuda else cpu_cpus
+    cap = PROVIDER_MAX_CPUS.get(provider)
+    if cap is not None:
+        cpus = min(cpus, cap)
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
@@ -1310,10 +1308,10 @@ def render_task(
     # NVIDIA device reservation and a 16 GB /dev/shm (PyTorch DataLoader
     # workers pass batches through /dev/shm; docker's 64 MB default kills them
     # mid-eval with "Bus error ... out of shared memory"; native runs docker
-    # with `--shm-size=16g`). The daytona variant ships none: stock Harbor's
-    # Daytona provider refuses GPU tasks that carry any compose file, and its
-    # sandboxes get their GPUs from `[environment].gpus` and have a large
-    # /dev/shm already.
+    # with `--shm-size=16g`). The daytona and modal variants ship none: stock
+    # Harbor's Daytona provider refuses GPU tasks that carry any compose file,
+    # Modal builds the Dockerfile directly, and both providers' sandboxes get
+    # their GPUs from `[environment].gpus` and have a large /dev/shm already.
     gpus_int = int(res.get("gpus") or 0)
     overlay_path = env_dir / "docker-compose.yaml"
     if provider == "docker":

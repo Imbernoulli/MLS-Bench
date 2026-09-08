@@ -499,10 +499,12 @@ def test_daytona_run_configs_select_custom_environment():
 def test_rendered_bundles_carry_their_own_cpu_ram_and_thread_settings():
     """Everything a downstream harness needs is in the bundle, not in this repo.
 
-    Two variants ship. ``harbor/tasks-docker`` carries the native calibration
+    Three variants ship. ``harbor/tasks-docker`` carries the native calibration
     and the Compose overlay a local run needs; ``harbor/tasks-daytona`` carries
     Daytona's CPU-sandbox shape for CPU-only tasks and no compose file at all,
-    because stock Harbor's Daytona provider refuses GPU tasks that have one.
+    because stock Harbor's Daytona provider refuses GPU tasks that have one;
+    ``harbor/tasks-modal`` is the native calibration without a compose file
+    and with CPUs capped at Modal's 64 per sandbox.
     A consumer copies exactly one of them and never imports
     ``mls_bench.harbor_env``.
     """
@@ -517,7 +519,8 @@ def test_rendered_bundles_carry_their_own_cpu_ram_and_thread_settings():
         "VECLIB_MAXIMUM_THREADS",
         "BLIS_NUM_THREADS",
     )
-    for variant, cpu_shape in (("tasks-docker", (8, 32 * 1024)), ("tasks-daytona", (4, 8 * 1024))):
+    for variant, cpu_shape in (("tasks-docker", (8, 32 * 1024)), ("tasks-daytona", (4, 8 * 1024)), ("tasks-modal", (8, 32 * 1024))):
+        cpu_cap = 64 if variant == "tasks-modal" else 10**9  # Modal: 0.125-64 cores per sandbox
         tasks = sorted(p for p in (Path("harbor") / variant).iterdir() if (p / "task.toml").is_file())
         assert len(tasks) == 140, variant
         verl = gpu = cpu = 0
@@ -535,10 +538,10 @@ def test_rendered_bundles_carry_their_own_cpu_ram_and_thread_settings():
                 assert gpu_types is None, (variant, task_dir.name)
             elif package == "verl":
                 verl += 1
-                assert (cpus, memory_mb) == (max(16, 12 * gpus), 128 * 1024), (variant, task_dir.name)
+                assert (cpus, memory_mb) == (min(max(16, 12 * gpus), cpu_cap), 128 * 1024), (variant, task_dir.name)
             else:
                 gpu += 1
-                assert (cpus, memory_mb) == (max(16, 12 * gpus), 64 * 1024), (variant, task_dir.name)
+                assert (cpus, memory_mb) == (min(max(16, 12 * gpus), cpu_cap), 64 * 1024), (variant, task_dir.name)
             if gpus > 0:
                 # Newer Harbor's Daytona provider maps this to a placement
                 # constraint; the images' CUDA wheels have no Blackwell kernels.
@@ -633,9 +636,56 @@ def test_lite_config_lists_exactly_the_readme_lite_tasks():
     for name in names:
         assert (Path("harbor/tasks-daytona") / name / "task.toml").is_file(), name
         assert (Path("harbor/tasks-docker") / name / "task.toml").is_file(), name
+        assert (Path("harbor/tasks-modal") / name / "task.toml").is_file(), name
     # Same provider settings as the full-dataset config, so the two cannot drift.
     assert lite["environment"] == full["environment"]
     assert lite["n_concurrent_trials"] == full["n_concurrent_trials"]
+
+    # The Modal pair mirrors the Daytona pair, task list included.
+    modal_lite = yaml.safe_load(Path("harbor/run-modal-lite.yaml").read_text())
+    modal_full = yaml.safe_load(Path("harbor/run-modal.yaml").read_text())
+    (modal_dataset,) = modal_lite["datasets"]
+    assert modal_dataset["path"] == "tasks-modal"
+    assert modal_dataset["task_names"] == names
+    assert modal_full["datasets"][0]["path"] == "tasks-modal"
+    assert set(modal_full["datasets"][0]["exclude_task_names"]) == set(full["datasets"][0]["exclude_task_names"])
+    assert modal_lite["environment"] == modal_full["environment"]
+    assert modal_full["environment"]["import_path"] == "harbor_env:ModalEnvironment"
+
+
+def test_modal_environment_maps_gpu_type_and_exports_the_h200_profile(tmp_path: Path):
+    """``harbor/tasks-modal`` needs nothing from this module; the class only
+    turns ``--ek gpu_type=H200`` into Modal's ``h200:<n>`` request (with the
+    task's native h200 GPU count when it has such a block) and puts
+    ``MLSBENCH_GPU_TYPE`` in the persistent env, like the other two classes."""
+    pytest.importorskip("harbor.environments.modal")
+    module = _module()
+    from harbor.models.task.config import EnvironmentConfig
+
+    task_dir = tmp_path / "task"
+    env_dir = task_dir / "environment"
+    env_dir.mkdir(parents=True)
+    (env_dir / "Dockerfile").write_text("FROM ubuntu:22.04\n")
+    trial_paths = TrialPaths(task_dir / "trial")
+    trial_paths.mkdir()
+
+    def make(**kwargs):
+        return module.ModalEnvironment(
+            environment_dir=env_dir,
+            environment_name="modal-test",
+            session_id="modal-test",
+            trial_paths=trial_paths,
+            task_env_config=EnvironmentConfig(cpus=16, memory_mb=65536, gpus=1, gpu_types=["h100"]),
+            **kwargs,
+        )
+
+    stock = make()
+    assert stock._gpu_config() == "h100:1"
+    assert "MLSBENCH_GPU_TYPE" not in stock._persistent_env
+
+    h200 = make(gpu_type="H200")
+    assert h200._gpu_config() == "h200:1"  # no native h200 block here: count unchanged
+    assert h200._persistent_env["MLSBENCH_GPU_TYPE"] == "H200"
 
 
 def _h200_task(tmp_path: Path, name: str, gpus: int = 2) -> Path:
@@ -981,3 +1031,28 @@ def test_local_docker_writes_the_gpu_and_shm_overlay_per_trial(tmp_path: Path):
     cpu_main = yaml.safe_load(cpu_env._docker_compose_paths[-1].read_text())["services"]["main"]
     assert cpu_main == {"shm_size": "16gb"}
 
+
+
+def test_harbor_env_imports_without_the_renderer_dependencies():
+    """`harbor_env.py` is what `run.yaml` / `run-daytona.yaml` / `run-modal.yaml`
+    load inside a plain `uv tool install "harbor[...]"` environment, which
+    has PyYAML and the provider SDKs but not the renderer's Jinja2/tomli_w.
+    The 2026-09-08 README check on Harbor 0.22.0 failed every local trial with
+    `ModuleNotFoundError: No module named 'tomli_w'` because the Docker class
+    reached into `mls_bench.adapter` for the compose overlay text."""
+    import os, subprocess, sys
+    code = (
+        "import sys\n"
+        "sys.modules['tomli_w'] = None\n"
+        "sys.modules['jinja2'] = None\n"
+        "import mls_bench.harbor_env as m\n"
+        "from mls_bench.compose_overlay import compose_overlay_text\n"
+        "assert 'shm_size: 16gb' in compose_overlay_text(0)\n"
+        "assert 'count: 2' in compose_overlay_text(2)\n"
+        "assert 'device_ids' in compose_overlay_text(1, ['3'])\n"
+        "m.DockerGPUEnvironment, m.DaytonaEnvironment, m.ModalEnvironment\n"
+        "print('ok')\n"
+    )
+    env = dict(os.environ, PYTHONPATH=str(Path("harbor_adapter/src").resolve()))
+    out = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, env=env)
+    assert out.returncode == 0 and "ok" in out.stdout, out.stderr[-2000:]

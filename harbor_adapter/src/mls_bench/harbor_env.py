@@ -34,6 +34,11 @@ import yaml
 from harbor.environments.capabilities import EnvironmentCapabilities
 from harbor.environments.docker.docker import DockerEnvironment
 
+try:  # Harbor's Modal provider ships behind the ``harbor[modal]`` extra.
+    from harbor.environments.modal import ModalEnvironment as _HarborModalEnvironment
+except Exception:  # pragma: no cover - Harbor without the modal extra
+    _HarborModalEnvironment = None
+
 try:  # Daytona >=0.205 exposes explicit GPU type selection.
     from daytona import GpuType as _DaytonaGpuType
 except ImportError:  # pragma: no cover - only exercised with old SDKs
@@ -911,7 +916,7 @@ class DockerGPUEnvironment(DockerEnvironment):
     def _write_mlsbench_compose_overlay(self) -> Path:
         """Device reservation + /dev/shm for this trial, next to Harbor's own
         per-trial mounts overlay (``docker-compose-mounts.json``)."""
-        from mls_bench.adapter import compose_overlay_text
+        from mls_bench.compose_overlay import compose_overlay_text
 
         gpus = int(getattr(self.task_env_config, "gpus", 0) or 0)
         path = Path(self.trial_paths.trial_dir) / self._MLSBENCH_COMPOSE_OVERLAY
@@ -968,10 +973,76 @@ class DockerGPUEnvironment(DockerEnvironment):
         )
 
 
+if _HarborModalEnvironment is None:  # pragma: no cover
+
+    class ModalEnvironment:  # type: ignore[no-redef]
+        """Placeholder when Harbor was installed without the ``modal`` extra."""
+
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            raise ImportError(
+                "harbor_env:ModalEnvironment needs Harbor's Modal provider: "
+                'install "harbor[modal]" (Harbor >= 0.22) and run `modal token new`.'
+            )
+
+else:
+
+    class ModalEnvironment(_HarborModalEnvironment):  # type: ignore[no-redef]
+        """Harbor's ``modal`` environment plus MLS-Bench's GPU-type switch.
+
+        ``harbor/tasks-modal`` runs on the stock class as shipped: ``task.toml``
+        carries the sandbox shape (CPUs capped at Modal's 64 per sandbox) and
+        its ``gpu_types = ["h100"]`` becomes Modal's ``h100:<n>`` request.
+        This subclass adds only ``--ek gpu_type=H200``: the sandbox asks for
+        that card — with the task's native ``h200`` GPU count when the task
+        has such a block — and ``MLSBENCH_GPU_TYPE`` plus the block's env
+        reach every exec, agent and verifier alike, exactly as on Daytona and
+        local Docker.  Everything else (``labels``, ``region``,
+        ``sandbox_timeout_secs``, ...) is the stock class's.
+        """
+
+        def __init__(
+            self,
+            environment_dir: Path,
+            environment_name: str,
+            session_id: str,
+            trial_paths: Any,
+            task_env_config: Any,
+            *args: Any,
+            gpu_type: Any = None,
+            **kwargs: Any,
+        ):
+            self._mlsbench_gpu_type = (
+                str(gpu_type).strip() if gpu_type not in (None, "") else None
+            )
+            super().__init__(
+                environment_dir=environment_dir,
+                environment_name=environment_name,
+                session_id=session_id,
+                trial_paths=trial_paths,
+                task_env_config=task_env_config,
+                *args,
+                **kwargs,
+            )
+            if self._mlsbench_gpu_type:
+                profile = gpu_profile_env(self.environment_dir, self._mlsbench_gpu_type)
+                # The task's own ``[environment].env`` keeps precedence.
+                self._persistent_env = {**profile, **self._persistent_env}
+
+        def _gpu_config(self) -> str | None:
+            base = super()._gpu_config()
+            if base is None or not self._mlsbench_gpu_type:
+                return base
+            count = int(str(base).rsplit(":", 1)[-1])
+            if "H200" in self._mlsbench_gpu_type.upper():
+                count = _h200_gpu_count_from_rendered_task(self.environment_dir, count)
+            return f"{self._mlsbench_gpu_type.lower()}:{count}"
+
+
 __all__ = [
     "DaytonaEnvironment",
     "DaytonaClientManager",
     "DockerGPUEnvironment",
+    "ModalEnvironment",
     "gpu_profile_env",
     "is_gpu_reservation_only_compose",
 ]

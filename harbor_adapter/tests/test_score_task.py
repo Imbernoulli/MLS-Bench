@@ -653,7 +653,7 @@ def test_rendered_bundles_match_the_verifier_template():
     guard fix initially shipped as a no-op). Fail loudly on drift.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    tasks_roots = [repo_root / "harbor" / v for v in ("tasks-docker", "tasks-daytona")]
+    tasks_roots = [repo_root / "harbor" / v for v in ("tasks-docker", "tasks-daytona", "tasks-modal")]
     tasks_roots = [r for r in tasks_roots if r.is_dir()]
     if not tasks_roots:
         return  # adapter-only checkout: nothing rendered to compare against
