@@ -694,6 +694,12 @@ WAVE_GRACE_SEC = 300
 # that is not always locked; a second between starts keeps those from
 # landing in the same instant without changing the wave's deadline.
 WAVE_LAUNCH_STAGGER_SEC = 1.0
+# After a wave in which a command was killed at its deadline, wait this long
+# before starting the next one. A killed torchrun leaves its rendezvous port
+# in TIME_WAIT for the kernel's 60 s; the next group of cv-diffusion-*
+# derives the same port from the task name and died 3 s later with
+# EADDRINUSE (Modal sweep, 2026-09-09), turning one timeout into two.
+WAVE_KILL_SETTLE_SEC = 65
 
 
 def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
@@ -1503,6 +1509,13 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                 _remove_budget_legacy_links(eval_task_links)
                 shutil.rmtree(eval_task_dir, ignore_errors=True)
             records.update(wave_results)
+            if any(int(r.get("rc", 0) or 0) == 124 for r in wave_results.values()):
+                print(
+                    f"[wave] a command was killed at its deadline; waiting "
+                    f"{WAVE_KILL_SETTLE_SEC}s for its sockets to clear before the next wave",
+                    flush=True,
+                )
+                time.sleep(WAVE_KILL_SETTLE_SEC)
             for task in runnable_tasks:
                 entry = task["entry"]
                 seed = int(task["seed"])
