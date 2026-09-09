@@ -80,8 +80,7 @@ harbor run -e modal --path tasks-modal/mls-bench__TASK --agent oracle   # stock 
 adds only `--ek gpu_type=H200` (see below). Modal's other limits: a sandbox
 lives at most 24 hours (`sandbox_timeout_secs`, default and maximum 86400),
 so a 5-hour agent budget plus a verifier deadline above 19 hours does not fit
-in one sandbox — that is `robo-humanoid-sim2real-algo` and
-`robo-diffusion-policy`, whose oracle runs are far shorter. Modal reports the
+in one sandbox — ten tasks declare one (`llm-kv-structural-reduction`, `marl-centralized-critic`, `meta-fewshot-classification`, `pde-design-solver`, `rl-intrinsic-exploration`, `rl-offline-off2on`, `rl-value-atari`, `robo-diffusion-sampling-method`, `robo-humanoid-sim2real-algo`, `stf-traffic-forecast`); their oracle runs are far shorter. Modal reports the
 granted cores as `nproc`, and its GPU sandboxes have a large `/dev/shm`.
 
 ### The 5-hour agent budget

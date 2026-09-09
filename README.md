@@ -343,10 +343,10 @@ harbor run -e modal --path tasks-modal/mls-bench__TASK \
   --agent oracle                                      # the same on stock Harbor, no PYTHONPATH
 ```
 
-Modal caps a sandbox at 24 hours, which the 5-hour agent budget plus the
-verifier deadline exceeds only for `robo-humanoid-sim2real-algo` and
-`robo-diffusion-policy` (oracle runs of both are far shorter). `--ek
-labels='{"run":"x"}'` tags every sandbox, `--ek region=...` pins placement.
+Modal caps a sandbox at 24 hours. Ten tasks declare a verifier deadline that,
+added to the 5-hour agent budget, exceeds it (`llm-kv-structural-reduction`, `marl-centralized-critic`, `meta-fewshot-classification`, `pde-design-solver`, `rl-intrinsic-exploration`, `rl-offline-off2on`, `rl-value-atari`, `robo-diffusion-sampling-method`, `robo-humanoid-sim2real-algo`, `stf-traffic-forecast`); an agent run of those can be cut off while verifying, though
+their oracle runs are far shorter. `--ek labels='{"run":"x"}'` tags every
+sandbox, `--ek region=...` pins placement.
 
 ### Evaluating an agent
 

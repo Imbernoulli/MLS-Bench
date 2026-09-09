@@ -14,8 +14,8 @@
 # Useful `--ek` keys (stock): `labels='{"run":"x"}'` tags every sandbox,
 # `region=us-east` pins placement, `sandbox_timeout_secs=N` (Modal caps a
 # sandbox at 86400 s, so a 5 h agent budget plus a verifier deadline above
-# 19 h cannot fit in one sandbox — only `robo-humanoid-sim2real-algo` and
-# `robo-diffusion-policy` come close; their oracle runs are far shorter).
+# 19 h cannot fit in one sandbox — ten tasks declare one, see harbor/README.md;
+# their oracle runs are far shorter).
 
 jobs_dir: jobs-modal
 n_attempts: 1
