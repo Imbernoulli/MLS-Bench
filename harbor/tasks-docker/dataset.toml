@@ -83,7 +83,7 @@ digest = "sha256:2d1fc6a20371d04ae7d337cdd5d6bad703b00a585d46e1d794fbef6dee2c052
 
 [[tasks]]
 name = "mls-bench/cv-classification-loss"
-digest = "sha256:099313141e38d2b3d7460a4dfde6ac89b8f9e84ccce5a3f95f9f8b3f6e5fe908"
+digest = "sha256:fc7f68dcd5cec9a0df8607bf94e0fea365938d021009cee26ee1575157d91ebf"
 
 [[tasks]]
 name = "mls-bench/cv-data-augmentation"
@@ -127,7 +127,7 @@ digest = "sha256:402bbd07d9946bd6cd2032d9ee4b66de1486d36fd0aec37da97a026807675a0
 
 [[tasks]]
 name = "mls-bench/cv-pooling-aggregation"
-digest = "sha256:3c8e96b12359b7fbc9e03a02aed6b00367cc39a26a1dd4797b096d21d628a16d"
+digest = "sha256:ea4846d6b3598a99ab825d7da1a2042834c8f8a88b29f511f5cfe4973d0e193d"
 
 [[tasks]]
 name = "mls-bench/cv-sample-weighting"
@@ -215,19 +215,19 @@ digest = "sha256:18348bf0ffc586d513729fcb5a80f292649d2f0dc7506482045ad6a524d0e8e
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-attention"
-digest = "sha256:f4f1ab61cd38b4756d085ef0a61de2b309353e6a19ce6289d5d6a290a7c83932"
+digest = "sha256:5b7b83ce0051161f6c6cb620035f9a5950486db0f2eb87ab4a1520978ddcf8ab"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-bitlinear"
-digest = "sha256:4e2ebd1f2cbbb01a1592ec5fce3c524454c8cc5d22537bbdb0d0f2ecc19b4646"
+digest = "sha256:6edf25cde74e50e67da15b7253f67e24de7b5e8b14cdf818259722bc1a9a7c74"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-embedding"
-digest = "sha256:a34c798d0f841832777bd5ce077cb3cd9b34234a5a41e66954b43b6f4fade4f9"
+digest = "sha256:db84442dd08684c178e0bcb67159ae4957b5716539d8569ab1c8b3b85e442fca"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-kernel"
-digest = "sha256:d99ad43566e457f6e987177d2d87e66ef5315be0622397c8360b838d7f1464dc"
+digest = "sha256:ca5247ff5f351af2d25d53a9e797476466b852764ad887085124592413ba2fbd"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-linear-attention"
@@ -235,27 +235,27 @@ digest = "sha256:4cf627e2672673d09d7ee3bd0275f19404f308ed84a4ca471cb916a50008b49
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-loss"
-digest = "sha256:058fc5d32329b9bf1828659c2bb049784c06b8d0543b2ee30231c39a206cb9db"
+digest = "sha256:53f4fc639516f21d850a2c9957122f27dfe0bbd91c11060720f814f606f1212b"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-lr-schedule"
-digest = "sha256:47170122f7bc1b9c40f9fe472740a0a73ec5b9bdb6cd2e72606224339d76dbe4"
+digest = "sha256:13efdc64c04d7921f9a6fb4c4d3a0ddca311ed67be5a4007b6f8f984dde4a1e1"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-mlp"
-digest = "sha256:a76c1185786808d93d5f19a08fabe478e883c4167be919b4f1f00369f520c66a"
+digest = "sha256:8c6e5caf89d5c3bfaf4b1a4e2381644ad64ab6f371e1272c9ed72f60e4e19b93"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-normalization"
-digest = "sha256:bc906fc65aafcb5df35c1f18f742995c11786e9c67cbb552adcdc3f2726b6997"
+digest = "sha256:2fc6a855a2b2169f1e6e5d7fea1daaeca94fe483b755387d37004fbe6443b0f3"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-optimizer"
-digest = "sha256:3d3d30a2ad729ad2ee53e4949683cf1143f641f198e971757b7d0b518276eec9"
+digest = "sha256:f0fbf4924e9eb029a11c1e4de1c070110394ee70379fcccf05d414d4989310db"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-residual"
-digest = "sha256:6e0e842171d40cce3a234537a4c2644c57a1b7968f9c924eb78e3e832b2f12ed"
+digest = "sha256:ea53ae66530f6c970773bbf50e0ca6baa13fd4e74f3258d448d30a1636a06ae2"
 
 [[tasks]]
 name = "mls-bench/llm-ptq-algorithm"
@@ -491,7 +491,7 @@ digest = "sha256:43f871ae2f5c3a6d40e94cd1c8a9d5ede95895978b6273eea4dc9f617487065
 
 [[tasks]]
 name = "mls-bench/robomimic-bc-loss"
-digest = "sha256:3b9c735184f75011b8caed545c96d2f472ce5d9d6719185852851f1ff1518543"
+digest = "sha256:ebe56f7738287f58d2e94bcae0d978bda4dfde20fca0451a0da804073b7146ca"
 
 [[tasks]]
 name = "mls-bench/robomimic-iql-vf"
@@ -499,7 +499,7 @@ digest = "sha256:f6ad0956354644e381bb3444d069789a1a7088ba156a0dc75b6e522c2fd3450
 
 [[tasks]]
 name = "mls-bench/robomimic-obs-encoder"
-digest = "sha256:1df236094a6309e86e5399d1256fe131f6306be213870502030b3eaf61ca9dcf"
+digest = "sha256:6beb4857b9970502669d6d7be856b2cb9aaac70c35532188bc7f11d93b597fcc"
 
 [[tasks]]
 name = "mls-bench/safe-rl"
@@ -531,7 +531,7 @@ digest = "sha256:6a287135c1cf86eccda67897b40bfd828383320c6382cb8753c95be2b2e11ff
 
 [[tasks]]
 name = "mls-bench/security-membership-inference-defense"
-digest = "sha256:bf68af97049aeef65944b0a7c0dc79be78b7fd8ab5cf5e3d851fed894246e2a7"
+digest = "sha256:18f2de9925140a686ea855541c06725557fadcefb02d0f0955ca4c4e87a75667"
 
 [[tasks]]
 name = "mls-bench/security-poison-robust-learning"
