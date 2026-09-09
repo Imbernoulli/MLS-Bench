@@ -18,7 +18,7 @@
       "label": "femnist",
       "group": 1,
       "compute": 1.0,
-      "time": "04:00:00",
+      "time": "6:00:00",
       "package": "flower"
     },
     {

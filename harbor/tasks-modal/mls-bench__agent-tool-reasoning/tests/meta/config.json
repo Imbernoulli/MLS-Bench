@@ -7,7 +7,7 @@
       "label": "I1-instruction-deepseek",
       "group": 1,
       "compute": 0,
-      "time": "6:00:00",
+      "time": "7:00:00",
       "package": "stabletoolbench"
     },
     {

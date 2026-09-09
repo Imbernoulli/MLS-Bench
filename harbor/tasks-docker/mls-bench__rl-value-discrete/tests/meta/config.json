@@ -11,7 +11,7 @@
       "label": "cartpole-v1",
       "group": 1,
       "compute": 0.33,
-      "time": "02:00:00",
+      "time": "3:00:00",
       "package": "cleanrl"
     },
     {
@@ -19,7 +19,7 @@
       "label": "lunarlander-v2",
       "group": 1,
       "compute": 0.33,
-      "time": "02:00:00",
+      "time": "4:00:00",
       "package": "cleanrl"
     },
     {

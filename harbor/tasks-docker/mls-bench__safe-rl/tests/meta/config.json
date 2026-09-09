@@ -11,7 +11,7 @@
       "label": "SafetyPointGoal1-v0",
       "group": 1,
       "compute": 0.33,
-      "time": "6:00:00",
+      "time": "12:00:00",
       "package": "omnisafe"
     },
     {
@@ -19,7 +19,7 @@
       "label": "SafetyCarGoal1-v0",
       "group": 1,
       "compute": 0.33,
-      "time": "6:00:00",
+      "time": "11:00:00",
       "package": "omnisafe"
     },
     {
@@ -27,7 +27,7 @@
       "label": "SafetyPointButton1-v0",
       "group": 1,
       "compute": 0.33,
-      "time": "6:00:00",
+      "time": "11:00:00",
       "package": "omnisafe",
       "hidden": true
     }
