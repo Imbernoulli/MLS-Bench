@@ -32,7 +32,7 @@
       "label": "Hailfinder",
       "group": 1,
       "compute": 0.25,
-      "time": "00:59:00",
+      "time": "2:00:00",
       "package": "causal-bnlearn"
     },
     {
@@ -41,7 +41,7 @@
       "hidden": true,
       "group": 1,
       "compute": 0.25,
-      "time": "00:59:00",
+      "time": "2:00:00",
       "package": "causal-bnlearn"
     }
   ],

@@ -55,7 +55,7 @@ digest = "sha256:053744d94a706e317226c0076de587048e2b317db4df7108292cb0d0888aea6
 
 [[tasks]]
 name = "mls-bench/causal-discovery-discrete"
-digest = "sha256:986c1af60bb6a5dfb6e2ed22e57c68e3ef6c073ea32bcd3c5978f195d3baad80"
+digest = "sha256:83b262bf69f686ec62689557bb664198b5534092a22400b5f54a5f86ecbe66e5"
 
 [[tasks]]
 name = "mls-bench/causal-observational-linear-gaussian"
@@ -71,7 +71,7 @@ digest = "sha256:e539afdedc10c43b712ef2892bdba7f93ac44397c8cbbf6f6cae048ced5f083
 
 [[tasks]]
 name = "mls-bench/causal-treatment-effect"
-digest = "sha256:d7d25fc306f807f710a1f387f2e44f019342a3521f146fd70f0354ff2bcbb0e0"
+digest = "sha256:1aac598d5e99bf0df6ee94c72227b2a8858ded4cd2e72d33959415d4bca9ada3"
 
 [[tasks]]
 name = "mls-bench/cv-3dgs-densification"
@@ -135,7 +135,7 @@ digest = "sha256:c680978b7b5439c1485d8f2dd713fa6ba43c3e7785671ded039562cb52bdb7a
 
 [[tasks]]
 name = "mls-bench/cv-vae-loss"
-digest = "sha256:256771ad51c72dc1d20890adf8f12cb8de93a826a5a3d7e4c0357b03cea14655"
+digest = "sha256:b8d86e6713950331063a465dd6afebea19f8eb648482b9d0996aaecb70d10a6e"
 
 [[tasks]]
 name = "mls-bench/dl-activation-function"
@@ -271,7 +271,7 @@ digest = "sha256:2d7117609822a4f7b94efae8e5800569480f485bab55fcdc3b63a55b0f74aa1
 
 [[tasks]]
 name = "mls-bench/llm-rl-importance-sampling"
-digest = "sha256:aed32364d3294e4b60b7389719a49ad176e61cf3da61e2a33f541ab4fcabb006"
+digest = "sha256:fe13a21a282d9a21dbb1bf3ff5f6c2cf77802054b12c8551a72e4e3c3bc7a253"
 
 [[tasks]]
 name = "mls-bench/llm-rl-kl-estimator"
@@ -479,7 +479,7 @@ digest = "sha256:5a9b80fd3f699c27b6cdf5cb69f1dacab387ba0917f9f3a028622c7248e6da8
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-policy"
-digest = "sha256:e629a7231799bd15a23983fe1f2d6a7224077c6bf301be5d8c05db524e3611d1"
+digest = "sha256:3dbfc21bbd4afd8a454f86c618f6aa090a7e4c7b33af05b748a156e9de894218"
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-sampling-method"
@@ -491,7 +491,7 @@ digest = "sha256:03291aa142b3553f207462ce999f2d2787d83875be822a1f3f5ce2f4658e3e9
 
 [[tasks]]
 name = "mls-bench/robomimic-bc-loss"
-digest = "sha256:d8e0f6d3fd63690ccbc069c2a101c05f1a7789f95779b0278548665d7b5097f7"
+digest = "sha256:64c2b20c249757f76aa1828818f204c018f7e34a52dc9aa0fed786c30c7cbbf2"
 
 [[tasks]]
 name = "mls-bench/robomimic-iql-vf"
