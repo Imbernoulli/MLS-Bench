@@ -816,6 +816,14 @@ WAVE_GRACE_SEC = 300
 # GPU memory is not taken from SLURM (`max(mem, gpus * 100)` GB is cluster
 # generosity, not a measured need): 64 GB is the floor the Daytona validation
 # runs exercised for every GPU task, 128 GB the verl bundles.
+# Harbor wraps the provider's image build — on Daytona the snapshot build, on
+# Modal `Image.from_dockerfile`, which pulls the base from Docker Hub — in the
+# task's build timeout. The largest harbor bases are 111 GB compressed
+# (transformers-kv-lab, cfgpp-main) and 57 GB (nanogpt, nine llm-pretrain
+# tasks); 1800 s timed out twice on Modal while a 47 GB base took ~25 min.
+# Two hours is an upper bound only.
+BUILD_TIMEOUT_SEC = 7200
+
 PROVIDERS = ("docker", "daytona", "modal")
 CPUS_PER_GPU = 12
 GPU_TASK_CPUS = 16
@@ -1282,7 +1290,7 @@ def render_task(
         ),
         "agent_timeout_sec": _agent_timeout_sec(ctx.config),
         "verifier_timeout_sec": _verifier_timeout_sec(ctx.config, res["gpus"]),
-        "build_timeout_sec": 1800,
+        "build_timeout_sec": BUILD_TIMEOUT_SEC,
         "cpus": res["cpus"],
         "memory_mb": res["memory_mb"],
         "storage_mb": res["storage_mb"],

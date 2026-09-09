@@ -531,6 +531,7 @@ def test_rendered_bundles_carry_their_own_cpu_ram_and_thread_settings():
             gpus = int(re.search(r"(?m)^gpus = (\d+)$", toml).group(1))
             package = re.search(r'(?m)^mls_bench_package = "([^"]*)"$', toml).group(1)
             gpu_types = re.search(r'(?m)^gpu_types = (.*)$', toml)
+            assert re.search(r"(?m)^build_timeout_sec = 7200$", toml), (variant, task_dir.name, "111 GB bases need > 30 min to pull on Modal")
 
             if gpus == 0:
                 cpu += 1
