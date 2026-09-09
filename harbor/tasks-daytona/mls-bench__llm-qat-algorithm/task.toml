@@ -25,7 +25,7 @@ timeout_sec = 16560
 # the Dockerfile (see harbor/environments/docker/docker.py:466), which would
 # also skip the per-task mid_edit scaffolding the Dockerfile applies.
 os = "linux"
-build_timeout_sec = 1800
+build_timeout_sec = 7200
 cpus = 16
 memory_mb = 65536
 storage_mb = 61440
