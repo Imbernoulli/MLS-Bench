@@ -17,7 +17,7 @@ mls_bench_package = "ClimSim"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 64800
+timeout_sec = 60060
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

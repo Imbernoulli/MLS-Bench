@@ -31,7 +31,7 @@ digest = "sha256:63f00e33c0d8cdd37bacef68435784ac887f58428bd856a6f4a180fd6d09226
 
 [[tasks]]
 name = "mls-bench/ai4sci-climate-emulation"
-digest = "sha256:c8a9a2c4b53adedbdf55193beba878f5dc0e8016dc325331251d8ac1564065b9"
+digest = "sha256:7aeaf556b33b3e08d6142b19c91f2ee78e8c498a1038102916fd98f0acea6e12"
 
 [[tasks]]
 name = "mls-bench/ai4sci-inverse-diffusion-algo"
@@ -87,7 +87,7 @@ digest = "sha256:099313141e38d2b3d7460a4dfde6ac89b8f9e84ccce5a3f95f9f8b3f6e5fe90
 
 [[tasks]]
 name = "mls-bench/cv-data-augmentation"
-digest = "sha256:f59cb1c1e99fb3797e803840b91f8f82b4ddde776df1cbcd9a1de52c6e65941b"
+digest = "sha256:5f0cb5e8e80a25547ccef6458494ce7ac1d318d1829d935709cb9ecdf2deaeb5"
 
 [[tasks]]
 name = "mls-bench/cv-dbm-sampler"
@@ -143,7 +143,7 @@ digest = "sha256:02172ebea110c543cca362284091f7e0be78c956fb18e6f9a983028e40587e1
 
 [[tasks]]
 name = "mls-bench/dl-lr-schedule"
-digest = "sha256:c0d46379af4e2b82482ec203a93a3fa886229c426a27449e2d3e5f3498872b6b"
+digest = "sha256:fda210dcf08ef62adc5023befb89cea460db040a964ba0ebb5661981af8f0c35"
 
 [[tasks]]
 name = "mls-bench/dl-normalization"
@@ -151,7 +151,7 @@ digest = "sha256:0a7dd9a8ea51446dc9d25c2265595fe0acb02928f14fb21a49a05de87bdbe3d
 
 [[tasks]]
 name = "mls-bench/dl-regularization"
-digest = "sha256:714cee65ad3acd20ac71de50c889089ee57bdf25200bce5a6d106bf8f8af7b21"
+digest = "sha256:186eb2be3d96dc97ab8357ff467f308cb42a2098a1ae7e83f4308505edb1bc63"
 
 [[tasks]]
 name = "mls-bench/dl-residual-connection"
@@ -159,7 +159,7 @@ digest = "sha256:f8b961de3c9b2380a16345ce30af81e03eb0a993f9472c467669baa4ad6efd8
 
 [[tasks]]
 name = "mls-bench/dl-weight-initialization"
-digest = "sha256:98f1e50153a276bde26f9c8148d0bb3e0dc6a9e6a68e009d291199926a07acb4"
+digest = "sha256:196fb90dc7b69a62ed313317d44a4ea589419b275a7f3a32a7c078644420138e"
 
 [[tasks]]
 name = "mls-bench/dlm-dkv-policy"
@@ -451,7 +451,7 @@ digest = "sha256:9928ef57d31dbc95bd69a32ba7e759804a0dc4b7b05f85e88ade4ea8c54120b
 
 [[tasks]]
 name = "mls-bench/rl-offline-off2on"
-digest = "sha256:b7300ac2d52f57dd5b893f72ae193b8544c724ba82791dba1f370497e849ceaf"
+digest = "sha256:b8abc9d4e99816a3ec4fa4a5df340ea066ab6968f44305502ce0c897540ee2e4"
 
 [[tasks]]
 name = "mls-bench/rl-offpolicy-continuous"
@@ -479,7 +479,7 @@ digest = "sha256:edc82f690ff085065cf051558746edd3c714b1ce9ff935866a1b2e04062a450
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-policy"
-digest = "sha256:ae9a67c0e2a295d4ea29e374669e442743b592b669da5a769f68838f33ded8d8"
+digest = "sha256:758f7b3bb3559d12ac393445b6a92729f7eee0504d1c5e518a6f5c45c3ebc072"
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-sampling-method"
