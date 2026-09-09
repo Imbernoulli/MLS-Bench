@@ -20,15 +20,54 @@ the metrics stay here, host-side.
 The ``PROBLEMS`` config, ``generate_pareto_front`` and the metric bodies are
 byte-identical to the originals that used to live in
 ``edits/custom_template.py`` — so every honest result is reproduced exactly.
+
+Version contract (issue #83): ``marshal`` does not validate the CPython version
+that produced a code object — a blob written by a different interpreter loads
+silently and then crashes the consumer (SIGSEGV) on first call. The spec
+therefore records the producer interpreter's magic number
+(``producer_magic``), which the in-container template checks before loading.
+The spec generation path needs only the standard library (numpy / deap /
+scipy are imported lazily inside the functions that use them), so this module
+can be executed with the CONTAINER interpreter — e.g. any ``python:3.11*``
+image — to marshal the kernels with the exact interpreter that will load them:
+
+    python dgp.py gen-specs --problems zdt1,zdt3,dtlz2,dtlz1 --seeds 42,123,456
+
+prints a JSON object ``{<alias>_seed<seed>: <spec>}`` on stdout (diagnostics go
+to stderr). The native ``edits/mid_edit.py`` shells out to the task container
+with this command whenever the host interpreter does not match the image.
 """
 
+import argparse
 import base64
+import importlib.util
+import json
 import marshal
+import sys
 
-import numpy as np
 
-from deap import benchmarks
-from deap.benchmarks import tools as btools
+def _np():
+    import numpy as np
+
+    return np
+
+
+def _benchmarks():
+    from deap import benchmarks
+
+    return benchmarks
+
+
+def _btools():
+    from deap.benchmarks import tools as btools
+
+    return btools
+
+
+# Magic number of the interpreter executing THIS module — i.e. of whichever
+# interpreter marshals the objective kernels. Recorded in every spec so the
+# consumer can refuse a cross-version blob instead of segfaulting.
+PRODUCER_MAGIC = importlib.util.MAGIC_NUMBER.hex()
 
 
 # ================================================================
@@ -37,7 +76,7 @@ from deap.benchmarks import tools as btools
 
 PROBLEMS = {
     "zdt1": {
-        "func": benchmarks.zdt1,
+        "func": lambda ind: _benchmarks().zdt1(ind),
         "n_var": 30,
         "n_obj": 2,
         "bounds": (0.0, 1.0),
@@ -47,7 +86,7 @@ PROBLEMS = {
         "description": "ZDT1: convex Pareto front, 30 variables, 2 objectives",
     },
     "zdt3": {
-        "func": benchmarks.zdt3,
+        "func": lambda ind: _benchmarks().zdt3(ind),
         "n_var": 30,
         "n_obj": 2,
         "bounds": (0.0, 1.0),
@@ -57,7 +96,7 @@ PROBLEMS = {
         "description": "ZDT3: disconnected Pareto front, 30 variables, 2 objectives",
     },
     "dtlz2": {
-        "func": lambda ind: benchmarks.dtlz2(ind, 3),
+        "func": lambda ind: _benchmarks().dtlz2(ind, 3),
         "n_var": 12,
         "n_obj": 3,
         "bounds": (0.0, 1.0),
@@ -67,7 +106,7 @@ PROBLEMS = {
         "description": "DTLZ2: spherical Pareto front, 12 variables, 3 objectives",
     },
     "dtlz1": {
-        "func": lambda ind: benchmarks.dtlz1(ind, 3),
+        "func": lambda ind: _benchmarks().dtlz1(ind, 3),
         "n_var": 7,
         "n_obj": 3,
         "bounds": (0.0, 1.0),
@@ -90,8 +129,9 @@ ALIASES = {
 ALIAS_TO_PROBLEM = {v: k for k, v in ALIASES.items()}
 
 
-def generate_pareto_front(problem_name: str, n_points: int = 500) -> np.ndarray:
+def generate_pareto_front(problem_name: str, n_points: int = 500):
     """Generate reference Pareto front points for IGD computation."""
+    np = _np()
     if problem_name == "zdt1":
         x = np.linspace(0, 1, n_points)
         return np.column_stack([x, 1 - np.sqrt(x)])
@@ -147,6 +187,7 @@ def generate_pareto_front(problem_name: str, n_points: int = 500) -> np.ndarray:
 
 def _hv_2d(points, ref):
     """Exact 2D hypervolume via non-dominated sweep."""
+    np = _np()
     pts = points[(points[:, 0] < ref[0]) & (points[:, 1] < ref[1])]
     if len(pts) == 0:
         return 0.0
@@ -167,6 +208,7 @@ def _hv_2d(points, ref):
 
 def _hv_3d(points, ref):
     """Exact 3D hypervolume via z-slicing + 2D sweep."""
+    np = _np()
     mask = np.all(points < ref, axis=1)
     pts = points[mask]
     if len(pts) == 0:
@@ -193,6 +235,7 @@ def compute_hypervolume(front_values, ref_point):
     the final non-dominated front (instead of DEAP individuals). The numerical
     body is byte-identical to the original ``compute_hypervolume``.
     """
+    np = _np()
     front_values = np.asarray(front_values, dtype=np.float64)
     ref = np.array(ref_point, dtype=np.float64)
     # Filter out points not dominated by ref
@@ -208,12 +251,13 @@ def compute_hypervolume(front_values, ref_point):
     return 0.0
 
 
-def compute_spread(front_values: np.ndarray) -> float:
+def compute_spread(front_values) -> float:
     """Compute spread (Delta) metric for a 2D front.
 
     Measures the extent and uniformity of the Pareto front approximation.
     Lower is better. For >2 objectives, returns average pairwise distance std.
     """
+    np = _np()
     if len(front_values) < 2:
         return float("inf")
 
@@ -245,12 +289,14 @@ def compute_spread(front_values: np.ndarray) -> float:
         return float(spread)
 
 
-def compute_igd(front_values: np.ndarray, problem_name: str) -> float:
+def compute_igd(front_values, problem_name: str) -> float:
     """IGD of a front-value array against the analytic true Pareto front.
 
     Uses the same ``deap.benchmarks.tools.igd`` call and the same 500-point
     reference front as the original pipeline.
     """
+    np = _np()
+    btools = _btools()
     pf_ref = generate_pareto_front(problem_name, n_points=500)
     try:
         return float(btools.igd(np.asarray(front_values), pf_ref))
@@ -359,7 +405,24 @@ def gen_problem(problem: str, seed: int = 42) -> dict:
         # problem-specific marshalled objective, so the spec does not enumerate
         # which held-out benchmark this is.
         "evaluator": _evaluator_blob(problem),
+        # Version contract (issue #83): marshal does not validate the producer
+        # CPython version, so record it. The consumer refuses a mismatch with a
+        # clear error instead of executing foreign bytecode (SIGSEGV).
+        "producer_magic": PRODUCER_MAGIC,
     }
+
+
+def gen_specs(problems, seeds) -> dict:
+    """Return ``{<alias>_seed<seed>: spec}`` for every (problem, seed) pair.
+
+    Needs only the standard library, so it can run inside any container whose
+    interpreter matches the task image (producer == consumer, issue #83).
+    """
+    out: dict = {}
+    for problem in problems:
+        for seed in seeds:
+            out[f"{ALIASES[problem]}_seed{int(seed)}"] = gen_problem(problem, seed=int(seed))
+    return out
 
 
 def truth(problem: str, seed: int = 42) -> dict:
@@ -377,6 +440,7 @@ def score_front(front_values, problem: str, seed: int = 42) -> dict:
     Uses the held-out analytic Pareto front and ref_point. Numerically
     byte-identical to the original in-file metric computation.
     """
+    np = _np()
     cfg = PROBLEMS[problem]
     ref_point = cfg["ref_point"]
     front_values = np.asarray(front_values, dtype=np.float64)
@@ -384,3 +448,44 @@ def score_front(front_values, problem: str, seed: int = 42) -> dict:
     igd = compute_igd(front_values, problem)
     spread = compute_spread(front_values)
     return {"hv": hv, "igd": igd, "spread": spread}
+
+
+# ================================================================
+# CLI: in-container spec generation (issue #83).
+# ================================================================
+
+
+def _main(argv) -> int:
+    """``python dgp.py gen-specs --problems zdt1,zdt3 --seeds 42,123``.
+
+    Prints a JSON object ``{<alias>_seed<seed>: <spec>}`` on stdout. The native
+    ``edits/mid_edit.py`` runs this with the CONTAINER interpreter so the
+    marshalled evaluators are produced by the same CPython version that will
+    load them. Generation needs only the standard library, so any python image
+    whose version matches the task image works.
+    """
+    ap = argparse.ArgumentParser(prog="dgp.py")
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    gs = sub.add_parser("gen-specs")
+    gs.add_argument("--problems", required=True, help="comma-separated problem names")
+    gs.add_argument("--seeds", required=True, help="comma-separated integer seeds")
+    args = ap.parse_args(argv)
+
+    problems = [p.strip() for p in args.problems.split(",") if p.strip()]
+    seeds = [int(s) for s in args.seeds.split(",") if s.strip()]
+    unknown = [p for p in problems if p not in PROBLEMS]
+    if unknown:
+        print(f"unknown problem(s): {unknown}", file=sys.stderr)
+        return 2
+    specs = gen_specs(problems, seeds)
+    print(
+        f"[gen-specs] producer python {sys.version.split()[0]} "
+        f"magic={PRODUCER_MAGIC} specs={len(specs)}",
+        file=sys.stderr,
+    )
+    json.dump(specs, sys.stdout)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(_main(sys.argv[1:]))
