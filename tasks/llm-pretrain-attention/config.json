@@ -7,7 +7,7 @@
       "label": "gpt-345m",
       "group": 1,
       "compute": 4.0,
-      "time": "13:00:00",
+      "time": "16:00:00",
       "package": "nanoGPT",
       "h200": {
         "compute": 2.0,
