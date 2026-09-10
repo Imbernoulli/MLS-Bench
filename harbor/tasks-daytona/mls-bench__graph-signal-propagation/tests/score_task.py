@@ -1057,6 +1057,16 @@ def _build_eval_task_dir(task_meta: Path) -> Path:
         src = task_meta / sub
         if src.exists():
             shutil.copytree(src, d / sub, dirs_exist_ok=True)
+    # The non-scoring remainder of the native task dir (task_description.md,
+    # hook contracts, benchmark specs, ...) lands at the root, where evals
+    # that resolve the task dir by `task_description.md` expect it.
+    extras = task_meta / "evaltask"
+    if extras.exists():
+        for entry in extras.iterdir():
+            if entry.is_dir():
+                shutil.copytree(entry, d / entry.name, dirs_exist_ok=True)
+            else:
+                shutil.copy2(entry, d / entry.name)
     return d
 
 
