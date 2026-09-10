@@ -776,14 +776,42 @@ def test_dockerfile_carries_package_image_setup_for_qlib_only():
     assert adapter._package_image_setup("QLIB") == adapter._package_image_setup("qlib")
 
 
-def test_evaltask_extras_stage_everything_but_the_scoring_metadata(tmp_path: Path):
+def test_evaltask_staging_ships_the_task_marker_and_nothing_else(tmp_path: Path):
+    """Only `task_description.md` reaches the bundle.
+
+    It is the marker an eval walks up the tree to find. Everything else in a
+    native task dir is either scoring metadata or, in `baselines/`, the
+    reference implementations — shipping those would put the answers in a
+    dataset anyone can download."""
     import mls_bench.adapter as adapter
-    task = tmp_path / "task"; (task / "edits").mkdir(parents=True); (task / "benchmarks").mkdir()
+    task = tmp_path / "task"
+    (task / "edits").mkdir(parents=True); (task / "benchmarks").mkdir(); (task / "baselines").mkdir()
     for name in ("config.json", "parser.py", "score_spec.py", "leaderboard.csv", "budget_check.py", "task_description.md", "HOOK_CONTRACT.md", "prepare_data.py"):
         (task / name).write_text("x")
-    (task / "benchmarks" / "b.json").write_text("{}"); (task / "edits" / "mid_edit.py").write_text("x")
+    (task / "benchmarks" / "b.json").write_text("{}")
+    (task / "edits" / "mid_edit.py").write_text("x")
+    (task / "baselines" / "token_level.edit.py").write_text("the answer")
     meta = tmp_path / "meta"; meta.mkdir()
-    staged = adapter._stage_evaltask_extras(task, meta)
-    assert staged == ["HOOK_CONTRACT.md", "benchmarks", "prepare_data.py", "task_description.md"]
-    assert (meta / "evaltask" / "benchmarks" / "b.json").exists()
-    assert not (meta / "evaltask" / "parser.py").exists() and not (meta / "evaltask" / "edits").exists()
+
+    staged = adapter._stage_evaltask_files(task, meta)
+
+    assert staged == ["task_description.md"]
+    assert sorted(p.name for p in (meta / "evaltask").iterdir()) == ["task_description.md"]
+
+
+def test_shipped_bundles_stage_only_the_task_marker():
+    """`tests/meta/evaltask/` holds the marker and nothing else, in every tree.
+
+    (The bundles do carry each task's `edits/` under `tests/meta/` and
+    `tests/eval/_inputgen/`, as they did before this branch — Harbor mounts
+    `tests/` only at verify time, and `solution/` ships the oracle's edit ops
+    by design. This guards the directory this renderer added.)"""
+    root = Path(__file__).resolve().parents[2] / "harbor"
+    for tree in ("tasks-docker", "tasks-daytona", "tasks-modal"):
+        if not (root / tree).is_dir():
+            continue
+        staged = sorted(
+            str(p.relative_to(root)) for p in (root / tree).glob("*/tests/meta/evaltask/*")
+            if p.name != "task_description.md"
+        )
+        assert staged == [], staged
