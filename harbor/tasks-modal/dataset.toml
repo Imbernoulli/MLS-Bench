@@ -467,7 +467,7 @@ digest = "sha256:52b0aab500dd3d1688a5ebd00d38e464933dbe8172283336944294a9f4fa634
 
 [[tasks]]
 name = "mls-bench/rl-value-atari"
-digest = "sha256:3543ed33722d587daff9c23bfe3130a0e724e07760ff64e9fb27a4fc0d667bc1"
+digest = "sha256:c972d00d5ab9cdd03fc90b38f3d56052dcfa51a9f189e6267c94301e6fe7917e"
 
 [[tasks]]
 name = "mls-bench/rl-value-discrete"
