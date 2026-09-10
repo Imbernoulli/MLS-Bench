@@ -27,7 +27,7 @@ digest = "sha256:6ceede5584edd18733cafa5502172733e6e09134ae7f113a4eb03c4dd50a700
 
 [[tasks]]
 name = "mls-bench/ai4bio-protein-structure-repr"
-digest = "sha256:63f00e33c0d8cdd37bacef68435784ac887f58428bd856a6f4a180fd6d092260"
+digest = "sha256:aa6d4819bfb8abbdf7f612d85f10809fa2e0d5e81235d31147801203ef0bd2ac"
 
 [[tasks]]
 name = "mls-bench/ai4sci-climate-emulation"
@@ -183,7 +183,7 @@ digest = "sha256:a5981fcb2ee2cb4c0be6cbf684cb1b34d5fb1ced1663152de51795151840343
 
 [[tasks]]
 name = "mls-bench/graph-signal-propagation"
-digest = "sha256:dc4a08b3b189248590f9a330b2203aeda57a94eb6eaf3dbc96bd512b881538ff"
+digest = "sha256:a44ad1c075af9f77417422d3b91d2ef8936da6f1ceb2eb44a82f12807de54fcd"
 
 [[tasks]]
 name = "mls-bench/jepa-planning"

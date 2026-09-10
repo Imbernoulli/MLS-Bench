@@ -357,7 +357,23 @@ def preprocess_and_cache(task_name, data_dir):
     subdir = processed_dir_map[task_name]
     processed_path = Path(data_dir) / subdir / 'processed'
 
-    if processed_path.exists() and (processed_path / 'train.pt').exists():
+    def _pt_loads(fp):
+        """Cheap integrity gate: a present-but-corrupt cache (truncated/bad
+        zip member) must NOT be treated as ready, or load_dataset_splits
+        crashes with a cryptic PytorchStreamReader error and the rebuild
+        below would re-trigger an offline structure download."""
+        if not fp.exists():
+            return False
+        try:
+            torch.load(fp, weights_only=False)
+            return True
+        except Exception as e:  # noqa: BLE001
+            print(f"Cached {fp} is unreadable ({type(e).__name__}); regenerating.")
+            return False
+
+    if processed_path.exists() and all(
+        _pt_loads(processed_path / f'{sp}.pt') for sp in ('train', 'val', 'test')
+    ):
         print(f"Processed data found at {processed_path}, skipping preprocessing.")
         return
 
@@ -373,7 +389,7 @@ def preprocess_and_cache(task_name, data_dir):
         dm = EnzymeCommissionReactionDataset(
             path=str(Path(data_dir) / 'ECReaction'),
             pdb_dir=str(Path(data_dir) / 'pdb'),
-            format='mmtf',
+            format='pdb',
             batch_size=1,
             num_workers=0,
             pin_memory=False,
@@ -385,7 +401,7 @@ def preprocess_and_cache(task_name, data_dir):
         dm = GeneOntologyDataset(
             path=str(Path(data_dir) / 'GeneOntology'),
             pdb_dir=str(Path(data_dir) / 'pdb'),
-            format='mmtf',
+            format='pdb',
             batch_size=1,
             num_workers=0,
             pin_memory=False,
@@ -499,7 +515,7 @@ def preprocess_and_cache(task_name, data_dir):
         val_data = convert_batch(dm.val_dataloader().dataset, 'val')
 
     if hasattr(dm, 'test_dataset'):
-        test_data = convert_batch(dm.test_dataset(), 'test')
+        test_data = convert_batch(dm.test_dataset('test_0.95') if task_name == 'go_bp' else dm.test_dataset(), 'test')  # GO test_dataset needs a cutoff split (test_0.95); EC/Fold take none
     else:
         test_dl = dm.test_dataloader()
         if isinstance(test_dl, list):
