@@ -75,3 +75,9 @@ vendor/verl/
 
 # Daytona smoke-validation scratch (reduced-scale task copies, run artifacts)
 harbor/.smoke/
+
+# Developer test suites: kept on disk, not shipped in the repository. The
+# anchored paths matter — a rendered bundle's tests/ directory and the
+# task-template's tests/ are Harbor's verifier, not test files, and stay.
+/harbor_adapter/tests/
+/src/openevolve/test_regional_endpoint.py
