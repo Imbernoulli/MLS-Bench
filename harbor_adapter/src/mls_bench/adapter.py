@@ -878,9 +878,12 @@ def _package_image_setup(package: str) -> list[str]:
 
 
 # Ceiling for a `test_cmds[].mem` declaration. The four verl RL tasks declare
-# `mem = 200` for SLURM; 128 GB is the largest GPU sandbox validated on
-# Daytona, and asking a provider for more than that has not been tested.
-MAX_TASK_MEMORY_GB = 128
+# `mem = 200` for SLURM; 192 GB is Daytona's per-sandbox ceiling (measured
+# 2026-09-07) and Modal has none, so declarations above it are clamped here.
+# rl-value-atari declares 160: three concurrent 1M-transition Atari replay
+# buffers (~28 GB each) OOM-killed an eval inside the 64 GB floor on Daytona
+# (2026-09-09); native SLURM gives the task 200 GB.
+MAX_TASK_MEMORY_GB = 192
 
 
 def _harbor_safe_name(task_id: str) -> str:

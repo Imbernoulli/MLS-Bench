@@ -6,6 +6,7 @@
       "label": "breakout-v4",
       "group": 1,
       "compute": 0.4,
+      "mem": 160,
       "time": "24:00:00",
       "package": "cleanrl"
     },
@@ -14,6 +15,7 @@
       "label": "seaquest-v4",
       "group": 1,
       "compute": 0.4,
+      "mem": 160,
       "time": "24:00:00",
       "package": "cleanrl"
     },
@@ -22,6 +24,7 @@
       "label": "pong-v4",
       "group": 1,
       "compute": 0.4,
+      "mem": 160,
       "time": "24:00:00",
       "package": "cleanrl",
       "hidden": true
