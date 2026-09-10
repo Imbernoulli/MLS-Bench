@@ -1476,35 +1476,30 @@ def _task_manifest_entry(task_dir: Path) -> dict:
 # Top-level entries of a native task dir that stay out of the eval-time
 # task dir: the scoring metadata cmd_score reads (an eval runs agent code as
 # root and must not reach parser/spec/leaderboard) and what is staged elsewhere.
-EVALTASK_EXCLUDE = frozenset({
-    "config.json", "parser.py", "score_spec.py", "leaderboard.csv",
-    "budget_check.py", "edits", "scripts", "data", "third_party", "dgp.py",
-    "__pycache__",
-})
+# The only file of the native task dir that gets staged for the evals. An
+# eval that needs to find its task directory locates it by walking up from
+# its own path until a directory holds `task_description.md`
+# (llm-kv-adaptive-quantization and llm-kv-selection-budgeting do this in
+# edits/custom_template.py, and died with "Unable to locate task directory"
+# without it). Nothing else in the native task dir is staged: `baselines/`
+# holds the reference implementations, `edits/`, `scripts/`, `parser.py`,
+# `score_spec.py` and `leaderboard.csv` are the scoring metadata, and no eval
+# reads any of them from the task dir. Keep this an allowlist — a denylist
+# ships the answers the first time a task grows a new directory.
+EVALTASK_FILES = ("task_description.md",)
 
 
-def _stage_evaltask_extras(task_dir: Path, meta: Path) -> list[str]:
-    """Copy the non-scoring remainder of ``task_dir`` into ``meta/evaltask/``.
-
-    Returns the staged top-level names. ``task_description.md`` is what evals
-    that locate the task dir look for; hook-contract markdowns, benchmark
-    specs, helper tools and baseline configs are the rest (all small).
-    """
+def _stage_evaltask_files(task_dir: Path, meta: Path) -> list[str]:
+    """Copy EVALTASK_FILES from ``task_dir`` into ``meta/evaltask/``."""
     staged: list[str] = []
     dst_root = meta / "evaltask"
-    for entry in sorted(task_dir.iterdir()):
-        if entry.name in EVALTASK_EXCLUDE or entry.name.endswith(".pyc"):
+    for name in EVALTASK_FILES:
+        src = task_dir / name
+        if not src.is_file():
             continue
-        dst = dst_root / entry.name
         dst_root.mkdir(exist_ok=True)
-        if entry.is_dir():
-            shutil.copytree(
-                entry, dst, dirs_exist_ok=True,
-                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
-            )
-        else:
-            shutil.copy2(entry, dst)
-        staged.append(entry.name)
+        shutil.copy2(src, dst_root / name)
+        staged.append(name)
     return staged
 
 
@@ -1878,7 +1873,7 @@ def _stage_verifier_assets(
     # provider, 2026-09-09) or read a sibling file (hook contracts, benchmark
     # specs). Stage the non-scoring remainder into tests/meta/evaltask/, which
     # score_task.py exposes at /workspace/_task next to scripts/data/third_party.
-    _stage_evaltask_extras(task_dir, meta)
+    _stage_evaltask_files(task_dir, meta)
 
     # mlsbench source tree — required by parser.py / score_spec.py / score_task.py
     # to import mlsbench.scoring.* and mlsbench.agent.parsers. NOT baked into
