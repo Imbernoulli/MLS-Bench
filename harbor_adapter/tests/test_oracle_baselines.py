@@ -106,3 +106,33 @@ def test_known_violations_are_still_violations():
     st = _score_task_module()
     stale = [name for name in KNOWN_VIOLATIONS if (TASKS / name).is_dir() and not _violations(TASKS / name, st)]
     assert not stale, f"fixed tasks still listed as known violations: {stale}"
+
+
+def test_scaffold_and_guard_baseline_agree_for_every_declared_file():
+    """The workspace an agent starts from is the image's ``_scaffold`` copy; the
+    guard diffs submissions against ``tests/meta/pristine``. When the two drift
+    (ai4bio-protein-structure-repr: the scaffold gained a 17-line cache gate
+    in a fixed region, the pristine copy did not) every submission — the oracle
+    included — fails the guard with "fixed segment not found" and scores 0.
+    Check all three rendered trees."""
+    for variant in ("tasks-docker", "tasks-daytona", "tasks-modal"):
+        root = REPO / "harbor" / variant
+        if not root.is_dir():
+            continue
+        drift = []
+        for task_dir in sorted(root.glob("mls-bench__*")):
+            config = json.loads((task_dir / "tests" / "meta" / "config.json").read_text())
+            manifest = json.loads((task_dir / "tests" / "meta" / "pristine_manifest.json").read_text())
+            for f in config.get("files", []):
+                if not f.get("edit"):
+                    continue
+                rel = f["filename"]
+                scaffold = task_dir / "environment" / "_scaffold" / rel
+                pristine = task_dir / "tests" / "meta" / "pristine" / rel
+                if scaffold.exists() and pristine.exists():
+                    if scaffold.read_bytes() != pristine.read_bytes():
+                        drift.append(f"{variant}/{task_dir.name}: {rel} scaffold != pristine")
+                    import hashlib
+                    if manifest.get(rel) and manifest[rel] != hashlib.sha256(pristine.read_bytes()).hexdigest():
+                        drift.append(f"{variant}/{task_dir.name}: {rel} manifest hash != pristine")
+        assert not drift, "\n".join(drift)
