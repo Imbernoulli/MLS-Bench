@@ -689,6 +689,18 @@ MAX_PARALLEL_GPUS = 8
 # charges the same amount per wave, so the outer verifier budget can never be
 # tighter than the deadlines this runner hands out.
 WAVE_GRACE_SEC = 300
+
+# budget_check.py is a preflight: it builds each declared baseline to count
+# parameters before the eval runs. On a loaded host that is not fast — the
+# FaceDetection eval of ts-classification needs well over two minutes — and a
+# preflight that is killed costs the whole eval. It is bounded only so a hung
+# check cannot eat the verifier budget, so the bound is generous.
+BUDGET_CHECK_TIMEOUT_SEC = 900
+# Distinct from 124. An eval that exits 124 missed its own deadline; a budget
+# check that is killed has not run the eval at all, and reporting both as 124
+# made a killed preflight read as "timed out after 0s (its own deadline is
+# 3840s)", which points the reader at the task's deadline instead of at this.
+BUDGET_CHECK_TIMEOUT_RC = 126
 # Gap between the launches of one wave's commands. They share a workspace and
 # a first-use initialization (an mlflow store, a compile cache, a font cache)
 # that is not always locked; a second between starts keeps those from
@@ -1112,13 +1124,16 @@ def _run_budget_check(
                 env=budget_env,
                 stdout=fh,
                 stderr=subprocess.STDOUT,
-                timeout=120,
+                timeout=BUDGET_CHECK_TIMEOUT_SEC,
                 check=False,
             )
             rc = proc.returncode
         except subprocess.TimeoutExpired:
-            fh.write("\n[BUDGET CHECK TIMEOUT] budget_check.py took >120s\n")
-            rc = 124
+            fh.write(
+                f"\n[BUDGET CHECK TIMEOUT] budget_check.py took "
+                f">{BUDGET_CHECK_TIMEOUT_SEC}s\n"
+            )
+            rc = BUDGET_CHECK_TIMEOUT_RC
         except Exception as exc:
             fh.write(f"\n[BUDGET CHECK ERROR] {exc}\n")
             rc = 125
@@ -1620,7 +1635,14 @@ def _eval_failures(summary: list[dict], config: dict) -> list[str]:
                 continue
             elapsed = float(log.get("elapsed") or 0.0)
             where = f"{label} seed {log.get('seed')}"
-            if rc == 124:
+            if rc == BUDGET_CHECK_TIMEOUT_RC:
+                lines.append(
+                    f"{where}: budget_check.py was killed after "
+                    f"{BUDGET_CHECK_TIMEOUT_SEC}s; the eval never ran"
+                )
+            elif rc == 125:
+                lines.append(f"{where}: budget_check.py errored; the eval never ran")
+            elif rc == 124:
                 lines.append(
                     f"{where}: timed out after {elapsed:.0f}s "
                     f"(its own deadline is {own_deadline.get(label, 0)}s incl. "
