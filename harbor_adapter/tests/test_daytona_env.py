@@ -542,7 +542,12 @@ def test_rendered_bundles_carry_their_own_cpu_ram_and_thread_settings():
                 assert (cpus, memory_mb) == (min(max(16, 12 * gpus), cpu_cap), 128 * 1024), (variant, task_dir.name)
             else:
                 gpu += 1
-                assert (cpus, memory_mb) == (min(max(16, 12 * gpus), cpu_cap), 64 * 1024), (variant, task_dir.name)
+                # 64 GB unless the task declares `mem` (rl-value-atari: 128,
+                # three 1M Atari replay buffers OOM-killed an eval at 64).
+                config = json.loads((task_dir / "tests" / "meta" / "config.json").read_text())
+                declared = max((int(tc.get("mem") or 0) for tc in config.get("test_cmds", [])), default=0)
+                expected_mb = max(64, min(declared, 128)) * 1024
+                assert (cpus, memory_mb) == (min(max(16, 12 * gpus), cpu_cap), expected_mb), (variant, task_dir.name)
             if gpus > 0:
                 # Newer Harbor's Daytona provider maps this to a placement
                 # constraint; the images' CUDA wheels have no Blackwell kernels.
