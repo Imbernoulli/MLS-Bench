@@ -762,3 +762,16 @@ def test_dockerfile_carries_package_image_setup_for_qlib_only():
     other = env.get_template("environment/Dockerfile.j2").render(**base, image_setup=adapter._package_image_setup("scikit-learn"))
     assert "RUN " not in other and "COPY _scaffold/ /workspace/" in other
     assert adapter._package_image_setup("QLIB") == adapter._package_image_setup("qlib")
+
+
+def test_evaltask_extras_stage_everything_but_the_scoring_metadata(tmp_path: Path):
+    import mls_bench.adapter as adapter
+    task = tmp_path / "task"; (task / "edits").mkdir(parents=True); (task / "benchmarks").mkdir()
+    for name in ("config.json", "parser.py", "score_spec.py", "leaderboard.csv", "budget_check.py", "task_description.md", "HOOK_CONTRACT.md", "prepare_data.py"):
+        (task / name).write_text("x")
+    (task / "benchmarks" / "b.json").write_text("{}"); (task / "edits" / "mid_edit.py").write_text("x")
+    meta = tmp_path / "meta"; meta.mkdir()
+    staged = adapter._stage_evaltask_extras(task, meta)
+    assert staged == ["HOOK_CONTRACT.md", "benchmarks", "prepare_data.py", "task_description.md"]
+    assert (meta / "evaltask" / "benchmarks" / "b.json").exists()
+    assert not (meta / "evaltask" / "parser.py").exists() and not (meta / "evaltask" / "edits").exists()

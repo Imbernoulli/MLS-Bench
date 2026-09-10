@@ -778,3 +778,23 @@ def test_eval_failures_name_timeouts_and_their_deadline():
     ]
     assert module._eval_failures([{"label": "ETTh1", "logs": [{"seed": 42, "rc": 0, "elapsed": 1.0}]}], config) == []
 
+
+
+def test_eval_task_dir_exposes_the_staged_task_dir_extras(tmp_path: Path):
+    """llm-kv-adaptive-quantization's eval resolves the task dir by
+    `task_description.md` (native bind-mounts tasks/<t>/ at /workspace/_task);
+    the Harbor eval dir carried only scripts/data/third_party and every eval
+    died with "Unable to locate task directory" (2026-09-09, both clouds).
+    Whatever the adapter stages under tests/meta/evaltask/ must land at the
+    eval dir root, while the scoring metadata stays out."""
+    score_task = _load_score_task()
+    meta = tmp_path / "meta"
+    (meta / "scripts").mkdir(parents=True); (meta / "scripts" / "a.sh").write_text("#!/bin/bash\n")
+    (meta / "evaltask" / "benchmarks").mkdir(parents=True)
+    (meta / "evaltask" / "task_description.md").write_text("# t\n")
+    (meta / "evaltask" / "benchmarks" / "spec.json").write_text("{}")
+    (meta / "parser.py").write_text("# secret\n")
+    d = score_task._build_eval_task_dir(meta)
+    assert (d / "task_description.md").read_text() == "# t\n"
+    assert (d / "benchmarks" / "spec.json").exists() and (d / "scripts" / "a.sh").exists()
+    assert not (d / "parser.py").exists() and not (d / "evaltask").exists()

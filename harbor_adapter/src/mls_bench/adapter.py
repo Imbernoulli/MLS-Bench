@@ -1457,6 +1457,41 @@ def _task_manifest_entry(task_dir: Path) -> dict:
         return {"name": match.group(1), "digest": f"sha256:{_manual_task_digest(task_dir)}"}
 
 
+# Top-level entries of a native task dir that stay out of the eval-time
+# task dir: the scoring metadata cmd_score reads (an eval runs agent code as
+# root and must not reach parser/spec/leaderboard) and what is staged elsewhere.
+EVALTASK_EXCLUDE = frozenset({
+    "config.json", "parser.py", "score_spec.py", "leaderboard.csv",
+    "budget_check.py", "edits", "scripts", "data", "third_party", "dgp.py",
+    "__pycache__",
+})
+
+
+def _stage_evaltask_extras(task_dir: Path, meta: Path) -> list[str]:
+    """Copy the non-scoring remainder of ``task_dir`` into ``meta/evaltask/``.
+
+    Returns the staged top-level names. ``task_description.md`` is what evals
+    that locate the task dir look for; hook-contract markdowns, benchmark
+    specs, helper tools and baseline configs are the rest (all small).
+    """
+    staged: list[str] = []
+    dst_root = meta / "evaltask"
+    for entry in sorted(task_dir.iterdir()):
+        if entry.name in EVALTASK_EXCLUDE or entry.name.endswith(".pyc"):
+            continue
+        dst = dst_root / entry.name
+        dst_root.mkdir(exist_ok=True)
+        if entry.is_dir():
+            shutil.copytree(
+                entry, dst, dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+        else:
+            shutil.copy2(entry, dst)
+        staged.append(entry.name)
+    return staged
+
+
 def write_dataset_manifest(output_dir: Path) -> Path:
     """Write Harbor's dataset.toml manifest next to generated task dirs."""
     task_dirs = sorted(
@@ -1819,6 +1854,15 @@ def _stage_verifier_assets(
             dirs_exist_ok=True,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
+
+    # Everything else an eval may read from the native task dir. Native
+    # bind-mounts tasks/<t>/ at /workspace/_task, and some evals resolve that
+    # dir by its `task_description.md` (llm-kv-adaptive-quantization,
+    # llm-kv-selection-budgeting: "Unable to locate task directory" on every
+    # provider, 2026-09-09) or read a sibling file (hook contracts, benchmark
+    # specs). Stage the non-scoring remainder into tests/meta/evaltask/, which
+    # score_task.py exposes at /workspace/_task next to scripts/data/third_party.
+    _stage_evaltask_extras(task_dir, meta)
 
     # mlsbench source tree — required by parser.py / score_spec.py / score_task.py
     # to import mlsbench.scoring.* and mlsbench.agent.parsers. NOT baked into
