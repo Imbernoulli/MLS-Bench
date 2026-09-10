@@ -379,7 +379,7 @@ digest = "sha256:7e4874fb92e405adbd4c38fc8d999b6bc4870afa1dac9dc0977baa89948f2ef
 
 [[tasks]]
 name = "mls-bench/optimization-diagonal-net"
-digest = "sha256:891a6320759958d91302b3ee234b9be1a341b3029a901cfb9a1729cfe2bc4459"
+digest = "sha256:cd4b5562363d82a8cad16e3680c56fa7eba4edf1b15fe348988db06c36d81fad"
 
 [[tasks]]
 name = "mls-bench/optimization-dp-sgd"
