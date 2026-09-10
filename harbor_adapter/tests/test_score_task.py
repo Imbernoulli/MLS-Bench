@@ -798,3 +798,49 @@ def test_eval_task_dir_exposes_the_staged_task_dir_extras(tmp_path: Path):
     assert (d / "task_description.md").read_text() == "# t\n"
     assert (d / "benchmarks" / "spec.json").exists() and (d / "scripts" / "a.sh").exists()
     assert not (d / "parser.py").exists() and not (d / "evaltask").exists()
+
+
+def test_eval_task_dir_carries_the_marker_the_llm_kv_evals_resolve(tmp_path: Path):
+    """`_build_eval_task_dir` must put `task_description.md` at its root.
+
+    `tasks/llm-kv-*/edits/custom_template.py` resolves its task directory by
+    trying, in order, its own directory, its parent, `$MLSBENCH_TASK_DIR`,
+    `$TASK_DIR`, `cwd/_task` and `cwd/../_task`, and taking the first that
+    holds `task_description.md`. `$MLSBENCH_TASK_DIR` points at the real
+    task_meta, which deliberately does not hold it, so resolution succeeds
+    only through the `_task` symlink onto this directory — the two llm-kv
+    tasks scored 0 with "Unable to locate task directory" before the marker
+    was staged."""
+    import os
+
+    score_task = _load_score_task()
+    meta = tmp_path / "meta"
+    (meta / "evaltask").mkdir(parents=True)
+    (meta / "scripts").mkdir()
+    (meta / "evaltask" / "task_description.md").write_text("# task\n")
+    (meta / "scripts" / "run.sh").write_text("echo hi\n")
+    (meta / "config.json").write_text("{}")
+
+    eval_dir = score_task._build_eval_task_dir(meta)
+
+    assert (eval_dir / "task_description.md").is_file()
+    assert (eval_dir / "scripts" / "run.sh").is_file()
+    assert not (eval_dir / "config.json").exists()
+
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    os.symlink(eval_dir, workspace / "_task", target_is_directory=True)
+
+    def resolve(here: Path, env: dict) -> Path:
+        for candidate in (here, here.parent, Path(env.get("MLSBENCH_TASK_DIR", "")),
+                          Path(env.get("TASK_DIR", "")), workspace / "_task",
+                          workspace.parent / "_task"):
+            if not candidate or str(candidate) == ".":
+                continue
+            resolved = candidate.resolve()
+            if (resolved / "task_description.md").exists():
+                return resolved
+        raise FileNotFoundError(here)
+
+    assert resolve(workspace / "pkg" / "custom_template.py",
+                   {"MLSBENCH_TASK_DIR": str(meta)}) == eval_dir.resolve()
