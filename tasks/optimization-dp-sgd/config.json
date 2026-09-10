@@ -23,7 +23,7 @@
       "label": "cifar10",
       "group": 2,
       "compute": 1.0,
-      "time": "0:59:00",
+      "time": "2:00:00",
       "package": "opacus",
       "hidden": true
     }

@@ -7,7 +7,7 @@
       "label": "gpt-345m",
       "group": 1,
       "compute": 4.0,
-      "time": "12:00:00",
+      "time": "17:00:00",
       "package": "nanoGPT",
       "h200": {
         "compute": 2.0,
@@ -22,7 +22,7 @@
       "label": "lm-eval-345m",
       "group": 2,
       "compute": 1.0,
-      "time": "1:00:00",
+      "time": "1:45:00",
       "package": "lm-evaluation-harness",
       "hidden": true
     }

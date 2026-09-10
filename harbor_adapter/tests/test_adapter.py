@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import pytest
+
 
 ROOT = Path(__file__).resolve().parents[2]
 ADAPTER_SRC = ROOT / "harbor_adapter" / "src"
@@ -13,6 +15,8 @@ if str(ADAPTER_SRC) not in sys.path:
 from mls_bench.adapter import (  # noqa: E402
     AGENT_TIMEOUT_SEC,
     MAX_PARALLEL_GPUS,
+    VERIFIER_PER_JOB_HEADROOM_SEC,
+    VERIFIER_SETUP_HEADROOM_SEC,
     WAVE_GRACE_SEC,
     MlsBenchRoot,
     _apply_ops_to_text,
@@ -449,6 +453,79 @@ def _gpu_config(test_cmds: list[dict], seeds: list[int] | None = None) -> dict:
     return config
 
 
+def test_resources_state_what_a_task_actually_needs():
+    """`task.toml` cpus/memory_mb are hard limits, so they must be real.
+
+    Harbor's Daytona provider provisions them verbatim and local Docker turns
+    them into cgroup limits via Compose's `deploy.resources.limits`, so a
+    downstream harness that consumes the rendered bundles without this repo's
+    environment classes gets exactly these numbers and nothing else.
+    """
+    gpu = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00"}]))
+    assert (gpu["cpus"], gpu["memory_mb"]) == (16, 64 * 1024)
+
+    # Native SLURM gives 12 CPUs per card; the 16 floor only matters below it.
+    two = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 2.0, "time": "1:00:00"}]))
+    assert (two["gpus"], two["cpus"]) == (2, 24)
+    eight = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 8.0, "time": "1:00:00"}]))
+    assert (eight["gpus"], eight["cpus"]) == (8, 96)
+
+    assert gpu["storage_mb"] == 60 * 1024
+    assert _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00"}]), provider="daytona") == gpu
+
+    # CPU-only tasks differ per variant: native's 8 CPUs / 32 GB for docker,
+    # Daytona's CPU-sandbox ceiling (4 / 8 GB / 10 GB) for daytona — stock
+    # Harbor cannot clamp, so a daytona bundle declaring 8 / 32 would fail at
+    # sandbox creation for a consumer without this repository's classes.
+    cpu_cfg = {"test_cmds": [{"label": "a", "group": 1, "compute": 0.0, "time": "1:00:00"}]}
+    docker = _resources({}, cpu_cfg, provider="docker")
+    assert (docker["cpus"], docker["memory_mb"], docker["storage_mb"], docker["gpus"]) == (8, 32 * 1024, 30 * 1024, 0)
+    daytona = _resources({}, cpu_cfg, provider="daytona")
+    assert (daytona["cpus"], daytona["memory_mb"], daytona["storage_mb"], daytona["gpus"]) == (4, 8 * 1024, 10 * 1024, 0)
+    # Modal has no small-sandbox ceiling, so CPU-only tasks keep the native
+    # shape there; its one hard limit is 64 CPUs per sandbox ("Function CPU
+    # request out of bounds. Must be between 0.125 and 64 cores."), which
+    # only the four 8-GPU tasks hit.
+    modal = _resources({}, cpu_cfg, provider="modal")
+    assert (modal["cpus"], modal["memory_mb"], modal["storage_mb"], modal["gpus"]) == (8, 32 * 1024, 30 * 1024, 0)
+    eight_modal = _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 8.0, "time": "1:00:00"}]), provider="modal")
+    assert (eight_modal["gpus"], eight_modal["cpus"]) == (8, 64)
+    assert _resources({}, _gpu_config([{"label": "a", "group": 1, "compute": 2.0, "time": "1:00:00"}]), provider="modal")["cpus"] == 24
+    with pytest.raises(ValueError):
+        _resources({}, cpu_cfg, provider="beam")
+
+
+def test_verl_bundles_declare_the_128g_floor_their_validation_needs():
+    """verl's validation generation is OOM-killed at 64 GB and completes at 128."""
+    config = _gpu_config([{"label": "a", "group": 1, "compute": 2.0, "time": "10:00:00"}])
+    assert _resources({}, config, "verl")["memory_mb"] == 128 * 1024
+    # Package matching is case/separator-insensitive, like native resolution.
+    assert _resources({}, config, "VERL")["memory_mb"] == 128 * 1024
+    assert _resources({}, config, "nanoGPT")["memory_mb"] == 64 * 1024
+
+
+def test_resources_honor_a_declared_mem_up_to_the_validated_ceiling():
+    """`test_cmds[].mem` is the task's own statement of need (SLURM `--mem`).
+
+    The four verl RL commands declare `mem = 200`; 128 GB is the largest GPU
+    sandbox validated on Daytona, so the declaration raises the floor only up
+    to that ceiling. A provider whose ceiling is lower clamps at request time.
+    """
+    modest = _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00", "mem": 96}])
+    assert _resources({}, modest)["memory_mb"] == 96 * 1024
+
+    huge = _gpu_config([{"label": "a", "group": 1, "compute": 1.0, "time": "1:00:00", "mem": 200}])
+    assert _resources({}, huge)["memory_mb"] == 128 * 1024
+
+    # ml-active-learning declares mem = 64 for a CPU-only group: honored on
+    # docker (a cgroup limit costs nothing), not on daytona, where it would
+    # push the sandbox past the CPU-sandbox ceiling and the task passes at 8 GB.
+    cpu_only = {"test_cmds": [{"label": "a", "group": 1, "compute": 0.0, "time": "1:00:00", "mem": 64}]}
+    assert _resources({}, cpu_only, provider="docker")["memory_mb"] == 64 * 1024
+    assert _resources({}, cpu_only, provider="daytona")["memory_mb"] == 8 * 1024
+    assert _resources({}, cpu_only, provider="modal")["memory_mb"] == 64 * 1024
+
+
 def test_resources_balances_waves_instead_of_clamping_to_the_cap():
     # cv-dbm-sampler: 3 whole-GPU jobs of 4 GPUs in one group = 12 concurrent.
     # Clamping to the cap would reserve 8 and run waves of 2 jobs then 1,
@@ -524,15 +601,20 @@ def test_verifier_timeout_pays_for_each_serialized_wave():
     ])
     gpus = _resources({}, config)["gpus"]
 
-    # 3 even waves x (4h + the grace score_task.py grants each wave), + 30min
-    # slack + 120s per (test_cmd, seed).
+    # 3 even waves x (4h + the grace score_task.py grants each wave), + the
+    # setup headroom + the per-(test_cmd, seed) headroom.
     assert _verifier_timeout_sec(config, gpus) == (
-        3 * (4 * 3600 + WAVE_GRACE_SEC) + 30 * 60 + 120 * 3
+        3 * (4 * 3600 + WAVE_GRACE_SEC)
+        + VERIFIER_SETUP_HEADROOM_SEC
+        + VERIFIER_PER_JOB_HEADROOM_SEC * 3
     )
 
     # With enough GPUs for the whole group it collapses to a single wave.
     assert _verifier_timeout_sec(config, 12) == (
-        4 * 3600 + WAVE_GRACE_SEC + 30 * 60 + 120 * 3
+        4 * 3600
+        + WAVE_GRACE_SEC
+        + VERIFIER_SETUP_HEADROOM_SEC
+        + VERIFIER_PER_JOB_HEADROOM_SEC * 3
     )
 
 
@@ -544,7 +626,12 @@ def test_verifier_timeout_unchanged_for_cpu_only_tasks():
 
     # One wave per group, each charged its own deadline plus grace.
     assert _verifier_timeout_sec(config, 0) == (
-        30 * 60 + WAVE_GRACE_SEC + 60 * 60 + WAVE_GRACE_SEC + 30 * 60 + 120 * 2
+        30 * 60
+        + WAVE_GRACE_SEC
+        + 60 * 60
+        + WAVE_GRACE_SEC
+        + VERIFIER_SETUP_HEADROOM_SEC
+        + VERIFIER_PER_JOB_HEADROOM_SEC * 2
     )
 
 
@@ -622,8 +709,9 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
     mb = MlsBenchRoot(root=repo)
     drift = {}
     for cfg_path in sorted((repo / "tasks").glob("*/config.json")):
+      for variant, provider in (("tasks-docker", "docker"), ("tasks-daytona", "daytona"), ("tasks-modal", "modal")):
         name = cfg_path.parent.name
-        bundle = repo / "harbor" / "tasks" / f"mls-bench__{name}"
+        bundle = repo / "harbor" / variant / f"mls-bench__{name}"
         toml = bundle / "task.toml"
         if not toml.exists():
             continue
@@ -632,7 +720,7 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
             pkg_config = _load_pkg_config(mb, _resolve_package(config))
         except Exception:
             pkg_config = {}
-        res = _resources(pkg_config, config)
+        res = _resources(pkg_config, config, provider=provider)
         text = toml.read_text()
         want = {
             "gpus": res["gpus"],
@@ -665,5 +753,65 @@ def test_rendered_bundles_match_what_the_adapter_would_render():
             if int(m.group(1)) != res["gpus"]:
                 bad["compose count"] = {"rendered": int(m.group(1)), "adapter": res["gpus"]}
         if bad:
-            drift[name] = bad
+            drift[f"{variant}/{name}"] = bad
     assert not drift, _json.dumps(drift, indent=2)
+
+
+def test_dockerfile_carries_package_image_setup_for_qlib_only():
+    """mlflow's FileStore creates mlruns/0/meta.yaml without locking, so three
+    qlib evals started together raced on it and one died (quant-concept-drift
+    on Modal, 2026-09-08). The qlib images create the default experiment at
+    build time; other packages get no RUN line."""
+    from jinja2 import Environment, FileSystemLoader, StrictUndefined
+    import mls_bench.adapter as adapter
+
+    tmpl_dir = Path(adapter.__file__).resolve().parent / "task-template"
+    env = Environment(loader=FileSystemLoader(str(tmpl_dir)), undefined=StrictUndefined, keep_trailing_newline=True)
+    base = dict(base_image="x:latest", cpus=4, gpu_count=0, workdir="/workspace", scaffold_files=["a"])
+    qlib = env.get_template("environment/Dockerfile.j2").render(**base, image_setup=adapter._package_image_setup("qlib"))
+    assert "RUN cd /workspace/qlib && python -W ignore -c" in qlib and "mlruns" in qlib
+    assert qlib.index("RUN cd /workspace/qlib") < qlib.index("COPY _scaffold/")
+    other = env.get_template("environment/Dockerfile.j2").render(**base, image_setup=adapter._package_image_setup("scikit-learn"))
+    assert "RUN " not in other and "COPY _scaffold/ /workspace/" in other
+    assert adapter._package_image_setup("QLIB") == adapter._package_image_setup("qlib")
+
+
+def test_evaltask_staging_ships_the_task_marker_and_nothing_else(tmp_path: Path):
+    """Only `task_description.md` reaches the bundle.
+
+    It is the marker an eval walks up the tree to find. Everything else in a
+    native task dir is either scoring metadata or, in `baselines/`, the
+    reference implementations — shipping those would put the answers in a
+    dataset anyone can download."""
+    import mls_bench.adapter as adapter
+    task = tmp_path / "task"
+    (task / "edits").mkdir(parents=True); (task / "benchmarks").mkdir(); (task / "baselines").mkdir()
+    for name in ("config.json", "parser.py", "score_spec.py", "leaderboard.csv", "budget_check.py", "task_description.md", "HOOK_CONTRACT.md", "prepare_data.py"):
+        (task / name).write_text("x")
+    (task / "benchmarks" / "b.json").write_text("{}")
+    (task / "edits" / "mid_edit.py").write_text("x")
+    (task / "baselines" / "token_level.edit.py").write_text("the answer")
+    meta = tmp_path / "meta"; meta.mkdir()
+
+    staged = adapter._stage_evaltask_files(task, meta)
+
+    assert staged == ["task_description.md"]
+    assert sorted(p.name for p in (meta / "evaltask").iterdir()) == ["task_description.md"]
+
+
+def test_shipped_bundles_stage_only_the_task_marker():
+    """`tests/meta/evaltask/` holds the marker and nothing else, in every tree.
+
+    (The bundles do carry each task's `edits/` under `tests/meta/` and
+    `tests/eval/_inputgen/`, as they did before this branch — Harbor mounts
+    `tests/` only at verify time, and `solution/` ships the oracle's edit ops
+    by design. This guards the directory this renderer added.)"""
+    root = Path(__file__).resolve().parents[2] / "harbor"
+    for tree in ("tasks-docker", "tasks-daytona", "tasks-modal"):
+        if not (root / tree).is_dir():
+            continue
+        staged = sorted(
+            str(p.relative_to(root)) for p in (root / tree).glob("*/tests/meta/evaltask/*")
+            if p.name != "task_description.md"
+        )
+        assert staged == [], staged

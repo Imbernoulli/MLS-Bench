@@ -8,7 +8,7 @@
       "label": "humaneval-4-deepseek",
       "group": 1,
       "compute": 1,
-      "time": "4:00:00",
+      "time": "6:00:00",
       "package": "chatdev-macnet"
     },
     {
@@ -16,7 +16,7 @@
       "label": "humaneval-4-qwen",
       "group": 2,
       "compute": 1,
-      "time": "4:00:00",
+      "time": "6:00:00",
       "package": "chatdev-macnet"
     },
     {

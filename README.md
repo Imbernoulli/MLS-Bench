@@ -242,20 +242,27 @@ dataset so any Harbor-supported agent (`claude-code`, `codex`, `openhands`,
 repository's own runner:
 
 ```bash
+cd harbor
 PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
 ```
 
 The pre-rendered dataset, GPU-capable environment plugin, and reference
-Harbor config live under [`harbor/`](harbor/). See
-[`harbor/README.md`](harbor/README.md) for usage details and the
-self-contained per-task layout.
+Harbor config live under [`harbor/`](harbor/). Three rendered datasets ship
+there, one per provider — `tasks-docker/` for local Docker (`run.yaml`),
+`tasks-daytona/` for Daytona and `tasks-modal/` for Modal. They hold the same
+140 tasks and differ only in the sandbox shape each provider can serve; use
+the one for your provider. See [`harbor/README.md`](harbor/README.md) for
+usage details and the self-contained per-task layout.
 
 ### Running Harbor tasks on Daytona
 
-The Daytona provider adapter forwards each task's declared GPU count and type
-to Daytona and uses direct GPU sandboxes for the GPU-only Compose overlays
-MLS-Bench emits. See [harbor/README.md](harbor/README.md#run-on-daytona) for
-the full option reference.
+`harbor/tasks-daytona/` runs on stock Harbor's `daytona` environment exactly
+as it ships: each task's `task.toml` carries the sandbox shape, GPU count and
+`gpu_types = ["h100"]`. The `run-daytona*.yaml` configs additionally load
+`harbor_env:DaytonaEnvironment`, which defaults the GPU type, clamps to your
+organization's sandbox ceilings instead of failing the trial, recreates a
+sandbox whose toolbox never answers, and forwards the H200 profiles. See
+[harbor/README.md](harbor/README.md#run-on-daytona) for the option reference.
 
 ```bash
 cd harbor
@@ -266,9 +273,9 @@ export PYTHONPATH=.:../harbor_adapter/src
 harbor run -c run-daytona-lite.yaml                   # the 30 MLS-Bench-Lite tasks
 harbor run -c run-daytona.yaml                        # all 138 non-API tasks
 harbor run -c run-daytona.yaml \
-  --path tasks/mls-bench__robo-diffusion-policy \
+  --path tasks-daytona/mls-bench__robo-diffusion-policy \
   --agent oracle                                      # one task, strongest baseline
-harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
+harbor run -c run-daytona.yaml --path tasks-daytona/mls-bench__TASK \
   --agent claude-code --model anthropic/claude-opus-4-7 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"   # one task, agent
 ```
@@ -277,14 +284,30 @@ harbor run -c run-daytona.yaml --path tasks/mls-bench__TASK \
 starts. The two tasks whose evaluators call DeepSeek/DashScope need those keys;
 the other 138 do not.
 
-`run-daytona.yaml` defaults to `gpu_type: H100`, `spot: false`,
-`gpu_memory_gb: 64` and `gpu_cpus: 16`; any `--ek`
-overrides the file for one invocation. The four verl `llm-rl-*` tasks are
-raised to 128 GB automatically; their validation step is OOM-killed at 64.
-H100 is the default because Daytona's pool also holds Blackwell (sm_120)
-cards that the pinned CUDA wheels have no kernels for. Unlike local Docker,
-Daytona enforces `task.toml` resources as hard cgroup limits, hence the
-RAM/CPU floors and the thread caps the adapter injects.
+`run-daytona.yaml` defaults to `gpu_type: H100` and `spot: false`; any `--ek`
+overrides the file for one invocation. H100 is the default because Daytona's
+pool also holds Blackwell (sm_120) cards that the pinned CUDA wheels have no
+kernels for.
+
+Sandbox CPU and RAM come from each task's `task.toml`. Three rendered
+variants ship, one per provider: `harbor/tasks-daytona/` (Dockerfile-only;
+CPU-only tasks at Daytona's 4 CPU / 8 GB sandbox ceiling),
+`harbor/tasks-modal/` (Dockerfile-only; native calibration with CPUs capped at
+Modal's 64 per sandbox) and `harbor/tasks-docker/` (native calibration,
+8 CPUs / 32 GB for CPU-only tasks, plus the Compose overlay a local run
+needs). GPU tasks are sized the same in all three: 12 CPUs per GPU (16
+minimum) and 64 GB, 128 GB for the four verl `llm-rl-*` tasks (their
+validation step is OOM-killed at 64); only Modal's cap touches the four 8-GPU
+tasks (96 → 64 CPUs).
+Both providers enforce those numbers — Daytona provisions them, local Docker
+applies them through Compose's `deploy.resources.limits` — and the task images
+pin `OMP_NUM_THREADS` and friends to the same budget, since a container reports
+every core the *host* has. `tasks-daytona/` fits our organization's ceilings
+(16 CPUs per GPU; 4 CPUs / 8 GB on a CPU-only sandbox) without any clamping.
+Where an organization's ceiling is lower, `harbor_env:DaytonaEnvironment`
+clamps to it and logs a warning; stock Harbor fails the trial instead.
+`--ek gpu_cpus=<n>` / `--ek gpu_memory_gb=<n>` raise the floor for a one-off
+run.
 
 GPU counts come from each task's own declaration; size `--n-concurrent`
 against those, and don't lower them with `--override-gpus`.
@@ -301,6 +324,35 @@ as well as the verifier, so exploration runs use the settings that get
 scored. Nothing auto-detects the card: without the switch, H200 hardware runs
 the H100 profile, which is valid there (same sm_90 kernels, more memory).
 
+### Running Harbor tasks on Modal
+
+`harbor/tasks-modal/` runs on stock Harbor's `modal` environment as shipped
+(Harbor ≥ 0.22, `harbor[modal]` extra): `task.toml`'s CPUs/RAM become the
+sandbox request, `gpus` and `gpu_types = ["h100"]` become Modal's `h100:<n>`.
+The `run-modal*.yaml` configs load `harbor_env:ModalEnvironment`, which only
+adds `--ek gpu_type=H200`.
+
+```bash
+cd harbor
+uv tool install "harbor[modal]"
+modal token new                       # or export MODAL_TOKEN_ID / MODAL_TOKEN_SECRET
+export PYTHONPATH=.
+
+harbor run -c run-modal-lite.yaml                     # the 30 MLS-Bench-Lite tasks
+harbor run -c run-modal.yaml                          # all 138 non-API tasks
+harbor run -c run-modal.yaml --path tasks-modal/mls-bench__TASK \
+  --agent oracle                                      # one task, strongest baseline
+harbor run -e modal --path tasks-modal/mls-bench__TASK \
+  --agent oracle                                      # the same on stock Harbor, no PYTHONPATH
+```
+
+Modal caps a sandbox at 24 hours. 29 of the 140 tasks declare a verifier
+budget that, added to the 5-hour agent budget, exceeds it — the long RL,
+robotics and nanoGPT tasks — so an agent run of those can be cut off while
+verifying. The budget is a ceiling rather than a reservation, their oracle
+runs finish well inside it, and Daytona and local Docker have no such cap. `--ek labels='{"run":"x"}'` tags every
+sandbox, `--ek region=...` pins placement.
+
 ### Evaluating an agent
 
 `--agent` selects the harness, `--model` the provider/model, and `--agent-env`
@@ -313,7 +365,7 @@ export DAYTONA_API_KEY="<your-daytona-key>"
 export PYTHONPATH=.:../harbor_adapter/src
 
 # one task, one agent
-harbor run -c run-daytona.yaml --path tasks/mls-bench__ts-classification \
+harbor run -c run-daytona.yaml --path tasks-daytona/mls-bench__ts-classification \
   --agent claude-code --model anthropic/claude-opus-4-7 \
   --agent-env ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY"
 
@@ -325,7 +377,7 @@ harbor run -c run-daytona-lite.yaml \
 
 `--path` takes a single task *or* a dataset directory; it cannot be repeated,
 and a directory replaces the config's `datasets:` block, its exclude list
-included. There is no separate Lite dataset — `harbor/tasks/` is the full
+included. There is no separate Lite dataset — `harbor/tasks-daytona/` (and its local-Docker twin `harbor/tasks-docker/`) is the full
 140 — so `run-daytona-lite.yaml` names the 30 in `task_names`; copy it for
 any other subset (`task_names` and `exclude_task_names` accept globs).
 

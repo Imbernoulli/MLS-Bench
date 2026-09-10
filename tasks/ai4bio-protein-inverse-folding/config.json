@@ -7,7 +7,7 @@
       "label": "CATH4.2",
       "group": 1,
       "compute": 1.0,
-      "time": "04:00:00",
+      "time": "7:00:00",
       "package": "ProteinInvBench"
     },
     {
@@ -15,7 +15,7 @@
       "label": "CATH4.3",
       "group": 1,
       "compute": 1.0,
-      "time": "04:00:00",
+      "time": "7:00:00",
       "package": "ProteinInvBench"
     },
     {
@@ -23,7 +23,7 @@
       "label": "TS50",
       "group": 2,
       "compute": 1.0,
-      "time": "08:00:00",
+      "time": "14:00:00",
       "package": "ProteinInvBench",
       "hidden": true
     }

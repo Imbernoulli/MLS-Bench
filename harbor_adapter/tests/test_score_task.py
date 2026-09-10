@@ -531,16 +531,63 @@ def test_budget_scratch_config_reflects_oracle_override(tmp_path: Path):
 
     override = [{"label": "PSM", "cmd": "scripts/timesnet.sh"}]
     scratch = tmp_path / "scratch"
-    score_task._copy_task_meta_for_budget(task_meta, scratch, override)
-    cfg = json.loads((scratch / "config.json").read_text())
+    task_dir = score_task._copy_task_meta_for_budget(task_meta, scratch, override)
+    cfg = json.loads((task_dir / "config.json").read_text())
     assert cfg["test_cmds"] == override, "override must reach the budget config"
     assert "baselines" in cfg and "files" in cfg, "other config fields preserved"
 
     # No override (agent run) → original test_cmds preserved unchanged.
     scratch2 = tmp_path / "scratch2"
-    score_task._copy_task_meta_for_budget(task_meta, scratch2)
-    cfg2 = json.loads((scratch2 / "config.json").read_text())
+    task_dir2 = score_task._copy_task_meta_for_budget(task_meta, scratch2)
+    cfg2 = json.loads((task_dir2 / "config.json").read_text())
     assert cfg2["test_cmds"][0]["cmd"] == "scripts/psm.sh"
+
+
+def test_budget_scratch_keeps_the_native_layout_so_mid_edit_finds_holdout(tmp_path: Path):
+    """optimization-nas's edits/mid_edit.py loads the verifier-only generator
+    from ``parents[3] / "holdout" / <task_id>`` (native snapshots
+    ``tasks/<task>`` beside ``holdout/<task>``).  A flat budget scratch dir
+    resolved that to ``/holdout/optimization-nas/dgp.py``, so the budget check
+    crashed and all 15 evals were rc=1 (Daytona oracle sweep, 2026-09-08).
+    The scratch copy must keep the layout and ship the bundle's
+    ``tests/eval/_inputgen/holdout/<task_id>`` next to it."""
+    score_task = _load_score_task()
+    task_meta = tmp_path / "meta"
+    (task_meta / "edits").mkdir(parents=True)
+    (task_meta / "task_id").write_text("optimization-nas\n")
+    (task_meta / "config.json").write_text(json.dumps({"test_cmds": []}))
+    (task_meta / "budget_check.py").write_text("# noop\n")
+    (task_meta / "edits" / "mid_edit.py").write_text(
+        "from pathlib import Path\n"
+        "_HERE = Path(__file__).resolve()\n"
+        "TASK_DIR = _HERE.parents[1]\n"
+        "DGP = _HERE.parents[3] / 'holdout' / 'optimization-nas' / 'dgp.py'\n"
+    )
+    eval_root = tmp_path / "eval"
+    holdout = eval_root / "_inputgen" / "holdout" / "optimization-nas"
+    holdout.mkdir(parents=True)
+    (holdout / "dgp.py").write_text("TABLES = 1\n")
+    (holdout / "nb201_tables.json.gz").write_bytes(b"gz")
+
+    scratch = tmp_path / "scratch"
+    task_dir = score_task._copy_task_meta_for_budget(
+        task_meta, scratch, None, eval_root=eval_root
+    )
+    assert task_dir == scratch / "tasks" / "optimization-nas"
+    assert (task_dir / "budget_check.py").exists()
+    ns: dict = {}
+    exec((task_dir / "edits" / "mid_edit.py").read_text(),
+         {"__file__": str(task_dir / "edits" / "mid_edit.py")}, ns)
+    assert ns["TASK_DIR"] == task_dir
+    assert ns["DGP"].exists(), "mid_edit's parents[3]/holdout resolution must hit the staged copy"
+    assert (scratch / "holdout" / "optimization-nas" / "nb201_tables.json.gz").exists()
+
+    # Bundles without an _inputgen holdout (the other 49 budget_check tasks)
+    # stage exactly as before, just one level deeper.
+    plain = tmp_path / "plain"
+    task_dir_plain = score_task._copy_task_meta_for_budget(task_meta, plain, None, eval_root=tmp_path / "nope")
+    assert task_dir_plain == plain / "tasks" / "optimization-nas"
+    assert not (plain / "holdout").exists()
 
 
 def test_infer_reserved_gpu_count_balances_waves_at_the_cap():
@@ -606,15 +653,17 @@ def test_rendered_bundles_match_the_verifier_template():
     guard fix initially shipped as a no-op). Fail loudly on drift.
     """
     repo_root = Path(__file__).resolve().parents[2]
-    tasks_root = repo_root / "harbor" / "tasks"
-    if not tasks_root.is_dir():
+    tasks_roots = [repo_root / "harbor" / v for v in ("tasks-docker", "tasks-daytona", "tasks-modal")]
+    tasks_roots = [r for r in tasks_roots if r.is_dir()]
+    if not tasks_roots:
         return  # adapter-only checkout: nothing rendered to compare against
 
     template_dir = Path(__file__).resolve().parents[1] / "src" / "mls_bench" / "task-template" / "tests"
     for name in ("score_task.py", "test.sh"):
         expected = (template_dir / name).read_bytes()
         drifted = [
-            p.parents[1].name
+            f"{tasks_root.name}/{p.parents[1].name}"
+            for tasks_root in tasks_roots
             for p in sorted(tasks_root.glob(f"*/tests/{name}"))
             if p.read_bytes() != expected
         ]
@@ -624,3 +673,128 @@ def test_rendered_bundles_match_the_verifier_template():
             f"{' …' if len(drifted) > 5 else ''}. Re-sync the copies — a template-only "
             "change does not reach any shipped task."
         )
+
+
+def test_thread_budget_follows_the_cgroup_quota_not_nproc(monkeypatch, tmp_path):
+    """A container reports every host core; only the cgroup quota is real.
+
+    Sizing thread pools from ``os.cpu_count()`` inside a 4-CPU cgroup on a
+    384-core host starts ~192 BLAS threads and makes a fixed matmul benchmark
+    13x slower, which is what pushed CPU-bound evals past their deadline.
+    """
+    module = _load_score_task()
+    monkeypatch.delenv("MLSBENCH_LOCAL_THREADS", raising=False)
+    monkeypatch.setattr(module.os, "sched_getaffinity", lambda _pid: set(range(384)))
+
+    cgroup_v2 = tmp_path / "cpu.max"
+    cgroup_v2.write_text("400000 100000\n")
+    real_read = module.Path.read_text
+
+    def fake_read(self, *args, **kwargs):
+        if self.as_posix() == "/sys/fs/cgroup/cpu.max":
+            return cgroup_v2.read_text()
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(module.Path, "read_text", fake_read)
+    assert module._available_cpus() == 4
+    # A wave of three concurrent commands splits the quota instead of each
+    # claiming all of it.
+    assert module._thread_budget() == 4
+    assert module._thread_budget(3) == 1
+    assert module._thread_budget(0) == 4
+
+
+def test_thread_budget_is_unlimited_without_a_quota(monkeypatch):
+    """Outside a limited cgroup the affinity mask is the honest answer."""
+    module = _load_score_task()
+    monkeypatch.delenv("MLSBENCH_LOCAL_THREADS", raising=False)
+    monkeypatch.setattr(module.os, "sched_getaffinity", lambda _pid: set(range(12)))
+    monkeypatch.setattr(module, "_cgroup_cpu_quota", lambda: None)
+    assert module._available_cpus() == 12
+    assert module._thread_budget(4) == 3
+
+
+def test_mlsbench_local_threads_overrides_the_budget(monkeypatch):
+    """Same escape hatch native runs use (`mlsbench/cli.py::local_thread_limit`)."""
+    module = _load_score_task()
+    monkeypatch.setenv("MLSBENCH_LOCAL_THREADS", "7")
+    monkeypatch.setattr(module, "_available_cpus", lambda: 64)
+    assert module._thread_budget(8) == 7
+    monkeypatch.setenv("MLSBENCH_LOCAL_THREADS", "not-a-number")
+    assert module._thread_budget(8) == 8
+
+
+def test_eval_env_pins_thread_pools_but_lets_a_task_override(tmp_path, monkeypatch):
+    """The budget lands in the eval subprocess; task/package env still wins."""
+    module = _load_score_task()
+    monkeypatch.setenv("OMP_NUM_THREADS", "384")
+    task_meta = tmp_path / "meta"
+    task_meta.mkdir()
+    (task_meta / "package").write_text("demo\n")
+    (task_meta / "task_id").write_text("demo-task\n")
+    (task_meta / "package_envs.json").write_text(json.dumps({"demo": {}}))
+
+    env = module._eval_env(
+        task_meta=task_meta,
+        out_dir=tmp_path / "out",
+        workspace_root=tmp_path / "ws",
+        pkg_dir=tmp_path / "ws" / "demo",
+        tc={"label": "a"},
+        seed=42,
+        threads=5,
+    )
+    assert env["OMP_NUM_THREADS"] == "5"
+    assert env["MKL_NUM_THREADS"] == env["BLIS_NUM_THREADS"] == "5"
+
+    override = module._eval_env(
+        task_meta=task_meta,
+        out_dir=tmp_path / "out",
+        workspace_root=tmp_path / "ws",
+        pkg_dir=tmp_path / "ws" / "demo",
+        tc={"label": "a", "env": {"OMP_NUM_THREADS": "1"}},
+        seed=42,
+        threads=5,
+    )
+    assert override["OMP_NUM_THREADS"] == "1"
+
+
+def test_eval_failures_name_timeouts_and_their_deadline():
+    """A reader must be able to tell a harness timeout from an empty model run."""
+    module = _load_score_task()
+    config = {"test_cmds": [
+        {"label": "Weather", "cmd": "w.sh", "group": 1, "compute": 0.33, "time": "00:59:00"},
+        {"label": "ECL", "cmd": "e.sh", "group": 1, "compute": 0.33, "time": "00:59:00"},
+        {"label": "ETTh1", "cmd": "t.sh", "group": 1, "compute": 0.33, "time": "00:59:00"},
+    ]}
+    summary = [
+        {"label": "Weather", "logs": [{"seed": 42, "rc": 124, "elapsed": 3870.2}]},
+        {"label": "ECL", "logs": [{"seed": 42, "rc": 1, "elapsed": 12.0}]},
+        {"label": "ETTh1", "logs": [{"seed": 42, "rc": 0, "elapsed": 49.0}]},
+    ]
+    lines = module._eval_failures(summary, config)
+    assert lines == [
+        "Weather seed 42: timed out after 3870s (its own deadline is 3840s incl. 300s grace; a wave shares its slowest member's)",
+        "ECL seed 42: exited rc=1 after 12s",
+    ]
+    assert module._eval_failures([{"label": "ETTh1", "logs": [{"seed": 42, "rc": 0, "elapsed": 1.0}]}], config) == []
+
+
+
+def test_eval_task_dir_exposes_the_staged_task_dir_extras(tmp_path: Path):
+    """llm-kv-adaptive-quantization's eval resolves the task dir by
+    `task_description.md` (native bind-mounts tasks/<t>/ at /workspace/_task);
+    the Harbor eval dir carried only scripts/data/third_party and every eval
+    died with "Unable to locate task directory" (2026-09-09, both clouds).
+    Whatever the adapter stages under tests/meta/evaltask/ must land at the
+    eval dir root, while the scoring metadata stays out."""
+    score_task = _load_score_task()
+    meta = tmp_path / "meta"
+    (meta / "scripts").mkdir(parents=True); (meta / "scripts" / "a.sh").write_text("#!/bin/bash\n")
+    (meta / "evaltask" / "benchmarks").mkdir(parents=True)
+    (meta / "evaltask" / "task_description.md").write_text("# t\n")
+    (meta / "evaltask" / "benchmarks" / "spec.json").write_text("{}")
+    (meta / "parser.py").write_text("# secret\n")
+    d = score_task._build_eval_task_dir(meta)
+    assert (d / "task_description.md").read_text() == "# t\n"
+    assert (d / "benchmarks" / "spec.json").exists() and (d / "scripts" / "a.sh").exists()
+    assert not (d / "parser.py").exists() and not (d / "evaltask").exists()

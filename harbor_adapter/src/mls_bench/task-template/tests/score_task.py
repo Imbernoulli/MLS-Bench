@@ -479,6 +479,71 @@ def _normalize_pkg_name(name: str) -> str:
     return str(name).lower().replace("-", "").replace("_", "")
 
 
+# Thread-pool knobs every scientific-Python stack reads at import time.
+# Mirrors ``_LOCAL_THREAD_ENV_KEYS`` in ``mlsbench/cli.py`` so a Harbor run and
+# a native local run size their thread pools the same way.
+_THREAD_ENV_KEYS = (
+    "OMP_NUM_THREADS",
+    "OMP_THREAD_LIMIT",
+    "MKL_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+    "NUMEXPR_MAX_THREADS",
+    "VECLIB_MAXIMUM_THREADS",
+    "BLIS_NUM_THREADS",
+)
+
+
+def _cgroup_cpu_quota() -> float | None:
+    """CPUs this container's cgroup actually grants, or None if unlimited."""
+    try:
+        fields = Path("/sys/fs/cgroup/cpu.max").read_text().split()
+        if len(fields) == 2 and fields[0] != "max":
+            period = int(fields[1])
+            if period > 0:
+                return int(fields[0]) / period
+    except (OSError, ValueError):
+        pass
+    try:
+        quota = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_quota_us").read_text())
+        period = int(Path("/sys/fs/cgroup/cpu/cpu.cfs_period_us").read_text())
+        if quota > 0 and period > 0:
+            return quota / period
+    except (OSError, ValueError):
+        pass
+    return None
+
+
+def _available_cpus() -> int:
+    """Cores usable here — the cgroup quota, not what ``nproc`` advertises.
+
+    Harbor turns ``task.toml``'s ``cpus`` into a hard cgroup limit (local
+    Docker via ``deploy.resources.limits``, Daytona via the sandbox's
+    resources), but ``/proc/cpuinfo`` still lists every host core.  Libraries
+    that size their pools from ``os.cpu_count()`` therefore start one thread
+    per host core and burn the quota on context switches.
+    """
+    try:
+        affinity = len(os.sched_getaffinity(0))
+    except (AttributeError, OSError):
+        affinity = os.cpu_count() or 1
+    quota = _cgroup_cpu_quota()
+    if quota is None:
+        return max(1, affinity)
+    return max(1, min(affinity, int(quota)))
+
+
+def _thread_budget(concurrency: int = 1) -> int:
+    """Per-process thread budget, split across concurrently running commands."""
+    override = os.environ.get("MLSBENCH_LOCAL_THREADS", "").strip()
+    if override:
+        try:
+            return max(1, int(override))
+        except ValueError:
+            pass
+    return max(1, _available_cpus() // max(1, concurrency))
+
+
 def _eval_env(
     *,
     task_meta: Path,
@@ -487,8 +552,15 @@ def _eval_env(
     pkg_dir: Path,
     tc: dict,
     seed: int,
+    threads: int | None = None,
 ) -> dict[str, str]:
     env = os.environ.copy()
+    # Size the thread pools against the cgroup quota before the package and
+    # command environments are layered on, so a task that deliberately sets
+    # one of these keys still wins.
+    budget = str(threads if threads is not None else _thread_budget())
+    for key in _THREAD_ENV_KEYS:
+        env[key] = budget
     default_pkg = _read_meta_text(task_meta, "package", "")
     package_envs = _load_package_envs(task_meta)
     pkg_name = str(tc.get("package") or default_pkg)
@@ -617,6 +689,17 @@ MAX_PARALLEL_GPUS = 8
 # charges the same amount per wave, so the outer verifier budget can never be
 # tighter than the deadlines this runner hands out.
 WAVE_GRACE_SEC = 300
+# Gap between the launches of one wave's commands. They share a workspace and
+# a first-use initialization (an mlflow store, a compile cache, a font cache)
+# that is not always locked; a second between starts keeps those from
+# landing in the same instant without changing the wave's deadline.
+WAVE_LAUNCH_STAGGER_SEC = 1.0
+# After a wave in which a command was killed at its deadline, wait this long
+# before starting the next one. A killed torchrun leaves its rendezvous port
+# in TIME_WAIT for the kernel's 60 s; the next group of cv-diffusion-*
+# derives the same port from the task name and died 3 s later with
+# EADDRINUSE (Modal sweep, 2026-09-09), turning one timeout into two.
+WAVE_KILL_SETTLE_SEC = 65
 
 
 def _bin_pack_fractional_gpus(fractionals: list[float]) -> int:
@@ -886,16 +969,37 @@ def _kill_process_group(pgid: int, timeout: float = 30.0) -> None:
 def _copy_task_meta_for_budget(
     task_meta: Path, scratch_dir: Path,
     effective_test_cmds: list[dict] | None = None,
-) -> None:
-    scratch_dir.mkdir(parents=True, exist_ok=True)
+    eval_root: Path | None = None,
+) -> Path:
+    """Stage a private copy of the task for budget_check.py; return its task dir.
+
+    The copy keeps the native checkout's relative layout,
+    ``<scratch>/tasks/<task_id>/`` beside ``<scratch>/holdout/<task_id>/``,
+    because ``edits/mid_edit.py`` resolves the verifier-only input generator
+    as ``parents[3] / "holdout" / <task_id>`` (native runs the budget check of
+    ephemeral-input tasks host-side against exactly such a snapshot).  The
+    holdout copy is ``<eval_root>/_inputgen/holdout/<task_id>`` when the bundle
+    ships one, the same files apply.py imports at eval time.  A flat scratch
+    dir made that path ``/holdout/<task_id>``, so optimization-nas's check
+    died on import and every eval failed with rc=1.
+    """
+    task_id = _read_meta_text(task_meta, "task_id", "task")
+    task_dir = scratch_dir / "tasks" / task_id
+    task_dir.mkdir(parents=True, exist_ok=True)
     for name in ("config.json", "budget_check.py"):
         src = task_meta / name
         if src.exists():
-            shutil.copy2(src, scratch_dir / name)
+            shutil.copy2(src, task_dir / name)
     for name in ("edits", "scripts"):
         src = task_meta / name
         if src.exists():
-            shutil.copytree(src, scratch_dir / name, dirs_exist_ok=True)
+            shutil.copytree(src, task_dir / name, dirs_exist_ok=True)
+    if eval_root is not None:
+        holdout_src = eval_root / "_inputgen" / "holdout" / task_id
+        if holdout_src.is_dir():
+            shutil.copytree(
+                holdout_src, scratch_dir / "holdout" / task_id, dirs_exist_ok=True
+            )
     # budget_check.py derives the agent model's hyperparameters from this
     # config.json's test_cmds (active_test_cmd -> cmd -> expand_script_argv). For
     # an oracle run the eval cmd is replaced by the strongest baseline's cmd, and
@@ -905,11 +1009,12 @@ def _copy_task_meta_for_budget(
     # oracle). Native MLSBench runs the budget check against the
     # baseline-substituted task config; mirror that.
     if effective_test_cmds is not None:
-        cfg_path = scratch_dir / "config.json"
+        cfg_path = task_dir / "config.json"
         if cfg_path.exists():
             cfg = json.loads(cfg_path.read_text())
             cfg["test_cmds"] = effective_test_cmds
             cfg_path.write_text(json.dumps(cfg, indent=2))
+    return task_dir
 
 
 def _install_budget_legacy_links(scratch_dir: Path, workspace_root: Path) -> list[Path]:
@@ -952,6 +1057,17 @@ def _build_eval_task_dir(task_meta: Path) -> Path:
         src = task_meta / sub
         if src.exists():
             shutil.copytree(src, d / sub, dirs_exist_ok=True)
+    # `task_description.md` lands at the root: an eval that resolves its task
+    # directory walks up from its own path until it finds that file. It is the
+    # only thing the renderer stages here (see EVALTASK_FILES) — the native
+    # task dir's `baselines/` holds the reference implementations.
+    extras = task_meta / "evaltask"
+    if extras.exists():
+        for entry in extras.iterdir():
+            if entry.is_dir():
+                shutil.copytree(entry, d / entry.name, dirs_exist_ok=True)
+            else:
+                shutil.copy2(entry, d / entry.name)
     return d
 
 
@@ -965,6 +1081,7 @@ def _run_budget_check(
     seed: int,
     env: dict[str, str],
     effective_test_cmds: list[dict] | None = None,
+    eval_root: Path | None = None,
 ) -> dict | None:
     if not (task_meta / "budget_check.py").exists():
         return None
@@ -982,13 +1099,15 @@ def _run_budget_check(
     legacy_links: list[Path] = []
     with log_path.open("w") as fh:
         try:
-            _copy_task_meta_for_budget(task_meta, scratch_dir, effective_test_cmds)
-            legacy_links = _install_budget_legacy_links(scratch_dir, workspace_root)
+            task_dir = _copy_task_meta_for_budget(
+                task_meta, scratch_dir, effective_test_cmds, eval_root=eval_root
+            )
+            legacy_links = _install_budget_legacy_links(task_dir, workspace_root)
             budget_env = env.copy()
             budget_env["TMPDIR"] = str(scratch_dir)
-            budget_env["MLSBENCH_TASK_DIR"] = str(scratch_dir)
+            budget_env["MLSBENCH_TASK_DIR"] = str(task_dir)
             proc = subprocess.run(
-                [python_bin, str(scratch_dir / "budget_check.py")],
+                [python_bin, str(task_dir / "budget_check.py")],
                 cwd=str(pkg_dir),
                 env=budget_env,
                 stdout=fh,
@@ -1066,8 +1185,13 @@ def _run_eval_wave(
     deadline = time.time() + timeout_secs
     running: list[dict] = []
     results: dict[tuple[int, int], dict] = {}
+    # Everything in a wave runs at once, so each command gets a share of the
+    # CPU quota rather than all of it.
+    threads = _thread_budget(len(tasks))
 
-    for task, gpu_devices in zip(tasks, assignments):
+    for launch_index, (task, gpu_devices) in enumerate(zip(tasks, assignments)):
+        if launch_index:
+            time.sleep(WAVE_LAUNCH_STAGGER_SEC)
         entry = task["entry"]
         seed = int(task["seed"])
         log_path = _eval_log_path(out_dir, entry["label"], seed)
@@ -1079,6 +1203,7 @@ def _run_eval_wave(
             pkg_dir=pkg_dir,
             tc=entry["tc"],
             seed=seed,
+            threads=threads,
         )
         if gpu_devices:
             env["CUDA_VISIBLE_DEVICES"] = gpu_devices
@@ -1349,6 +1474,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     seed=seed,
                     env=env,
                     effective_test_cmds=test_cmds,
+                    eval_root=eval_root,
                 )
                 if budget and budget["rc"] != 0:
                     records[(entry["idx"], seed)] = _write_error_record(
@@ -1394,6 +1520,13 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                 _remove_budget_legacy_links(eval_task_links)
                 shutil.rmtree(eval_task_dir, ignore_errors=True)
             records.update(wave_results)
+            if any(int(r.get("rc", 0) or 0) == 124 for r in wave_results.values()):
+                print(
+                    f"[wave] a command was killed at its deadline; waiting "
+                    f"{WAVE_KILL_SETTLE_SEC}s for its sockets to clear before the next wave",
+                    flush=True,
+                )
+                time.sleep(WAVE_KILL_SETTLE_SEC)
             for task in runnable_tasks:
                 entry = task["entry"]
                 seed = int(task["seed"])
@@ -1464,6 +1597,40 @@ def _has_real_metrics(record: dict) -> bool:
 def _valid_seed_metric_records(per_seed_metrics: dict[int, dict]) -> list[dict]:
     return [metrics for _seed, metrics in sorted(per_seed_metrics.items()) if _has_real_metrics(metrics)]
 
+def _eval_failures(summary: list[dict], config: dict) -> list[str]:
+    """One line per (label, seed) whose eval command did not exit 0.
+
+    rc=124 is this runner's own deadline (the wave's longest ``time`` plus
+    WAVE_GRACE_SEC), so say so in words: a reader of ``score_error.txt``
+    otherwise sees only "no metrics extracted" and cannot tell a harness
+    timeout from a model that produced nothing.
+    """
+    own_deadline: dict[str, int] = {}
+    for tc in _effective_test_cmds(config):
+        label = str(tc.get("label", tc.get("cmd", "test")))
+        own_deadline[label] = (
+            _parse_time_to_seconds(tc.get("time", "1:00:00")) + WAVE_GRACE_SEC
+        )
+    lines: list[str] = []
+    for entry in summary:
+        label = str(entry.get("label", ""))
+        for log in entry.get("logs", []):
+            rc = log.get("rc")
+            if rc in (0, None):
+                continue
+            elapsed = float(log.get("elapsed") or 0.0)
+            where = f"{label} seed {log.get('seed')}"
+            if rc == 124:
+                lines.append(
+                    f"{where}: timed out after {elapsed:.0f}s "
+                    f"(its own deadline is {own_deadline.get(label, 0)}s incl. "
+                    f"{WAVE_GRACE_SEC}s grace; a wave shares its slowest member's)"
+                )
+            else:
+                lines.append(f"{where}: exited rc={rc} after {elapsed:.0f}s")
+    return lines
+
+
 def cmd_score(args: argparse.Namespace) -> int:
     task_meta = Path(args.task_meta)
     out_dir = Path(args.out_dir)
@@ -1519,6 +1686,9 @@ def cmd_score(args: argparse.Namespace) -> int:
         (out_dir / "score_error.txt").write_text("eval_summary.json missing\n")
         return 0
     summary = json.loads(summary_path.read_text())
+    failures = _eval_failures(summary, config)
+    if failures:
+        (out_dir / "eval_failures.txt").write_text("".join(f"{line}\n" for line in failures))
 
     # Parse every log, aggregate per-seed metrics, then mean across seeds.
     test_cmd_by_label = {tc.get("label", tc["cmd"]): tc for tc in config.get("test_cmds", [])}
@@ -1557,7 +1727,12 @@ def cmd_score(args: argparse.Namespace) -> int:
     valid_metrics = _valid_seed_metric_records(per_seed_metrics)
     if not valid_metrics:
         reward_out.write_text("0\n")
-        (out_dir / "score_error.txt").write_text("no metrics extracted from logs\n")
+        detail = "no metrics extracted from logs\n"
+        if failures:
+            detail += "eval commands that did not finish cleanly:\n" + "".join(
+                f"  {line}\n" for line in failures
+            )
+        (out_dir / "score_error.txt").write_text(detail)
         return 0
 
     mean_metrics = _aggregate_metrics(valid_metrics)
@@ -1580,6 +1755,7 @@ def cmd_score(args: argparse.Namespace) -> int:
     (out_dir / "metrics.json").write_text(json.dumps({
         "combined_score": combined,
         "reward": reward,
+        "eval_failures": failures,
         "mean_metrics": mean_metrics,
         "per_seed_metrics": per_seed_metrics,
     }, indent=2))

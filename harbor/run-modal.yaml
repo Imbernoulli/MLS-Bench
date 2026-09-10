@@ -1,0 +1,44 @@
+# Modal run configuration: all 138 tasks whose evaluators need no model API
+# key, on Modal sandboxes.  Run from this directory with:
+#
+#   uv tool install "harbor[modal]"     # Harbor >= 0.22; then `modal token new`
+#   PYTHONPATH=. harbor run -c run-modal.yaml
+#
+# `harbor/tasks-modal/` is the variant sized for Modal: the native CPU/RAM
+# calibration, CPUs capped at Modal's 64 per sandbox (only the four 8-GPU
+# tasks are affected), no compose file.  It runs on stock Harbor's `modal`
+# environment as shipped (`harbor run -e modal --path tasks-modal/<task>`);
+# `harbor_env:ModalEnvironment` only adds `--ek gpu_type=H200`, which selects
+# a task's native h200 profile for the agent and the verifier alike.
+#
+# Useful `--ek` keys (stock): `labels='{"run":"x"}'` tags every sandbox,
+# `region=us-east` pins placement, `sandbox_timeout_secs=N` (Modal caps a
+# sandbox at 86400 s, so a 5 h agent budget plus a verifier deadline above
+# 19 h cannot fit in one sandbox — ten tasks declare one, see harbor/README.md;
+# their oracle runs are far shorter).
+
+jobs_dir: jobs-modal
+n_attempts: 1
+timeout_multiplier: 1.0
+# Modal has no per-workspace GPU quota comparable to Daytona's, but each
+# trial reserves its task's declared GPU count (up to 8); raise this with
+# your workspace's concurrency limits in mind.
+n_concurrent_trials: 1
+quiet: false
+
+environment:
+  import_path: harbor_env:ModalEnvironment
+  force_build: true
+  delete: true
+
+agents:
+  - name: oracle
+
+# Replace the oracle block with a real Harbor agent when running evaluations,
+# or pass `--agent ... --model ... --agent-env KEY=...` on the command line.
+
+datasets:
+  - path: tasks-modal
+    exclude_task_names:
+      - mls-bench__agent-tool-reasoning
+      - mls-bench__mas-topology

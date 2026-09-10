@@ -7,18 +7,21 @@ Container Toolkit installed (`nvidia-container-runtime` in `docker info` →
 Runtimes), which can run GPU containers directly via `docker compose`.
 
 ``DockerGPUEnvironment`` flips the one flag without modifying Harbor's
-source. Each MLS-Bench task that needs GPUs ships an
-`environment/docker-compose.yaml` that reserves nvidia devices via the
-standard `deploy.resources.reservations.devices` block; Harbor merges that
-with its base compose file. CPU-only tasks (`gpus = 0`) work identically to
-the stock environment — the GPU capability is just declared, not used.
+source and writes a per-trial compose overlay with the NVIDIA device
+reservation (``--ek gpu_ids=2,3`` pins devices) and ``shm_size: 16gb``,
+ignoring the bundle's own overlay so devices are never reserved twice. A CPU
+request above the host's core count is clamped with a warning.
 ``--ek gpu_type=H200`` selects a task's native H200 profile for the agent and
 the verifier alike, as it does on Daytona.
 
 Both classes live in the adapter package (``mls_bench.harbor_env``) and are
 re-exported here so ``run.yaml`` / ``run-daytona.yaml`` can name them as
-``harbor_env:...`` from this directory.  ``DaytonaEnvironment`` handles
-MLS-Bench's GPU-only Compose overlays as direct Daytona GPU sandboxes.
+``harbor_env:...`` from this directory.  ``DaytonaEnvironment`` is optional:
+``tasks-daytona/`` runs on stock Harbor's ``daytona`` environment as shipped;
+this class adds the H100 default, clamp-on-refusal, toolbox retries and the
+H200 profile export.  ``ModalEnvironment`` likewise: ``tasks-modal/`` runs on
+stock Harbor's ``modal`` environment; the class only adds ``--ek
+gpu_type=H200``.
 
 Wired into ``run.yaml`` for remote runs:
 
@@ -41,6 +44,7 @@ from mls_bench.harbor_env import (  # noqa: E402
     DaytonaEnvironment,
     DaytonaClientManager,
     DockerGPUEnvironment,
+    ModalEnvironment,
     is_gpu_reservation_only_compose,
 )
 
@@ -49,5 +53,6 @@ __all__ = [
     "DockerGPUEnvironment",
     "DaytonaEnvironment",
     "DaytonaClientManager",
+    "ModalEnvironment",
     "is_gpu_reservation_only_compose",
 ]

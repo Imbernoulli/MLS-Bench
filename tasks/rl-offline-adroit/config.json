@@ -6,7 +6,7 @@
       "label": "pen-human-v1",
       "group": 1,
       "compute": 0.33,
-      "time": "12:00:00",
+      "time": "23:00:00",
       "package": "CORL"
     },
     {
@@ -14,7 +14,7 @@
       "label": "hammer-human-v1",
       "group": 1,
       "compute": 0.33,
-      "time": "12:00:00",
+      "time": "23:00:00",
       "package": "CORL"
     },
     {
@@ -22,7 +22,7 @@
       "label": "door-cloned-v1",
       "group": 1,
       "compute": 0.33,
-      "time": "12:00:00",
+      "time": "23:00:00",
       "package": "CORL",
       "hidden": true
     }

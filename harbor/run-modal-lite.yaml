@@ -1,44 +1,28 @@
-# Daytona run configuration for the 30-task MLS-Bench-Lite subset.
+# Modal run configuration for the 30-task MLS-Bench-Lite subset.
 #
 # Run from this directory with:
-#   DAYTONA_API_KEY=... PYTHONPATH=.:../harbor_adapter/src harbor run -c run-daytona-lite.yaml
+#   PYTHONPATH=. harbor run -c run-modal-lite.yaml
 #
-# Identical to run-daytona.yaml except for the `datasets:` block, which names
-# the 30 tasks of the README's "MLS-Bench-Lite" table.  Neither API-backed
-# evaluator (agent-tool-reasoning, mas-topology) is part of Lite, so no model
-# keys are needed beyond the agent's own.  See run-daytona.yaml for what each
-# option means.  Copy this file and edit `task_names` (globs accepted) for any
-# other subset; do not pass `--path tasks-daytona` with it, which would replace this
-# block with the whole dataset.
+# Identical to run-modal.yaml except for the dataset block, which names the
+# 30 tasks of the README's "MLS-Bench-Lite" table (the same list as
+# run-daytona-lite.yaml).  See run-modal.yaml for what each option means.
 
-jobs_dir: jobs-daytona-lite
+jobs_dir: jobs-modal-lite
 n_attempts: 1
 timeout_multiplier: 1.0
-# Keep remote environment allocation serial.  Raise this only when the
-# aggregate *declared* GPU counts of the concurrent tasks fit your quota
-# (Lite tasks declare 0-8 GPUs each; see each task.toml).
 n_concurrent_trials: 1
 quiet: false
 
 environment:
-  import_path: harbor_env:DaytonaEnvironment
+  import_path: harbor_env:ModalEnvironment
   force_build: true
   delete: true
-  kwargs:
-    gpu_type: H100
-    spot: false
 
 agents:
   - name: oracle
 
-# Replace the oracle block with a real Harbor agent when running evaluations,
-# or pass `--agent ... --model ... --agent-env KEY=...` on the command line.
-# agents:
-#   - name: claude-code
-#     model_name: anthropic/claude-opus-4-7
-
 datasets:
-  - path: tasks-daytona
+  - path: tasks-modal
     task_names:
       # LM
       - mls-bench__llm-dllm-demask-strategy

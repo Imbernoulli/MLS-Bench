@@ -8,9 +8,15 @@ the MLS-Bench problem set.
 ## Quick start
 
 ```bash
-# 1. Render the 140 tasks (CPU-only; this is fast)
+# 1. Render the 140 tasks (CPU-only; this is fast).  The repository already
+#    ships all three renders: harbor/tasks-docker/, harbor/tasks-daytona/
+#    and harbor/tasks-modal/.  Rendering needs every package a task references
+#    fetched under vendor/ (`mlsbench fetch --name <package>`); the run aborts
+#    at the first task whose package is missing unless you pass
+#    --continue-on-error or restrict it with --task-ids.
 cd harbor_adapter
 PYTHONPATH=src python3 -m mls_bench.main \
+    --provider docker \                   # or daytona / modal: no compose file, that provider's sandbox shape
     --output-dir ./datasets/mls-bench \
     --mls-bench-root /path/to/MLS-Bench    # default: auto-detect from cwd
 
@@ -28,10 +34,15 @@ export DAYTONA_API_KEY="<your-daytona-key>"
 PYTHONPATH=src harbor run -c run-daytona.yaml
 ```
 
-`run-daytona.yaml` uses `mls_bench.harbor_env:DaytonaEnvironment`, which sends
-each task's GPU-only Compose overlay to Daytona's direct sandbox resource
-request — Daytona rejects GPU+Compose. Real CPU-only multi-container tasks are
-untouched. The provider key comes from the host environment and is never
+Render with `--provider daytona` for this: that variant carries no compose
+file (Daytona rejects GPU + Compose) and sizes CPU-only tasks to Daytona's
+4 CPU / 8 GB / 10 GB sandbox ceiling. Stock Harbor's `daytona` environment
+runs it as shipped; `mls_bench.harbor_env:DaytonaEnvironment` adds the H100
+default, clamp-on-refusal, toolbox retries and the H200 profile export.
+`--provider modal` (`harbor/tasks-modal/`, `run-modal.yaml`) is the native
+calibration without a compose file and with CPUs capped at Modal's 64 per
+sandbox; `mls_bench.harbor_env:ModalEnvironment` adds only `--ek
+gpu_type=H200`. The provider key comes from the host environment and is never
 embedded in task files. See
 [harbor/README.md](../harbor/README.md#run-on-daytona) for the option
 reference; `agent-tool-reasoning` and `mas-topology` additionally need
@@ -67,9 +78,12 @@ pristine manifest must match), installs the CUDA runtime alias vLLM needs,
 and caps verl's worker processes in the verifier copies of `train.sh`. Only
 the rendered `environment/Dockerfile` and verifier copies are changed;
 editable source and native task scripts are not. The operation is idempotent,
-so re-rendering does not accumulate layers or verifier flags. Runtime
-provider settings (H100 default, thread caps, RAM/CPU floors, NCCL fallback)
-live in `mls_bench.harbor_env.DaytonaEnvironment`, not in task files.
+so re-rendering does not accumulate layers or verifier flags. Everything a task
+needs at run time — CPU/RAM/disk/GPU shape in `task.toml`, thread pins and
+NCCL settings in the image `ENV`, the cgroup-aware thread budget in
+`score_task.py` — lives in the bundle (see
+[harbor/README.md](../harbor/README.md#container-resources)); the environment
+classes only default the GPU type and clamp to a provider's ceiling.
 
 Each rendered task directory:
 
@@ -80,7 +94,7 @@ mls-bench__<task-id>/
 ├── environment/
 │   ├── Dockerfile            # 5-line FROM <harbor-base> + COPY _scaffold/
 │   ├── _scaffold/            # mid_edit create/replace files
-│   └── docker-compose.yaml   # only when gpus > 0 (per-task device reservation)
+│   └── docker-compose.yaml   # --provider docker only: shm_size 16gb (+ NVIDIA reservation when gpus > 0); daytona/modal ship none
 ├── solution/
 │   ├── solve.sh              # oracle: apply baseline_edit_ops.json then exit
 │   └── baseline_edit_ops.json
@@ -111,16 +125,23 @@ mls-bench__<task-id>/
   which is what an agent cannot otherwise do. Note the asymmetry with the native
   harness, where the agent has no shell and `edit(op="create")` is refused
   outright when the flag is false.
-- **`budget_check.py`** (e.g. `llm-pretrain-normalization`) runs as part of
-  the eval scripts; no extra wrapping needed.
+- **`budget_check.py`** (e.g. `llm-pretrain-normalization`) is run by
+  `score_task.py` before each eval command from a private snapshot laid out
+  like a native checkout — `tasks/<task>/` beside `holdout/<task>/`, the
+  latter copied from `tests/eval/_inputgen/` when a task ships one — so a
+  `mid_edit.py` that imports its holdout generator resolves it.
 - **Hidden eval scripts** — all eval scripts (visible + hidden) live in
   `tests/eval/scripts/*.sh`, outside `/workspace`. Agent shell session
   never sees `/tests/`; Harbor uploads it at verify time only.
-- **Per-task budgets** — `[environment].{cpus, memory_mb, gpus}` and
+- **Per-task budgets** — `[environment].gpus` and
   `[agent]/[verifier].timeout_sec` are derived from `test_cmds[].compute`
   and `test_cmds[].time` in `config.json`, matching native
   `mlsbench.scheduler.peak_gpus` semantics: per-group
   `whole + ceil(fractional)` GPUs × `n_seeds`, max across groups.
+  `cpus` / `memory_mb` / `storage_mb` follow the native SLURM calibration
+  (`_resources()`: 12 CPUs per GPU with a 16 minimum, 64 GB, 128 GB for verl
+  tasks; CPU-only tasks 8 / 32 / 30 GB for `--provider docker` and `modal`,
+  4 / 8 / 10 GB for `--provider daytona`; `modal` caps CPUs at 64).
 - **GPU cap** — that peak is clamped to `MAX_PARALLEL_GPUS = 8`
   (`adapter.py`), because docker refuses to start a container reserving more
   devices than the host has. A group that wants more than 8 GPUs at once is
@@ -158,10 +179,11 @@ Harbor's stock `type: docker` environment refuses any task with `gpus > 0`
 `mls_bench.harbor_env:DockerGPUEnvironment`, a subclass that flips that flag,
 loaded via Harbor's documented
 `EnvironmentFactory.create_environment_from_import_path` extension point.
-For each task with `gpus > 0` the adapter emits a per-task
-`docker-compose.yaml` reserving nvidia devices via the standard
-`deploy.resources.reservations.devices` block. No Harbor fork, no
-site-packages patch.
+With `--provider docker` every task gets a `docker-compose.yaml` with
+`shm_size: 16gb` and, when `gpus > 0`, the standard
+`deploy.resources.reservations.devices` block; `DockerGPUEnvironment` writes
+its own copy of that overlay per trial (so `--ek gpu_ids=2,3` can pin
+devices) and ignores the bundle's. No Harbor fork, no site-packages patch.
 
 `run_mls-bench.yaml` wires this up:
 
@@ -272,7 +294,7 @@ containing `tasks/` + `vendor/packages.yaml` → `~/MLS-Bench/`.
   in-container mini-scheduler
 - `src/mls_bench/task-template/tests/score_task.py::cmd_guard` — the
   edit-range guard
-- `src/mls_bench/harbor_env.py` — `DockerGPUEnvironment` plugin
+- `src/mls_bench/harbor_env.py` — `DockerGPUEnvironment` / `DaytonaEnvironment` / `ModalEnvironment` plugins
 - `scripts/build_base_image.py::build_one` — per-package harbor base build
-- `tests/test_scheduler.py`, `tests/test_adapter.py`,
-  `tests/test_score_task.py` — 28 unit tests
+- `tests/` — the unit tests; run them from the repo root with
+  `PYTEST_DISABLE_PLUGIN_AUTOLOAD=1 python -m pytest harbor_adapter/tests`
