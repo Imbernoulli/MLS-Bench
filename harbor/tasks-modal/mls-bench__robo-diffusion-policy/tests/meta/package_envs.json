@@ -1,0 +1,8 @@
+{
+  "CleanDiffuser": {
+    "MUJOCO_GL": "osmesa",
+    "MUJOCO_PY_MUJOCO_PATH": "/opt/mujoco/mujoco210",
+    "LD_LIBRARY_PATH": "/opt/mujoco/mujoco210/bin:${LD_LIBRARY_PATH}",
+    "D4RL_DATASET_DIR": "/root/.d4rl/datasets"
+  }
+}

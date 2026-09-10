@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_fid_small,best_fid_medium,best_fid_large
+2026-04-14T00:00:00.000000+00:00,baseline:standard,true,42,18.60,8.47,7.18
+2026-04-14T00:00:00.000000+00:00,baseline:full-attn,true,42,17.44,8.82,7.31
+2026-04-14T00:00:00.000000+00:00,baseline:no-attn,true,42,21.39,11.25,9.55

@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,val_loss_gpt-345m,wikitext2_ppl_gpt-345m,lambada_ppl_gpt-345m,arc_easy_lm-eval-345m,hellaswag_lm-eval-345m,piqa_lm-eval-345m,winogrande_lm-eval-345m,elapsed_gpt-345m,elapsed_lm-eval-345m
+2026-04-10T14:38:09.409702+00:00,baseline:relu_sq_torch,true,42,2.2736,42.81,67.05,55.43,33.84,63.98,50.59,21776,488
+2026-04-10T12:48:05.084944+00:00,baseline:triton_gelu,true,42,2.2868,43.94,68.2,54.67,33.61,63.44,51.7,20035,447
+2026-04-10T15:51:11.452993+00:00,baseline:triton_relu_sq_fused,true,42,2.2749,43.52,66.88,54.8,33.77,63.49,48.46,30344,462

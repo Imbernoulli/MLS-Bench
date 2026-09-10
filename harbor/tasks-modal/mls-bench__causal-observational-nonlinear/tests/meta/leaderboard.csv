@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,shd_SF20-GP,f1_SF20-GP,precision_SF20-GP,recall_SF20-GP,shd_ER20-Gauss,f1_ER20-Gauss,precision_ER20-Gauss,recall_ER20-Gauss,shd_ER12-LowSample,f1_ER12-LowSample,precision_ER12-LowSample,recall_ER12-LowSample,elapsed_SF20-GP,elapsed_ER20-Gauss,elapsed_ER12-LowSample
+2026-04-21T12:30:29.314035+00:00,baseline:cam,true,42,8,0.8529,0.9062,0.8056,26,0.7234,0.9444,0.5862,21,0.5417,0.4483,0.6842,47,49,5
+2026-04-21T12:30:30.187945+00:00,baseline:notears_mlp,true,42,35,0.2258,0.2692,0.1944,42,0.4186,0.6429,0.3103,15,0.4516,0.5833,0.3684,6,11,3
+2026-04-21T12:30:31.198863+00:00,baseline:directlingam,true,42,69,0.25,0.1842,0.3889,95,0.2194,0.1753,0.2931,22,0.2286,0.25,0.2105,3,3,2
+2026-04-19T11:19:18.085183+00:00,baseline:grandag,true,42,38,0.3953,0.34,0.4722,53,0.5,0.5185,0.4828,59,0.1205,0.0781,0.2632,161,165,165

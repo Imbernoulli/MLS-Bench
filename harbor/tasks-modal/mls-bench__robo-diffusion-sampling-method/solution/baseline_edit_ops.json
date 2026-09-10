@@ -1,0 +1,16 @@
+[
+  {
+    "op": "replace",
+    "file": "CleanDiffuser/configs/custom/mujoco/mujoco.yaml",
+    "start_line": 17,
+    "end_line": 17,
+    "content": "sampling_steps: 10\n"
+  },
+  {
+    "op": "replace",
+    "file": "CleanDiffuser/configs/custom/mujoco/mujoco.yaml",
+    "start_line": 15,
+    "end_line": 15,
+    "content": "solver: ode_dpmsolver++_2M\n"
+  }
+]

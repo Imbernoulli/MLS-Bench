@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_compressor.py",
+    "start_line": 182,
+    "end_line": 232,
+    "content": "class Compressor:\n    \"\"\"SignSGD with error feedback.\n\n    Compresses each gradient element to its sign (+1 or -1), achieving\n    32x compression. Error feedback accumulates the magnitude information\n    lost during sign extraction, improving convergence.\n\n    The compress_ratio parameter is not used for sign compression (always\n    1-bit), but the error feedback momentum can be tuned.\n    \"\"\"\n\n    def __init__(self, compress_ratio=0.01):\n        self.compress_ratio = compress_ratio\n        self.residuals = {}\n        # Error feedback momentum\n        self.ef_beta = 1.0\n\n    def compress(self, tensor, name):\n        # Error feedback: add accumulated residual\n        if name in self.residuals:\n            tensor = tensor + self.ef_beta * self.residuals[name]\n\n        shape = tensor.shape\n        tensor_flat = tensor.flatten()\n\n        # Sign compression: 1 bit per element\n        signs = (tensor_flat >= 0).to(torch.uint8)\n\n        # Scale by mean magnitude for better reconstruction\n        mean_magnitude = tensor_flat.abs().mean()\n\n        # Update residual: original - reconstructed\n        sign_float = signs.float() * 2 - 1  # map {0,1} -> {-1,+1}\n        reconstructed = sign_float * mean_magnitude\n        self.residuals[name] = (tensor_flat - reconstructed).view(shape)\n\n        return [signs, mean_magnitude], shape\n\n    def decompress(self, compressed_tensors, ctx):\n        shape = ctx\n        signs, mean_magnitude = compressed_tensors\n\n        # Reconstruct: sign * mean_magnitude\n        sign_float = signs.float() * 2 - 1\n        tensor_decompressed = sign_float * mean_magnitude\n        return tensor_decompressed.view(shape)\n"
+  }
+]

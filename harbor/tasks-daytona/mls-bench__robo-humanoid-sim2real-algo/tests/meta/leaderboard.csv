@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,success_rate_forward-only,success_rate_diverse-commands,success_rate_high-speed,elapsed_train,elapsed_diverse-commands,elapsed_forward-only,elapsed_high-speed
+2026-05-02T16:34:44.564340+00:00,baseline:default,true,42,1.0,0.96,0.23,11110,491,491,491
+2026-05-02T16:24:49.424680+00:00,baseline:ppo_adaptive_kl,true,42,1.0,0.97,0.13,11055,462,462,462
+2026-05-02T16:33:55.773830+00:00,baseline:ppo_layernorm,true,42,1.0,1.0,0.27,11267,393,401,401

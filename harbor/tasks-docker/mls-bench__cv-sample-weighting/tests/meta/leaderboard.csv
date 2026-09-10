@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet32-cifar10lt,test_acc_resnet32-cifar100lt,test_acc_vgg16bn-cifar100lt,elapsed_resnet32-cifar10lt,elapsed_resnet32-cifar100lt,elapsed_vgg16bn-cifar100lt
+2026-04-03T14:12:24.387294+00:00,baseline:inverse_freq,true,42,71.79,35.55,43.91,500,500,0
+2026-04-05T12:15:45.224571+00:00,baseline:effective_number,true,42,73.13,40.16,44.82,248,223,196
+2026-04-03T14:12:24.387294+00:00,baseline:balanced_softmax,true,42,73.59,39.42,45.36,507,507,0

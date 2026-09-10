@@ -1,0 +1,9 @@
+{
+  "LLaDA": {
+    "HF_HOME": "/opt/huggingface",
+    "HF_HUB_OFFLINE": "1",
+    "TRANSFORMERS_OFFLINE": "1",
+    "LLADA_INSTRUCT_PATH": "/data/llada-instruct",
+    "PYTHONPATH": "/workspace/LLaDA:${PYTHONPATH}"
+  }
+}

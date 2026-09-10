@@ -1,7 +1,0 @@
-#!/bin/bash
-# Opaque task token (host-side salted hash of the benchmark); reveals nothing
-# about which target function is in use.
-cd /workspace
-python "/tests/eval/_inputgen/apply.py" "ml-symbolic-regression" /workspace
-cd /workspace/gplearn
-SR_TASK=3ea1edc2332c python custom_sr.py --seed ${SEED:-42} --pop-size 500 --generations 50 --max-depth 6

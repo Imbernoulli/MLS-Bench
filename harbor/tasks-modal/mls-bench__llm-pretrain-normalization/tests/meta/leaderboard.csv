@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,val_loss_gpt-345m,wikitext2_ppl_gpt-345m,lambada_ppl_gpt-345m,arc_easy_lm-eval-345m,hellaswag_lm-eval-345m,piqa_lm-eval-345m,winogrande_lm-eval-345m,elapsed_gpt-345m,elapsed_lm-eval-345m
+2026-04-08T06:17:21.604905+00:00,baseline:rmsnorm,true,42,2.295,44.75,68.29,54.97,33.25,64.36,51.22,20389,458
+2026-04-08T00:23:34.569251+00:00,baseline:rmsnorm_post,true,42,2.3104,46.8,72.08,54.76,33.03,62.46,50.28,21661,586
+2026-04-08T10:51:00.628905+00:00,baseline:rmsnorm_parallel,true,42,2.3112,45.98,70.96,54.76,32.93,64.42,50.2,19747,406

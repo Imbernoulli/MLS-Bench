@@ -7,7 +7,7 @@
       "label": "math",
       "group": 1,
       "compute": 1.0,
-      "time": "02:00:00",
+      "time": "4:00:00",
       "package": "dLLM-cache"
     },
     {
@@ -15,7 +15,7 @@
       "label": "humaneval",
       "group": 2,
       "compute": 1.0,
-      "time": "03:00:00",
+      "time": "5:00:00",
       "package": "dLLM-cache"
     },
     {
@@ -23,7 +23,7 @@
       "label": "lm-eval",
       "group": 3,
       "compute": 1.0,
-      "time": "02:00:00",
+      "time": "4:00:00",
       "package": "dLLM-cache",
       "hidden": true
     }

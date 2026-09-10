@@ -1,0 +1,7 @@
+{
+  "omnisafe": {
+    "MUJOCO_GL": "osmesa",
+    "PYOPENGL_PLATFORM": "osmesa",
+    "LD_PRELOAD": "/usr/lib/x86_64-linux-gnu/libstdc++.so.6"
+  }
+}

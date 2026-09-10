@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "verl/verl/trainer/ppo/custom_advantage.py",
+    "start_line": 17,
+    "end_line": 72,
+    "content": "# =====================================================================\n\n\n@register_adv_est(\"custom\")\ndef compute_custom_advantage(\n    token_level_rewards: torch.Tensor,\n    response_mask: torch.Tensor,\n    index: np.ndarray = None,\n    epsilon: float = 1e-6,\n    config: Optional[AlgoConfig] = None,\n    **kwargs,\n) -> tuple[torch.Tensor, torch.Tensor]:\n    \"\"\"Dr. GRPO: GRPO without standard deviation normalization.\n\n    Computes outcome-level advantages by subtracting the group mean reward,\n    without dividing by the group standard deviation.\n    \"\"\"\n    scores = token_level_rewards.sum(dim=-1)\n\n    id2score = defaultdict(list)\n    id2mean = {}\n\n    with torch.no_grad():\n        bsz = scores.shape[0]\n        for i in range(bsz):\n            id2score[index[i]].append(scores[i])\n        for idx in id2score:\n            if len(id2score[idx]) == 1:\n                id2mean[idx] = torch.tensor(0.0)\n            elif len(id2score[idx]) > 1:\n                scores_tensor = torch.stack(id2score[idx])\n                id2mean[idx] = torch.mean(scores_tensor)\n            else:\n                raise ValueError(f\"no score in prompt index: {idx}\")\n        for i in range(bsz):\n            scores[i] = scores[i] - id2mean[index[i]]\n        scores = scores.unsqueeze(-1) * response_mask\n\n    return scores, scores\n"
+  }
+]

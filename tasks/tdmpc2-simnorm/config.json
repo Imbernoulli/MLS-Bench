@@ -12,7 +12,7 @@
       "label": "walker-walk",
       "group": 1,
       "compute": 0.33,
-      "time": "6:00:00",
+      "time": "8:00:00",
       "package": "tdmpc2"
     },
     {
@@ -20,7 +20,7 @@
       "label": "cheetah-run",
       "group": 1,
       "compute": 0.33,
-      "time": "6:00:00",
+      "time": "8:00:00",
       "package": "tdmpc2"
     },
     {
@@ -28,7 +28,7 @@
       "label": "cartpole-swingup",
       "group": 1,
       "compute": 0.33,
-      "time": "6:00:00",
+      "time": "8:00:00",
       "package": "tdmpc2",
       "hidden": true
     }

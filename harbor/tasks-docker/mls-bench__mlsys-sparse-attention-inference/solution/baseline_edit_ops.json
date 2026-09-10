@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "sparse-attn-eval/custom_sparse_attn.py",
+    "start_line": 31,
+    "end_line": 103,
+    "content": "\nclass SparseAttention(nn.Module):\n    \"\"\"Dense attention oracle. Reports true full-attention density.\n\n    The point of this baseline is to give an upper-bound quality reference;\n    it is not meant to satisfy a real sparsity constraint.\n    \"\"\"\n\n    def __init__(self, head_dim, num_heads, block_size=64, density_budget=0.25):\n        super().__init__()\n        self.head_dim = head_dim\n        self.num_heads = num_heads\n        self.density_budget = density_budget\n        self.last_density = None\n\n    def forward(self, q, k, v, is_causal=False, scale=None):\n        B, H, N, D = q.shape\n        scale = scale if scale is not None else 1.0 / math.sqrt(D)\n        # Use PyTorch's fused SDPA for efficient dense attention.\n        out = F.scaled_dot_product_attention(\n            q, k, v, attn_mask=None, dropout_p=0.0,\n            is_causal=is_causal, scale=scale,\n        )\n        self.last_density = 1.0\n        return out\n"
+  }
+]

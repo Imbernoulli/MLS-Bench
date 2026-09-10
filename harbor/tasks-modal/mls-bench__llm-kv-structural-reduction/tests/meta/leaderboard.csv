@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,val_loss_gpt-345m,kv_bytes_per_token_gpt-345m,heldout_loss_gpt-345m,arc_easy_lm-eval-345m,hellaswag_lm-eval-345m,piqa_lm-eval-345m,winogrande_lm-eval-345m,elapsed_gpt-345m,elapsed_lm-eval-345m
+2026-04-26T00:00:51.577088+00:00,baseline:mha,true,42,2.275425,4096.0,3.967285,54.88,33.42,64.15,53.2,24511,405
+2026-04-25T23:40:48.995894+00:00,baseline:mqa,true,42,2.33785,256.0,3.999302,53.49,32.46,64.8,50.43,23268,472
+2026-04-25T23:47:51.479298+00:00,baseline:gqa,true,42,2.312553,1024.0,3.969124,55.01,33.12,63.76,50.67,23765,437
+2026-04-26T05:47:01.642710+00:00,baseline:mla,true,42,2.306939,192.0,3.988359,54.76,33.21,63.76,51.93,43991,1029

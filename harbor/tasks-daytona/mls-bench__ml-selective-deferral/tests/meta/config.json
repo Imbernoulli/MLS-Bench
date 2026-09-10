@@ -1,0 +1,65 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/adult.sh",
+      "label": "adult",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/compas.sh",
+      "label": "compas",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/law_school.sh",
+      "label": "law_school",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:45:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "confidence_thresholding": {
+      "edit_ops": "edits/confidence_thresholding.edit.py"
+    },
+    "conformal_abstention": {
+      "edit_ops": "edits/conformal_abstention.edit.py"
+    },
+    "learned_deferral": {
+      "edit_ops": "edits/learned_deferral.edit.py"
+    },
+    "groupwise_thresholding": {
+      "edit_ops": "edits/groupwise_thresholding.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_selective.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 253,
+          "end": 287
+        }
+      ]
+    }
+  ]
+}

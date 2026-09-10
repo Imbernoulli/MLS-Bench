@@ -1,6 +1,0 @@
-{
-  "scaling-law-lab": {
-    "PYTHONPATH": "/workspace/scaling-law-lab:${PYTHONPATH}",
-    "SCALING_LAW_DATA_DIR": "/data/scaling_law"
-  }
-}

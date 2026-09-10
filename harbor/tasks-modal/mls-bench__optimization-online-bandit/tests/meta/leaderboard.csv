@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,normalized_regret_stochastic_mab,normalized_regret_contextual,normalized_regret_nonstationary,elapsed_stochastic-mab,elapsed_contextual,elapsed_nonstationary
+2026-04-23T06:36:50.936862+00:00,baseline:ucb1,true,42,0.039685,0.183238,0.077025,3,3,3
+2026-04-04T11:22:21.767444+00:00,baseline:thompson_sampling,true,42,0.03967,0.0212,0.05425,1.9,2.3,1.9
+2026-04-04T07:34:54.367323+00:00,baseline:kl_ucb,true,42,0.06016,0.184689,0.03541,4,3,3

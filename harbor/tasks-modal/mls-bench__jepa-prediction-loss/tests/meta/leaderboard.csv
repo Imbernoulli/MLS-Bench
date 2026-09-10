@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,mean_detection_ap_small,mean_detection_ap_base,mean_detection_ap_large,elapsed_small,elapsed_base,elapsed_large
+2026-04-21T19:40:51.918103+00:00,baseline:mse,true,42,0.6019,0.6506,0.6409,9408,13353,22908
+2026-04-21T19:17:40.356636+00:00,baseline:smooth_l1,true,42,0.6158,0.6399,0.6476,9422,13279,22945
+2026-05-03T18:08:29.959685+00:00,baseline:cosine,true,42,0.5613,0.5475,0.4664,9572,13613,23560

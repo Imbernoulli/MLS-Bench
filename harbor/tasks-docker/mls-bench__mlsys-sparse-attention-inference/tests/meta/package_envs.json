@@ -1,0 +1,8 @@
+{
+  "sparse-attn-eval": {
+    "HF_HOME": "/data/huggingface",
+    "TRANSFORMERS_CACHE": "/data/huggingface/transformers",
+    "HF_DATASETS_CACHE": "/data/longctx",
+    "PYTHONPATH": "/workspace/sparse-attn-eval:${PYTHONPATH}"
+  }
+}

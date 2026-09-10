@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_fid_small,best_fid_medium,best_fid_large
+2026-04-14T00:00:00.000000+00:00,baseline:concat-film,true,42,19.39,11.50,10.52
+2026-04-14T00:00:00.000000+00:00,baseline:cross-attn,true,42,19.17,11.21,10.41
+2026-04-14T00:00:00.000000+00:00,baseline:adanorm,true,42,20.01,12.31,11.77

@@ -1,9 +1,0 @@
-{
-  "ProteinInvBench": {
-    "PYTHONPATH": "/workspace/ProteinInvBench:/workspace:${PYTHONPATH}",
-    "TRANSFORMERS_CACHE": "/opt/hf_cache",
-    "HF_HOME": "/opt/hf_cache",
-    "HF_HUB_OFFLINE": "1",
-    "MPLBACKEND": "Agg"
-  }
-}

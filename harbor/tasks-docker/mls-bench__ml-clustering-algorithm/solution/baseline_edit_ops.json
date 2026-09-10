@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "scikit-learn/custom_clustering.py",
+    "start_line": 36,
+    "end_line": 109,
+    "content": "\nclass CustomClustering(BaseEstimator, ClusterMixin):\n    \"\"\"HDBSCAN \u2014 hierarchical density-based clustering (Campello et al., 2013).\"\"\"\n\n    def __init__(self, n_clusters=None, random_state=42):\n        self.n_clusters = n_clusters\n        self.random_state = random_state\n        self.labels_ = None\n\n    def fit(self, X):\n        from sklearn.cluster import HDBSCAN\n\n        # HDBSCAN automatically determines the number of clusters.\n        # min_cluster_size controls granularity.\n        min_cs = max(5, X.shape[0] // 50)\n        self._model = HDBSCAN(\n            min_cluster_size=min_cs,\n            min_samples=5,\n            cluster_selection_method=\"eom\",\n        )\n        self._model.fit(X)\n        self.labels_ = self._model.labels_\n\n        # If HDBSCAN assigns everything to noise (-1), fall back to\n        # labeling all points as cluster 0 to avoid degenerate metrics.\n        if len(set(self.labels_)) <= 1:\n            from sklearn.cluster import KMeans\n            k = self.n_clusters if self.n_clusters is not None else 8\n            km = KMeans(n_clusters=k, random_state=self.random_state, n_init=10)\n            km.fit(X)\n            self.labels_ = km.labels_\n\n        return self\n\n    def predict(self, X):\n        if self.labels_ is None:\n            self.fit(X)\n        return self.labels_\n\n\ndef custom_distance(x, y):\n    return np.sqrt(np.sum((x - y) ** 2))\n"
+  }
+]

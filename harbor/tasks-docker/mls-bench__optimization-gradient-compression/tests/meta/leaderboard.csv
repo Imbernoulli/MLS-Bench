@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_acc_resnet20-cifar10,test_loss_resnet20-cifar10,best_acc_vgg11-cifar100,test_loss_vgg11-cifar100,best_acc_resnet56-cifar10,test_loss_resnet56-cifar10,elapsed_resnet20-cifar10,elapsed_vgg11-cifar100,elapsed_resnet56-cifar10
+2026-04-04T07:35:04.164171+00:00,baseline:topk_ef,true,42,92.05,0.2805,70.78,1.4511,93.78,0.2562,7,6,8
+2026-04-23T10:51:05.892152+00:00,baseline:qsgd,true,42,92.66,0.2781,69.8,1.6211,94.06,0.2681,13435,13435,4586
+2026-04-04T07:35:59.632958+00:00,baseline:signsgd,true,42,92.66,0.2703,70.82,1.453,94.33,0.261,6,4,4

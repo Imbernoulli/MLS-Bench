@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,test_acc_vgg16bn_cifar100_labelflip,poison_fit_vgg16bn_cifar100_labelflip,robust_score_vgg16bn_cifar100_labelflip,test_acc_resnet20_cifar10_labelflip,poison_fit_resnet20_cifar10_labelflip,robust_score_resnet20_cifar10_labelflip,test_acc_mobilenetv2_fmnist_labelflip,poison_fit_mobilenetv2_fmnist_labelflip,robust_score_mobilenetv2_fmnist_labelflip,elapsed_resnet20-cifar10-labelflip,elapsed_vgg16bn-cifar100-labelflip,elapsed_mobilenetv2-fmnist-labelflip
+2026-04-07T09:54:50.233926+00:00,baseline:cross_entropy,true,42,0.6907,0.4532,0.6187,0.9039,0.1188,0.8925,0.9472,0.0104,0.9684,424.1,292.7,771.1
+2026-04-07T09:58:31.079407+00:00,baseline:generalized_ce,true,42,0.6674,0.0264,0.8205,0.9055,0.0404,0.9325,0.9335,0.005,0.9643,425.5,318.4,794.5
+2026-04-07T10:01:28.824124+00:00,baseline:symmetric_ce,true,42,0.7032,0.1806,0.7613,0.9076,0.0802,0.9137,0.9431,0.0067,0.9682,440.7,326.0,815.5
+2026-04-07T10:04:26.704881+00:00,baseline:bootstrap,true,42,0.6814,0.5642,0.5586,0.9025,0.1142,0.8942,0.948,0.0076,0.9702,429.1,318.7,806.5

@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,val_loss_gpt-345m,wikitext2_ppl_gpt-345m,lambada_ppl_gpt-345m,arc_easy_lm-eval-345m,hellaswag_lm-eval-345m,piqa_lm-eval-345m,winogrande_lm-eval-345m,elapsed_gpt-345m,elapsed_lm-eval-345m
+2026-04-08T15:12:06.875488+00:00,baseline:adamw_nesterov,true,42,2.3231,46.96,71.82,55.18,32.75,63.98,51.38,20324,376
+2026-04-08T05:35:01.888121+00:00,baseline:lion,true,42,2.2028,38.96,60.05,58.21,35.64,65.45,51.62,21680,376
+2026-04-13T07:17:59.857157+00:00,baseline:muon,true,42,2.1995,37.98,60.08,60.19,36.85,64.15,52.17,20923,389

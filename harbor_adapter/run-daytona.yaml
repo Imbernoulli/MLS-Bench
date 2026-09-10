@@ -19,13 +19,13 @@ environment:
     # See harbor/run-daytona.yaml for the meaning of each option.
     gpu_type: H100
     spot: false
-    gpu_memory_gb: 64
-    gpu_cpus: 16
 
 agents:
   - name: oracle
 
 datasets:
+  # Render this tree with `python -m mls_bench.main --provider daytona`;
+  # the checked-in equivalent is harbor/tasks-daytona.
   - path: datasets/mls-bench
     # The two API-backed tasks are intentionally excluded from the default
     # Daytona run. Add them back only when DeepSeek/DashScope keys are set.

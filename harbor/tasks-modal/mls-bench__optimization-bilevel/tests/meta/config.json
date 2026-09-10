@@ -1,0 +1,74 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/toy_convergence.sh",
+      "label": "toy-convergence",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:20:00",
+      "package": "penalized-bilevel-gradient-descent"
+    },
+    {
+      "cmd": "scripts/hyperclean_linear.sh",
+      "label": "hyperclean-linear",
+      "group": 1,
+      "compute": 0.33,
+      "time": "01:00:00",
+      "package": "penalized-bilevel-gradient-descent"
+    },
+    {
+      "cmd": "scripts/hyperclean_mlp.sh",
+      "label": "hyperclean-mlp",
+      "group": 1,
+      "compute": 0.33,
+      "time": "02:00:00",
+      "package": "penalized-bilevel-gradient-descent",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "v_pbgd": {
+      "edit_ops": "edits/v_pbgd.edit.py"
+    },
+    "g_pbgd": {
+      "edit_ops": "edits/g_pbgd.edit.py"
+    },
+    "rhg": {
+      "edit_ops": "edits/rhg.edit.py"
+    },
+    "t_rhg": {
+      "edit_ops": "edits/t_rhg.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "penalized-bilevel-gradient-descent/mlsbench/custom_strategy.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 227,
+          "end": 262
+        }
+      ]
+    },
+    {
+      "filename": "penalized-bilevel-gradient-descent/RHG/hypergrad/hypergradients.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

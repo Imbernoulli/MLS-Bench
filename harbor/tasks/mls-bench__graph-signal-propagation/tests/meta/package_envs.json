@@ -1,6 +1,0 @@
-{
-  "ChebNetII": {
-    "PYTHONPATH": "/workspace/ChebNetII/main:${PYTHONPATH}",
-    "HOME": "/root"
-  }
-}

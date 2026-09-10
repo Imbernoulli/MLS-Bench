@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_fitness_rastrigin-30d,best_fitness_rosenbrock-30d,best_fitness_ackley-30d,best_fitness_rastrigin-100d,elapsed_rastrigin-30d,elapsed_rosenbrock-30d,elapsed_ackley-30d,elapsed_rastrigin-100d
+2026-04-23T06:37:26.080711+00:00,baseline:ga_sbx,true,42,8.985411,87.01174,1.048397,115.1942,5,5,5,31
+2026-04-23T06:37:15.899076+00:00,baseline:de,true,42,172.2954,32.24717,0.4881168,925.7715,5,5,5,25
+2026-04-24T07:55:35.018873+00:00,baseline:lshade,true,42,7.892829,15.011,4.659428e-11,120.5674,6,6,6,44

@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,convergence_steps_toy_convergence,final_residual_toy_convergence,final_projected_grad_toy_convergence,success_rate_toy_convergence,test_accuracy_hyperclean_linear,f1_score_hyperclean_linear,cleaner_precision_hyperclean_linear,cleaner_recall_hyperclean_linear,test_accuracy_hyperclean_mlp,f1_score_hyperclean_mlp,cleaner_precision_hyperclean_mlp,cleaner_recall_hyperclean_mlp,elapsed_toy-convergence,elapsed_hyperclean-linear,elapsed_hyperclean-mlp
+2026-04-04T13:36:33.650210+00:00,baseline:v_pbgd,true,42,261.256,0.030345,1e-05,1.0,90.08,91.810837,0.88379,0.9552,91.48,92.050041,0.887199,0.9564,7,66.3,174.3
+2026-04-04T13:37:07.326187+00:00,baseline:g_pbgd,true,42,303.318,0.089126,1e-05,1.0,89.77,83.521446,0.857564,0.814,92.38,90.820122,0.88923,0.928,8,67.2,112.9
+2026-04-04T13:40:15.444382+00:00,baseline:rhg,true,42,261.256,0.030345,1e-05,1.0,84.82,89.534676,0.828737,0.9736,84.79,89.339172,0.821692,0.9788,5,89.4,185.8
+2026-04-04T13:39:58.333887+00:00,baseline:t_rhg,true,42,261.256,0.030345,1e-05,1.0,84.82,89.244934,0.826962,0.9692,84.79,89.348465,0.823549,0.9764,7,40.7,68.7

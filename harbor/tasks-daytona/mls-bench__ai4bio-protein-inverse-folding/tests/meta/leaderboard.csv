@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,recovery_CATH4.2,perplexity_CATH4.2,recovery_CATH4.3,perplexity_CATH4.3,recovery_TS50,perplexity_TS50,elapsed_CATH4.2,elapsed_CATH4.3,elapsed_TS50
+2026-04-27T13:36:55.774382+00:00,baseline:proteinmpnn,true,42,0.4603,5.4723,0.4612,5.4639,0.4829,5.0827,9314,8840,8650
+2026-04-27T18:04:24.113887+00:00,baseline:pifold,true,42,0.4648,5.2943,0.4772,5.1294,0.5228,4.5513,10934,10949,23722
+2026-04-27T12:37:04.413659+00:00,baseline:gvp,true,42,0.431,5.8996,0.4337,5.8209,0.4602,5.4831,5625,5297,5174

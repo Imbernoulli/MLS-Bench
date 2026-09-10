@@ -1,0 +1,62 @@
+{
+  "rigorous_codebase": true,
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/hdim64_seq4k.sh",
+      "label": "hdim64_seq4k",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:01:00",
+      "package": "flash-attention"
+    },
+    {
+      "cmd": "scripts/hdim128_seq8k.sh",
+      "label": "hdim128_seq8k",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:01:00",
+      "package": "flash-attention"
+    },
+    {
+      "cmd": "scripts/hdim256_seq16k.sh",
+      "label": "hdim256_seq16k",
+      "group": 1,
+      "compute": 1.0,
+      "time": "0:01:00",
+      "package": "flash-attention",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "flash_v1": {
+      "edit_ops": "edits/naive_triton.edit.py"
+    },
+    "flash_v2": {
+      "edit_ops": "edits/triton_flash_v2.edit.py"
+    },
+    "flash_v3": {
+      "edit_ops": "edits/flash_attn_3.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "flash-attention/custom_triton_bench.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 29,
+          "end": 119
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

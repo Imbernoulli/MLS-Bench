@@ -39,7 +39,7 @@
       "label": "gsm8k",
       "group": 1,
       "compute": 1.0,
-      "time": "09:00:00",
+      "time": "17:00:00",
       "package": "transformers-kv-lab",
       "hidden": true
     }

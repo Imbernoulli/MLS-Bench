@@ -22,6 +22,7 @@ import tomli_w
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
 from .daytona_compat import apply_daytona_compatibility
+from .compose_overlay import SHM_SIZE_GB, compose_overlay_text  # noqa: F401  (re-exported)
 
 
 # --------------------------------------------------------------------------- #
@@ -157,7 +158,11 @@ class MlsBenchAdapter:
         task_ids: list[str] | None = None,
         mls_bench_root: Path | None = None,
         continue_on_error: bool = False,
+        provider: str = "docker",
     ):
+        if provider not in PROVIDERS:
+            raise ValueError(f"provider must be one of {PROVIDERS}, got {provider!r}")
+        self.provider = provider
         self.output_dir = output_dir
         self.limit = limit
         self.overwrite = overwrite
@@ -182,7 +187,7 @@ class MlsBenchAdapter:
         for task_id in wanted:
             try:
                 ctx = build_task_context(mb, task_id)
-                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite)
+                out = render_task(mb, ctx, self.output_dir, overwrite=self.overwrite, provider=self.provider)
                 print(f"[ok] {task_id} -> {out}")
                 ok += 1
                 task_dirs.append(out)
@@ -774,6 +779,122 @@ MAX_PARALLEL_GPUS = 8
 WAVE_GRACE_SEC = 300
 
 
+# Wall clock the verifier gets on top of the eval deadlines themselves: staging
+# the task and holdout inputs, the budget check, the scoring pass, and on a
+# cloud sandbox the first read of a multi-GB dataset off network storage. It is
+# not eval time — an eval that overruns is killed by its own deadline long
+# before this matters — so it is sized generously rather than tightly.
+VERIFIER_SETUP_HEADROOM_SEC = 60 * 60
+VERIFIER_PER_JOB_HEADROOM_SEC = 300
+
+
+# `task.toml`'s `cpus`/`memory_mb` are hard cgroup limits everywhere, not
+# hints. Harbor's local docker-compose base sets `deploy.resources.limits`
+# (a task rendered with 4 CPUs / 16 GiB lands in a cgroup with
+# `cpu.max = 400000 100000` and `memory.max = 17179869184`), and Harbor's
+# Daytona provider provisions exactly these numbers
+# (`Resources(cpu=cpus, memory=memory_mb // 1024, ...)`). They therefore have
+# to state what a task really needs — a downstream harness that consumes the
+# rendered bundles without the adapter's environment classes gets nothing else.
+#
+# Three rendered variants ship, one per provider, because the providers' hard
+# constraints do not intersect cleanly and a bundle that satisfies all of them
+# would be right for none:
+#
+# * ``docker`` (harbor/tasks-docker): what the tasks were calibrated on.
+#   MLS-Bench's native SLURM path (src/mlsbench/agent/slurm.py) gives a GPU
+#   group `gpus * 12` CPUs and a CPU-only group 8 CPUs / 32 GB, and every
+#   eval's `time` deadline was measured under that. The bundle carries a
+#   Compose overlay with the NVIDIA device reservation and a 16 GB /dev/shm
+#   (native runs docker with `--shm-size=16g`).
+# * ``daytona`` (harbor/tasks-daytona): the same GPU numbers (Daytona's
+#   GPU-sandbox ceiling is 16 CPUs per card, 192 GB), but CPU-only tasks
+#   at Daytona's CPU-sandbox ceiling of 4 CPUs / 8 GB / 10 GB — stock
+#   Harbor cannot clamp, and all 24 pass at that shape — and no Compose file
+#   at all: stock Harbor's Daytona provider refuses GPU tasks that carry one
+#   ("only supported for Dockerfile-based tasks"), and its sandboxes come
+#   with a large /dev/shm anyway.
+# * ``modal`` (harbor/tasks-modal): the native calibration for CPU-only tasks
+#   too (Modal has no small-sandbox ceiling), no Compose file (Harbor's Modal
+#   provider builds the Dockerfile directly and its sandboxes have a large
+#   /dev/shm), and CPUs capped at Modal's 64 cores per sandbox ("Function CPU
+#   request out of bounds. Must be between 0.125 and 64 cores."), which only
+#   touches the four 8-GPU tasks (96 -> 64). Modal reports the granted cores
+#   as `nproc`, but the images pin the thread keys anyway.
+#
+# GPU memory is not taken from SLURM (`max(mem, gpus * 100)` GB is cluster
+# generosity, not a measured need): 64 GB is the floor the Daytona validation
+# runs exercised for every GPU task, 128 GB the verl bundles.
+# Harbor wraps the provider's image build — on Daytona the snapshot build, on
+# Modal `Image.from_dockerfile`, which pulls the base from Docker Hub — in the
+# task's build timeout. The largest harbor bases are 111 GB compressed
+# (transformers-kv-lab, cfgpp-main) and 57 GB (nanogpt, nine llm-pretrain
+# tasks); 1800 s timed out twice on Modal while a 47 GB base took ~25 min.
+# Two hours is an upper bound only.
+BUILD_TIMEOUT_SEC = 7200
+
+PROVIDERS = ("docker", "daytona", "modal")
+CPUS_PER_GPU = 12
+GPU_TASK_CPUS = 16
+GPU_TASK_MEMORY_GB = 64
+GPU_TASK_STORAGE_GB = 60
+CPU_TASK_SHAPE_GB: dict[str, tuple[int, int, int]] = {
+    # provider: (cpus, memory GB, storage GB)
+    "docker": (8, 32, 30),
+    "daytona": (4, 8, 10),
+    "modal": (8, 32, 30),
+}
+
+# Hard per-sandbox CPU ceilings a provider enforces at creation time. Modal
+# refuses anything above 64 cores, so its variant caps there (8-GPU tasks).
+PROVIDER_MAX_CPUS: dict[str, int] = {
+    "modal": 64,
+}
+
+# Per-package floors for packages whose peak RSS is known to exceed the
+# generic GPU floor.
+PACKAGE_MEMORY_GB: dict[str, int] = {
+    # verl's validation step generates with vLLM while the FSDP actor is
+    # resident; 64 GB is OOM-killed (ray reports the AgentLoopWorker as
+    # SYSTEM_ERROR), 128 GB completes.
+    "verl": 128,
+}
+
+# Image-build steps a package needs so that the concurrent evals of one wave
+# do not race on first-use initialization inside the shared workspace.
+# Rendered into the per-task Dockerfile as `RUN` lines (after the ENV block,
+# before the scaffold COPY) and run on every provider that builds the image.
+PACKAGE_IMAGE_SETUP: dict[str, list[str]] = {
+    # qlib's MLflowExpManager opens a file store at /workspace/qlib/mlruns;
+    # mlflow's FileStore creates `mlruns/0/meta.yaml` only when `mlruns/` is
+    # absent and does so without locking, so three evals started together
+    # race and one dies with "Yaml file '.../mlruns/0/meta.yaml' exists"
+    # (quant-concept-drift on Modal, 2026-09-08). Creating the default
+    # experiment at build time takes that path away from every eval.
+    "qlib": [
+        "cd /workspace/qlib && python -W ignore -c "
+        "\"import mlflow; mlflow.tracking.MlflowClient('file:///workspace/qlib/mlruns').search_experiments()\"",
+    ],
+}
+
+
+def _package_image_setup(package: str) -> list[str]:
+    wanted = _normalize_pkg_name(package)
+    for name, steps in PACKAGE_IMAGE_SETUP.items():
+        if _normalize_pkg_name(name) == wanted:
+            return list(steps)
+    return []
+
+
+# Ceiling for a `test_cmds[].mem` declaration. The four verl RL tasks declare
+# `mem = 200` for SLURM; 128 GB is the largest GPU sandbox validated on
+# Daytona (whose per-sandbox ceiling is 192), and asking a provider for more
+# than that has not been tested. rl-value-atari declares 128: three
+# concurrent 1M-transition Atari replay buffers (~28 GB each) OOM-killed an
+# eval inside the 64 GB floor on Daytona (2026-09-09); native gives it 200.
+MAX_TASK_MEMORY_GB = 128
+
+
 def _harbor_safe_name(task_id: str) -> str:
     safe = re.sub(r"[^a-z0-9_-]", "-", task_id.lower())
     return f"mls-bench__{safe}"
@@ -995,14 +1116,63 @@ def _verifier_timeout_sec(config: dict, gpus: int) -> int:
             # waves, at which point 300s/wave outgrows it and the run scores 0
             # while still inside the limits the runner advertised.
             total += max(seconds for _, seconds in wave) + WAVE_GRACE_SEC
-    return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
+    return (
+        total
+        + VERIFIER_SETUP_HEADROOM_SEC
+        + VERIFIER_PER_JOB_HEADROOM_SEC * len(test_cmds) * n_seeds
+    )
 
 
-def _resources(pkg_config: dict, config: dict) -> dict:
+# `SHM_SIZE_GB` / `compose_overlay_text` live in mls_bench.compose_overlay so
+# that harbor_env.py can write the overlay without the renderer's dependencies.
+
+
+def _package_memory_gb(package: str) -> int:
+    """Memory floor (GB) for a package name, matched the way native does."""
+    wanted = _normalize_pkg_name(package)
+    for name, floor in PACKAGE_MEMORY_GB.items():
+        if _normalize_pkg_name(name) == wanted:
+            return floor
+    return 0
+
+
+def _declared_memory_gb(config: dict) -> int:
+    """Largest ``test_cmds[].mem`` (GB) the task declares, capped."""
+    declared = 0
+    for tc in config.get("test_cmds", []) or []:
+        if not isinstance(tc, dict):
+            continue
+        try:
+            declared = max(declared, int(tc.get("mem") or 0))
+        except (TypeError, ValueError):
+            continue
+    return min(declared, MAX_TASK_MEMORY_GB)
+
+
+def _resources(
+    pkg_config: dict, config: dict, package: str = "", provider: str = "docker"
+) -> dict:
+    if provider not in PROVIDERS:
+        raise ValueError(f"provider must be one of {PROVIDERS}, got {provider!r}")
     use_cuda = bool(config.get("use_cuda")) or bool(pkg_config.get("use_cuda"))
-    cpus = 4
-    memory_mb = 16 * 1024 if use_cuda else 8 * 1024
-    storage_mb = 60 * 1024 if use_cuda else 30 * 1024
+    cpu_cpus, cpu_memory_gb, cpu_storage_gb = CPU_TASK_SHAPE_GB[provider]
+    if use_cuda:
+        memory_gb = max(
+            GPU_TASK_MEMORY_GB,
+            _package_memory_gb(package),
+            _declared_memory_gb(config),
+        )
+        storage_gb = GPU_TASK_STORAGE_GB
+    else:
+        # A `mem` declaration (ml-active-learning says 64) raises the floor on
+        # docker, where it is only a cgroup limit; on Daytona it would push the
+        # sandbox past the CPU-sandbox ceiling, and the task passes at 8 GB.
+        memory_gb = cpu_memory_gb
+        if provider in ("docker", "modal"):
+            memory_gb = max(memory_gb, _declared_memory_gb(config))
+        storage_gb = cpu_storage_gb
+    memory_mb = memory_gb * 1024
+    storage_mb = storage_gb * 1024
     gpus = 0
     if use_cuda:
         n_seeds = _seed_count(config)
@@ -1037,6 +1207,10 @@ def _resources(pkg_config: dict, config: dict) -> dict:
                 f"MAX_PARALLEL_GPUS={MAX_PARALLEL_GPUS} cap; reserving "
                 f"{gpus} — this task needs a host with at least that many"
             )
+    cpus = max(GPU_TASK_CPUS, gpus * CPUS_PER_GPU) if use_cuda else cpu_cpus
+    cap = PROVIDER_MAX_CPUS.get(provider)
+    if cap is not None:
+        cpus = min(cpus, cap)
     return dict(cpus=cpus, memory_mb=memory_mb, storage_mb=storage_mb, gpus=gpus)
 
 
@@ -1090,6 +1264,7 @@ def render_task(
     ctx: TaskContext,
     out_root: Path,
     overwrite: bool = False,
+    provider: str = "docker",
 ) -> Path:
     final_dir = out_root / _harbor_safe_name(ctx.task_id)
     if final_dir.exists() and not overwrite:
@@ -1109,7 +1284,7 @@ def render_task(
     task_dir = mb.tasks_dir / ctx.task_id
 
     pkg_workdir = ctx.pkg_config.get("workdir", "/workspace")
-    res = _resources(ctx.pkg_config, ctx.config)
+    res = _resources(ctx.pkg_config, ctx.config, ctx.package, provider)
     effective_config = _config_with_shifted_edit_ranges(mb, ctx)
 
     visible_test_cmds = list(effective_config.get("test_cmds", []))
@@ -1131,7 +1306,7 @@ def render_task(
         ),
         "agent_timeout_sec": _agent_timeout_sec(ctx.config),
         "verifier_timeout_sec": _verifier_timeout_sec(ctx.config, res["gpus"]),
-        "build_timeout_sec": 1800,
+        "build_timeout_sec": BUILD_TIMEOUT_SEC,
         "cpus": res["cpus"],
         "memory_mb": res["memory_mb"],
         "storage_mb": res["storage_mb"],
@@ -1176,29 +1351,24 @@ def render_task(
         env.get_template("environment/Dockerfile.j2").render(
             **template_ctx,
             scaffold_files=scaffold_files,
+            image_setup=_package_image_setup(ctx.package),
         )
     )
 
-    # GPU reservation: Harbor's base docker-compose only sets cpu/memory
-    # limits, not GPU. Tasks that resolve to `gpus > 0` need a per-task
-    # compose override so docker actually attaches the nvidia runtime.
-    # Compose-merge with base happens via harbor/environments/docker/
-    # docker.py:292 picking up this file when present. `res["gpus"]`
-    # comes from `_resources()` which honors both task config's `use_cuda`
-    # and the package config's `use_cuda` flag.
+    # The docker variant ships the Compose overlay a local run needs: the
+    # NVIDIA device reservation and a 16 GB /dev/shm (PyTorch DataLoader
+    # workers pass batches through /dev/shm; docker's 64 MB default kills them
+    # mid-eval with "Bus error ... out of shared memory"; native runs docker
+    # with `--shm-size=16g`). The daytona and modal variants ship none: stock
+    # Harbor's Daytona provider refuses GPU tasks that carry any compose file,
+    # Modal builds the Dockerfile directly, and both providers' sandboxes get
+    # their GPUs from `[environment].gpus` and have a large /dev/shm already.
     gpus_int = int(res.get("gpus") or 0)
-    if gpus_int > 0:
-        (env_dir / "docker-compose.yaml").write_text(
-            "services:\n"
-            "  main:\n"
-            "    deploy:\n"
-            "      resources:\n"
-            "        reservations:\n"
-            "          devices:\n"
-            "            - driver: nvidia\n"
-            f"              count: {gpus_int}\n"
-            "              capabilities: [gpu]\n"
-        )
+    overlay_path = env_dir / "docker-compose.yaml"
+    if provider == "docker":
+        overlay_path.write_text(compose_overlay_text(gpus_int))
+    elif overlay_path.exists():
+        overlay_path.unlink()
 
     # solution/ — Harbor mounts this at /solution/ only when the oracle agent runs.
     sol_dir = out_dir / "solution"
@@ -1301,6 +1471,41 @@ def _task_manifest_entry(task_dir: Path) -> dict:
         if not match:
             raise
         return {"name": match.group(1), "digest": f"sha256:{_manual_task_digest(task_dir)}"}
+
+
+# Top-level entries of a native task dir that stay out of the eval-time
+# task dir: the scoring metadata cmd_score reads (an eval runs agent code as
+# root and must not reach parser/spec/leaderboard) and what is staged elsewhere.
+EVALTASK_EXCLUDE = frozenset({
+    "config.json", "parser.py", "score_spec.py", "leaderboard.csv",
+    "budget_check.py", "edits", "scripts", "data", "third_party", "dgp.py",
+    "__pycache__",
+})
+
+
+def _stage_evaltask_extras(task_dir: Path, meta: Path) -> list[str]:
+    """Copy the non-scoring remainder of ``task_dir`` into ``meta/evaltask/``.
+
+    Returns the staged top-level names. ``task_description.md`` is what evals
+    that locate the task dir look for; hook-contract markdowns, benchmark
+    specs, helper tools and baseline configs are the rest (all small).
+    """
+    staged: list[str] = []
+    dst_root = meta / "evaltask"
+    for entry in sorted(task_dir.iterdir()):
+        if entry.name in EVALTASK_EXCLUDE or entry.name.endswith(".pyc"):
+            continue
+        dst = dst_root / entry.name
+        dst_root.mkdir(exist_ok=True)
+        if entry.is_dir():
+            shutil.copytree(
+                entry, dst, dirs_exist_ok=True,
+                ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            )
+        else:
+            shutil.copy2(entry, dst)
+        staged.append(entry.name)
+    return staged
 
 
 def write_dataset_manifest(output_dir: Path) -> Path:
@@ -1613,7 +1818,7 @@ def _stage_verifier_assets(
     (meta / "package").write_text(ctx.package + "\n")
     (meta / "workdir").write_text(ctx.pkg_config.get("workdir", "/workspace") + "\n")
     (meta / "gpu_count").write_text(
-        str(_resources(ctx.pkg_config, config if config is not None else ctx.config)["gpus"]) + "\n"
+        str(_resources(ctx.pkg_config, config if config is not None else ctx.config, ctx.package)["gpus"]) + "\n"
     )
     package_envs: dict[str, dict] = {}
     for tc in ctx.config.get("test_cmds", []):
@@ -1665,6 +1870,15 @@ def _stage_verifier_assets(
             dirs_exist_ok=True,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
+
+    # Everything else an eval may read from the native task dir. Native
+    # bind-mounts tasks/<t>/ at /workspace/_task, and some evals resolve that
+    # dir by its `task_description.md` (llm-kv-adaptive-quantization,
+    # llm-kv-selection-budgeting: "Unable to locate task directory" on every
+    # provider, 2026-09-09) or read a sibling file (hook contracts, benchmark
+    # specs). Stage the non-scoring remainder into tests/meta/evaltask/, which
+    # score_task.py exposes at /workspace/_task next to scripts/data/third_party.
+    _stage_evaltask_extras(task_dir, meta)
 
     # mlsbench source tree — required by parser.py / score_spec.py / score_task.py
     # to import mlsbench.scoring.* and mlsbench.agent.parsers. NOT baked into

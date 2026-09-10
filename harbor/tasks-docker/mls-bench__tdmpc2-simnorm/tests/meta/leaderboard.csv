@@ -1,0 +1,17 @@
+timestamp,model,is_final,seed,episode_reward_walker_walk,episode_reward_cheetah_run,episode_reward_cartpole_swingup,elapsed_walker-walk,elapsed_cheetah-run,elapsed_cartpole-swingup
+2026-04-16T22:39:36.116747+00:00,baseline:simnorm,true,42,973.41,876.3,882.23,13764,13455,13513
+2026-04-16T22:39:36.119440+00:00,baseline:simnorm,true,123,977.77,617.88,881.21,13859,13455,13613
+2026-04-16T22:39:36.119839+00:00,baseline:simnorm,true,456,975.26,901.23,880.64,13859,13455,13613
+2026-04-16T22:39:36.119839+00:00,baseline:simnorm,true,mean,975.48,798.47,881.36,13827.3333333,13455,13579.6666667
+,baseline:l2norm,true,42,977.97,889.17,879.00,,,
+,baseline:l2norm,true,123,974.25,887.06,882.47,,,
+,baseline:l2norm,true,456,976.77,664.23,875.51,,,
+,baseline:l2norm,true,mean,976.33,813.486666667,878.993333333,,,
+,baseline:rmsnorm,true,42,979.32,712.15,879.86,,,
+,baseline:rmsnorm,true,123,973.84,699.55,864.74,,,
+,baseline:rmsnorm,true,456,977.61,631.18,875.58,,,
+,baseline:rmsnorm,true,mean,976.923333333,680.96,873.393333333,,,
+,baseline:identity,true,42,978.78,767.88,879.44,,,
+,baseline:identity,true,123,972.46,754.64,881.94,,,
+,baseline:identity,true,456,978.80,767.83,857.98,,,
+,baseline:identity,true,mean,976.68,763.45,873.12,,,

@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,rocauc_BBBP,rocauc_BACE,rocauc_Tox21,elapsed_BBBP,elapsed_BACE,elapsed_Tox21
+2026-04-15T23:26:30.000000+00:00,baseline:dmpnn,true,42,0.598573,0.688054,0.713105,142,173,801
+2026-04-16T22:41:42.000000+00:00,baseline:unimol,true,42,0.712867,0.846635,0.761314,1572,1572,1523
+2026-04-15T23:26:30.000000+00:00,baseline:gin,true,42,0.509886,0.726135,0.747023,139,168,830

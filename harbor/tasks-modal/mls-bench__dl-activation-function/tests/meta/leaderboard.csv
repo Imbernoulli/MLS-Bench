@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet20-cifar10,test_acc_vgg16bn-cifar100,test_acc_mobilenetv2-fmnist,elapsed_resnet20-cifar10,elapsed_vgg16bn-cifar100,elapsed_mobilenetv2-fmnist
+2026-04-03T16:56:56.995993+00:00,baseline:gelu,true,42,93.11,71.38,94.75,802,824,2151
+2026-04-03T14:12:24.347600+00:00,baseline:silu,true,42,92.72,70.38,94.69,,,
+2026-04-05T12:43:46.061380+00:00,baseline:mish,true,42,92.78,70.5,94.7,603,599,1855

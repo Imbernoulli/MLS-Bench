@@ -1,0 +1,65 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/adult.sh",
+      "label": "adult",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/compas.sh",
+      "label": "compas",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn"
+    },
+    {
+      "cmd": "scripts/law_school.sh",
+      "label": "law_school",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:30:00",
+      "package": "scikit-learn",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "temperature_scaling": {
+      "edit_ops": "edits/temperature_scaling.edit.py"
+    },
+    "isotonic_regression": {
+      "edit_ops": "edits/isotonic_regression.edit.py"
+    },
+    "beta_calibration": {
+      "edit_ops": "edits/beta_calibration.edit.py"
+    },
+    "group_temperature_scaling": {
+      "edit_ops": "edits/group_temperature_scaling.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "scikit-learn/custom_subgroup_calibration.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 200,
+          "end": 219
+        }
+      ]
+    }
+  ]
+}

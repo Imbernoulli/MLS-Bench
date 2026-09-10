@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet56-cifar100,test_acc_resnet110-cifar100,test_acc_mobilenetv2-fmnist,elapsed_resnet56-cifar100,elapsed_resnet110-cifar100,elapsed_mobilenetv2-fmnist
+2026-03-28T04:04:00.212003+00:00,baseline:group_norm,true,42,67.9,70.43,93.16,,,8319
+2026-04-03T14:12:24.425181+00:00,baseline:batch_instance_norm,true,42,66.06,68.65,93.64,,,5172
+2026-04-03T14:12:24.425181+00:00,baseline:switchable_norm,true,42,68.95,70.58,94.1,0,0,0

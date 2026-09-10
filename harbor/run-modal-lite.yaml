@@ -1,0 +1,68 @@
+# Modal run configuration for the 30-task MLS-Bench-Lite subset.
+#
+# Run from this directory with:
+#   PYTHONPATH=. harbor run -c run-modal-lite.yaml
+#
+# Identical to run-modal.yaml except for the dataset block, which names the
+# 30 tasks of the README's "MLS-Bench-Lite" table (the same list as
+# run-daytona-lite.yaml).  See run-modal.yaml for what each option means.
+
+jobs_dir: jobs-modal-lite
+n_attempts: 1
+timeout_multiplier: 1.0
+n_concurrent_trials: 1
+quiet: false
+
+environment:
+  import_path: harbor_env:ModalEnvironment
+  force_build: true
+  delete: true
+
+agents:
+  - name: oracle
+
+datasets:
+  - path: tasks-modal
+    task_names:
+      # LM
+      - mls-bench__llm-dllm-demask-strategy
+      - mls-bench__llm-pretrain-optimizer
+      - mls-bench__llm-rl-importance-sampling
+      # Robotics
+      - mls-bench__jepa-planning
+      - mls-bench__robo-diffusion-guidance
+      - mls-bench__robo-diffusion-policy
+      - mls-bench__robo-humanoid-sim2real-algo
+      - mls-bench__robomimic-bc-loss
+      # RL
+      - mls-bench__rl-value-discrete
+      # Vision & Generation
+      - mls-bench__cv-3dgs-densification
+      - mls-bench__cv-dbm-sampler
+      - mls-bench__cv-vae-loss
+      # Systems
+      - mls-bench__llm-ptq-algorithm
+      - mls-bench__llm-qat-algorithm
+      - mls-bench__mlsys-sparse-attention-inference
+      # AI for Science
+      - mls-bench__ai4bio-mutation-effect-prediction
+      - mls-bench__ai4sci-inverse-diffusion-algo
+      - mls-bench__ai4sci-pla-binding-affinity
+      # Optimization
+      - mls-bench__optimization-multi-objective
+      - mls-bench__optimization-variance-reduction
+      # Classical ML
+      - mls-bench__ml-clustering-algorithm
+      - mls-bench__ml-dimensionality-reduction
+      # Deep learning
+      - mls-bench__cv-pooling-aggregation
+      - mls-bench__dl-activation-function
+      # Time series
+      - mls-bench__quant-concept-drift
+      - mls-bench__ts-exogenous-forecast
+      - mls-bench__ts-imputation
+      # Structured / causal
+      - mls-bench__causal-discovery-discrete
+      - mls-bench__graph-generation
+      # Trustworthy learning
+      - mls-bench__security-membership-inference-defense

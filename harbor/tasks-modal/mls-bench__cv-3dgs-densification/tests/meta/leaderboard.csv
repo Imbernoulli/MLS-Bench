@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,best_psnr_garden,best_psnr_bicycle,best_psnr_bonsai,best_psnr_stump
+2026-04-19T00:00:00.000000+00:00,baseline:absgrad,true,42,29.745,27.026,33.051,27.850
+2026-04-19T00:00:00.000000+00:00,baseline:taming,true,42,30.044,27.141,33.353,27.794
+2026-04-27T18:26:10.414898+00:00,baseline:edc,true,42,30.206,27.219,33.068,28.260

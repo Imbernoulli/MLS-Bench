@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/bbbp.sh",
+      "label": "BBBP",
+      "group": 1,
+      "compute": 0.5,
+      "time": "01:30:00",
+      "package": "Uni-Mol"
+    },
+    {
+      "cmd": "scripts/bace.sh",
+      "label": "BACE",
+      "group": 1,
+      "compute": 0.5,
+      "time": "01:30:00",
+      "package": "Uni-Mol"
+    },
+    {
+      "cmd": "scripts/tox21.sh",
+      "label": "Tox21",
+      "group": 1,
+      "compute": 0.5,
+      "time": "02:00:00",
+      "package": "Uni-Mol",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "dmpnn": {
+      "edit_ops": "edits/dmpnn.edit.py"
+    },
+    "unimol": {
+      "edit_ops": "edits/unimol.edit.py"
+    },
+    "gin": {
+      "edit_ops": "edits/gin.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "Uni-Mol/custom_molprop.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 115,
+          "end": 207
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

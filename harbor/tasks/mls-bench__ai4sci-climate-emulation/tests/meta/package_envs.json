@@ -1,6 +1,0 @@
-{
-  "ClimSim": {
-    "PYTHONPATH": "/workspace/ClimSim:${PYTHONPATH}",
-    "DATA_DIR": "/data/climsim"
-  }
-}

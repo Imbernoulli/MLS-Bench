@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "Time-Series-Library/models/Custom.py",
+    "start_line": 1,
+    "end_line": -1,
+    "content": "from models.TimesNet import Model\n"
+  }
+]

@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,clean_acc_SmallCNN_MNIST,robust_acc_fgsm_SmallCNN_MNIST,robust_acc_pgd_SmallCNN_MNIST,clean_acc_PreActResNet18_C10,robust_acc_fgsm_PreActResNet18_C10,robust_acc_pgd_PreActResNet18_C10,clean_acc_VGG11BN_C10,robust_acc_fgsm_VGG11BN_C10,robust_acc_pgd_VGG11BN_C10,clean_acc_PreActResNet18_C100,robust_acc_fgsm_PreActResNet18_C100,robust_acc_pgd_PreActResNet18_C100,elapsed_SmallCNN-MNIST,elapsed_PreActResNet18-C10,elapsed_VGG11BN-C10,elapsed_PreActResNet18-C100
+2026-04-24T10:54:02.513725+00:00,baseline:pgdat,true,42,0.9856,0.9457,0.8932,0.8501,0.5602,0.4585,0.7796,0.4974,0.4194,0.5828,0.2755,0.2214,523,2501,1307,2249
+2026-04-24T10:51:21.490938+00:00,baseline:trades,true,42,0.9863,0.9647,0.935,0.7894,0.4924,0.441,0.7421,0.4556,0.4065,0.5249,0.2552,0.2268,549,2633,1479,2501
+2026-04-24T13:03:12.869113+00:00,baseline:mart,true,42,0.9837,0.9475,0.9055,0.8342,0.578,0.4891,0.7344,0.5181,0.4746,0.5425,0.312,0.2713,534,2364,1494,2509
+2026-04-24T12:01:48.226571+00:00,baseline:awp,true,42,0.9732,0.9434,0.9217,0.8112,0.5751,0.537,0.7642,0.4751,0.4235,0.5789,0.3289,0.3043,614,4228,2214,4222

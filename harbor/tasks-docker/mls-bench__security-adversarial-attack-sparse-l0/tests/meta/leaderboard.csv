@@ -1,0 +1,6 @@
+timestamp,model,is_final,seed,asr_Rebuffi_R18_L2,asr_Augustin_L2,asr_Engstrom_L2,elapsed_Rebuffi-R18-L2,elapsed_Augustin-L2,elapsed_Engstrom-L2
+2026-05-18T04:38:11.828176+00:00,baseline:onepixel,false,42,0.1,0.18,0.18,170.5,532.1,559.8
+2026-05-18T04:28:40.678695+00:00,baseline:sparsefool,false,42,0.166667,0.113333,0.28,218.2,599.5,562.2
+2026-05-18T04:29:14.522850+00:00,baseline:jsma,false,42,0.026667,0.046667,0.066667,156.7,192.3,210.6
+2026-05-18T04:27:00.635847+00:00,baseline:pixle,false,42,0.006667,0.02,0.006667,17.9,24.0,29.9
+2026-05-18T04:31:45.729765+00:00,baseline:sparse_rs,false,42,0.853333,0.946667,0.966667,146.6,222.4,182.5

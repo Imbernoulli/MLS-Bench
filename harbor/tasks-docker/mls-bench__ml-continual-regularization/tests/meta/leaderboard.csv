@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,average_accuracy_split_mnist,average_accuracy_perm_mnist,average_accuracy_split_cifar100,elapsed_split-mnist,elapsed_perm-mnist,elapsed_split-cifar100
+2026-04-08T03:36:15.244336+00:00,baseline:ewc,true,42,0.9577,0.8381,0.5463,99,293,1873
+2026-04-07T19:58:12.000000+00:00,baseline:si,true,42,0.9852,0.4474,0.5363,96,280,1642
+2026-04-12T07:28:40.369678+00:00,baseline:online_ewc,true,42,0.9743,0.8427,0.5444,130,372,2936

@@ -1,0 +1,8 @@
+{
+  "llm-qat-runtime": {
+    "HF_HOME": "/data/huggingface",
+    "TRANSFORMERS_CACHE": "/data/huggingface/transformers",
+    "HF_DATASETS_CACHE": "/data/wikitext2",
+    "PYTHONPATH": "/workspace/llm-qat-runtime:${PYTHONPATH}"
+  }
+}

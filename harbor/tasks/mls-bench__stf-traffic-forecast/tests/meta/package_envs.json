@@ -1,6 +1,0 @@
-{
-  "BasicTS": {
-    "PYTHONPATH": "/workspace/BasicTS/src:/workspace/BasicTS:${PYTHONPATH}",
-    "HOME": "/root"
-  }
-}

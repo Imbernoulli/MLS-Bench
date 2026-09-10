@@ -1,5 +1,0 @@
-{
-  "scikit-learn": {
-    "SKLEARN_DATA_HOME": "/data/sklearn"
-  }
-}

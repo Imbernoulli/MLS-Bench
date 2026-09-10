@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,gsm8k_accuracy,math500_accuracy,amc_accuracy,elapsed_deepmath-3bench-1gpu
+2026-04-24T01:33:31.827635+00:00,baseline:outcome_only,false,42,0.4595,0.3038,0.0904,32962
+2026-04-24T02:23:59.526543+00:00,baseline:group_std,false,42,0.4656,0.299,0.122,35659
+2026-04-24T09:49:51.210661+00:00,baseline:batch_std,false,42,0.4682,0.3073,0.1039,32138
+2026-04-24T10:13:56.884034+00:00,baseline:length_aware,false,42,0.4655,0.288,0.137,32978

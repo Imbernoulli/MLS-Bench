@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "pytorch-vision/custom_init.py",
+    "start_line": 228,
+    "end_line": 261,
+    "content": "def initialize_weights(model, config):\n    \"\"\"Fixup-inspired residual scaling with zero-gamma BatchNorm.\n\n    For ResNets: Kaiming normal for all Conv2d, then scale the last conv in\n    each residual block by n_blocks^(-0.5) to control variance accumulation.\n    Zero-initialize the last BN in each block (Goyal et al., 2017).\n    For VGG: Kaiming normal (no residual branches to scale).\n    Linear: small normal init with zero bias.\n    \"\"\"\n    arch = config['arch']\n    is_resnet = arch.startswith('resnet')\n\n    # Phase 1: standard Kaiming init for all layers\n    for m in model.modules():\n        if isinstance(m, nn.Conv2d):\n            nn.init.kaiming_normal_(m.weight, mode='fan_out', nonlinearity='relu')\n        elif isinstance(m, nn.BatchNorm2d):\n            nn.init.constant_(m.weight, 1)\n            nn.init.constant_(m.bias, 0)\n        elif isinstance(m, nn.Linear):\n            nn.init.kaiming_normal_(m.weight, mode='fan_in', nonlinearity='relu')\n            if m.bias is not None:\n                nn.init.constant_(m.bias, 0)\n\n    # Phase 2: Fixup-inspired residual branch scaling for ResNets\n    if is_resnet:\n        n_blocks = sum(1 for m in model.modules() if isinstance(m, BasicBlock))\n        fixup_scale = n_blocks ** (-0.5)\n        for m in model.modules():\n            if isinstance(m, BasicBlock):\n                # Scale the last conv (conv2) in each residual block\n                m.conv2.weight.data.mul_(fixup_scale)\n                # Zero-init the last BN so residual branch starts near identity\n                nn.init.constant_(m.bn2.weight, 0)\n"
+  }
+]

@@ -8,7 +8,7 @@
       "label": "small",
       "group": 1,
       "compute": 1.0,
-      "time": "3:30:00",
+      "time": "6:00:00",
       "package": "eb_jepa"
     },
     {
@@ -16,7 +16,7 @@
       "label": "base",
       "group": 1,
       "compute": 1.0,
-      "time": "4:00:00",
+      "time": "8:00:00",
       "package": "eb_jepa"
     },
     {
@@ -24,7 +24,7 @@
       "label": "large",
       "group": 1,
       "compute": 1.0,
-      "time": "8:00:00",
+      "time": "14:00:00",
       "package": "eb_jepa",
       "hidden": true
     }

@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "seeds": [
+    42
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/resnet32_cifar10lt.sh",
+      "label": "resnet32-cifar10lt",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/resnet32_cifar100lt.sh",
+      "label": "resnet32-cifar100lt",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision"
+    },
+    {
+      "cmd": "scripts/vgg16bn_cifar100lt.sh",
+      "label": "vgg16bn-cifar100lt",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-vision",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "inverse_freq": {
+      "edit_ops": "edits/inverse_freq.edit.py"
+    },
+    "effective_number": {
+      "edit_ops": "edits/effective_number.edit.py"
+    },
+    "balanced_softmax": {
+      "edit_ops": "edits/balanced_softmax.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-vision/custom_weighting.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 164,
+          "end": 195
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,15 @@
+name: Custom
+method:
+  _target_: algo.custom.Custom
+  diffusion_scheduler_config:
+    num_steps: 1000
+    schedule: 'vp'
+    timestep: 'vp'
+    scaling: 'vp'
+  guidance_scale: 10.0
+  sde: true
+  num_optim_steps: 1000
+  observation_weight: 1.0
+  base_lambda: 0.25
+  base_lr: 0.5
+  num_mc_samples: 10

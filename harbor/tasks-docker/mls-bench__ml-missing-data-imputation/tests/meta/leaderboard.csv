@@ -1,0 +1,6 @@
+timestamp,model,is_final,seed,rmse_breast_cancer,downstream_score_breast_cancer,rmse_wine,downstream_score_wine,rmse_california,downstream_score_california,elapsed_breast_cancer,elapsed_wine,elapsed_california
+2026-04-23T06:20:59.380884+00:00,baseline:mean_impute,true,42,1.036933,0.949076,1.063643,0.916032,0.949179,0.638772,5,5,9
+2026-04-23T06:21:04.705688+00:00,baseline:knn,true,42,0.619728,0.952554,0.85356,0.921111,0.940856,0.59634,6,6,11
+2026-04-23T06:21:04.657270+00:00,baseline:mice,true,42,0.402701,0.956078,1.054262,0.893175,0.782002,0.64015,6,6,10
+2026-04-23T06:21:45.125860+00:00,baseline:missforest,true,42,0.505517,0.952569,0.816274,0.915873,0.739564,0.667574,55,55,55
+2026-04-23T06:21:39.938734+00:00,baseline:gain,true,42,0.507258,0.945536,0.798362,0.920952,0.71185,0.670868,49,49,49

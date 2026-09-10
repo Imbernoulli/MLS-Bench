@@ -1,0 +1,73 @@
+{
+  "allow_create": false,
+  "seeds": [
+    42,
+    123,
+    456
+  ],
+  "test_cmds": [
+    {
+      "cmd": "scripts/halfcheetah.sh",
+      "label": "halfcheetah-v4",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "imitation"
+    },
+    {
+      "cmd": "scripts/hopper.sh",
+      "label": "hopper-v4",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "imitation"
+    },
+    {
+      "cmd": "scripts/walker2d.sh",
+      "label": "walker2d-v4",
+      "group": 1,
+      "compute": 0.33,
+      "time": "12:00:00",
+      "package": "imitation",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "gail": {
+      "edit_ops": "edits/gail.edit.py"
+    },
+    "airl": {
+      "edit_ops": "edits/airl.edit.py"
+    },
+    "bc": {
+      "edit_ops": "edits/bc.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "imitation/custom_irl.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 231,
+          "end": 357
+        }
+      ]
+    },
+    {
+      "filename": "imitation/src/imitation/rewards/reward_nets.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ]
+}

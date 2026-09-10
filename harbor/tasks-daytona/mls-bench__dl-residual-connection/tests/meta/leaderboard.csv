@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet20-cifar10,test_acc_resnet56-cifar100,test_acc_resnet110-cifar100
+,baseline:pre_activation,true,42,92.62,71.78,74.08
+,baseline:gated_residual,true,42,92.96,71.98,73.46
+,baseline:stochastic_depth,true,42,91.37,74.56,75.7

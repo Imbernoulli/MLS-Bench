@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,worst_group_ece_adult,brier_adult,subgroup_auroc_adult,max_subgroup_gap_adult,worst_group_ece_compas,brier_compas,subgroup_auroc_compas,max_subgroup_gap_compas,worst_group_ece_law_school,brier_law_school,subgroup_auroc_law_school,max_subgroup_gap_law_school,elapsed_adult,elapsed_compas,elapsed_law_school
+2026-04-30T16:14:31.482346+00:00,baseline:temperature_scaling,true,42,0.48444,0.434545,0.859001,0.418805,0.48505,0.363691,0.881861,0.120009,0.309843,0.32057,0.748642,0.167908,3,3,3
+2026-04-30T16:14:31.573248+00:00,baseline:isotonic_regression,true,42,0.348209,0.324132,0.854536,0.264226,0.483246,0.395198,0.841982,0.120958,0.450577,0.42289,0.729167,0.170555,3,3,3
+2026-04-30T16:14:30.846669+00:00,baseline:beta_calibration,true,42,0.348952,0.319698,0.859001,0.31158,0.466339,0.377046,0.881861,0.108896,0.375155,0.361064,0.748642,0.176224,3,3,3
+2026-04-30T16:14:31.169065+00:00,baseline:group_temperature_scaling,true,42,0.493795,0.433107,0.859001,0.436052,0.497207,0.360305,0.881861,0.141706,0.313789,0.317415,0.748642,0.194673,3,3,3

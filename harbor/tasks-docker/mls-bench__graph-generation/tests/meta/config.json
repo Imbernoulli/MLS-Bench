@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/community_small.sh",
+      "label": "community_small",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric"
+    },
+    {
+      "cmd": "scripts/ego_small.sh",
+      "label": "ego_small",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric"
+    },
+    {
+      "cmd": "scripts/enzymes.sh",
+      "label": "enzymes",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "graphvae": {
+      "edit_ops": "edits/graphvae.edit.py"
+    },
+    "gran": {
+      "edit_ops": "edits/gran.edit.py"
+    },
+    "digress": {
+      "edit_ops": "edits/digress.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-geometric/custom_graphgen.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 446,
+          "end": 590
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

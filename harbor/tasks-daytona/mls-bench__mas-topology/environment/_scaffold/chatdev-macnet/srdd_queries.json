@@ -1,0 +1,102 @@
+[
+  {
+    "id": "srdd_001",
+    "type": "Action_Game",
+    "task": "Develop a Python terminal-based action game where the player controls a spaceship that dodges falling asteroids using keyboard input. The game should track the player's score based on survival time and display a game-over screen."
+  },
+  {
+    "id": "srdd_002",
+    "type": "Board_Game",
+    "task": "Build a Python implementation of a two-player Tic-Tac-Toe game with a text-based interface. Players take turns entering their moves, and the program should detect wins, losses, and draws."
+  },
+  {
+    "id": "srdd_003",
+    "type": "Budgeting",
+    "task": "Create a personal budget tracker application in Python that allows users to add income and expense entries with categories, view a summary of spending by category, and calculate the remaining balance."
+  },
+  {
+    "id": "srdd_004",
+    "type": "Data",
+    "task": "Develop a CSV data analysis tool in Python that reads a CSV file, computes basic statistics (mean, median, standard deviation) for numeric columns, and prints a formatted summary report."
+  },
+  {
+    "id": "srdd_005",
+    "type": "Entertainment",
+    "task": "Build a movie recommendation system in Python that stores a catalog of movies with genres and ratings, and recommends movies to the user based on their preferred genre."
+  },
+  {
+    "id": "srdd_006",
+    "type": "Finance",
+    "task": "Create a compound interest calculator in Python that takes principal amount, annual interest rate, compounding frequency, and time period as inputs, then displays year-by-year growth in a formatted table."
+  },
+  {
+    "id": "srdd_007",
+    "type": "Health_Fitness",
+    "task": "Develop a BMI calculator and fitness log application in Python. It should calculate BMI from user-provided height and weight, categorize the result, and maintain a log of past entries."
+  },
+  {
+    "id": "srdd_008",
+    "type": "Language",
+    "task": "Build a vocabulary flashcard application in Python that lets users add word-definition pairs, quiz themselves randomly, and track their correct/incorrect answer statistics."
+  },
+  {
+    "id": "srdd_009",
+    "type": "Music",
+    "task": "Create a music playlist manager in Python that allows users to create playlists, add and remove songs, shuffle the playlist, and display the current queue."
+  },
+  {
+    "id": "srdd_010",
+    "type": "News",
+    "task": "Develop a text-based news aggregator in Python that organizes articles by category, allows users to browse headlines, and displays article summaries when selected."
+  },
+  {
+    "id": "srdd_011",
+    "type": "Notebook",
+    "task": "Build a command-line note-taking application in Python that supports creating, listing, searching, and deleting notes. Notes should be stored persistently in JSON format."
+  },
+  {
+    "id": "srdd_012",
+    "type": "Puzzle_Game",
+    "task": "Create a number sliding puzzle game (15-puzzle) in Python with a text-based interface. The program should generate a solvable random configuration and let the player move tiles until solved."
+  },
+  {
+    "id": "srdd_013",
+    "type": "Schedule",
+    "task": "Develop a daily schedule planner in Python that allows users to add, view, and delete events with start and end times. It should warn about time conflicts between events."
+  },
+  {
+    "id": "srdd_014",
+    "type": "Science",
+    "task": "Build a unit conversion tool in Python that supports conversions between common units of length, weight, temperature, and volume. The user selects the category, input unit, output unit, and value."
+  },
+  {
+    "id": "srdd_015",
+    "type": "Security",
+    "task": "Create a password strength checker and generator in Python. The checker evaluates passwords against length, complexity, and common patterns. The generator creates random strong passwords of specified length."
+  },
+  {
+    "id": "srdd_016",
+    "type": "Shopping",
+    "task": "Develop a shopping list manager in Python where users can add items with quantities and prices, remove items, and view the total estimated cost of their shopping list."
+  },
+  {
+    "id": "srdd_017",
+    "type": "SocialNetwork",
+    "task": "Build a simple social network simulator in Python where users can create profiles, add friends, post status messages, and view a news feed of their friends' recent posts."
+  },
+  {
+    "id": "srdd_018",
+    "type": "Strategy_Game",
+    "task": "Create a text-based strategy game in Python where two armies take turns attacking each other. Each army has units with health and attack stats, and the player chooses which unit attacks which target."
+  },
+  {
+    "id": "srdd_019",
+    "type": "Tools_Utilities",
+    "task": "Develop a file organizer utility in Python that scans a given directory and sorts files into subdirectories based on their file extensions (e.g., images, documents, code)."
+  },
+  {
+    "id": "srdd_020",
+    "type": "Travel",
+    "task": "Build a travel itinerary planner in Python that lets users add destinations with dates and notes, view the itinerary in chronological order, and calculate the total trip duration."
+  }
+]

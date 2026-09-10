@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,test_acc_resnet20-cifar100mt,test_acc_resnet56-cifar100mt,test_acc_vgg16bn-cifar100mt
+,baseline:uncertainty,true,42,66.81,70.94,72.67
+,baseline:dwa,true,42,67.96,72.39,73.78
+,baseline:pcgrad,true,42,64.31,70.2,74.17

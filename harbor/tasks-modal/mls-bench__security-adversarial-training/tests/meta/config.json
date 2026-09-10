@@ -1,0 +1,92 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "use_cuda": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/SmallCNN_MNIST.sh",
+      "label": "SmallCNN-MNIST",
+      "group": 1,
+      "compute": 1.0,
+      "time": "1:00:00",
+      "package": "torchattacks"
+    },
+    {
+      "cmd": "scripts/PreActResNet18_C10.sh",
+      "label": "PreActResNet18-C10",
+      "group": 1,
+      "compute": 1.0,
+      "time": "3:00:00",
+      "package": "torchattacks"
+    },
+    {
+      "cmd": "scripts/VGG11BN_C10.sh",
+      "label": "VGG11BN-C10",
+      "group": 1,
+      "compute": 1.0,
+      "time": "3:00:00",
+      "package": "torchattacks"
+    },
+    {
+      "cmd": "scripts/PreActResNet18_C100.sh",
+      "label": "PreActResNet18-C100",
+      "hidden": true,
+      "group": 2,
+      "compute": 1.0,
+      "time": "3:00:00",
+      "package": "torchattacks"
+    }
+  ],
+  "baselines": {
+    "pgdat": {
+      "edit_ops": "edits/pgdat.edit.py"
+    },
+    "trades": {
+      "edit_ops": "edits/trades.edit.py"
+    },
+    "mart": {
+      "edit_ops": "edits/mart.edit.py"
+    },
+    "awp": {
+      "edit_ops": "edits/awp.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "torchattacks/bench/custom_adv_train.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 10,
+          "end": 54
+        }
+      ]
+    },
+    {
+      "filename": "torchattacks/bench/run_adv_train.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    },
+    {
+      "filename": "torchattacks/bench/models.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

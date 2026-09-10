@@ -1,0 +1,44 @@
+defaults:
+  - _self_
+  - task: hopper-medium-v2
+
+pipeline_name: custom_sampling_method
+mode: train
+seed: 42
+device: cuda:0
+
+# Environment
+normalize_reward: True
+discount: 0.99
+
+# Actor
+solver: ddpm
+diffusion_steps: 100
+sampling_steps: 100
+predict_noise: True
+ema_rate: 0.995
+actor_learning_rate: 0.0003
+
+# Critic
+hidden_dim: 256
+critic_learning_rate: 0.0003
+
+# Training
+gradient_steps: 100000
+batch_size: 256
+ema_update_interval: 5
+log_interval: 1000
+save_interval: 50000
+
+# Inference
+ckpt: latest
+num_envs: 50
+num_episodes: 3
+num_candidates: 50
+temperature: 0.5
+use_ema: True
+
+# hydra
+hydra:
+  job:
+    chdir: false

@@ -1,5 +1,0 @@
-{
-  "pytorch-vision": {
-    "PYTHONPATH": "/workspace/pytorch-vision:${PYTHONPATH}"
-  }
-}

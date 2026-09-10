@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,accuracy_cora,accuracy_citeseer,accuracy_texas,accuracy_cornell,elapsed_cora,elapsed_citeseer,elapsed_texas,elapsed_cornell
+2026-03-27T03:14:52.829152+00:00,baseline:gprgnn,true,42,0.8887,0.802,0.9098,0.8738,52.0,52.0,68.0,62.0
+2026-03-27T03:05:51.728152+00:00,baseline:bernnet,true,42,0.8563,0.7798,0.9049,0.8836,98.0,99.0,99.0,85.0
+2026-03-25T10:35:03.370597+00:00,baseline:chebnetii,true,42,0.8724,0.8001,0.877,0.8475,,,,

@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,fid_sd15,fid_sd20,fid_sdxl
+2026-04-14T00:00:00.000000+00:00,baseline:ddim,true,42,34.2344,28.4142,51.5227
+2026-04-14T00:00:00.000000+00:00,baseline:dpm3m_sde,true,42,27.9800,23.4519,39.6558
+2026-04-14T00:00:00.000000+00:00,baseline:dpm2s,true,42,29.0098,23.8945,42.8336

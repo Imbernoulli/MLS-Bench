@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "test_cmds": [
+    {
+      "cmd": "scripts/stochastic_mab.sh",
+      "label": "stochastic-mab",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:30:00",
+      "package": "SMPyBandits"
+    },
+    {
+      "cmd": "scripts/contextual.sh",
+      "label": "contextual",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:30:00",
+      "package": "SMPyBandits"
+    },
+    {
+      "cmd": "scripts/nonstationary.sh",
+      "label": "nonstationary",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:30:00",
+      "package": "SMPyBandits",
+      "hidden": true
+    }
+  ],
+  "rigorous_codebase": true,
+  "baselines": {
+    "ucb1": {
+      "edit_ops": "edits/ucb1.edit.py"
+    },
+    "thompson_sampling": {
+      "edit_ops": "edits/thompson_sampling.edit.py"
+    },
+    "kl_ucb": {
+      "edit_ops": "edits/kl_ucb.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "SMPyBandits/custom_bandit.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 261,
+          "end": 321
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

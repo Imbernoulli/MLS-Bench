@@ -1,0 +1,69 @@
+{
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/cora.sh",
+      "label": "cora",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "ChebNetII"
+    },
+    {
+      "cmd": "scripts/citeseer.sh",
+      "label": "citeseer",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "ChebNetII"
+    },
+    {
+      "cmd": "scripts/texas.sh",
+      "label": "texas",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "ChebNetII"
+    },
+    {
+      "cmd": "scripts/cornell.sh",
+      "label": "cornell",
+      "group": 1,
+      "compute": 0.25,
+      "time": "00:59:00",
+      "package": "ChebNetII",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "gprgnn": {
+      "edit_ops": "edits/gprgnn.edit.py"
+    },
+    "bernnet": {
+      "edit_ops": "edits/bernnet.edit.py"
+    },
+    "chebnetii": {
+      "edit_ops": "edits/chebnetii.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "ChebNetII/main/custom_filter.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 211,
+          "end": 308
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

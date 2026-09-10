@@ -1,0 +1,9 @@
+[
+  {
+    "op": "replace",
+    "file": "verl/verl/trainer/ppo/custom_kl_penalty.py",
+    "start_line": 17,
+    "end_line": 56,
+    "content": "# =====================================================================\n\n\ndef compute_custom_kl_penalty(\n    logprob: torch.Tensor,\n    ref_logprob: torch.Tensor,\n) -> torch.Tensor:\n    \"\"\"k1 estimator: naive unbiased KL = logprob - ref_logprob.\"\"\"\n    return logprob - ref_logprob\n"
+  }
+]

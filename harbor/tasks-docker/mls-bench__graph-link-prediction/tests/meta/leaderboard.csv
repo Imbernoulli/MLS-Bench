@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,AUC_Cora,MRR_Cora,Hits@20_Cora,AUC_CiteSeer,MRR_CiteSeer,Hits@20_CiteSeer,Hits@50_ogbl-collab,MRR_ogbl-collab,elapsed_Cora,elapsed_CiteSeer,elapsed_ogbl-collab
+2026-04-23T08:58:02.661129+00:00,baseline:gcn_dot,true,42,93.11,39.45,76.66,93.05,39.4,75.82,53.74,13.79,9,9,575
+2026-04-22T07:39:47.189000+00:00,baseline:vgae,true,42,90.51,24.04,63.0,91.46,46.24,73.19,31.77,7.7,9,9,944
+2026-04-22T07:36:14.893210+00:00,baseline:seal,true,42,92.16,23.46,60.72,93.86,31.64,73.63,57.88,10.58,9,9,837

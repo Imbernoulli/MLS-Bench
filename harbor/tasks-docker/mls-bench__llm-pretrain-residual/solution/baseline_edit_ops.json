@@ -1,0 +1,23 @@
+[
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 175,
+    "end_line": 192,
+    "content": "    def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):\n        # Route residual scaling params to no-decay group\n        scaling_ids = {id(self.resid_lambdas), id(self.x0_lambdas)}\n        param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}\n        decay_params = [p for n, p in param_dict.items() if p.dim() >= 2 and id(p) not in scaling_ids]\n        nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2 and id(p) not in scaling_ids]\n        scaling_params = [p for n, p in param_dict.items() if id(p) in scaling_ids]\n        optim_groups = [\n            {'params': decay_params, 'weight_decay': weight_decay},\n            {'params': nodecay_params, 'weight_decay': 0.0},\n            {'params': scaling_params, 'weight_decay': 0.0},\n        ]\n        num_decay_params = sum(p.numel() for p in decay_params)\n        num_nodecay_params = sum(p.numel() for p in nodecay_params)\n        num_scaling_params = sum(p.numel() for p in scaling_params)\n        print(f\"num decayed parameter tensors: {len(decay_params)}, with {num_decay_params:,} parameters\")\n        print(f\"num non-decayed parameter tensors: {len(nodecay_params)}, with {num_nodecay_params:,} parameters\")\n        print(f\"num scaling parameter tensors: {len(scaling_params)}, with {num_scaling_params:,} parameters\")\n        fused_available = 'fused' in inspect.signature(torch.optim.AdamW).parameters\n        use_fused = fused_available and device_type == 'cuda'\n        extra_args = dict(fused=True) if use_fused else dict()\n        optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)\n        print(f\"using fused AdamW: {use_fused}\")\n        return optimizer\n"
+  },
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 162,
+    "end_line": 164,
+    "content": "        # \u2500\u2500 Learnable residual scaling + x0 injection \u2500\u2500\n        # x0 = embedding output; provides gradient highway to every depth.\n        x0 = x\n        for i, block in enumerate(self.transformer.h):\n            block_out = block(x)\n            delta = block_out - x\n            x = self.resid_lambdas[i] * x + delta + self.x0_lambdas[i] * x0\n"
+  },
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 128,
+    "end_line": 130,
+    "content": "        # \u2500\u2500 Learnable residual scaling + x0 injection \u2500\u2500\n        # resid_lambdas[i]: scales the incoming residual stream (init 1.0 = vanilla)\n        # x0_lambdas[i]:    scales the embedding injection (init 0.0 = no injection)\n        self.resid_lambdas = nn.Parameter(torch.ones(config.n_layer))\n        self.x0_lambdas = nn.Parameter(torch.zeros(config.n_layer))\n"
+  }
+]

@@ -1,0 +1,4 @@
+timestamp,model,is_final,seed,spearman_BLAT_ECOLX,spearman_ESTA_BACSU,spearman_RASH_HUMAN,elapsed_BLAT_ECOLX,elapsed_ESTA_BACSU,elapsed_RASH_HUMAN
+2026-04-27T03:56:36.673712+00:00,baseline:ridge,true,42,0.736985,-0.107204,0.681465,94,94,94
+2026-04-27T03:57:47.936632+00:00,baseline:mlp,true,42,0.88254,0.64249,0.808986,77,77,77
+2026-04-27T03:58:33.115492+00:00,baseline:reshape_cnn,true,42,0.860462,0.64077,0.798003,128,128,128

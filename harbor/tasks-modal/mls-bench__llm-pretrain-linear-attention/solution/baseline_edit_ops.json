@@ -1,0 +1,16 @@
+[
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 88,
+    "end_line": 100,
+    "content": "class Block(nn.Module):\n    def __init__(self, config):\n        super().__init__()\n        self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)\n        self.attn = CausalSelfAttention(config)\n        self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)\n        self.mlp = MLP(config)\n\n    def forward(self, x):\n        x = x + self.attn(self.ln_1(x))\n        x = x + self.mlp(self.ln_2(x))\n        return x\n"
+  },
+  {
+    "op": "replace",
+    "file": "nanoGPT/custom_pretrain.py",
+    "start_line": 33,
+    "end_line": 70,
+    "content": "class CausalSelfAttention(nn.Module):\n    def __init__(self, config):\n        super().__init__()\n        from fla.layers import DeltaNet\n        self.attn = DeltaNet(\n            hidden_size=config.n_embd,\n            num_heads=config.n_head,\n            use_beta=True,\n            use_short_conv=True,\n            conv_size=4,\n            qk_activation='silu',\n            qk_norm='l2',\n        )\n        self.use_pos_emb = False\n\n    def forward(self, x):\n        o, _, _ = self.attn(x)\n        return o\n"
+  }
+]

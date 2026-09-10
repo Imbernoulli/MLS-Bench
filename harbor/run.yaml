@@ -16,10 +16,10 @@ quiet: false
 
 environment:
   # Subclass of Harbor's `docker` environment that advertises GPU capability
-  # so MLS-Bench tasks with `gpus > 0` are not rejected. Each such task
-  # ships its own `environment/docker-compose.yaml` reserving the actual
-  # nvidia devices via standard `deploy.resources.reservations.devices`.
-  # If you don't need GPU, replace this whole block with `type: docker`.
+  # so MLS-Bench tasks with `gpus > 0` are not rejected, and that writes a
+  # per-trial Compose overlay reserving the nvidia devices and sizing
+  # /dev/shm (bundles ship no compose file of their own). If you don't need
+  # GPU, `type: docker` works but leaves /dev/shm at docker's 64 MB default.
   import_path: harbor_env:DockerGPUEnvironment
   force_build: true
   delete: true
@@ -40,4 +40,4 @@ agents:
 #   - name: terminus-2
 
 datasets:
-  - path: tasks
+  - path: tasks-docker

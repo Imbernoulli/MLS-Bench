@@ -3,7 +3,7 @@
 Usage:
     uv run python -m mls_bench.main \
         [--output-dir ./datasets/mls-bench] \
-        [--limit N] [--overwrite] [--task-ids t1 t2 ...] \
+        [--limit N] [--overwrite] [--task-ids t1 t2 ...] [--provider docker|daytona|modal] \
         [--mls-bench-root /path/to/MLS-Bench]
 """
 from __future__ import annotations
@@ -45,6 +45,12 @@ def main(argv: list[str] | None = None) -> int:
                         "if omitted.")
     p.add_argument("--continue-on-error", action="store_true",
                    help="Skip tasks that fail to render instead of aborting.")
+    p.add_argument("--provider", choices=("docker", "daytona", "modal"), default="docker",
+                   help="Which rendered variant to produce: 'docker' (native "
+                        "calibration + Compose overlay; harbor/tasks-docker), "
+                        "'daytona' (Daytona sandbox shape, Dockerfile-only; "
+                        "harbor/tasks-daytona) or 'modal' (native calibration, "
+                        "CPUs capped at 64, Dockerfile-only; harbor/tasks-modal).")
     args = p.parse_args(argv)
 
     adapter = MlsBenchAdapter(
@@ -54,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
         task_ids=_parse_task_ids(args.task_ids),
         mls_bench_root=args.mls_bench_root,
         continue_on_error=args.continue_on_error,
+        provider=args.provider,
     )
     try:
         result = adapter.run()

@@ -1,0 +1,62 @@
+{
+  "allow_create": false,
+  "rigorous_codebase": true,
+  "test_cmds": [
+    {
+      "cmd": "scripts/cora.sh",
+      "label": "Cora",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric-lp"
+    },
+    {
+      "cmd": "scripts/citeseer.sh",
+      "label": "CiteSeer",
+      "group": 1,
+      "compute": 0.33,
+      "time": "00:59:00",
+      "package": "pytorch-geometric-lp"
+    },
+    {
+      "cmd": "scripts/ogbl_collab.sh",
+      "label": "ogbl-collab",
+      "group": 1,
+      "compute": 1.0,
+      "time": "00:59:00",
+      "package": "pytorch-geometric-lp",
+      "hidden": true
+    }
+  ],
+  "baselines": {
+    "gcn_dot": {
+      "edit_ops": "edits/gcn_dot.edit.py"
+    },
+    "vgae": {
+      "edit_ops": "edits/vgae.edit.py"
+    },
+    "seal": {
+      "edit_ops": "edits/seal.edit.py"
+    }
+  },
+  "files": [
+    {
+      "filename": "pytorch-geometric-lp/custom_linkpred.py",
+      "read": [
+        {
+          "start": -1,
+          "end": -1
+        }
+      ],
+      "edit": [
+        {
+          "start": 127,
+          "end": 210
+        }
+      ]
+    }
+  ],
+  "seeds": [
+    42
+  ]
+}

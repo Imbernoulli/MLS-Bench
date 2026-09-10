@@ -1,0 +1,5 @@
+timestamp,model,is_final,seed,niah_acc,qasper_f1,multifieldqa_f1,niah_density,qasper_density,multifieldqa_density,elapsed_niah_8k,elapsed_longbench_qasper,elapsed_longbench_multifieldqa_en
+2026-04-30T17:10:57.076879+00:00,baseline:dense,true,42,1.0,0.1406,0.3447,1.0,1.0,1.0,89,114,304
+2026-04-26T21:16:24.654111+00:00,baseline:streaming_llm,true,42,0.2,0.1103,0.213,0.2344,0.2344,0.2344,1751,1678,4578
+2026-04-27T04:16:12.224639+00:00,baseline:bigbird,true,42,0.2,0.0871,0.2298,0.2601,0.2421,0.2693,1669,1347,5283
+2026-04-27T09:12:28.318874+00:00,baseline:block_topk,true,42,0.26,0.1082,0.2074,0.242,0.2291,0.2331,1396,1354,5830
