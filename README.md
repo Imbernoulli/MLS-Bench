@@ -247,9 +247,12 @@ PYTHONPATH=. harbor run -c run.yaml -a claude-code -m anthropic/claude-opus-4-7
 ```
 
 The pre-rendered dataset, GPU-capable environment plugin, and reference
-Harbor config live under [`harbor/`](harbor/). See
-[`harbor/README.md`](harbor/README.md) for usage details and the
-self-contained per-task layout.
+Harbor config live under [`harbor/`](harbor/). Three rendered datasets ship
+there, one per provider — `tasks-docker/` for local Docker (`run.yaml`),
+`tasks-daytona/` for Daytona and `tasks-modal/` for Modal. They hold the same
+140 tasks and differ only in the sandbox shape each provider can serve; use
+the one for your provider. See [`harbor/README.md`](harbor/README.md) for
+usage details and the self-contained per-task layout.
 
 ### Running Harbor tasks on Daytona
 
@@ -343,9 +346,11 @@ harbor run -e modal --path tasks-modal/mls-bench__TASK \
   --agent oracle                                      # the same on stock Harbor, no PYTHONPATH
 ```
 
-Modal caps a sandbox at 24 hours. Ten tasks declare a verifier deadline that,
-added to the 5-hour agent budget, exceeds it (`llm-kv-structural-reduction`, `marl-centralized-critic`, `meta-fewshot-classification`, `pde-design-solver`, `rl-intrinsic-exploration`, `rl-offline-off2on`, `rl-value-atari`, `robo-diffusion-sampling-method`, `robo-humanoid-sim2real-algo`, `stf-traffic-forecast`); an agent run of those can be cut off while verifying, though
-their oracle runs are far shorter. `--ek labels='{"run":"x"}'` tags every
+Modal caps a sandbox at 24 hours. 29 of the 140 tasks declare a verifier
+budget that, added to the 5-hour agent budget, exceeds it — the long RL,
+robotics and nanoGPT tasks — so an agent run of those can be cut off while
+verifying. The budget is a ceiling rather than a reservation, their oracle
+runs finish well inside it, and Daytona and local Docker have no such cap. `--ek labels='{"run":"x"}'` tags every
 sandbox, `--ek region=...` pins placement.
 
 ### Evaluating an agent

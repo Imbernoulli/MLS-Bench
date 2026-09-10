@@ -5,6 +5,21 @@ packaged as a [Harbor](https://github.com/harbor-framework/harbor) dataset.
 Any Harbor agent (`claude-code`, `codex`, `openhands`, `terminus-2`, …) can be
 evaluated on the suite with a single command.
 
+## Which dataset to use
+
+Three rendered datasets ship side by side, one per provider. They hold the
+same 140 tasks and differ only in `task.toml`'s sandbox shape, the thread
+`ENV` block baked into the image, and whether a Compose overlay is present —
+everything else is byte-identical. Pick the one for your provider and ignore
+the others; there is nothing to merge, and a third-party harness copies that
+one directory.
+
+| provider | dataset | Harbor config |
+| --- | --- | --- |
+| local Docker | `tasks-docker/` | `run.yaml` |
+| Daytona | `tasks-daytona/` | `run-daytona.yaml`, `run-daytona-lite.yaml` |
+| Modal | `tasks-modal/` | `run-modal.yaml`, `run-modal-lite.yaml` |
+
 ## Quick start
 
 Prerequisites:
@@ -79,9 +94,15 @@ harbor run -e modal --path tasks-modal/mls-bench__TASK --agent oracle   # stock 
 `gpu_types[0]:gpus` (`h100:<n>`) as the GPU. `harbor_env:ModalEnvironment`
 adds only `--ek gpu_type=H200` (see below). Modal's other limits: a sandbox
 lives at most 24 hours (`sandbox_timeout_secs`, default and maximum 86400),
-so a 5-hour agent budget plus a verifier deadline above 19 hours does not fit
-in one sandbox — ten tasks declare one (`llm-kv-structural-reduction`, `marl-centralized-critic`, `meta-fewshot-classification`, `pde-design-solver`, `rl-intrinsic-exploration`, `rl-offline-off2on`, `rl-value-atari`, `robo-diffusion-sampling-method`, `robo-humanoid-sim2real-algo`, `stf-traffic-forecast`); their oracle runs are far shorter. Modal reports the
-granted cores as `nproc`, and its GPU sandboxes have a large `/dev/shm`.
+so a task whose `[agent]` plus `[verifier]` `timeout_sec` exceeds 86400 cannot
+run both phases in one sandbox. 29 of the 140 bundles are in that position —
+the long RL, robotics and nanoGPT tasks, whose verifier budget alone reaches
+67 hours. That budget is a ceiling rather than a reservation: their oracle
+runs finish in a fraction of it, and Daytona and local Docker have no such
+cap.
+
+Modal reports the granted cores as `nproc`, and its GPU sandboxes have a large
+`/dev/shm`.
 
 ### The 5-hour agent budget
 
@@ -109,9 +130,9 @@ eval cost — and is deliberately not flattened to one value.
 
 ### Container resources
 
-Two rendered variants ship, one per provider, because the providers' hard
+Three rendered variants ship, one per provider, because the providers' hard
 constraints do not intersect cleanly and a single bundle would be right for
-neither:
+none of them:
 
 | | `tasks-docker/` (local Docker, `run.yaml`) | `tasks-daytona/` (Daytona, `run-daytona*.yaml`) | `tasks-modal/` (Modal, `run-modal*.yaml`) |
 | --- | --- | --- | --- |
