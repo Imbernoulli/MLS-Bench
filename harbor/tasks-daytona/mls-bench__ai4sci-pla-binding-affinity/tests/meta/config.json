@@ -7,7 +7,7 @@
       "label": "PDBbind2013",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "package": "EHIGN_PLA"
     },
     {
@@ -15,7 +15,7 @@
       "label": "PDBbind2016",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "package": "EHIGN_PLA"
     },
     {
@@ -23,7 +23,7 @@
       "label": "PDBbind2019",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "package": "EHIGN_PLA",
       "hidden": true
     }

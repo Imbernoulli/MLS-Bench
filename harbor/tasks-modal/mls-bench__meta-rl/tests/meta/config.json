@@ -12,7 +12,7 @@
       "label": "cheetah-vel",
       "group": 1,
       "compute": 0.33,
-      "time": "1:00:00",
+      "time": "2:00:00",
       "package": "oyster"
     },
     {
@@ -21,7 +21,7 @@
       "hidden": true,
       "group": 1,
       "compute": 0.33,
-      "time": "2:00:00",
+      "time": "2:45:00",
       "package": "oyster"
     },
     {
@@ -29,7 +29,7 @@
       "label": "point-robot",
       "group": 1,
       "compute": 0.33,
-      "time": "0:59:00",
+      "time": "2:45:00",
       "package": "oyster"
     }
   ],

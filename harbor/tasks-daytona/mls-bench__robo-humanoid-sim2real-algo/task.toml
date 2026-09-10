@@ -17,7 +17,7 @@ mls_bench_package = "humanoid-gym"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 96480
+timeout_sec = 99000
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

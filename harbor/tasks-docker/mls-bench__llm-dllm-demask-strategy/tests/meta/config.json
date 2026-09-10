@@ -7,7 +7,7 @@
       "label": "llada-math",
       "group": 1,
       "compute": 1.0,
-      "time": "02:59:00",
+      "time": "4:00:00",
       "package": "LLaDA"
     },
     {
@@ -15,7 +15,7 @@
       "label": "llada-humaneval",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:45:00",
       "package": "LLaDA"
     },
     {
@@ -23,7 +23,7 @@
       "label": "dream-text",
       "group": 2,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:45:00",
       "package": "LLaDA",
       "hidden": true
     }

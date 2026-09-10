@@ -7,7 +7,7 @@
       "label": "z500-3day",
       "group": 1,
       "compute": 1.0,
-      "time": "08:00:00",
+      "time": "11:00:00",
       "package": "ClimaX"
     },
     {
@@ -15,7 +15,7 @@
       "label": "t850-5day",
       "group": 1,
       "compute": 1.0,
-      "time": "08:00:00",
+      "time": "11:00:00",
       "package": "ClimaX"
     },
     {
@@ -23,7 +23,7 @@
       "label": "wind10m-7day",
       "group": 1,
       "compute": 1.0,
-      "time": "08:00:00",
+      "time": "11:00:00",
       "package": "ClimaX",
       "hidden": true
     }

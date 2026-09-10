@@ -7,7 +7,7 @@
       "label": "Car",
       "group": 1,
       "compute": 0.33,
-      "time": "23:59:59",
+      "time": "46:00:00",
       "package": "Neural-Solver-Library"
     },
     {
@@ -15,7 +15,7 @@
       "label": "AirfRANS",
       "group": 1,
       "compute": 0.33,
-      "time": "23:59:59",
+      "time": "46:00:00",
       "package": "Neural-Solver-Library"
     },
     {
@@ -23,7 +23,7 @@
       "label": "AirCraft",
       "group": 1,
       "compute": 0.33,
-      "time": "23:59:59",
+      "time": "46:00:00",
       "package": "Neural-Solver-Library",
       "hidden": true
     }

@@ -9,7 +9,7 @@
       "label": "m4_monthly",
       "group": 1,
       "compute": 0.33,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "package": "Time-Series-Library"
     },
     {
@@ -17,7 +17,7 @@
       "label": "m4_quarterly",
       "group": 1,
       "compute": 0.33,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "package": "Time-Series-Library"
     },
     {
@@ -25,7 +25,7 @@
       "label": "m4_yearly",
       "group": 1,
       "compute": 0.33,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "hidden": true,
       "package": "Time-Series-Library"
     }

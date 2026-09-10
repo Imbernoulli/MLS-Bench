@@ -17,7 +17,7 @@ mls_bench_package = "verl"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 45420
+timeout_sec = 47400
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the

@@ -8,7 +8,7 @@
       "label": "d200_k20_a1e3",
       "group": 1,
       "compute": 1.0,
-      "time": "5:00:00",
+      "time": "8:00:00",
       "package": "RAIN"
     },
     {
@@ -16,7 +16,7 @@
       "label": "d500_k10_a1e3",
       "group": 1,
       "compute": 1.0,
-      "time": "7:00:00",
+      "time": "8:00:00",
       "package": "RAIN"
     },
     {

@@ -10,7 +10,7 @@
       "label": "niah_8k",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "package": "sparse-attn-eval"
     },
     {
@@ -18,7 +18,7 @@
       "label": "longbench_qasper",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:00:00",
       "package": "sparse-attn-eval"
     },
     {
@@ -26,7 +26,7 @@
       "label": "longbench_multifieldqa_en",
       "group": 1,
       "compute": 1.0,
-      "time": "02:00:00",
+      "time": "4:00:00",
       "package": "sparse-attn-eval",
       "hidden": true
     }

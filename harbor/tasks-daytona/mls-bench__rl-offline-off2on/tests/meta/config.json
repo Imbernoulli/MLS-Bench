@@ -6,7 +6,7 @@
       "label": "pen-cloned-v1",
       "group": 1,
       "compute": 0.33,
-      "time": "48:00:00",
+      "time": "53:00:00",
       "package": "CORL"
     },
     {
@@ -14,7 +14,7 @@
       "label": "hammer-cloned-v1",
       "group": 1,
       "compute": 0.33,
-      "time": "48:00:00",
+      "time": "53:00:00",
       "package": "CORL"
     },
     {
@@ -22,7 +22,7 @@
       "label": "hammer-expert-v1",
       "group": 1,
       "compute": 0.33,
-      "time": "44:00:00",
+      "time": "53:00:00",
       "package": "CORL",
       "hidden": true
     }

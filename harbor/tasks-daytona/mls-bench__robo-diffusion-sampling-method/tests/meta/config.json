@@ -7,7 +7,7 @@
       "label": "train_hopper",
       "group": 1,
       "compute": 1,
-      "time": "18:00:00",
+      "time": "34:00:00",
       "package": "CleanDiffuser"
     },
     {
@@ -15,7 +15,7 @@
       "label": "train_walker2d",
       "group": 2,
       "compute": 1,
-      "time": "8:00:00",
+      "time": "12:00:00",
       "package": "CleanDiffuser"
     },
     {
@@ -24,7 +24,7 @@
       "hidden": true,
       "group": 3,
       "compute": 1,
-      "time": "8:00:00",
+      "time": "12:00:00",
       "package": "CleanDiffuser"
     }
   ],
