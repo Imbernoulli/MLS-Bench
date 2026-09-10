@@ -31,7 +31,7 @@ digest = "sha256:e72c9fdf232a3b47a0d7a64032a85db3e7f2e35b57b3e6004eef10842a7b391
 
 [[tasks]]
 name = "mls-bench/ai4sci-climate-emulation"
-digest = "sha256:0d72feb404dfaae0c15e50b08c4f234adb960fb4bc88eb3d3275960d11a41d11"
+digest = "sha256:26ea2fced741078ecb1a93db782eafaf7e05eeace84529889886516cfda51f12"
 
 [[tasks]]
 name = "mls-bench/ai4sci-inverse-diffusion-algo"
