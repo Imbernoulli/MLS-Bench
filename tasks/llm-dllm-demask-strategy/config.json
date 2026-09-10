@@ -2,9 +2,9 @@
   "allow_create": false,
   "rigorous_codebase": true,
   "test_cmds": [
-    {"cmd": "scripts/llada_math.sh",      "label": "llada-math",      "group": 1, "compute": 1.0, "time": "02:59:00", "package": "LLaDA"},
-    {"cmd": "scripts/llada_humaneval.sh", "label": "llada-humaneval", "group": 1, "compute": 1.0, "time": "00:59:00", "package": "LLaDA"},
-    {"cmd": "scripts/dream_text.sh",      "label": "dream-text",      "group": 2, "compute": 1.0, "time": "00:59:00", "package": "LLaDA", "hidden": true}
+    {"cmd": "scripts/llada_math.sh",      "label": "llada-math",      "group": 1, "compute": 1.0, "time": "4:00:00", "package": "LLaDA"},
+    {"cmd": "scripts/llada_humaneval.sh", "label": "llada-humaneval", "group": 1, "compute": 1.0, "time": "1:45:00", "package": "LLaDA"},
+    {"cmd": "scripts/dream_text.sh",      "label": "dream-text",      "group": 2, "compute": 1.0, "time": "1:45:00", "package": "LLaDA", "hidden": true}
   ],
   "baselines": {
     "topk_margin":       {"edit_ops": "edits/topk_margin.edit.py"},

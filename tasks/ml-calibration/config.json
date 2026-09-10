@@ -31,7 +31,7 @@
       "label": "svm-breast_cancer",
       "group": 1,
       "compute": 1.0,
-      "time": "00:10:00",
+      "time": "0:15:00",
       "package": "scikit-learn",
       "hidden": true
     }

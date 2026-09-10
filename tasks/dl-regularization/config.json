@@ -8,7 +8,7 @@
       "label": "resnet56-cifar100",
       "group": 1,
       "compute": 1.0,
-      "time": "02:00:00",
+      "time": "5:00:00",
       "package": "pytorch-vision"
     },
     {
@@ -16,7 +16,7 @@
       "label": "vgg16bn-cifar100",
       "group": 1,
       "compute": 1.0,
-      "time": "02:00:00",
+      "time": "5:00:00",
       "package": "pytorch-vision"
     },
     {
@@ -24,7 +24,7 @@
       "label": "mobilenetv2-fmnist",
       "group": 1,
       "compute": 1.0,
-      "time": "4:00:00",
+      "time": "5:00:00",
       "package": "pytorch-vision",
       "hidden": true
     }

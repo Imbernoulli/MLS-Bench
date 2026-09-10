@@ -779,6 +779,15 @@ MAX_PARALLEL_GPUS = 8
 WAVE_GRACE_SEC = 300
 
 
+# Wall clock the verifier gets on top of the eval deadlines themselves: staging
+# the task and holdout inputs, the budget check, the scoring pass, and on a
+# cloud sandbox the first read of a multi-GB dataset off network storage. It is
+# not eval time — an eval that overruns is killed by its own deadline long
+# before this matters — so it is sized generously rather than tightly.
+VERIFIER_SETUP_HEADROOM_SEC = 60 * 60
+VERIFIER_PER_JOB_HEADROOM_SEC = 300
+
+
 # `task.toml`'s `cpus`/`memory_mb` are hard cgroup limits everywhere, not
 # hints. Harbor's local docker-compose base sets `deploy.resources.limits`
 # (a task rendered with 4 CPUs / 16 GiB lands in a cgroup with
@@ -1107,7 +1116,11 @@ def _verifier_timeout_sec(config: dict, gpus: int) -> int:
             # waves, at which point 300s/wave outgrows it and the run scores 0
             # while still inside the limits the runner advertised.
             total += max(seconds for _, seconds in wave) + WAVE_GRACE_SEC
-    return total + 30 * 60 + 120 * len(test_cmds) * n_seeds
+    return (
+        total
+        + VERIFIER_SETUP_HEADROOM_SEC
+        + VERIFIER_PER_JOB_HEADROOM_SEC * len(test_cmds) * n_seeds
+    )
 
 
 # `SHM_SIZE_GB` / `compose_overlay_text` live in mls_bench.compose_overlay so

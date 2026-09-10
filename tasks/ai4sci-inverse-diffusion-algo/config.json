@@ -7,7 +7,7 @@
       "label": "inv-scatter",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:45:00",
       "package": "InverseBench"
     },
     {
@@ -15,7 +15,7 @@
       "label": "blackhole",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:45:00",
       "package": "InverseBench"
     },
     {
@@ -23,7 +23,7 @@
       "label": "inpainting",
       "group": 1,
       "compute": 1.0,
-      "time": "00:59:00",
+      "time": "1:45:00",
       "package": "InverseBench",
       "hidden": true
     }

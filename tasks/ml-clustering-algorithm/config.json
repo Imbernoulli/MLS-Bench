@@ -6,7 +6,7 @@
       "label": "blobs",
       "group": 1,
       "compute": 0.25,
-      "time": "00:10:00",
+      "time": "0:15:00",
       "package": "scikit-learn"
     },
     {
@@ -14,7 +14,7 @@
       "label": "moons",
       "group": 1,
       "compute": 0.25,
-      "time": "00:10:00",
+      "time": "0:15:00",
       "package": "scikit-learn"
     },
     {

@@ -8,7 +8,7 @@
       "label": "tutankham-v5",
       "group": 1,
       "compute": 1.0,
-      "time": "08:00:00",
+      "time": "11:00:00",
       "package": "cleanrl"
     },
     {
@@ -16,7 +16,7 @@
       "label": "frostbite-v5",
       "group": 1,
       "compute": 1.0,
-      "time": "08:00:00",
+      "time": "11:00:00",
       "package": "cleanrl"
     },
     {
@@ -24,7 +24,7 @@
       "label": "private-eye-v5",
       "group": 1,
       "compute": 1.0,
-      "time": "08:00:00",
+      "time": "11:00:00",
       "hidden": true,
       "package": "cleanrl"
     }
