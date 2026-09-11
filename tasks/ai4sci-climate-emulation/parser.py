@@ -50,7 +50,7 @@ class Parser(OutputParser):
             if "TEST_METRICS:" not in line:
                 continue
             pairs = re.findall(
-                r"(\w+)=([\d.]+(?:e[+-]?\d+)?|nan|inf|-inf)", line, re.IGNORECASE
+                r"(\w+)=(-?[\d.]+(?:e[+-]?\d+)?|nan|[-+]?inf)", line, re.IGNORECASE
             )
             for key, raw in pairs:
                 val = float(raw.lower())

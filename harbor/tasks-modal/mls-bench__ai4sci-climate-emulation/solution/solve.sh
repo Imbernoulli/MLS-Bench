@@ -1,6 +1,6 @@
 #!/bin/bash
 # Oracle solution: applies the strongest baseline for ai4sci-climate-emulation
-# (cnn) to the workspace, then exits.
+# (unet) to the workspace, then exits.
 #
 # Verification (run by Harbor verifier) will diff the workspace against
 # /opt/mlsbench/original/, find only in-range modifications, run all eval
@@ -64,6 +64,6 @@ for op in ops:
         print(f"unknown op: {op['op']}", file=sys.stderr)
         sys.exit(2)
 
-print(f"applied {len(ops)} baseline edit ops (cnn) to {workdir}")
+print(f"applied {len(ops)} baseline edit ops (unet) to {workdir}")
 print(f"prepared {len(overrides)} oracle cmd override(s) for verifier")
 PY
