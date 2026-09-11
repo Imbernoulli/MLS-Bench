@@ -483,7 +483,7 @@ digest = "sha256:ac237e1c943559eb2dbb5248c644cb633c5acee3ca26b072cc4543a508ad953
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-sampling-method"
-digest = "sha256:3475b374d336ede78f4b8286a1171a0b1b70f49362b6053d08dbd20883c0891c"
+digest = "sha256:67600703498bf805c6af4684a360accc55c7e8689303ff6132155bbf0ace9dfb"
 
 [[tasks]]
 name = "mls-bench/robo-humanoid-sim2real-algo"
