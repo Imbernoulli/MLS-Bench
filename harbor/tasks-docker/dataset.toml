@@ -475,11 +475,11 @@ digest = "sha256:048220f77c6bb2447fb179a24dff1eaa309979d579e0dfa3c5c03d4592cda90
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-guidance"
-digest = "sha256:aa7de7ab9c41e86b9feabbaf43a78b9fa01cdfc146d177a0901ef76acbeb01b8"
+digest = "sha256:44ae1178f98fde5adf4c501b8f3274afbb443e6a39da924753d3f7ff983dbe42"
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-policy"
-digest = "sha256:4507f3cb397d2412566532bd3bad47d44dd2c750ba91bd24de8a3acb72873107"
+digest = "sha256:4cf417e9c344de12a26f88fb64945a802285f5a40733c6cb8258be9109c5fd5d"
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-sampling-method"

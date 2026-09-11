@@ -13,7 +13,7 @@
     {
       "cmd": "scripts/train_walker2d.sh",
       "label": "train_walker2d",
-      "group": 2,
+      "group": 1,
       "compute": 1,
       "time": "4:00:00",
       "package": "CleanDiffuser"
@@ -22,7 +22,7 @@
       "cmd": "scripts/train_halfcheetah.sh",
       "label": "train_halfcheetah",
       "hidden": true,
-      "group": 3,
+      "group": 1,
       "compute": 1,
       "time": "4:00:00",
       "package": "CleanDiffuser"
