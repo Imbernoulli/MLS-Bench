@@ -422,6 +422,15 @@ def _is_gpu_reservation_only_compose(
 class DaytonaEnvironment(_HarborDaytonaEnvironment):
     """Daytona provider with MLS-Bench's GPU-only Compose compatibility."""
 
+    def _bool_kwarg(self, name: str, *, default: bool) -> bool:
+        """Read a boolean ``--ek`` kwarg, accepting the usual spellings."""
+        raw = self._kwargs.get(name)
+        if raw is None:
+            return default
+        if isinstance(raw, bool):
+            return raw
+        return str(raw).strip().lower() in {"1", "true", "yes", "on"}
+
     def _int_kwarg(self, name: str) -> int:
         """Return an integer environment kwarg (``--ek name=value``) or 0."""
         value = self._kwargs.get(name)
@@ -493,6 +502,17 @@ class DaytonaEnvironment(_HarborDaytonaEnvironment):
         if gpu_count > 0:
             if self._spot_requested() and hasattr(params, "spot"):
                 params.spot = True
+            # Some Daytona organizations require GPU sandboxes to be ephemeral
+            # and refuse the create outright: `GPU sandboxes must be ephemeral;
+            # set autoDeleteInterval to 0`. Setting it costs nothing where the
+            # policy is absent — Harbor deletes the sandbox itself when the
+            # trial ends, so this only guarantees cleanup if that path is
+            # missed — and it is what makes the create succeed where the policy
+            # is enforced. `--ek ephemeral_gpu=false` opts out.
+            if self._bool_kwarg("ephemeral_gpu", default=True) and hasattr(
+                params, "auto_delete_interval"
+            ):
+                params.auto_delete_interval = 0
             if resources is not None and gpu_type is not None:
                 resources.gpu_type = gpu_type
             # The verifier runs inside the Daytona sandbox (and, for GPU-only

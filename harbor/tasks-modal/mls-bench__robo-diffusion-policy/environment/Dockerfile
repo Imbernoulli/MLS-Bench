@@ -23,13 +23,23 @@ FROM bohanlyu2022/mlsbench-harbor-cleandiffuser:latest
 # in as the default so the agent's development runs get it too;
 # `tests/score_task.py` recomputes it from the live cgroup at verify time and
 # divides it across the commands a wave runs concurrently.
-ENV OMP_NUM_THREADS=16 \
-    OMP_THREAD_LIMIT=16 \
-    MKL_NUM_THREADS=16 \
-    OPENBLAS_NUM_THREADS=16 \
-    NUMEXPR_NUM_THREADS=16 \
-    NUMEXPR_MAX_THREADS=16 \
-    VECLIB_MAXIMUM_THREADS=16 \
-    BLIS_NUM_THREADS=16
+ENV OMP_NUM_THREADS=36 \
+    OMP_THREAD_LIMIT=36 \
+    MKL_NUM_THREADS=36 \
+    OPENBLAS_NUM_THREADS=36 \
+    NUMEXPR_NUM_THREADS=36 \
+    NUMEXPR_MAX_THREADS=36 \
+    VECLIB_MAXIMUM_THREADS=36 \
+    BLIS_NUM_THREADS=36
+
+# NCCL >= 2.19 allocates communication buffers through the cuMem driver API
+# and uses NVLink SHARP where the fabric advertises it. Both paths fail with
+# `cudaErrorIllegalState` (Cuda failure 401) inside a GPU sandbox — cuMem on
+# the first collective, NVLS in `transport/nvls.cc` on multi-GPU DDP. The
+# ring/tree transports and the classic allocator work everywhere, so make
+# them the image default; a host that prefers the faster paths can override
+# either variable.
+ENV NCCL_CUMEM_ENABLE=0 \
+    NCCL_NVLS_ENABLE=0
 
 COPY _scaffold/ /workspace/
