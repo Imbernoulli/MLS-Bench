@@ -88,7 +88,7 @@ harbor run -e modal --path tasks-modal/mls-bench__TASK --agent oracle   # stock 
 
 `tasks-modal/` is the variant sized for Modal — the native calibration
 (CPU-only tasks 8 CPUs / 32 GB), CPUs capped at Modal's 64 per sandbox
-(only the four 8-GPU tasks: 96 → 64), no compose file — and stock Harbor's
+(only the five 8-GPU tasks: 96 → 64), no compose file — and stock Harbor's
 `modal` environment runs it as shipped: Harbor builds the Dockerfile with
 `Image.from_dockerfile`, sends `cpus`/`memory_mb` as the sandbox request and
 `gpu_types[0]:gpus` (`h100:<n>`) as the GPU. `harbor_env:ModalEnvironment`
@@ -136,7 +136,7 @@ none of them:
 
 | | `tasks-docker/` (local Docker, `run.yaml`) | `tasks-daytona/` (Daytona, `run-daytona*.yaml`) | `tasks-modal/` (Modal, `run-modal*.yaml`) |
 | --- | --- | --- | --- |
-| GPU task | 12 CPUs per GPU (16 min), 64 GB (128 GB verl) — the native SLURM calibration | same | same, CPUs capped at Modal's 64 per sandbox (the four 8-GPU tasks: 96 → 64) |
+| GPU task | 12 CPUs per GPU (16 min), 64 GB (128 GB verl) — the native SLURM calibration | same | same, CPUs capped at Modal's 64 per sandbox (the five 8-GPU tasks: 96 → 64) |
 | CPU-only task | 8 CPUs / 32 GB / 30 GB — native | 4 CPUs / 8 GB / 10 GB — Daytona's CPU-sandbox ceiling; stock Harbor cannot clamp, and the 22 CPU-only tasks whose oracle needs no model API key pass at full scale at this shape | 8 CPUs / 32 GB / 30 GB — native |
 | `environment/docker-compose.yaml` | NVIDIA device reservation + `shm_size: 16gb` | none — stock Harbor's Daytona provider refuses GPU tasks that carry one | none — Harbor's Modal provider builds the Dockerfile directly |
 

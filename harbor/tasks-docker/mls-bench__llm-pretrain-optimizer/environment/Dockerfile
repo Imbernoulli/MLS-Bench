@@ -23,14 +23,14 @@ FROM bohanlyu2022/mlsbench-harbor-nanogpt:latest
 # in as the default so the agent's development runs get it too;
 # `tests/score_task.py` recomputes it from the live cgroup at verify time and
 # divides it across the commands a wave runs concurrently.
-ENV OMP_NUM_THREADS=48 \
-    OMP_THREAD_LIMIT=48 \
-    MKL_NUM_THREADS=48 \
-    OPENBLAS_NUM_THREADS=48 \
-    NUMEXPR_NUM_THREADS=48 \
-    NUMEXPR_MAX_THREADS=48 \
-    VECLIB_MAXIMUM_THREADS=48 \
-    BLIS_NUM_THREADS=48
+ENV OMP_NUM_THREADS=96 \
+    OMP_THREAD_LIMIT=96 \
+    MKL_NUM_THREADS=96 \
+    OPENBLAS_NUM_THREADS=96 \
+    NUMEXPR_NUM_THREADS=96 \
+    NUMEXPR_MAX_THREADS=96 \
+    VECLIB_MAXIMUM_THREADS=96 \
+    BLIS_NUM_THREADS=96
 
 # NCCL >= 2.19 allocates communication buffers through the cuMem driver API
 # and uses NVLink SHARP where the fabric advertises it. Both paths fail with

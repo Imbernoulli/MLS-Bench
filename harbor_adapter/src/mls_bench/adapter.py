@@ -819,7 +819,7 @@ VERIFIER_PER_JOB_HEADROOM_SEC = 300
 #   provider builds the Dockerfile directly and its sandboxes have a large
 #   /dev/shm), and CPUs capped at Modal's 64 cores per sandbox ("Function CPU
 #   request out of bounds. Must be between 0.125 and 64 cores."), which only
-#   touches the four 8-GPU tasks (96 -> 64). Modal reports the granted cores
+#   touches the five 8-GPU tasks (96 -> 64). Modal reports the granted cores
 #   as `nproc`, but the images pin the thread keys anyway.
 #
 # GPU memory is not taken from SLURM (`max(mem, gpus * 100)` GB is cluster

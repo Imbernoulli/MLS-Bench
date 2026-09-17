@@ -251,7 +251,7 @@ digest = "sha256:d352766a712329bee8e514455e7430bbbdd8737371eb3ec2f6da47669c90f8d
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-optimizer"
-digest = "sha256:a0bf23463c668dc54b2f43203b4aea7f5c9c2d1441d930dbf22d54d491075f66"
+digest = "sha256:a444f45402c9c6184415e5824d47b8baa0e1c964c74d8a7a17b994f7e57ca442"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-residual"
