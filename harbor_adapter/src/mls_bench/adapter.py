@@ -786,6 +786,14 @@ WAVE_GRACE_SEC = 300
 # before this matters — so it is sized generously rather than tightly.
 VERIFIER_SETUP_HEADROOM_SEC = 60 * 60
 VERIFIER_PER_JOB_HEADROOM_SEC = 300
+# Mirrors BUDGET_CHECK_TIMEOUT_SEC in task-template/tests/score_task.py (as
+# WAVE_GRACE_SEC above mirrors its counterpart). score_task.py runs
+# budget_check.py once per test_cmd — serially, and before the first eval of
+# each wave — so a task's whole preflight can cost this times its command
+# count. _verifier_timeout_sec asserts the headroom covers that: if it did not,
+# Harbor could kill the verifier before any eval produced a metric, which is
+# the failure the headroom exists to prevent.
+BUDGET_CHECK_TIMEOUT_SEC = 900
 
 
 # `task.toml`'s `cpus`/`memory_mb` are hard cgroup limits everywhere, not
@@ -1116,11 +1124,19 @@ def _verifier_timeout_sec(config: dict, gpus: int) -> int:
             # waves, at which point 300s/wave outgrows it and the run scores 0
             # while still inside the limits the runner advertised.
             total += max(seconds for _, seconds in wave) + WAVE_GRACE_SEC
-    return (
-        total
-        + VERIFIER_SETUP_HEADROOM_SEC
+    headroom = (
+        VERIFIER_SETUP_HEADROOM_SEC
         + VERIFIER_PER_JOB_HEADROOM_SEC * len(test_cmds) * n_seeds
     )
+    preflight_worst = BUDGET_CHECK_TIMEOUT_SEC * len(test_cmds)
+    if preflight_worst > headroom:
+        raise ValueError(
+            f"budget-check preflight worst case ({preflight_worst}s for "
+            f"{len(test_cmds)} test_cmds) exceeds the verifier headroom "
+            f"({headroom}s); raise VERIFIER_PER_JOB_HEADROOM_SEC or lower "
+            f"BUDGET_CHECK_TIMEOUT_SEC in score_task.py"
+        )
+    return total + headroom
 
 
 # `SHM_SIZE_GB` / `compose_overlay_text` live in mls_bench.compose_overlay so
