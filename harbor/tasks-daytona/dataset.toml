@@ -31,7 +31,7 @@ digest = "sha256:e72c9fdf232a3b47a0d7a64032a85db3e7f2e35b57b3e6004eef10842a7b391
 
 [[tasks]]
 name = "mls-bench/ai4sci-climate-emulation"
-digest = "sha256:26ea2fced741078ecb1a93db782eafaf7e05eeace84529889886516cfda51f12"
+digest = "sha256:0d72feb404dfaae0c15e50b08c4f234adb960fb4bc88eb3d3275960d11a41d11"
 
 [[tasks]]
 name = "mls-bench/ai4sci-inverse-diffusion-algo"
@@ -251,7 +251,7 @@ digest = "sha256:15c885c9d165c4f6f7db12f4baab5743aaf1ea62e34646527105ed3f6b3d2cc
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-optimizer"
-digest = "sha256:17f2c8b0e28b79b978f0f4723911ec0b83490da47a21a04b309a380f2ad09066"
+digest = "sha256:6459053835b88994e584b1f3565ee869600ac763287376e22ccbddefdd8560de"
 
 [[tasks]]
 name = "mls-bench/llm-pretrain-residual"
@@ -475,15 +475,15 @@ digest = "sha256:49c0d209eaa18e583ba8391c435df3a21c9cd81bb005e762244068b968fabc8
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-guidance"
-digest = "sha256:97492d1073adc0c2142c0f65adc120371c410e4408876068b87c27437c588b74"
+digest = "sha256:59d996ab28781c0045704c97a20fd85c08ce37a0de749ac0ea9b3480c05b1b68"
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-policy"
-digest = "sha256:ac237e1c943559eb2dbb5248c644cb633c5acee3ca26b072cc4543a508ad953f"
+digest = "sha256:03fcc6677ea7d90ecd34ab002fbb0fdc1b56215eaef62034833542a013623df1"
 
 [[tasks]]
 name = "mls-bench/robo-diffusion-sampling-method"
-digest = "sha256:67600703498bf805c6af4684a360accc55c7e8689303ff6132155bbf0ace9dfb"
+digest = "sha256:3475b374d336ede78f4b8286a1171a0b1b70f49362b6053d08dbd20883c0891c"
 
 [[tasks]]
 name = "mls-bench/robo-humanoid-sim2real-algo"
