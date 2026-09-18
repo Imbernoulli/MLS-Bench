@@ -1,7 +1,7 @@
 # Federated Learning Aggregation Strategy Design
 
 ## Research Question
-Design a federated-learning strategy that converges faster and to higher test accuracy under heterogeneous (non-IID) client data. The contribution is the *aggregation rule*, optionally together with the client-selection rule and the client-side local-update correction that the `Strategy` interface below exposes (a proximal term, control variates, a regularizer, ...). The simulation harness, data partitions, models, local epochs / learning rate, and evaluation are fixed.
+Design a federated-learning strategy that converges faster and to higher test accuracy under heterogeneous (non-IID) client data. The contribution is the *aggregation rule*, optionally together with the client-selection rule and the client-side local-update correction that the `Strategy` interface below exposes (a proximal term, control variates, a regularizer, ...). The simulation harness, data partitions, models, communication rounds, per-round participation, and evaluation are fixed. The harness hands `client_local_train` the reference local budget (`local_epochs`, `local_lr`, `local_batch_size`): a strategy may change how the local update is computed (regularizers, corrections, an adaptive local step size) but is expected to keep the local compute at that budget — the harness does not enforce it, and a submission that trains longer per round is not comparable to the baselines.
 
 ## Background
 Federated Learning (FL) trains a shared global model across many clients without centralizing data. Under non-IID client data, naive averaging suffers from "client drift" — local updates diverge, slowing or destabilizing convergence.
@@ -46,7 +46,7 @@ Every round the harness calls `select_clients`, then `client_local_train` once p
 ## Fixed Pipeline & Evaluation
 - **Communication rounds**: 200.
 - **Per-round participation**: 10 of 100 clients.
-- **Local training**: 5 local epochs per round, SGD with `lr=0.01`.
+- **Local training (reference recipe passed to `client_local_train`)**: 5 local epochs per round, SGD with `lr=0.01`.
 
 Benchmarks:
 1. **CIFAR-10** with Dirichlet split (`alpha=0.1`) — 100 clients, 10-class image classification.

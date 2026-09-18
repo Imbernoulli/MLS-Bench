@@ -3,7 +3,7 @@
 # Federated Learning Aggregation Strategy Design
 
 ## Research Question
-Design a federated-learning strategy that converges faster and to a better-performing global model under heterogeneous (non-IID) client data. The contribution is the *aggregation rule*, optionally together with the client-selection rule and the client-side local-update correction that the `Strategy` interface below exposes (a proximal term, control variates, a regularizer, ...). The simulation harness, data partitions, models, local epochs / learning rate, and evaluation are fixed.
+Design a federated-learning strategy that converges faster and to a better-performing global model under heterogeneous (non-IID) client data. The contribution is the *aggregation rule*, optionally together with the client-selection rule and the client-side local-update correction that the `Strategy` interface below exposes (a proximal term, control variates, a regularizer, ...). The simulation harness, data partitions, models, communication rounds, per-round participation, and evaluation are fixed. The harness hands `client_local_train` the reference local budget (`local_epochs`, `local_lr`, `local_batch_size`): a strategy may change how the local update is computed (regularizers, corrections, an adaptive local step size) but is expected to keep the local compute at that budget — the harness does not enforce it, and a submission that trains longer per round is not comparable to the baselines.
 
 ## Background
 Federated Learning (FL) trains a shared global model across many clients without centralizing data. Under non-IID client data, naive averaging suffers from "client drift" — local updates diverge, slowing or destabilizing convergence.
@@ -47,10 +47,13 @@ Every round the harness calls `select_clients`, then `client_local_train` once p
 
 ## Fixed Pipeline
 The federated simulation pipeline (number of communication rounds, client
-population and per-round participation, local training schedule, optimizer,
-datasets, non-IID partitioning, and evaluation) is fixed by the harness and not
-editable. Your contribution must be confined to the strategy in the editable
-region.
+population and per-round participation, datasets, non-IID partitioning, models,
+and evaluation) is fixed by the harness and not editable. The local training
+recipe (epochs, learning rate, batch size) is passed to `client_local_train` as
+the reference budget: a strategy may change how the local update is computed
+but is expected to keep the local compute at that budget; the harness does not
+enforce it. Your contribution must be confined to the `Strategy` class in the
+editable region.
 
 
 ## Your Workspace
