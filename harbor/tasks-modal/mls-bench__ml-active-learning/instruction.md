@@ -96,7 +96,7 @@ Other files you may **read** for context (do not modify):
     23: 
     24: 
     25: # ================================================================
-    26: # EDITABLE REGION — Implement your query strategy below (lines 28-55)
+    26: # EDITABLE REGION — Implement your query strategy below
     27: # ================================================================
     28: class CustomSampling(Strategy):
     29:     """Custom active learning query strategy.
@@ -143,7 +143,7 @@ In `badge/query_strategies/custom_sampling.py`:
 ```python
 Lines 28–112:
     25: # ================================================================
-    26: # EDITABLE REGION — Implement your query strategy below (lines 28-55)
+    26: # EDITABLE REGION — Implement your query strategy below
     27: # ================================================================
     28: class CustomSampling(Strategy):
     29:     """BADGE — Batch Active learning by Diverse Gradient Embeddings.
@@ -239,7 +239,7 @@ In `badge/query_strategies/custom_sampling.py`:
 ```python
 Lines 28–283:
     25: # ================================================================
-    26: # EDITABLE REGION — Implement your query strategy below (lines 28-55)
+    26: # EDITABLE REGION — Implement your query strategy below
     27: # ================================================================
     28: class CustomSampling(Strategy):
     29:     """BAIT — Batch Active Learning via Information Matrices (Fisher embeddings).
@@ -506,7 +506,7 @@ In `badge/query_strategies/custom_sampling.py`:
 ```python
 Lines 28–51:
     25: # ================================================================
-    26: # EDITABLE REGION — Implement your query strategy below (lines 28-55)
+    26: # EDITABLE REGION — Implement your query strategy below
     27: # ================================================================
     28: class CustomSampling(Strategy):
     29:     """BALD — Bayesian Active Learning by Disagreement (MC Dropout).
@@ -541,7 +541,7 @@ In `badge/query_strategies/custom_sampling.py`:
 ```python
 Lines 28–39:
     25: # ================================================================
-    26: # EDITABLE REGION — Implement your query strategy below (lines 28-55)
+    26: # EDITABLE REGION — Implement your query strategy below
     27: # ================================================================
     28: class CustomSampling(Strategy):
     29:     """Least Confidence (Uncertainty Sampling) — selects samples with lowest
@@ -564,7 +564,7 @@ In `badge/query_strategies/custom_sampling.py`:
 ```python
 Lines 28–36:
     25: # ================================================================
-    26: # EDITABLE REGION — Implement your query strategy below (lines 28-55)
+    26: # EDITABLE REGION — Implement your query strategy below
     27: # ================================================================
     28: class CustomSampling(Strategy):
     29:     """Random sampling baseline — selects samples uniformly at random."""

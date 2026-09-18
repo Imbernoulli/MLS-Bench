@@ -151,7 +151,7 @@ def _build_objective(spec):
 
 
 # ================================================================
-# EDITABLE — Custom multi-objective evolutionary strategy (lines 297 to 441)
+# EDITABLE — Custom multi-objective evolutionary strategy
 # The agent modifies ONLY this section.
 # ================================================================
 

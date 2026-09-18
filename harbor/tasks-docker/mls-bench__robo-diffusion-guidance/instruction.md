@@ -134,7 +134,7 @@ stay unchanged.
     36:     obs_dim, act_dim = dataset.o_dim, dataset.a_dim
     37: 
     38:     # ============================================================================
-    39:     # EDITABLE REGION 3: Network + Agent Setup (lines 40-72)
+    39:     # EDITABLE REGION 3: Network + Agent Setup
     40:     # ============================================================================
     41: 
     42:     # --------------- Network Architecture -----------------
@@ -168,7 +168,7 @@ stay unchanged.
     70:         device=args.device, diffusion_steps=args.diffusion_steps, predict_noise=args.predict_noise)
     71: 
     72:     # ============================================================================
-    73:     # EDITABLE REGION 4: Training + Finetune (lines 74-182)
+    73:     # EDITABLE REGION 4: Training + Finetune
     74:     # ============================================================================
     75: 
     76:     # ---------------------- Training ----------------------
@@ -224,7 +224,7 @@ stay unchanged.
    126:     elif args.mode == "inference":
    127: 
    128:         # ============================================================================
-   129:         # EDITABLE REGION 5: Inference Setup (lines 186-197)
+   129:         # EDITABLE REGION 5: Inference Setup
    130:         # ============================================================================
    131: 
    132:         agent.load(save_path + f"diffusion_ckpt_{args.ckpt}.pt")
@@ -233,7 +233,7 @@ stay unchanged.
    135:         agent.eval()
    136: 
    137:         # ============================================================================
-   138:         # FIXED: Environment Setup (lines 198-206)
+   138:         # FIXED: Environment Setup
    139:         # ============================================================================
    140: 
    141:         env_eval = gym.vector.make(args.task.env_name, args.num_envs)
@@ -241,7 +241,7 @@ stay unchanged.
    143:         episode_rewards = []
    144: 
    145:         # ============================================================================
-   146:         # EDITABLE REGION 6: Prior + Condition Initialization (lines 207-222)
+   146:         # EDITABLE REGION 6: Prior + Condition Initialization
    147:         # ============================================================================
    148: 
    149:         prior = torch.zeros((args.num_envs, args.task.horizon, obs_dim + act_dim), device=args.device)
@@ -253,14 +253,14 @@ stay unchanged.
    155:             while not np.all(cum_done) and t < 1000 + 1:
    156: 
    157:                 # ============================================================================
-   158:                 # FIXED: Observation Normalization (lines 223-225)
+   158:                 # FIXED: Observation Normalization
    159:                 # ============================================================================
    160: 
    161:                 # normalize obs
    162:                 obs = torch.tensor(normalizer.normalize(obs), device=args.device, dtype=torch.float32)
    163: 
    164:                 # ============================================================================
-   165:                 # EDITABLE REGION 7: Action Sampling (lines 226-240)
+   165:                 # EDITABLE REGION 7: Action Sampling
    166:                 # ============================================================================
    167: 
    168:                 # sample trajectories
@@ -280,7 +280,7 @@ stay unchanged.
    182:                 act = act.clip(-1., 1.).cpu().numpy()
    183: 
    184:                 # ============================================================================
-   185:                 # FIXED: Environment Step + Reward Collection (lines 241-252)
+   185:                 # FIXED: Environment Step + Reward Collection
    186:                 # ============================================================================
    187: 
    188:                 # step
@@ -295,7 +295,7 @@ stay unchanged.
    197:             episode_rewards.append(ep_reward)
    198: 
    199:         # ============================================================================
-   200:         # FIXED: Final Scoring (lines 253-257)
+   200:         # FIXED: Final Scoring
    201:         # ============================================================================
    202: 
    203:         raw_episode_rewards = episode_rewards
@@ -467,7 +467,7 @@ Lines 38–130:
    129:         agent.eval()
    130: 
    131:         # ============================================================================
-   132:         # FIXED: Environment Setup (lines 198-206)
+   132:         # FIXED: Environment Setup
    133:         # ============================================================================
 
 Lines 139–146:
@@ -517,7 +517,7 @@ Lines 158–183:
    182:                 idx = torch.zeros((args.num_envs,), dtype=torch.long, device=args.device)
    183: 
    184:                 # ============================================================================
-   185:                 # FIXED: Environment Step + Reward Collection (lines 241-252)
+   185:                 # FIXED: Environment Step + Reward Collection
    186:                 # ============================================================================
 ```
 
@@ -637,7 +637,7 @@ Lines 36–110:
    109: 
    110: 
    111:         # ============================================================================
-   112:         # FIXED: Environment Setup (lines 198-206)
+   112:         # FIXED: Environment Setup
    113:         # ============================================================================
 
 Lines 119–125:
@@ -683,7 +683,7 @@ Lines 137–159:
    158:                 idx = torch.zeros((args.num_envs,), dtype=torch.long, device=args.device)
    159: 
    160:                 # ============================================================================
-   161:                 # FIXED: Environment Step + Reward Collection (lines 241-252)
+   161:                 # FIXED: Environment Step + Reward Collection
    162:                 # ============================================================================
 ```
 
@@ -733,7 +733,7 @@ Lines 41–133:
     39:     obs_dim, act_dim = dataset.o_dim, dataset.a_dim
     40: 
     41:     # ============================================================================
-    42:     # EDITABLE REGION 3: Network + Agent Setup (lines 40-72)
+    42:     # EDITABLE REGION 3: Network + Agent Setup
     43:     # ============================================================================
     44: 
     45:     # --------------- Network Architecture -----------------
@@ -762,7 +762,7 @@ Lines 41–133:
     68:     # --------------- Inverse Dynamic -------------------
     69:     invdyn = MlpInvDynamic(obs_dim, act_dim, 512, nn.Tanh(), {"lr": 2e-4}, device=args.device)
     70:     # ============================================================================
-    71:     # EDITABLE REGION 4: Training + Finetune (lines 74-182)
+    71:     # EDITABLE REGION 4: Training + Finetune
     72:     # ============================================================================
     73: 
     74:     # ---------------------- Training ----------------------
@@ -817,7 +817,7 @@ Lines 41–133:
    123:     elif args.mode == "inference":
    124: 
    125:         # ============================================================================
-   126:         # EDITABLE REGION 5: Inference Setup (lines 186-197)
+   126:         # EDITABLE REGION 5: Inference Setup
    127:         # ============================================================================
    128: 
    129:         agent.load(save_path + f"diffusion_ckpt_{args.diffusion_ckpt}.pt")
@@ -826,7 +826,7 @@ Lines 41–133:
    132:         invdyn.eval()
    133: 
    134:         # ============================================================================
-   135:         # FIXED: Environment Setup (lines 198-206)
+   135:         # FIXED: Environment Setup
    136:         # ============================================================================
 
 Lines 142–149:
@@ -834,7 +834,7 @@ Lines 142–149:
    140:         episode_rewards = []
    141: 
    142:         # ============================================================================
-   143:         # EDITABLE REGION 6: Prior + Condition Initialization (lines 207-222)
+   143:         # EDITABLE REGION 6: Prior + Condition Initialization
    144:         # ============================================================================
    145: 
    146:         prior = torch.zeros((args.num_envs, args.task.horizon, obs_dim), device=args.device)
@@ -850,7 +850,7 @@ Lines 161–180:
    159:                 obs = torch.tensor(normalizer.normalize(obs), device=args.device, dtype=torch.float32)
    160: 
    161:                 # ============================================================================
-   162:                 # EDITABLE REGION 7: Action Sampling (lines 226-240)
+   162:                 # EDITABLE REGION 7: Action Sampling
    163:                 # ============================================================================
    164: 
    165:                 # sample trajectories
@@ -870,7 +870,7 @@ Lines 161–180:
    179:                 idx = torch.zeros((args.num_envs,), dtype=torch.long, device=args.device)
    180: 
    181:                 # ============================================================================
-   182:                 # FIXED: Environment Step + Reward Collection (lines 241-252)
+   182:                 # FIXED: Environment Step + Reward Collection
    183:                 # ============================================================================
 ```
 

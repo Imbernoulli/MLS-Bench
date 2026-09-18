@@ -248,7 +248,7 @@ stay unchanged.
    151: 
    152: 
    153: # ================================================================
-   154: # EDITABLE — Custom multi-objective evolutionary strategy (lines 297 to 441)
+   154: # EDITABLE — Custom multi-objective evolutionary strategy
    155: # The agent modifies ONLY this section.
    156: # ================================================================
    157: 

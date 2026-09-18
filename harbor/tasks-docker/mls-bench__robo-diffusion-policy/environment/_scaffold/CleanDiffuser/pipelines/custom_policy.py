@@ -36,7 +36,7 @@ def pipeline(args):
     obs_dim, act_dim = dataset.o_dim, dataset.a_dim
 
     # ============================================================================
-    # EDITABLE REGION: Policy Algorithm (lines 40-205)
+    # EDITABLE REGION: Policy Algorithm
     # ============================================================================
     # Defines the actor (diffusion policy), optional critic(s), training loop,
     # and inference action-selection. The template defaults to Diffusion

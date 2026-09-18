@@ -56,7 +56,7 @@ def pipeline(args):
 
 _NETWORK_AGENT = """\
     # ============================================================================
-    # EDITABLE REGION 3: Network + Agent Setup (lines 40-72)
+    # EDITABLE REGION 3: Network + Agent Setup
     # ============================================================================
 
     # --------------- Network Architecture -----------------
@@ -88,7 +88,7 @@ _NETWORK_AGENT = """\
 
 _TRAINING = """\
     # ============================================================================
-    # EDITABLE REGION 4: Training + Finetune (lines 74-182)
+    # EDITABLE REGION 4: Training + Finetune
     # ============================================================================
 
     # ---------------------- Training ----------------------
@@ -142,7 +142,7 @@ _TRAINING = """\
 
 _INFERENCE_SETUP = """\
         # ============================================================================
-        # EDITABLE REGION 5: Inference Setup (lines 186-197)
+        # EDITABLE REGION 5: Inference Setup
         # ============================================================================
 
         agent.load(save_path + f"diffusion_ckpt_{args.diffusion_ckpt}.pt")
@@ -153,7 +153,7 @@ _INFERENCE_SETUP = """\
 
 _PRIOR_CONDITION = """\
         # ============================================================================
-        # EDITABLE REGION 6: Prior + Condition Initialization (lines 207-222)
+        # EDITABLE REGION 6: Prior + Condition Initialization
         # ============================================================================
 
         prior = torch.zeros((args.num_envs, args.task.horizon, obs_dim), device=args.device)
@@ -164,7 +164,7 @@ _PRIOR_CONDITION = """\
 
 _ACTION_SAMPLING = """\
                 # ============================================================================
-                # EDITABLE REGION 7: Action Sampling (lines 226-240)
+                # EDITABLE REGION 7: Action Sampling
                 # ============================================================================
 
                 # sample trajectories
@@ -194,7 +194,7 @@ OPS = [
         "end_line": 182,
         "content": _ACTION_SAMPLING,
     },
-    # 6. Replace prior + condition (lines 145-155)
+    # 6. Replace prior + condition (lines 145-152)
     {
         "op": "replace",
         "file": _FILE,
