@@ -80,7 +80,7 @@ In `RolloutStorage.compute_returns`:
 
 **4. Training command distribution: `humanoid_config_custom.py`**
 
-The training command ranges are editable, but the default values mirror the official XBot recipe: `vx ∈ [-0.3, 0.6]`, `vy ∈ [-0.3, 0.3]`, `dyaw ∈ [-0.3, 0.3]`. Keep these defaults for paper-aligned comparisons; widen them only as an explicit algorithmic choice.
+The training command ranges are fixed (read-only) at the official XBot recipe: `vx ∈ [-0.3, 0.6]`, `vy ∈ [-0.3, 0.3]`, `dyaw ∈ [-0.3, 0.3]`, so every algorithm variant trains on the same command distribution.
 
 **5. PPO hyperparameters: `humanoid_config_custom.py`**
 
