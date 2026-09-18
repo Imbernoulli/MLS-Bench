@@ -1,7 +1,7 @@
 """Parameter budget check for ml-federated-aggregation (standalone).
 
 Run by tools.py before training: python /workspace/_task/budget_check.py
-Instantiates each baseline's ServerAggregator, counts any torch parameters
+Instantiates each baseline's Strategy, counts any torch parameters
 it creates (server-side models, momentum buffers, etc.), and asserts the
 agent's version doesn't exceed 1.05x the largest baseline.
 """
@@ -62,11 +62,11 @@ def make_dummy_args():
 
 
 def count_aggregator_params(module_path):
-    """Import module, instantiate ServerAggregator, count extra params."""
+    """Import module, instantiate Strategy, count extra params."""
     mod = load_module(module_path, f"_check_{id(module_path)}")
     dummy_model = make_dummy_model()
     dummy_args = make_dummy_args()
-    agg = mod.ServerAggregator(dummy_model, dummy_args)
+    agg = mod.Strategy(dummy_model, dummy_args)
 
     total = 0
     for attr_name in dir(agg):

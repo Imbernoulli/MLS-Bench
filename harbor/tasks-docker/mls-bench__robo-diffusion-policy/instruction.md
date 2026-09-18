@@ -110,7 +110,7 @@ stay unchanged.
     36:     obs_dim, act_dim = dataset.o_dim, dataset.a_dim
     37: 
     38:     # ============================================================================
-    39:     # EDITABLE REGION: Policy Algorithm (lines 40-205)
+    39:     # EDITABLE REGION: Policy Algorithm
     40:     # ============================================================================
     41:     # Defines the actor (diffusion policy), optional critic(s), training loop,
     42:     # and inference action-selection. The template defaults to Diffusion

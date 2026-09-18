@@ -10,7 +10,7 @@ _FILE = "scikit-learn/custom_imputation.py"
 
 _MEAN_IMPUTE = """\
 # ================================================================
-# EDITABLE -- agent modifies this section (lines 36 to 142)
+# EDITABLE -- agent modifies this section
 # ================================================================
 
 

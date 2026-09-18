@@ -17,7 +17,7 @@ _FILE = "scikit-learn/custom_imputation.py"
 
 _GAIN = """\
 # ================================================================
-# EDITABLE -- agent modifies this section (lines 36 to 142)
+# EDITABLE -- agent modifies this section
 # ================================================================
 
 

@@ -1,7 +1,7 @@
 # Custom environment configuration for robo-humanoid-sim2real-algo task.
 # Algorithm is modified via actor_critic_custom.py / ppo_custom.py / rollout_storage_custom.py.
-# The commands.ranges block below is editable, but the default values mirror the
-# official XBot recipe from humanoid_config.py.
+# The commands.ranges block below is READ-ONLY (official XBot recipe from
+# humanoid_config.py); the editable lines are the PPO hyperparameters in XBotLCustomCfgPPO.
 
 from humanoid.envs.custom.humanoid_config import XBotLCfg, XBotLCfgPPO
 

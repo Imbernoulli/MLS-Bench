@@ -36,7 +36,7 @@ def pipeline(args):
     obs_dim, act_dim = dataset.o_dim, dataset.a_dim
 
     # ============================================================================
-    # EDITABLE REGION 3: Network + Agent Setup (lines 40-72)
+    # EDITABLE REGION 3: Network + Agent Setup
     # ============================================================================
 
     # --------------- Network Architecture -----------------
@@ -70,7 +70,7 @@ def pipeline(args):
         device=args.device, diffusion_steps=args.diffusion_steps, predict_noise=args.predict_noise)
 
     # ============================================================================
-    # EDITABLE REGION 4: Training + Finetune (lines 74-182)
+    # EDITABLE REGION 4: Training + Finetune
     # ============================================================================
 
     # ---------------------- Training ----------------------
@@ -126,7 +126,7 @@ def pipeline(args):
     elif args.mode == "inference":
 
         # ============================================================================
-        # EDITABLE REGION 5: Inference Setup (lines 186-197)
+        # EDITABLE REGION 5: Inference Setup
         # ============================================================================
 
         agent.load(save_path + f"diffusion_ckpt_{args.ckpt}.pt")
@@ -135,7 +135,7 @@ def pipeline(args):
         agent.eval()
 
         # ============================================================================
-        # FIXED: Environment Setup (lines 198-206)
+        # FIXED: Environment Setup
         # ============================================================================
 
         env_eval = gym.vector.make(args.task.env_name, args.num_envs)
@@ -143,7 +143,7 @@ def pipeline(args):
         episode_rewards = []
 
         # ============================================================================
-        # EDITABLE REGION 6: Prior + Condition Initialization (lines 207-222)
+        # EDITABLE REGION 6: Prior + Condition Initialization
         # ============================================================================
 
         prior = torch.zeros((args.num_envs, args.task.horizon, obs_dim + act_dim), device=args.device)
@@ -155,14 +155,14 @@ def pipeline(args):
             while not np.all(cum_done) and t < 1000 + 1:
 
                 # ============================================================================
-                # FIXED: Observation Normalization (lines 223-225)
+                # FIXED: Observation Normalization
                 # ============================================================================
 
                 # normalize obs
                 obs = torch.tensor(normalizer.normalize(obs), device=args.device, dtype=torch.float32)
 
                 # ============================================================================
-                # EDITABLE REGION 7: Action Sampling (lines 226-240)
+                # EDITABLE REGION 7: Action Sampling
                 # ============================================================================
 
                 # sample trajectories
@@ -182,7 +182,7 @@ def pipeline(args):
                 act = act.clip(-1., 1.).cpu().numpy()
 
                 # ============================================================================
-                # FIXED: Environment Step + Reward Collection (lines 241-252)
+                # FIXED: Environment Step + Reward Collection
                 # ============================================================================
 
                 # step
@@ -197,7 +197,7 @@ def pipeline(args):
             episode_rewards.append(ep_reward)
 
         # ============================================================================
-        # FIXED: Final Scoring (lines 253-257)
+        # FIXED: Final Scoring
         # ============================================================================
 
         raw_episode_rewards = episode_rewards

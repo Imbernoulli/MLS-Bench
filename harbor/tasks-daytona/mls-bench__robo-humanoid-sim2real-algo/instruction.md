@@ -80,7 +80,7 @@ In `RolloutStorage.compute_returns`:
 
 **4. Training command distribution: `humanoid_config_custom.py`**
 
-The training command ranges are editable, but the default values mirror the official XBot recipe: `vx ∈ [-0.3, 0.6]`, `vy ∈ [-0.3, 0.3]`, `dyaw ∈ [-0.3, 0.3]`. Keep these defaults for paper-aligned comparisons; widen them only as an explicit algorithmic choice.
+The training command ranges are fixed (read-only) at the official XBot recipe: `vx ∈ [-0.3, 0.6]`, `vy ∈ [-0.3, 0.3]`, `dyaw ∈ [-0.3, 0.3]`, so every algorithm variant trains on the same command distribution.
 
 **5. PPO hyperparameters: `humanoid_config_custom.py`**
 
@@ -135,7 +135,7 @@ stay unchanged.
 - `humanoid-gym/humanoid/algo/ppo/rollout_storage_custom.py`
 - editable lines **34–182**
 - `humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py`
-- editable lines **29–34**
+- editable lines **37–42**
 
 
 Other files you may **read** for context (do not modify):
@@ -656,13 +656,13 @@ Other files you may **read** for context (do not modify):
    181: 
 ```
 
-### `humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py`  [EDITABLE — lines 29–34 only]
+### `humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py`  [EDITABLE — lines 37–42 only]
 
 ```python
      1: # Custom environment configuration for robo-humanoid-sim2real-algo task.
      2: # Algorithm is modified via actor_critic_custom.py / ppo_custom.py / rollout_storage_custom.py.
-     3: # The commands.ranges block below is editable, but the default values mirror the
-     4: # official XBot recipe from humanoid_config.py.
+     3: # The commands.ranges block below is READ-ONLY (official XBot recipe from
+     4: # humanoid_config.py); the editable lines are the PPO hyperparameters in XBotLCustomCfgPPO.
      5: 
      6: from humanoid.envs.custom.humanoid_config import XBotLCfg, XBotLCfgPPO
      7: 

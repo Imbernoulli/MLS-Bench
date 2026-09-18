@@ -23,7 +23,7 @@ from query_strategies.strategy import Strategy
 
 
 # ================================================================
-# EDITABLE REGION — Implement your query strategy below (lines 28-55)
+# EDITABLE REGION — Implement your query strategy below
 # ================================================================
 class CustomSampling(Strategy):
     """Custom active learning query strategy.

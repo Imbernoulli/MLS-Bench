@@ -191,7 +191,7 @@ OPS = [
         "end_line": 182,
         "content": _ACTION_SAMPLING,
     },
-    # 6. Replace prior + condition (lines 145-155)
+    # 6. Replace prior + condition (lines 145-152)
     {
         "op": "replace",
         "file": _FILE,
