@@ -135,7 +135,7 @@ stay unchanged.
 - `humanoid-gym/humanoid/algo/ppo/rollout_storage_custom.py`
 - editable lines **34–182**
 - `humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py`
-- editable lines **29–34**
+- editable lines **37–42**
 
 
 Other files you may **read** for context (do not modify):
@@ -656,13 +656,13 @@ Other files you may **read** for context (do not modify):
    181: 
 ```
 
-### `humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py`  [EDITABLE — lines 29–34 only]
+### `humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py`  [EDITABLE — lines 37–42 only]
 
 ```python
      1: # Custom environment configuration for robo-humanoid-sim2real-algo task.
      2: # Algorithm is modified via actor_critic_custom.py / ppo_custom.py / rollout_storage_custom.py.
-     3: # The commands.ranges block below is editable, but the default values mirror the
-     4: # official XBot recipe from humanoid_config.py.
+     3: # The commands.ranges block below is READ-ONLY (official XBot recipe from
+     4: # humanoid_config.py); the editable lines are the PPO hyperparameters in XBotLCustomCfgPPO.
      5: 
      6: from humanoid.envs.custom.humanoid_config import XBotLCfg, XBotLCfgPPO
      7: 

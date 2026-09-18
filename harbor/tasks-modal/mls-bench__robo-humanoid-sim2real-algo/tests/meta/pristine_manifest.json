@@ -20,7 +20,7 @@
   "humanoid-gym/humanoid/envs/base/legged_robot.py": "d7e4b034d2010554076c3b832e4d48a79053015ebc4b4f600301b1540fbac5c9",
   "humanoid-gym/humanoid/envs/base/legged_robot_config.py": "0940123db62961a7df507317e9a6d5b1f99f8a8e630cb6a6e1172707965ce505",
   "humanoid-gym/humanoid/envs/custom/humanoid_config.py": "159c592627a409370e25fa3dff19417087a22cfaa388c071f7508057d37dac0f",
-  "humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py": "f66ffdee85432a23a034e609ad3e0f26fa5022ab655bb4eec88313a058ccb993",
+  "humanoid-gym/humanoid/envs/custom/humanoid_config_custom.py": "916e5067f7f189ee93a210d5fb48ef8de0f60b5f36cd8f28b57ee19dd4c493c6",
   "humanoid-gym/humanoid/envs/custom/humanoid_env.py": "7baa5cf85e172cb1dbac7094040c995495e47b76eec1a15623ad262d1a1c1c93",
   "humanoid-gym/humanoid/envs/custom/humanoid_env_custom.py": "e27f8c8fb572b8f7996a6383ed37d505151f243aa1ce9a4e5f4e8e2d03fe1504",
   "humanoid-gym/humanoid/scripts/play.py": "5b5fe46b501155f556699a7ef4df228011645b0af1a70e93b4c02df11e9a0232",

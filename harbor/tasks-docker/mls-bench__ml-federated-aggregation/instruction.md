@@ -82,9 +82,9 @@ stay unchanged.
 ```python
      1: # Custom federated learning aggregation strategy for MLS-Bench
      2: #
-     3: # EDITABLE section: ServerAggregator class (aggregate method + helpers).
-     4: # FIXED sections: everything else (config, data partitioning, client training,
-     5: #                 FL simulation loop, evaluation).
+     3: # EDITABLE section: Strategy class (client_local_train, aggregate, select_clients + helpers).
+     4: # FIXED sections: everything else (config, data partitioning, models, the default
+     5: #                 client SGD helper, FL simulation loop, evaluation).
      6: import argparse
      7: import copy
      8: import json

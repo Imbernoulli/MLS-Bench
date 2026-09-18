@@ -26,7 +26,7 @@ Not editable: the `get_lr` function. The schedule's *shape* (linear warmup → c
 - Gradient clipping (`clip_grad_norm_` to `grad_clip`) runs in the training loop before `.step()`; you can change its threshold via `CONFIG_OVERRIDES` but not move it into the optimizer.
 
 ## Reference baselines
-- `lion` — Lion (sign of the interpolated momentum, decoupled weight decay), same grouping, peak LR = 0.3× the AdamW peak, under the fixed cosine schedule.
+- `lion` — Lion (sign of the interpolated momentum, decoupled weight decay), same grouping, driven at the same scheduled learning rate as AdamW (no `lr_scale`), under the fixed cosine schedule.
 - `muon` — Muon (Nesterov momentum + 5-step Newton–Schulz orthogonalization, weight decay 0.1) for 2D hidden weights, AdamW for embeddings / `lm_head` / 1D params; Muon's base LR 0.02 is expressed through `lr_scale`, and the AdamW peak LR is raised to 1e-3 through `CONFIG_OVERRIDES`.
 - `adamw_nesterov` — AdamW with Nesterov momentum (PyTorch `NAdam` with decoupled weight decay), same grouping and LR.
 

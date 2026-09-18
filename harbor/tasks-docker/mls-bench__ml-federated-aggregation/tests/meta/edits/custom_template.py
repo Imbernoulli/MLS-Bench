@@ -1,8 +1,8 @@
 # Custom federated learning aggregation strategy for MLS-Bench
 #
-# EDITABLE section: ServerAggregator class (aggregate method + helpers).
-# FIXED sections: everything else (config, data partitioning, client training,
-#                 FL simulation loop, evaluation).
+# EDITABLE section: Strategy class (client_local_train, aggregate, select_clients + helpers).
+# FIXED sections: everything else (config, data partitioning, models, the default
+#                 client SGD helper, FL simulation loop, evaluation).
 import argparse
 import copy
 import json
