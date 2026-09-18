@@ -1,7 +1,7 @@
 # Federated Learning Aggregation Strategy Design
 
 ## Research Question
-Design a federated-learning strategy that converges faster and to higher test accuracy under heterogeneous (non-IID) client data. The contribution is the *aggregation rule*, optionally together with the client-selection rule and the client-side local-update correction that the `Strategy` interface below exposes (a proximal term, control variates, a regularizer, ...). The simulation harness, data partitions, models, communication rounds, per-round participation, and evaluation are fixed. The harness hands `client_local_train` the reference local budget (`local_epochs`, `local_lr`, `local_batch_size`): a strategy may change how the local update is computed (regularizers, corrections, an adaptive local step size) but is expected to keep the local compute at that budget — the harness does not enforce it, and a submission that trains longer per round is not comparable to the baselines.
+Design a federated-learning strategy that converges faster and to higher test accuracy under heterogeneous (non-IID) client data. The contribution is the *aggregation rule*, optionally together with the client-selection rule and the client-side local-update correction that the `Strategy` interface below exposes (a proximal term, control variates, a regularizer, ...). The simulation harness, data partitions, models, the client population, communication rounds, and evaluation are fixed. Two budgets are handed to the strategy rather than enforced: `select_clients` receives the per-round participation (`num_to_select`), and `client_local_train` receives the reference local budget (`local_epochs`, `local_lr`, `local_batch_size`). A strategy may change which clients it picks and how the local update is computed (regularizers, corrections, an adaptive local step size), but is expected to select `num_to_select` clients and keep the local compute at that budget — the harness checks neither, and a submission that uses more clients or trains longer per round is not comparable to the baselines.
 
 ## Background
 Federated Learning (FL) trains a shared global model across many clients without centralizing data. Under non-IID client data, naive averaging suffers from "client drift" — local updates diverge, slowing or destabilizing convergence.
@@ -41,11 +41,11 @@ class Strategy:
         ...
 ```
 
-Every round the harness calls `select_clients`, then `client_local_train` once per selected client, then `aggregate` on the collected updates. All four methods have working defaults (uniform random selection, plain SGD, sample-weighted averaging), so override only what your method changes. Everything outside the class — models, data loading and partitioning, `_default_client_sgd`, the round loop, and evaluation — is read-only.
+Every round the harness calls `select_clients`, then `client_local_train` once per selected client, then `aggregate` on the collected updates. The three hooks have working defaults (uniform random selection, plain SGD, sample-weighted averaging), so override only what your method changes; `select_clients` is expected to return `num_to_select` distinct indices. Everything outside the class — models, data loading and partitioning, `_default_client_sgd`, the round loop, and evaluation — is read-only.
 
 ## Fixed Pipeline & Evaluation
 - **Communication rounds**: 200.
-- **Per-round participation**: 10 of 100 clients.
+- **Per-round participation (passed to `select_clients` as `num_to_select`)**: 10 of 100 clients.
 - **Local training (reference recipe passed to `client_local_train`)**: 5 local epochs per round, SGD with `lr=0.01`.
 
 Benchmarks:
