@@ -689,6 +689,22 @@ MAX_PARALLEL_GPUS = 8
 # charges the same amount per wave, so the outer verifier budget can never be
 # tighter than the deadlines this runner hands out.
 WAVE_GRACE_SEC = 300
+
+# budget_check.py is a preflight: it builds each declared baseline to count
+# parameters before the eval runs. On a loaded host that is not fast — the
+# FaceDetection eval of ts-classification needs well over two minutes — and a
+# preflight that is killed costs the whole eval. It is bounded only so a hung
+# check cannot eat the verifier budget, so the bound is generous.
+# The bound is per test_cmd, not per (test_cmd, seed): the check is run once
+# per command and its verdict reused for the other seeds, because no task's
+# budget_check.py reads SEED: of the 52 that exist, 44 never mention a seed and
+# the other 8 pin the literal 42.
+# That holds the worst case at BUDGET_CHECK_TIMEOUT_SEC * len(test_cmds),
+# which the verifier headroom covers for every task; adapter.py asserts it at
+# render time. Per (test_cmd, seed) it would not: at 900s and more than six
+# jobs the preflight alone can outlast the whole verifier timeout, and Harbor
+# would kill the verifier before any eval produced a metric.
+BUDGET_CHECK_TIMEOUT_SEC = 900
 # Gap between the launches of one wave's commands. They share a workspace and
 # a first-use initialization (an mlflow store, a compile cache, a font cache)
 # that is not always locked; a second between starts keeps those from
@@ -1085,7 +1101,8 @@ def _run_budget_check(
 ) -> dict | None:
     if not (task_meta / "budget_check.py").exists():
         return None
-    log_path = out_dir / f"{label}__seed{seed}__budget_check.log"
+    # One log per command, not per seed: the check no longer reruns per seed.
+    log_path = out_dir / f"{label}__budget_check.log"
     # Use the same hardened interpreter as test.sh — MLSBENCH_VERIFIER_PYTHON
     # is exported by test.sh after PATH reset; falls back to sys.executable
     # (which is itself a hardened interpreter since we run under test.sh).
@@ -1112,20 +1129,30 @@ def _run_budget_check(
                 env=budget_env,
                 stdout=fh,
                 stderr=subprocess.STDOUT,
-                timeout=120,
+                timeout=BUDGET_CHECK_TIMEOUT_SEC,
                 check=False,
             )
             rc = proc.returncode
+            phase = "budget_check_failed" if rc else None
         except subprocess.TimeoutExpired:
-            fh.write("\n[BUDGET CHECK TIMEOUT] budget_check.py took >120s\n")
+            fh.write(
+                f"\n[BUDGET CHECK TIMEOUT] budget_check.py took "
+                f">{BUDGET_CHECK_TIMEOUT_SEC}s\n"
+            )
+            # rc stays 124 — it *is* a timeout, and every other rc this runner
+            # emits already means something (126 unsafe_cmd_path, 127 missing
+            # script, 125 three different GPU/result failures). `phase` is what
+            # tells a reader which timeout this was; see _eval_failures.
             rc = 124
+            phase = "budget_check_timeout"
         except Exception as exc:
             fh.write(f"\n[BUDGET CHECK ERROR] {exc}\n")
             rc = 125
+            phase = "budget_check_error"
         finally:
             _remove_budget_legacy_links(legacy_links)
             shutil.rmtree(scratch_dir, ignore_errors=True)
-    return {"rc": rc, "log": str(log_path)}
+    return {"rc": rc, "log": str(log_path), "phase": phase}
 
 
 def _eval_log_path(out_dir: Path, label: str, seed: int) -> Path:
@@ -1138,7 +1165,12 @@ def _write_error_record(
     seed: int,
     message: str,
     rc: int,
+    phase: str | None = None,
 ) -> dict:
+    # `phase` names where the job died. rc alone cannot: 125 is emitted by the
+    # budget check *and* by three GPU/result paths, 126 by the budget check
+    # *and* by unsafe_cmd_path, and a launched eval can return either on its
+    # own. Diagnostics read this; rc stays the raw exit status.
     log_path = _eval_log_path(out_dir, entry["label"], seed)
     log_path.write_text(message.rstrip() + "\n")
     return {
@@ -1146,6 +1178,7 @@ def _write_error_record(
         "rc": rc,
         "log": str(log_path),
         "elapsed": 0.0,
+        "phase": phase,
     }
 
 
@@ -1377,6 +1410,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     seed,
                     f"[ERROR] unsafe_cmd_path: {exc}",
                     126,
+                    "unsafe_cmd_path",
                 )
             continue
         if not script.exists():
@@ -1388,6 +1422,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     seed,
                     f"[ERROR] missing_script: {cmd_rel}",
                     127,
+                    "missing_script",
                 )
             continue
         prepared[idx] = {"idx": idx, "tc": tc, "label": label, "script": script}
@@ -1395,6 +1430,11 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
     grouped = _group_entries(test_cmds)
     devices = _visible_gpu_indices(task_meta, config)
     n_reserved = len(devices)
+    # idx -> the one budget-check verdict for that test_cmd. The check builds
+    # the declared baselines to count parameters; that work is identical for
+    # every seed, so running it per (cmd, seed) only multiplied both the wall
+    # time and the worst case by the seed count.
+    budget_cache: dict[int, dict | None] = {}
 
     for group_key in sorted(grouped.keys()):
         group_entries = [
@@ -1426,6 +1466,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                         f"{need} GPUs but only {n_reserved} reserved/visible"
                     ),
                     125,
+                    "gpu_reservation",
                 )
             else:
                 schedulable.append(task)
@@ -1447,6 +1488,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                         f"with compute={_test_cmd_compute(entry['tc'])}"
                     ),
                     125,
+                    "gpu_allocation",
                 )
             continue
 
@@ -1465,17 +1507,21 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                     tc=entry["tc"],
                     seed=seed,
                 )
-                budget = _run_budget_check(
-                    task_meta=task_meta,
-                    workspace_root=workspace_root,
-                    pkg_dir=pkg_dir,
-                    out_dir=out_dir,
-                    label=entry["label"],
-                    seed=seed,
-                    env=env,
-                    effective_test_cmds=test_cmds,
-                    eval_root=eval_root,
-                )
+                if entry["idx"] in budget_cache:
+                    budget = budget_cache[entry["idx"]]
+                else:
+                    budget = _run_budget_check(
+                        task_meta=task_meta,
+                        workspace_root=workspace_root,
+                        pkg_dir=pkg_dir,
+                        out_dir=out_dir,
+                        label=entry["label"],
+                        seed=seed,
+                        env=env,
+                        effective_test_cmds=test_cmds,
+                        eval_root=eval_root,
+                    )
+                    budget_cache[entry["idx"]] = budget
                 if budget and budget["rc"] != 0:
                     records[(entry["idx"], seed)] = _write_error_record(
                         out_dir,
@@ -1483,6 +1529,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                         seed,
                         f"[BUDGET CHECK FAILED]\nSee {budget['log']}",
                         int(budget["rc"]),
+                        budget.get("phase") or "budget_check_failed",
                     )
                     with (out_dir / "budget_violation.txt").open("a") as fh:
                         fh.write(
@@ -1537,6 +1584,7 @@ def cmd_run_evals(args: argparse.Namespace) -> int:
                         seed,
                         "[ERROR] eval command produced no result",
                         125,
+                        "no_result",
                     )
 
     for idx, _tc in enumerate(test_cmds):
@@ -1600,8 +1648,11 @@ def _valid_seed_metric_records(per_seed_metrics: dict[int, dict]) -> list[dict]:
 def _eval_failures(summary: list[dict], config: dict) -> list[str]:
     """One line per (label, seed) whose eval command did not exit 0.
 
-    rc=124 is this runner's own deadline (the wave's longest ``time`` plus
-    WAVE_GRACE_SEC), so say so in words: a reader of ``score_error.txt``
+    A job that never reached its eval carries a ``phase`` saying which
+    preflight rejected it, and that is what these lines report — rc is shared
+    (125 by four paths, 126 by two) and cannot identify the failure on its own.
+    Otherwise rc=124 is this runner's own deadline (the wave's longest ``time``
+    plus WAVE_GRACE_SEC), so say so in words: a reader of ``score_error.txt``
     otherwise sees only "no metrics extracted" and cannot tell a harness
     timeout from a model that produced nothing.
     """
@@ -1620,7 +1671,25 @@ def _eval_failures(summary: list[dict], config: dict) -> list[str]:
                 continue
             elapsed = float(log.get("elapsed") or 0.0)
             where = f"{label} seed {log.get('seed')}"
-            if rc == 124:
+            phase = log.get("phase")
+            if phase == "budget_check_timeout":
+                lines.append(
+                    f"{where}: budget_check.py was killed after "
+                    f"{BUDGET_CHECK_TIMEOUT_SEC}s; the eval never ran"
+                )
+            elif phase == "budget_check_error":
+                lines.append(f"{where}: budget_check.py errored; the eval never ran")
+            elif phase == "budget_check_failed":
+                lines.append(
+                    f"{where}: budget_check.py rejected the submission; the eval never ran"
+                )
+            elif phase == "no_result":
+                lines.append(f"{where}: the eval produced no result record")
+            elif phase is not None:
+                # unsafe_cmd_path / missing_script / gpu_reservation /
+                # gpu_allocation — all rejected before the command was launched.
+                lines.append(f"{where}: {phase}; the eval never ran")
+            elif rc == 124:
                 lines.append(
                     f"{where}: timed out after {elapsed:.0f}s "
                     f"(its own deadline is {own_deadline.get(label, 0)}s incl. "
