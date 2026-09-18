@@ -1,12 +1,14 @@
 # MLS-Bench: llm-pretrain-optimizer
 
-# LLM Pretraining: Optimizer & Learning Rate Schedule Optimization
+# LLM Pretraining: Optimizer Design
 
 ## Research Question
-Design an improved optimizer and / or learning-rate schedule for GPT-style language model pretraining. The change should improve training efficiency or final model quality compared to AdamW + cosine annealing under the same model and data budget.
+Design an improved optimizer for GPT-style language model pretraining: the parameter update rule, the state it keeps, and how parameters are grouped and treated. The change should reduce validation loss compared to AdamW under the same model, data, step budget, and learning-rate schedule.
+
+This is an optimizer task, not a schedule task. The learning-rate schedule (linear warmup → cosine decay to `min_lr`) is fixed code that you cannot edit. Every iteration the training loop computes the scheduled `lr` and writes it into each `param_group` of whatever optimizer you return; what you control is how that scheduled step size is turned into a parameter update.
 
 ## Background
-The default optimizer is AdamW (fused) with weight decay only on 2D parameters and cosine LR decay with linear warmup. Studied alternatives at this layer:
+The default optimizer is AdamW (fused) with weight decay only on 2D parameters, driven by the fixed cosine schedule with linear warmup. Studied alternatives at this layer:
 
 - **Lion** — Chen et al., "Symbolic Discovery of Optimization Algorithms", NeurIPS 2023, arXiv:2302.06675. Sign-momentum optimizer found via program search; tracks only momentum, applies a uniform-magnitude `sign(...)` update; typically uses LR ≈ 0.1× AdamW LR and stronger weight decay.
 - **Muon** — Keller Jordan et al. (2024), "Muon: An optimizer for hidden layers in neural networks" (https://kellerjordan.github.io/posts/muon/). Applies SGD-momentum, then orthogonalizes the resulting matrix update via a 5-step Newton–Schulz iteration; intended for 2D hidden-layer matrices, with AdamW kept for embeddings / `lm_head` / 1D parameters. ~35% training-speed improvement reported on the NanoGPT speedrun versus AdamW.
@@ -15,27 +17,23 @@ The default optimizer is AdamW (fused) with weight decay only on 2D parameters a
 ## What you can modify
 Two regions in `nanoGPT/custom_pretrain.py`:
 
-1. **`configure_optimizers` method** — optimizer creation and parameter grouping.
-2. **`get_lr` function** — learning-rate schedule.
+1. **`configure_optimizers` method** — everything about the optimizer: the update rule (define any custom `torch.optim.Optimizer` subclass, or a combination of optimizers, inside this method), parameter grouping (default: weight decay on ≥2D params, none on 1D params), per-group treatment (e.g. one rule for hidden matrices and another for embeddings / `lm_head` / 1D params), and optimizer hyperparameters (betas, eps, momentum, weight decay, …).
+2. **`CONFIG_OVERRIDES` dict** — scalar training hyperparameters your optimizer needs set differently from the AdamW defaults. Allowed keys: `learning_rate` (peak LR; setting it also resets `min_lr` to `learning_rate / 10`, so put `min_lr` after it if you need both), `weight_decay`, `warmup_iters`, `min_lr`, `grad_clip` (0 disables clipping). Other keys are ignored.
 
-You may modify:
-- The optimization algorithm (default: AdamW fused).
-- Parameter grouping strategy (default: weight decay for 2D params, none for 1D params).
-- LR schedule shape (default: cosine with linear warmup).
-- Any optimizer hyperparameters (betas, eps, weight decay, etc.).
+Not editable: the `get_lr` function. The schedule's *shape* (linear warmup → cosine decay) is fixed; only its scalar knobs (peak LR, warmup length, floor) can move, through `CONFIG_OVERRIDES`. Everything outside the two regions — architecture, tokenizer, dataset, batch construction, training loop, evaluation — is fixed, and no new files may be created.
 
 ### Interface contract
-- `get_lr(it, warmup_iters, lr_decay_iters, learning_rate, min_lr)` — keep this signature.
-- The optimizer returned by `configure_optimizers` must support `.zero_grad()`, `.step()`, and `.param_groups`.
-- Architecture, tokenizer, dataset, batch construction, and evaluation are fixed.
+- `configure_optimizers(self, weight_decay, learning_rate, betas, device_type)` — keep this signature; it receives the config values after `CONFIG_OVERRIDES` is applied.
+- The returned object must support `.zero_grad()`, `.step()`, and `.param_groups`, where each `param_group` is a dict holding a `'params'` list. The training loop sets `param_group['lr'] = lr * param_group.get('lr_scale', 1.0)` every iteration, so a group that needs a different step size than the scheduled one (e.g. Muon's much larger LR) should carry an `'lr_scale'` key rather than ignore `'lr'`.
+- Gradient clipping (`clip_grad_norm_` to `grad_clip`) runs in the training loop before `.step()`; you can change its threshold via `CONFIG_OVERRIDES` but not move it into the optimizer.
 
 ## Reference baselines
-- `lion` — Lion optimizer with cosine schedule.
-- `muon` — Muon for 2D hidden weights + AdamW for the rest.
-- `adamw_nesterov` — AdamW with Nesterov momentum.
+- `lion` — Lion (sign of the interpolated momentum, decoupled weight decay), same grouping, peak LR = 0.3× the AdamW peak, under the fixed cosine schedule.
+- `muon` — Muon (Nesterov momentum + 5-step Newton–Schulz orthogonalization, weight decay 0.1) for 2D hidden weights, AdamW for embeddings / `lm_head` / 1D params; Muon's base LR 0.02 is expressed through `lr_scale`, and the AdamW peak LR is raised to 1e-3 through `CONFIG_OVERRIDES`.
+- `adamw_nesterov` — AdamW with Nesterov momentum (PyTorch `NAdam` with decoupled weight decay), same grouping and LR.
 
 ## Fixed Pipeline
-The training and evaluation pipeline (model architecture, tokenizer, dataset, batch construction, training loop, and metrics) is fixed by the harness and not editable. Only the optimizer/LR-schedule regions and the listed `CONFIG_OVERRIDES` keys are editable.
+The training and evaluation pipeline (model architecture, tokenizer, dataset, batch construction, training loop, learning-rate schedule, and metrics) is fixed by the harness and not editable. Only the `configure_optimizers` region and the listed `CONFIG_OVERRIDES` keys are editable.
 
 ## Your Workspace
 
