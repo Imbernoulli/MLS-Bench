@@ -11,3 +11,10 @@ N_LAYER=24 N_HEAD=16 N_EMBD=1024 \
 MAX_ITERS=${MAX_ITERS:-13535} EVAL_INTERVAL=${EVAL_INTERVAL:-1000} \
 BATCH_SIZE=${BATCH_SIZE:-32} GRAD_ACCUM=${GRAD_ACCUM:-16} LEARNING_RATE=${LEARNING_RATE:-3e-4} \
 torchrun --nproc_per_node=${N_GPU} --standalone custom_pretrain.py
+rc=$?
+# Fixed MLP-kernel throughput benchmark (mlp_speedup = t_reference / t_submission,
+# unfused PyTorch GELU MLP vs the submitted fused_mlp_forward, same GPU).
+if [ "${rc}" -eq 0 ]; then
+    python3 "$(dirname "${BASH_SOURCE[0]}")/mlp_bench.py" --source custom_pretrain.py
+fi
+exit "${rc}"

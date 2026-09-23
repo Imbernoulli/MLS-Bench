@@ -143,6 +143,8 @@ class CausalSelfAttention(nn.Module):
         kv_latent, k_rot = torch.split(
             compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
         )
+        # MLA caches only the compressed latent and the shared rotary key.
+        kv_latent, k_rot = kv_cache(kv_latent, k_rot)
         kv_states = self.kv_b_proj(self.kv_a_layernorm(kv_latent))
         kv_states = kv_states.view(
             bsz, seq_len, self.n_head, self.qk_nope_head_dim + self.v_head_dim

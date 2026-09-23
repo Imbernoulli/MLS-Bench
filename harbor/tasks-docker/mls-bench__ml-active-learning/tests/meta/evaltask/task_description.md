@@ -22,12 +22,12 @@ class CustomSampling(Strategy):
         super().__init__(X, Y, idxs_lb, net, handler, args)
 
     def query(self, n) -> np.ndarray:
-        # Return n indices into self.X of currently-unlabeled samples to label.
+        # Return exactly n distinct indices into self.X of currently-unlabeled samples to label.
         ...
 ```
 
 Available from the `Strategy` base class:
-- `self.X`, `self.Y`, `self.idxs_lb` — pool features (numpy `[n_pool, n_features]`), labels (LongTensor `[n_pool]`), boolean labeled mask.
+- `self.X`, `self.Y`, `self.idxs_lb` — pool features (numpy `[n_pool, n_features]`), labels (LongTensor `[n_pool]`; only labeled rows carry their true label, unlabeled rows hold an uninformative placeholder), boolean labeled mask (a copy; the harness keeps the authoritative one and rejects a query that is not exactly `n` distinct currently-unlabeled indices).
 - `self.n_pool` — total pool size.
 - `self.predict_prob(X, Y)` — softmax probabilities `[len(X), n_classes]`.
 - `self.predict_prob_dropout_split(X, Y, n_drop)` — MC dropout probabilities `[n_drop, len(X), n_classes]`.

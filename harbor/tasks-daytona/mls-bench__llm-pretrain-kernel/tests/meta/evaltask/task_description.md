@@ -29,9 +29,15 @@ The MLP class calls this function and handles dropout separately.
 
 ## Evaluation
 
-- Metrics: validation loss (cross-entropy, lower is better) and training
-  throughput (elapsed time, lower is better) — kernel optimizations that
-  also change the activation function may improve loss
+- Metrics: validation loss (cross-entropy, lower is better) and MLP
+  kernel throughput — kernel optimizations that also change the
+  activation function may improve loss
+- Throughput is `mlp_speedup`, measured after training by a fixed
+  benchmark: the forward+backward time of the unfused PyTorch GELU MLP
+  (the unmodified `fused_mlp_forward`) divided by that of your
+  `fused_mlp_forward`, both under `torch.compile` and bf16 autocast at the
+  training shape on the same GPU (higher is better; > 1 means faster than
+  the unfused reference)
 - Model: GPT-2 Medium (24L/16H/1024D, ~355M params)
 - Dataset: FineWeb 10B (GPT-2 tokenizer), ~7.1B tokens (D=20N
   Chinchilla-optimal)

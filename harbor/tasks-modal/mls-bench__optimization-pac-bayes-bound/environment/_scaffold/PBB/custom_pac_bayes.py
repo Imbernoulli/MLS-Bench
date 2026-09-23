@@ -6,10 +6,10 @@ bound and then evaluates the tightness of the resulting risk certificate.
 The agent edits the EDITABLE section (BoundOptimizer class) which controls:
   1. How the PAC-Bayes bound is computed from empirical risk + KL divergence
   2. How the posterior distribution is optimized (training objective)
-  3. How the final risk certificate is evaluated
+  3. A reference risk certificate (printed, not scored)
 
 Fixed sections handle data loading, model architecture, stochastic layers,
-and the outer training loop.
+the outer training loop and the scored risk certificate.
 """
 
 import argparse
@@ -605,6 +605,203 @@ class BoundOptimizer:
 
 
 # ================================================================
+# FIXED — Scored risk certificate (do not modify)
+# ================================================================
+# Every scored metric is computed here, from the trained posterior's own
+# parameters (weight/bias mu and rho) and from a copy of the prior taken before
+# posterior training starts. Nothing returned by BoundOptimizer enters the
+# score: compute_risk_certificate() still runs, but its values are printed for
+# reference only.
+
+_CERT_PMIN = 1e-5  # log-probability floor of the recorded cross-entropy
+
+
+def _cert_arch(model_type):
+    """Ordered (layer name, kind) of the fixed stochastic architectures."""
+    if model_type == "fcn":
+        return (("fc1", "linear"), ("fc2", "linear"), ("fc3", "linear"),
+                ("fc4", "linear"))
+    return (("conv1", "conv"), ("conv2", "conv"), ("fc1", "linear"),
+            ("fc2", "linear"))
+
+
+def _cert_prior_snapshot(det_model, model_type, prior_sigma):
+    """Copy the prior P = N(prior network weights, prior_sigma^2 I).
+
+    Taken from the deterministic prior network trained on the prior split,
+    before the posterior (and BoundOptimizer) sees the bound split.
+    """
+    prior = {}
+    for name, _ in _cert_arch(model_type):
+        layer = getattr(det_model, name)
+        prior[name] = (layer.weight.detach().clone(),
+                       layer.bias.detach().clone())
+    return {"layers": prior, "sigma": float(prior_sigma)}
+
+
+def _cert_posterior(model, model_type, prior):
+    """Read the posterior Q = N(mu, softplus(rho)^2) and check the prior."""
+    post = {}
+    for name, _ in _cert_arch(model_type):
+        layer = getattr(model, name)
+        pw, pb = prior["layers"][name]
+        tensors = []
+        for attr, ref in (("weight_mu", pw), ("weight_rho", pw),
+                          ("bias_mu", pb), ("bias_rho", pb)):
+            t = getattr(layer, attr, None)
+            if not isinstance(t, torch.Tensor) or tuple(t.shape) != tuple(ref.shape):
+                raise RuntimeError(
+                    f"certificate: {name}.{attr} is missing or has the wrong "
+                    f"shape; the stochastic architecture is fixed")
+            t = t.detach()
+            if not torch.isfinite(t).all():
+                raise RuntimeError(f"certificate: {name}.{attr} is not finite")
+            tensors.append(t)
+        # The prior must be the one fixed before posterior training.
+        if (not torch.equal(layer.weight_prior_mu.detach(), pw)
+                or not torch.equal(layer.bias_prior_mu.detach(), pb)
+                or float(layer.prior_sigma) != prior["sigma"]):
+            raise RuntimeError(
+                f"certificate: the prior of layer {name} was changed after "
+                f"posterior training started; the prior must not depend on "
+                f"the bound set")
+        post[name] = tuple(tensors)
+    return post
+
+
+def _cert_forward(post, model_type, x, sample):
+    """Stochastic (sample=True) or posterior-mean forward pass of Q."""
+    arch = _cert_arch(model_type)
+    if model_type == "fcn":
+        x = x.view(x.size(0), -1)
+    for i, (name, kind) in enumerate(arch):
+        w_mu, w_rho, b_mu, b_rho = post[name]
+        if sample:
+            weight = w_mu + torch.log1p(torch.exp(w_rho)) * torch.randn_like(w_mu)
+            bias = b_mu + torch.log1p(torch.exp(b_rho)) * torch.randn_like(b_mu)
+        else:
+            weight, bias = w_mu, b_mu
+        if kind == "conv":
+            x = F.max_pool2d(F.relu(F.conv2d(x, weight, bias, 1, 1)), 2)
+        else:
+            if model_type == "cnn" and i > 0 and arch[i - 1][1] == "conv":
+                x = x.view(x.size(0), -1)
+            x = F.linear(x, weight, bias)
+            if i < len(arch) - 1:
+                x = F.relu(x)
+    return x
+
+
+def _cert_kl(post, model_type, prior):
+    """Closed-form KL(Q || P) for diagonal Gaussians, summed over layers."""
+    p_var = prior["sigma"] ** 2
+    total = 0.0
+    for name, _ in _cert_arch(model_type):
+        w_mu, w_rho, b_mu, b_rho = post[name]
+        pw, pb = prior["layers"][name]
+        layer_kl = 0.0
+        for mu, rho, p_mu in ((w_mu, w_rho, pw), (b_mu, b_rho, pb)):
+            q_sigma = torch.log1p(torch.exp(rho))
+            kl = (0.5 * (
+                (q_sigma ** 2 + (mu - p_mu) ** 2) / p_var
+                - 1.0
+                + math.log(p_var) - 2.0 * torch.log(q_sigma)
+            )).sum()
+            layer_kl = kl if isinstance(layer_kl, float) else layer_kl + kl
+        total = total + layer_kl
+    kl = float(total.item())
+    if math.isnan(kl) or kl < 0.0:
+        raise RuntimeError(f"certificate: invalid KL(Q||P) = {kl}")
+    return kl
+
+
+def _cert_inv_kl(q, c):
+    """Largest p >= q with KL(Ber(q) || Ber(p)) <= c (same as inv_kl)."""
+    if q >= 1.0:
+        return 1.0
+    if c == 0:
+        return q
+    lo, hi = q, 1.0 - 1e-10
+    for _ in range(64):
+        mid = (lo + hi) / 2.0
+        if q < 1e-12:
+            kl_val = -math.log(1 - mid + 1e-12)
+        else:
+            kl_val = q * math.log(q / (mid + 1e-12)) + (1 - q) * math.log(
+                (1 - q) / (1 - mid + 1e-12))
+        if kl_val < c:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def evaluate_certificate(model, model_type, prior, bound_loader, test_loader,
+                         device, n_bound, delta, mc_samples):
+    """Scored metrics of the trained posterior Q against the fixed prior P.
+
+    - empirical_01_risk: MC estimate on the bound set (majority vote over
+      `mc_samples` posterior samples per example).
+    - kl_divergence: closed-form KL(Q || P).
+    - risk_certificate: PAC-Bayes-kl inversion (Seeger 2002 / Maurer 2004),
+      kl^{-1}(empirical_01_risk, (KL + log(2 sqrt(n) / delta)) / n).
+    - ce_bound: McAllester / Maurer bound on the cross-entropy (log-prob floor
+      log(1e-5), one posterior sample per example):
+      nll + sqrt((KL + log(2 sqrt(n) / delta)) / (2n)).
+    - test_error: posterior-mean error on the test set.
+    """
+    post = _cert_posterior(model, model_type, prior)
+    with torch.no_grad():
+        # 1. Empirical 0-1 risk on the bound set (MC majority vote).
+        total_wrong, total_samples = 0, 0
+        for data, target in bound_loader:
+            data, target = data.to(device), target.to(device)
+            batch_size = data.size(0)
+            votes = torch.zeros(batch_size, 10, device=device)
+            for _ in range(mc_samples):
+                preds = _cert_forward(post, model_type, data, True).argmax(dim=1)
+                votes.scatter_add_(1, preds.unsqueeze(1),
+                                   torch.ones(batch_size, 1, device=device))
+            total_wrong += (votes.argmax(dim=1) != target).sum().item()
+            total_samples += batch_size
+        emp_risk_01 = total_wrong / total_samples
+
+        # 2. Empirical cross-entropy on the bound set (one sample per example).
+        total_nll, total_samples = 0.0, 0
+        for data, target in bound_loader:
+            data, target = data.to(device), target.to(device)
+            log_probs = F.log_softmax(_cert_forward(post, model_type, data, True),
+                                      dim=1)
+            log_probs = torch.clamp(log_probs, min=math.log(_CERT_PMIN))
+            total_nll += F.nll_loss(log_probs, target, reduction="sum").item()
+            total_samples += target.size(0)
+        emp_nll = total_nll / total_samples
+
+        # 3. Posterior-mean test error.
+        correct, total = 0, 0
+        for data, target in test_loader:
+            data, target = data.to(device), target.to(device)
+            pred = _cert_forward(post, model_type, data, False).argmax(dim=1)
+            correct += (pred == target).sum().item()
+            total += target.size(0)
+        test_error = 1.0 - correct / total
+
+    kl = _cert_kl(post, model_type, prior)
+    log_term = math.log(2.0 * math.sqrt(n_bound) / delta)
+    risk_cert_01 = _cert_inv_kl(emp_risk_01, (kl + log_term) / n_bound)
+    ce_bound = (torch.tensor(emp_nll) + torch.sqrt(
+        (torch.tensor(kl) + log_term) / (2.0 * n_bound))).item()
+    return {
+        "risk_certificate": risk_cert_01,
+        "test_error": test_error,
+        "kl_divergence": kl,
+        "ce_bound": ce_bound,
+        "empirical_01_risk": emp_risk_01,
+        "empirical_nll": emp_nll,
+    }
+
+
+# ================================================================
 # FIXED — Training pipeline and evaluation (do not modify)
 # ================================================================
 
@@ -734,6 +931,8 @@ def main():
         stoch_model = StochasticCNN(in_channels, num_classes,
                                      prior_sigma=args.prior_sigma).to(device)
     transfer_weights_to_stochastic(det_model, stoch_model)
+    # The certificate is computed against this copy of the prior.
+    prior = _cert_prior_snapshot(det_model, args.model, args.prior_sigma)
 
     # Step 3: Create bound optimizer and train posterior
     bound_optimizer = BoundOptimizer(
@@ -758,29 +957,41 @@ def main():
     eval_bound_loader = DataLoader(bound_set, batch_size=args.batch_size,
                                    shuffle=False, num_workers=2, pin_memory=True)
 
-    risk_cert_01, metrics = bound_optimizer.compute_risk_certificate(
+    # Scored metrics: computed by fixed code from the posterior's parameters
+    # and the prior copy above (see evaluate_certificate).
+    scored = evaluate_certificate(
+        stoch_model, args.model, prior, eval_bound_loader, test_loader,
+        device, n_bound=len(bound_set), delta=args.delta,
+        mc_samples=args.mc_samples,
+    )
+
+    # BoundOptimizer's own certificate: printed for reference, not scored.
+    agent_cert, agent_metrics = bound_optimizer.compute_risk_certificate(
         stoch_model, eval_bound_loader, device,
         delta=args.delta,
         mc_samples=args.mc_samples,
     )
-
-    # Also compute test error for reference
-    test_error = compute_test_error(stoch_model, test_loader, device)
+    print(f"BoundOptimizer.compute_risk_certificate (reference, not scored): "
+          f"risk_certificate={float(agent_cert):.6f} "
+          + " ".join(f"{k}={v}" for k, v in dict(agent_metrics).items()),
+          flush=True)
 
     print(f"\n--- Results ---", flush=True)
-    print(f"Empirical 0-1 risk (bound set): {metrics['empirical_01_risk']:.6f}",
+    print(f"Empirical 0-1 risk (bound set): {scored['empirical_01_risk']:.6f}",
           flush=True)
-    print(f"KL divergence: {metrics['kl_divergence']:.2f}", flush=True)
-    print(f"CE bound: {metrics['ce_bound']:.6f}", flush=True)
-    print(f"Risk certificate (0-1 loss): {risk_cert_01:.6f}", flush=True)
-    print(f"Test error (posterior mean): {test_error:.6f}", flush=True)
+    print(f"KL divergence: {scored['kl_divergence']:.2f}", flush=True)
+    print(f"CE bound: {scored['ce_bound']:.6f}", flush=True)
+    print(f"Risk certificate (0-1 loss): {scored['risk_certificate']:.6f}",
+          flush=True)
+    print(f"Test error (posterior mean): {scored['test_error']:.6f}", flush=True)
 
     # Output metrics for parser
-    print(f"TEST_METRICS risk_certificate={risk_cert_01:.6f}", flush=True)
-    print(f"TEST_METRICS test_error={test_error:.6f}", flush=True)
-    print(f"TEST_METRICS kl_divergence={metrics['kl_divergence']:.2f}", flush=True)
-    print(f"TEST_METRICS ce_bound={metrics['ce_bound']:.6f}", flush=True)
-    print(f"TEST_METRICS empirical_01_risk={metrics['empirical_01_risk']:.6f}",
+    print(f"TEST_METRICS risk_certificate={scored['risk_certificate']:.6f}",
+          flush=True)
+    print(f"TEST_METRICS test_error={scored['test_error']:.6f}", flush=True)
+    print(f"TEST_METRICS kl_divergence={scored['kl_divergence']:.2f}", flush=True)
+    print(f"TEST_METRICS ce_bound={scored['ce_bound']:.6f}", flush=True)
+    print(f"TEST_METRICS empirical_01_risk={scored['empirical_01_risk']:.6f}",
           flush=True)
 
     # Save model

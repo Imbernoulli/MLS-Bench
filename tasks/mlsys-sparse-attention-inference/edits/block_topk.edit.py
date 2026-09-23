@@ -104,6 +104,7 @@ class SparseAttention(nn.Module):
         denom = (N * (N + 1) / 2.0) if is_causal else float(N * N)
         # Take per-(b,h) mean for reporting; harness aggregates further.
         self.last_density = float(token_keep[0, 0].sum().item()) / max(denom, 1.0)
+        self.last_mask = token_keep  # harness computes density from this mask
 
         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
         attn = attn.masked_fill(~token_keep, float('-inf'))

@@ -5,7 +5,7 @@
 ## Objective
 
 Design a sampling algorithm for text-to-image diffusion models that achieves
-high generation quality with a fixed budget of NFE = 20 denoiser evaluations.
+high generation quality with a fixed budget of NFE = 50 denoiser evaluations.
 
 ## Background
 
@@ -54,8 +54,19 @@ the marked editable regions of two files:
    `self.initialize_latent(size=...)`, `self.predict_noise()`,
    `self.scheduler.alphas_cumprod[t]`.
 
-The contribution must respect a fixed budget of **NFE = 20** denoiser calls
+The contribution must respect a fixed budget of **NFE = 50** denoiser calls
 per sample.
+
+The budget is measured, not trusted. The evaluation script replaces the
+solver's `self.unet` with a counting wrapper, so every UNet forward the sampler
+makes, through `self.predict_noise()` or `self.unet(...)` directly, is counted
+for each image. One NFE is one UNet forward on the image's latent: the batched
+unconditional + conditional pair of classifier-free guidance counts as 1, and
+so does a single-branch call. A forward over more than two latent rows counts
+ceil(rows / 2). A run that spends more than 50 NFE on any image is rejected and
+records no FID; spending fewer is allowed. All denoiser evaluations must go
+through `self.unet` / `self.predict_noise()`, and a solver that keeps another
+handle on the UNet is rejected.
 
 ## Baselines
 
@@ -63,7 +74,7 @@ per sample.
 |-------------|-------------|
 | `ddim`      | DDIM (Song et al., ICLR 2021, arXiv:2010.02502). First-order deterministic. |
 | `dpm3m_sde` | DPM-Solver++(3M) SDE multistep variant (Lu et al., 2022, arXiv:2211.01095). |
-| `dpm2s`     | DPM-Solver++(2S) second-order singlestep variant (same paper). |
+| `dpm2s`     | DPM-Solver++(2S) second-order singlestep variant (same paper). Two evaluations per step, so 25 steps. |
 
 ## Fixed Pipeline
 
@@ -88,7 +99,7 @@ stay unchanged.
 - `CFGpp-main/latent_diffusion.py`
 - editable lines **621–677**
 - `CFGpp-main/latent_sdxl.py`
-- editable lines **713–755**
+- editable lines **722–764**
 
 
 
@@ -603,7 +614,7 @@ stay unchanged.
 [truncated: showing at most 500 lines / 60000 bytes from CFGpp-main/latent_diffusion.py]
 ```
 
-### `CFGpp-main/latent_sdxl.py`  [EDITABLE — lines 713–755 only]
+### `CFGpp-main/latent_sdxl.py`  [EDITABLE — lines 722–764 only]
 
 ```python
      1: from typing import Any, Optional, Tuple

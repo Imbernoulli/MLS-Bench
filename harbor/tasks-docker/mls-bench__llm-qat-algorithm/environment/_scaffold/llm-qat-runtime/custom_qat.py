@@ -83,21 +83,17 @@ def fake_quantize_activation(x, num_bits):
     return x
 
 
-def quantize_dequantize_weight(weight, num_bits, group_size):
-    """REAL (non-differentiable) symmetric per-group QDQ for post-training.
-
-    Used after QAT finetune to materialize the quantized weights for eval.
-    Returns the same shape/dtype as `weight`.
-    """
-    qmin, qmax = _qrange(num_bits)
-    out_features, in_features = weight.shape
-    assert in_features % group_size == 0
-    with torch.no_grad():
-        w = weight.float().reshape(out_features, -1, group_size)
-        w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
-        scale = w_max / qmax
-        w_q = torch.clamp(torch.round(w / scale), qmin, qmax) * scale
-        return w_q.reshape(out_features, in_features).to(weight.dtype)
+# NOTE: the final quantize-dequantize used for evaluation is FIXED code
+# (`apply_real_quantization`, below the editable region).  It rounds every
+# QATWrapper's `linear.weight` to the symmetric signed per-group grid:
+#     codes = clamp(round(w / s), qmin, qmax),   w_q = codes * s
+# with one step `s` per (row, group of `group_size` columns).  By default
+# `s = |w|.amax(group) / qmax` (max-abs RTN).  A wrapper may instead supply
+# its own learned steps (LSQ scales, learned clipping, ...) through
+# `QATWrapper.quant_scale()`.  Evaluation then runs plain `nn.Linear` layers
+# holding `w_q` (bias kept in full precision), so `QATWrapper.forward`,
+# `fake_quantize_weight` and `fake_quantize_activation` are training-only.
+# The returned steps must be finite and nonzero, one per group.
 
 
 class QATWrapper(nn.Module):
@@ -133,6 +129,10 @@ class QATWrapper(nn.Module):
         x = fake_quantize_activation(x, self.num_bits)
         w_q = fake_quantize_weight(self.linear.weight, self.num_bits, self.group_size)
         return F.linear(x, w_q, self.linear.bias)
+
+    def quant_scale(self):
+        """Per-group step for the fixed final QDQ; None = max-abs RTN."""
+        return None
 
 
 def prepare_qat_model(model, num_bits, group_size):
@@ -331,21 +331,128 @@ def train_qat(model, tokenizer, dev, num_bits, group_size, seed):
     return time.time() - t0
 
 
-# ── Real-quant materialization ────────────────────────────────────────────────
+# ── Real-quant materialization (fixed) ────────────────────────────────────────
+
+_HEAD_ATTRS = ("lm_head", "embed_out")
+_TRUSTED_MODULE_PREFIXES = ("torch.", "transformers.")
+
+
+def snapshot_quant_targets(model):
+    """Record every nn.Linear (except the LM head) of the pristine model.
+
+    Called before ``prepare_qat_model``; ``apply_real_quantization`` later
+    requires each of these layers to come back as a quantized Linear.
+    """
+    heads = {id(getattr(model, a)) for a in _HEAD_ATTRS if getattr(model, a, None) is not None}
+    return {
+        name: (tuple(m.weight.shape), m.bias is not None)
+        for name, m in model.named_modules()
+        if isinstance(m, nn.Linear) and id(m) not in heads
+    }
+
 
 @torch.no_grad()
-def apply_real_quantization(model, num_bits, group_size):
-    """After QAT, replace each QATWrapper weight with the real QDQ value.
+def fixed_group_qdq(weight, num_bits, group_size, scale=None):
+    """Symmetric signed per-group ``num_bits`` QDQ with a verified grid.
 
-    The wrapper still applies fake-quant in forward, but with the weight
-    already materialized to the quantization grid the result is the true
-    INT-N model output (no train-time noise / scale drift).
+    ``scale`` is None (max-abs RTN step) or one finite nonzero step per
+    (row, group).  Returns the dequantized weight in ``weight``'s dtype.
+    """
+    qmax = (1 << (num_bits - 1)) - 1
+    qmin = -(1 << (num_bits - 1))
+    out_features, in_features = weight.shape
+    if in_features % group_size != 0:
+        raise ValueError(f"in_features {in_features} not divisible by group_size {group_size}")
+    n_groups = in_features // group_size
+    w = weight.detach().float().reshape(out_features, n_groups, group_size)
+    if scale is None:
+        w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
+        s = w_max / qmax
+    else:
+        s = torch.as_tensor(scale).detach().to(device=w.device, dtype=torch.float32)
+        if s.numel() != out_features * n_groups:
+            raise ValueError(
+                f"quant_scale() returned {s.numel()} steps, expected "
+                f"{out_features}x{n_groups} (one per row and group)"
+            )
+        s = s.reshape(out_features, n_groups, 1)
+        if not bool(torch.isfinite(s).all()) or bool((s == 0).any()):
+            raise ValueError("quant_scale() steps must be finite and nonzero")
+    if not bool(torch.isfinite(w).all()):
+        raise ValueError("non-finite weight entering the final QDQ")
+    codes = torch.clamp(torch.round(w / s), qmin, qmax)
+    w_q = (codes * s).reshape(out_features, in_features).to(weight.dtype)
+    # Verify the stored tensor really is on the num_bits grid.
+    back = w_q.float().reshape(out_features, n_groups, group_size) / s
+    if (back - codes).abs().max().item() > 1e-3 or codes.min() < qmin or codes.max() > qmax:
+        raise RuntimeError("final QDQ produced weights off the num_bits grid")
+    return w_q
+
+
+@torch.no_grad()
+def apply_real_quantization(model, num_bits, group_size, targets):
+    """After QAT, replace each QATWrapper by a plain nn.Linear on the grid.
+
+    The quantizer (format, rounding, clamping) is fixed here; only the
+    per-group steps may come from the method (``QATWrapper.quant_scale()``).
+    Evaluation then runs through the plain Linear, not the wrapper, and
+    every layer recorded by ``snapshot_quant_targets`` must be quantized.
     """
     wrappers = find_qat_wrappers(model)
+    quantized = {}
     for name, w in wrappers.items():
-        w_dq = quantize_dequantize_weight(w.linear.weight.data, num_bits, group_size)
-        w.linear.weight.data.copy_(w_dq)
-    return len(wrappers)
+        weight = w.linear.weight
+        bias = w.linear.bias
+        get_scale = getattr(w, "quant_scale", None)
+        scale = get_scale() if callable(get_scale) else None
+        w_q = fixed_group_qdq(weight, num_bits, group_size, scale)
+        out_f, in_f = w_q.shape
+        lin = nn.Linear(in_f, out_f, bias=bias is not None,
+                        device=weight.device, dtype=weight.dtype)
+        lin.weight.copy_(w_q)
+        if bias is not None:
+            lin.bias.copy_(bias.detach().reshape(out_f))
+        lin.requires_grad_(False)
+        parent_name, _, attr = name.rpartition(".")
+        parent = model.get_submodule(parent_name) if parent_name else model
+        setattr(parent, attr, lin)
+        quantized[name] = lin
+    verify_eval_model(model, targets, quantized)
+    return len(quantized)
+
+
+def verify_eval_model(model, targets, quantized):
+    """Reject evaluation models the fixed quantizer does not fully cover."""
+    q_ids = {id(m) for m in quantized.values()}
+    for name, (shape, has_bias) in targets.items():
+        try:
+            m = model.get_submodule(name)
+        except AttributeError:
+            m = None
+        if m is None or id(m) not in q_ids:
+            raise RuntimeError(
+                f"layer {name!r} was not quantized (every block nn.Linear must be "
+                f"wrapped in QATWrapper by prepare_qat_model)"
+            )
+        if tuple(m.weight.shape) != shape or (m.bias is not None) != has_bias:
+            raise RuntimeError(f"layer {name!r} changed shape during QAT")
+    import torch.nn.modules.module as _mm
+    for hooks in ("_global_forward_hooks", "_global_forward_pre_hooks"):
+        if getattr(_mm, hooks, None):
+            raise RuntimeError("global module forward hooks are not allowed at evaluation")
+    for name, m in model.named_modules():
+        cls = type(m)
+        fwd = getattr(cls, "forward", None)
+        fwd_mod = getattr(fwd, "__module__", "") or ""
+        if (not cls.__module__.startswith(_TRUSTED_MODULE_PREFIXES)
+                or not fwd_mod.startswith(_TRUSTED_MODULE_PREFIXES)
+                or "forward" in m.__dict__):
+            raise RuntimeError(
+                f"module {name!r} ({cls.__module__}.{cls.__name__}) is not a stock "
+                f"torch/transformers module at evaluation"
+            )
+        if m._forward_hooks or m._forward_pre_hooks:
+            raise RuntimeError(f"module {name!r} carries forward hooks at evaluation")
 
 
 # ── Perplexity evaluation ─────────────────────────────────────────────────────
@@ -410,6 +517,7 @@ def main():
     print(f"TRAIN_METRICS: fp_perplexity={fp_ppl:.4f}", flush=True)
 
     # Wrap model for QAT
+    quant_targets = snapshot_quant_targets(model)
     print(f"\n=== Preparing QAT (INT{args.num_bits}, group_size={args.group_size}) ===", flush=True)
     model = prepare_qat_model(model, num_bits=args.num_bits, group_size=args.group_size)
     model.to(dev)
@@ -423,7 +531,7 @@ def main():
 
     # Real-quant roundtrip
     print("\n=== Materializing real INT-N weights ===", flush=True)
-    n_q = apply_real_quantization(model, args.num_bits, args.group_size)
+    n_q = apply_real_quantization(model, args.num_bits, args.group_size, quant_targets)
     print(f"Quantized {n_q} layers to INT{args.num_bits}", flush=True)
 
     # Quantized ppl

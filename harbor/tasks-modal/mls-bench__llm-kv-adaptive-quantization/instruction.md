@@ -43,16 +43,23 @@ calls the editable class:
 - `needs_prefill_qkv_observer() -> bool`
 - `query_observation_position() -> str`
 - `observe_prefill_qkv(layer_id, query_states, key_states, value_states, attention_meta)`
-- `quantize_key(layer_id, key_states, cache_meta) -> tensor | (tensor, avg_bits)`
-- `quantize_value(layer_id, value_states, cache_meta) -> tensor | (tensor, avg_bits)`
-- `estimate_bits(layer_id, kv_kind, seq_len, head_dim, cache_meta) -> float`
+- `quantize_key(layer_id, key_states, cache_meta) -> tensor | (tensor, layout)`
+- `quantize_value(layer_id, value_states, cache_meta) -> tensor | (tensor, layout)`
 
 `key_states` and `value_states` have shape
 `[batch, heads, seq_len, head_dim]`. The class implements the actual tensor
 algorithm: grouping, asymmetric ranges, zero-points, per-layer bit presets,
-residual retention, query-subspace transforms, and memory accounting all
-belong inside this class. The task does not expose a fixed algorithm enum
-or a backend selector.
+residual retention, and query-subspace transforms all belong inside this
+class. The task does not expose a fixed algorithm enum or a backend selector.
+
+KV memory is measured by the fixed harness, not self-reported. `layout` is
+`{"group_ids": ..., "group_bits": ...}`: `group_ids` is an integer tensor
+with the returned tensor's shape that maps every element to a quantization
+group (`-1` = kept at FP16), and `group_bits` is a 1-D integer tensor of
+per-group bit-widths in `[1, 16]`. Every used group must hold at least 32
+elements and at most `2**bits` distinct stored values, otherwise the run
+aborts. Returning a bare tensor (or a `None` layout) charges every element
+at FP16. Scale/zero-point metadata is not charged.
 
 ## What You Cannot Modify
 
@@ -66,13 +73,16 @@ or a backend selector.
 The parser expects one `TEST_METRICS:` line per workload with:
 
 - `final_score`: benchmark-native quality on a 0-100 scale
-- `effective_kv_bits`: quantizer-level effective KV bits per cached element
+- `effective_kv_bits`: effective KV bits per cached element, measured by the
+  harness from the stored tensors and their layouts
 - `kv_compression_ratio`: `16 / effective_kv_bits`, using FP16 KV as the
   reference footprint
 - `runtime_seconds`: task-level wall-clock runtime for the workload command
 
-`effective_kv_bits` is computed from the submitted quantizer at a 4096-token
-reference KV span so the efficiency term is hardware-independent.
+`effective_kv_bits` is measured at a 4096-token reference KV span so the
+efficiency term is hardware-independent: after each request the harness
+quantizes that request's real KV cache, cropped or tiled to 4096 tokens,
+with the submitted quantizer and averages the measured bits over requests.
 
 ## Baselines
 
@@ -178,133 +188,133 @@ Other files you may **read** for context (do not modify):
     43: 
     44:     The fixed harness supplies real key/value tensors from a Hugging Face
     45:     DynamicCache and calls this class for the actual algorithm. Participants
-    46:     may rewrite the quantization math, residual policy, optional prefill
-    47:     observation, and memory accounting here without changing the benchmark
-    48:     datasets, model, or decode loop.
-    49:     """
-    50: 
-    51:     def __init__(self):
-    52:         self.bits = 4
-    53:         self.key_group_size = 32
-    54:         self.value_group_size = 32
-    55:         self.key_residual_length = 128
-    56:         self.value_residual_length = 128
-    57: 
-    58:     def reset_request(self, request_meta: dict, budget_state: dict):
-    59:         self.bits = min(4, int(budget_state.get("budget_bits", 4)))
-    60:         workload = str(request_meta.get("workload", ""))
-    61:         residual = 128 if workload.startswith("longbench_") else 32
-    62:         self.key_residual_length = residual
-    63:         self.value_residual_length = residual
-    64: 
-    65:     def needs_prefill_qkv_observer(self) -> bool:
-    66:         return False
-    67: 
-    68:     def observe_prefill_qkv(
-    69:         self,
-    70:         layer_id: int,
-    71:         query_states: torch.Tensor | None,
-    72:         key_states: torch.Tensor | None,
-    73:         value_states: torch.Tensor | None,
-    74:         attention_meta: dict,
-    75:     ) -> None:
-    76:         return None
-    77: 
-    78:     def query_observation_position(self) -> str:
-    79:         return "post_rope"
-    80: 
-    81:     def _residual_keep_length(self, seq_len: int, residual_length: int, residual_policy: str = "tail") -> int:
-    82:         residual_length = max(0, min(seq_len, int(residual_length)))
-    83:         if residual_length == 0 or residual_policy in {"none", ""}:
-    84:             return 0
-    85:         if residual_policy == "block_modulo":
-    86:             return seq_len % residual_length
-    87:         if residual_policy == "tail":
-    88:             return residual_length
-    89:         raise ValueError(f"Unsupported residual_policy={residual_policy}")
-    90: 
-    91:     def _minmax_quantize_last_dim(self, data: torch.Tensor, bits: int, group_size: int) -> torch.Tensor:
-    92:         if data.numel() == 0 or bits >= FP_BITS - 0.5:
-    93:             return data
-    94:         max_int = max(1, int(2**int(bits)) - 1)
-    95:         trailing = data.shape[-1]
-    96:         group_size = trailing if int(group_size) <= 0 else int(group_size)
-    97:         padded = math.ceil(trailing / group_size) * group_size
-    98:         work = data
-    99:         if padded != trailing:
-   100:             work = torch.nn.functional.pad(work, (0, padded - trailing))
-   101:         grouped = work.reshape(*work.shape[:-1], padded // group_size, group_size)
-   102:         gmin = grouped.amin(dim=-1, keepdim=True)
-   103:         gmax = grouped.amax(dim=-1, keepdim=True)
-   104:         scale = (gmax - gmin).clamp(min=1e-5) / max_int
-   105:         quant = torch.round((grouped - gmin) / scale).clamp(0, max_int)
-   106:         dequant = quant.mul(scale).add(gmin)
-   107:         return dequant.reshape(*work.shape[:-1], padded)[..., :trailing]
-   108: 
-   109:     def _quantize_grouped_minmax(
-   110:         self,
-   111:         layer_tensor: torch.Tensor,
-   112:         *,
-   113:         axis: str,
-   114:         bits: int,
-   115:         group_size: int,
-   116:         residual_length: int,
-   117:         residual_policy: str = "tail",
-   118:     ) -> tuple[torch.Tensor, float]:
-   119:         work = layer_tensor.float().clone()
-   120:         batch, heads, seq_len, head_dim = work.shape
-   121:         residual = self._residual_keep_length(seq_len, residual_length, residual_policy)
-   122:         quant_end = seq_len - residual
-   123:         if quant_end <= 0 or bits >= FP_BITS - 0.5:
-   124:             return work.to(layer_tensor.dtype), FP_BITS
-   125: 
-   126:         quant_slice = work[:, :, :quant_end, :]
-   127:         if axis == "channel":
-   128:             quant_len = quant_slice.shape[-2]
-   129:             group_size = quant_len if int(group_size) <= 0 else int(group_size)
-   130:             usable = quant_len - (quant_len % group_size)
-   131:             main = quant_slice[:, :, :usable, :]
-   132:             tail = quant_slice[:, :, usable:, :]
-   133:             if usable > 0:
-   134:                 main = main.transpose(2, 3).reshape(batch, heads, head_dim, usable // group_size, group_size)
-   135:                 main = self._minmax_quantize_last_dim(main, bits, group_size)
-   136:                 work[:, :, :usable, :] = main.reshape(batch, heads, head_dim, usable).transpose(2, 3)
-   137:             if tail.numel() > 0:
-   138:                 work[:, :, usable:quant_end, :] = tail
-   139:             fp_tokens = residual + (quant_len - usable)
-   140:             avg_bits = (usable * bits + fp_tokens * FP_BITS) / max(seq_len, 1)
-   141:         else:
-   142:             flat = quant_slice.transpose(1, 2).reshape(batch, quant_slice.shape[-2], heads * head_dim)
-   143:             flat = self._minmax_quantize_last_dim(flat, bits, group_size)
-   144:             work[:, :, :quant_end, :] = flat.reshape(batch, quant_slice.shape[-2], heads, head_dim).transpose(1, 2)
-   145:             avg_bits = (quant_end * bits + residual * FP_BITS) / max(seq_len, 1)
-   146:         return work.to(layer_tensor.dtype), float(avg_bits)
-   147: 
-   148:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   149:         return self._quantize_grouped_minmax(
-   150:             key_states,
-   151:             axis="channel",
-   152:             bits=self.bits,
-   153:             group_size=self.key_group_size,
-   154:             residual_length=self.key_residual_length,
-   155:             residual_policy="tail",
-   156:         )
-   157: 
-   158:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   159:         return self._quantize_grouped_minmax(
-   160:             value_states,
-   161:             axis="token",
-   162:             bits=self.bits,
-   163:             group_size=self.value_group_size,
-   164:             residual_length=self.value_residual_length,
-   165:             residual_policy="tail",
+    46:     may rewrite the quantization math, residual policy, and optional prefill
+    47:     observation here without changing the benchmark datasets, model, or decode
+    48:     loop. Memory is not self-reported: `quantize_key` / `quantize_value` return
+    49:     a storage layout (see `_group_layout`) that the fixed harness checks and
+    50:     measures; a bare tensor (or a `None` layout) is charged at FP16.
+    51:     """
+    52: 
+    53:     def __init__(self):
+    54:         self.bits = 4
+    55:         self.key_group_size = 32
+    56:         self.value_group_size = 32
+    57:         self.key_residual_length = 128
+    58:         self.value_residual_length = 128
+    59: 
+    60:     def reset_request(self, request_meta: dict, budget_state: dict):
+    61:         self.bits = min(4, int(budget_state.get("budget_bits", 4)))
+    62:         workload = str(request_meta.get("workload", ""))
+    63:         residual = 128 if workload.startswith("longbench_") else 32
+    64:         self.key_residual_length = residual
+    65:         self.value_residual_length = residual
+    66: 
+    67:     def needs_prefill_qkv_observer(self) -> bool:
+    68:         return False
+    69: 
+    70:     def observe_prefill_qkv(
+    71:         self,
+    72:         layer_id: int,
+    73:         query_states: torch.Tensor | None,
+    74:         key_states: torch.Tensor | None,
+    75:         value_states: torch.Tensor | None,
+    76:         attention_meta: dict,
+    77:     ) -> None:
+    78:         return None
+    79: 
+    80:     def query_observation_position(self) -> str:
+    81:         return "post_rope"
+    82: 
+    83:     def _residual_keep_length(self, seq_len: int, residual_length: int, residual_policy: str = "tail") -> int:
+    84:         residual_length = max(0, min(seq_len, int(residual_length)))
+    85:         if residual_length == 0 or residual_policy in {"none", ""}:
+    86:             return 0
+    87:         if residual_policy == "block_modulo":
+    88:             return seq_len % residual_length
+    89:         if residual_policy == "tail":
+    90:             return residual_length
+    91:         raise ValueError(f"Unsupported residual_policy={residual_policy}")
+    92: 
+    93:     def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+    94:         """(group ids, group count) for contiguous groups along the last dim.
+    95: 
+    96:         A layout is `{"group_ids": int tensor shaped like the returned tensor,
+    97:         "group_bits": 1-D int tensor}`: element -> group id (-1 = kept at
+    98:         FP16), group id -> integer bit-width in [1, 16]. Each used group needs
+    99:         >= 32 elements and at most 2**bits distinct stored values.
+   100:         """
+   101:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+   102:         per_row = math.ceil(trailing / group_size)
+   103:         rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+   104:         ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+   105:         return ids, math.prod(lead_shape) * per_row
+   106: 
+   107:     def _minmax_quantize_last_dim(self, data: torch.Tensor, bits: int, group_size: int) -> torch.Tensor:
+   108:         if data.numel() == 0 or bits >= FP_BITS - 0.5:
+   109:             return data
+   110:         max_int = max(1, int(2**int(bits)) - 1)
+   111:         trailing = data.shape[-1]
+   112:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+   113:         padded = math.ceil(trailing / group_size) * group_size
+   114:         work = data
+   115:         if padded != trailing:
+   116:             work = torch.nn.functional.pad(work, (0, padded - trailing))
+   117:         grouped = work.reshape(*work.shape[:-1], padded // group_size, group_size)
+   118:         gmin = grouped.amin(dim=-1, keepdim=True)
+   119:         gmax = grouped.amax(dim=-1, keepdim=True)
+   120:         scale = (gmax - gmin).clamp(min=1e-5) / max_int
+   121:         quant = torch.round((grouped - gmin) / scale).clamp(0, max_int)
+   122:         dequant = quant.mul(scale).add(gmin)
+   123:         return dequant.reshape(*work.shape[:-1], padded)[..., :trailing]
+   124: 
+   125:     def _quantize_grouped_minmax(
+   126:         self,
+   127:         layer_tensor: torch.Tensor,
+   128:         *,
+   129:         axis: str,
+   130:         bits: int,
+   131:         group_size: int,
+   132:         residual_length: int,
+   133:         residual_policy: str = "tail",
+   134:     ) -> tuple[torch.Tensor, dict | None]:
+   135:         work = layer_tensor.float().clone()
+   136:         batch, heads, seq_len, head_dim = work.shape
+   137:         residual = self._residual_keep_length(seq_len, residual_length, residual_policy)
+   138:         quant_end = seq_len - residual
+   139:         if quant_end <= 0 or bits >= FP_BITS - 0.5:
+   140:             return work.to(layer_tensor.dtype), None
+   141:         ids, count = torch.full(work.shape, -1, dtype=torch.long, device=work.device), 0
+   142:         quant_slice = work[:, :, :quant_end, :]
+   143:         if axis == "channel":
+   144:             quant_len = quant_slice.shape[-2]
+   145:             group_size = quant_len if int(group_size) <= 0 else int(group_size)
+   146:             usable = quant_len - (quant_len % group_size)
+   147:             if usable > 0:
+   148:                 main = quant_slice[:, :, :usable, :].transpose(2, 3)
+   149:                 main = self._minmax_quantize_last_dim(main, bits, group_size)
+   150:                 work[:, :, :usable, :] = main.transpose(2, 3)
+   151:                 region, count = self._group_layout((batch, heads, head_dim), usable, group_size, work.device)
+   152:                 ids[:, :, :usable, :] = region.transpose(2, 3)
+   153:         else:
+   154:             flat = quant_slice.transpose(1, 2).reshape(batch, quant_end, heads * head_dim)
+   155:             flat = self._minmax_quantize_last_dim(flat, bits, group_size)
+   156:             work[:, :, :quant_end, :] = flat.reshape(batch, quant_end, heads, head_dim).transpose(1, 2)
+   157:             flat_ids, count = self._group_layout((batch, quant_end), heads * head_dim, group_size, work.device)
+   158:             ids[:, :, :quant_end, :] = flat_ids.reshape(batch, quant_end, heads, head_dim).transpose(1, 2)
+   159:         group_bits = torch.full((count,), int(bits), dtype=torch.long, device=work.device)
+   160:         return work.to(layer_tensor.dtype), {"group_ids": ids, "group_bits": group_bits}
+   161: 
+   162:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict):
+   163:         return self._quantize_grouped_minmax(
+   164:             key_states, axis="channel", bits=self.bits, group_size=self.key_group_size,
+   165:             residual_length=self.key_residual_length, residual_policy="tail",
    166:         )
    167: 
-   168:     def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-   169:         residual = self.key_residual_length if kv_kind == "key" else self.value_residual_length
-   170:         residual = self._residual_keep_length(seq_len, residual, "tail")
-   171:         quant_tokens = max(0, seq_len - residual)
-   172:         return float((quant_tokens * self.bits + residual * FP_BITS) / max(seq_len, 1))
+   168:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict):
+   169:         return self._quantize_grouped_minmax(
+   170:             value_states, axis="token", bits=self.bits, group_size=self.value_group_size,
+   171:             residual_length=self.value_residual_length, residual_policy="tail",
+   172:         )
    173: 
    174: 
    175: def resolve_task_dir() -> Path:
@@ -651,7 +661,7 @@ a baseline reproduction.
 In `transformers-kv-lab/custom_quant_eval.py`:
 
 ```python
-Lines 41–119:
+Lines 41–125:
     38:         return [example["prompt"] for example in self.examples]
     39: 
     40: 
@@ -684,59 +694,65 @@ Lines 41–119:
     67:             return residual_length
     68:         return 0
     69: 
-    70:     def _minmax_last_dim(self, data: torch.Tensor, bits: int, group_size: int) -> torch.Tensor:
-    71:         if data.numel() == 0 or bits >= FP_BITS - 0.5:
-    72:             return data
-    73:         max_int = max(1, int(2**bits) - 1)
-    74:         trailing = data.shape[-1]
-    75:         group_size = trailing if int(group_size) <= 0 else int(group_size)
-    76:         padded = math.ceil(trailing / group_size) * group_size
-    77:         work = torch.nn.functional.pad(data, (0, padded - trailing)) if padded != trailing else data
-    78:         grouped = work.reshape(*work.shape[:-1], padded // group_size, group_size)
-    79:         gmin = grouped.amin(dim=-1, keepdim=True)
-    80:         gmax = grouped.amax(dim=-1, keepdim=True)
-    81:         scale = (gmax - gmin).clamp(min=1e-5) / max_int
-    82:         q = torch.round((grouped - gmin) / scale).clamp(0, max_int)
-    83:         return q.mul(scale).add(gmin).reshape(*work.shape[:-1], padded)[..., :trailing]
-    84: 
-    85:     def _quantize(self, tensor: torch.Tensor, axis: str, residual_policy: str) -> tuple[torch.Tensor, float]:
-    86:         work = tensor.float().clone()
-    87:         batch, heads, seq_len, head_dim = work.shape
-    88:         residual = self._residual_keep_length(seq_len, self.key_residual_length, residual_policy)
-    89:         quant_end = seq_len - residual
-    90:         if quant_end <= 0:
-    91:             return work.to(tensor.dtype), FP_BITS
-    92:         quant_slice = work[:, :, :quant_end, :]
-    93:         if axis == "channel":
-    94:             usable = quant_slice.shape[-2] - (quant_slice.shape[-2] % self.group_size)
-    95:             if usable > 0:
-    96:                 main = quant_slice[:, :, :usable, :].transpose(2, 3)
-    97:                 main = main.reshape(batch, heads, head_dim, usable // self.group_size, self.group_size)
-    98:                 main = self._minmax_last_dim(main, self.bits, self.group_size)
-    99:                 work[:, :, :usable, :] = main.reshape(batch, heads, head_dim, usable).transpose(2, 3)
-   100:             fp_tokens = residual + (quant_slice.shape[-2] - usable)
-   101:             avg_bits = (usable * self.bits + fp_tokens * FP_BITS) / max(seq_len, 1)
-   102:         else:
-   103:             flat = quant_slice.transpose(1, 2).reshape(batch, quant_slice.shape[-2], heads * head_dim)
-   104:             flat = self._minmax_last_dim(flat, self.bits, self.group_size)
-   105:             work[:, :, :quant_end, :] = flat.reshape(batch, quant_slice.shape[-2], heads, head_dim).transpose(1, 2)
-   106:             avg_bits = (quant_end * self.bits + residual * FP_BITS) / max(seq_len, 1)
-   107:         return work.to(tensor.dtype), float(avg_bits)
-   108: 
-   109:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   110:         return self._quantize(key_states, "channel", "block_modulo")
-   111: 
-   112:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   113:         return self._quantize(value_states, "token", "tail")
-   114: 
-   115:     def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-   116:         policy = "block_modulo" if kv_kind == "key" else "tail"
-   117:         residual = self._residual_keep_length(seq_len, self.key_residual_length, policy)
-   118:         quant_tokens = max(0, seq_len - residual)
-   119:         return float((quant_tokens * self.bits + residual * FP_BITS) / max(seq_len, 1))
+    70:     def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+    71:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+    72:         per_row = math.ceil(trailing / group_size)
+    73:         rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+    74:         ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+    75:         return ids, math.prod(lead_shape) * per_row
+    76: 
+    77:     def _layout(self, ids: torch.Tensor, count: int, bits: int) -> dict:
+    78:         return {"group_ids": ids, "group_bits": torch.full((count,), int(bits), dtype=torch.long, device=ids.device)}
+    79: 
+    80:     def _minmax_last_dim(self, data: torch.Tensor, bits: int, group_size: int) -> torch.Tensor:
+    81:         if data.numel() == 0 or bits >= FP_BITS - 0.5:
+    82:             return data
+    83:         max_int = max(1, int(2**bits) - 1)
+    84:         trailing = data.shape[-1]
+    85:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+    86:         padded = math.ceil(trailing / group_size) * group_size
+    87:         work = torch.nn.functional.pad(data, (0, padded - trailing)) if padded != trailing else data
+    88:         grouped = work.reshape(*work.shape[:-1], padded // group_size, group_size)
+    89:         gmin = grouped.amin(dim=-1, keepdim=True)
+    90:         gmax = grouped.amax(dim=-1, keepdim=True)
+    91:         scale = (gmax - gmin).clamp(min=1e-5) / max_int
+    92:         q = torch.round((grouped - gmin) / scale).clamp(0, max_int)
+    93:         return q.mul(scale).add(gmin).reshape(*work.shape[:-1], padded)[..., :trailing]
+    94: 
+    95:     def _quantize(self, tensor: torch.Tensor, axis: str, residual_policy: str) -> tuple[torch.Tensor, dict | None]:
+    96:         work = tensor.float().clone()
+    97:         batch, heads, seq_len, head_dim = work.shape
+    98:         residual = self._residual_keep_length(seq_len, self.key_residual_length, residual_policy)
+    99:         quant_end = seq_len - residual
+   100:         if quant_end <= 0:
+   101:             return work.to(tensor.dtype), None
+   102:         ids, count = torch.full(work.shape, -1, dtype=torch.long, device=work.device), 0
+   103:         quant_slice = work[:, :, :quant_end, :]
+   104:         if axis == "channel":
+   105:             usable = quant_slice.shape[-2] - (quant_slice.shape[-2] % self.group_size)
+   106:             if usable > 0:
+   107:                 main = quant_slice[:, :, :usable, :].transpose(2, 3)
+   108:                 main = main.reshape(batch, heads, head_dim, usable // self.group_size, self.group_size)
+   109:                 main = self._minmax_last_dim(main, self.bits, self.group_size)
+   110:                 work[:, :, :usable, :] = main.reshape(batch, heads, head_dim, usable).transpose(2, 3)
+   111:                 region, count = self._group_layout((batch, heads, head_dim), usable, self.group_size, work.device)
+   112:                 ids[:, :, :usable, :] = region.transpose(2, 3)
+   113:         else:
+   114:             flat = quant_slice.transpose(1, 2).reshape(batch, quant_slice.shape[-2], heads * head_dim)
+   115:             flat = self._minmax_last_dim(flat, self.bits, self.group_size)
+   116:             work[:, :, :quant_end, :] = flat.reshape(batch, quant_slice.shape[-2], heads, head_dim).transpose(1, 2)
+   117:             flat_ids, count = self._group_layout((batch, quant_end), heads * head_dim, self.group_size, work.device)
+   118:             ids[:, :, :quant_end, :] = flat_ids.reshape(batch, quant_end, heads, head_dim).transpose(1, 2)
+   119:         return work.to(tensor.dtype), self._layout(ids, count, self.bits)
    120: 
-   121: 
-   122: def resolve_task_dir() -> Path:
+   121:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   122:         return self._quantize(key_states, "channel", "block_modulo")
+   123: 
+   124:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   125:         return self._quantize(value_states, "token", "tail")
+   126: 
+   127: 
+   128: def resolve_task_dir() -> Path:
 ```
 
 ### `kvtuner4_pertoken_qwen25_3b` baseline — editable region  [READ-ONLY — reference implementation]
@@ -744,7 +760,7 @@ Lines 41–119:
 In `transformers-kv-lab/custom_quant_eval.py`:
 
 ```python
-Lines 41–107:
+Lines 41–116:
     38:         return [example["prompt"] for example in self.examples]
     39: 
     40: 
@@ -778,46 +794,55 @@ Lines 41–107:
     68:     def query_observation_position(self) -> str:
     69:         return "post_rope"
     70: 
-    71:     def _signed_asymmetric(self, tensor: torch.Tensor, bits: int, axis: int, group_size: int, residual_length: int) -> tuple[torch.Tensor, float]:
-    72:         work = tensor.float().clone()
-    73:         _, _, seq_len, _ = work.shape
-    74:         residual = max(0, min(seq_len, int(residual_length)))
-    75:         quant_end = seq_len - residual
-    76:         if quant_end <= 0 or bits >= FP_BITS - 0.5:
-    77:             return work.to(tensor.dtype), FP_BITS
-    78:         quant_slice = work[:, :, :quant_end, :]
-    79:         shaped = quant_slice.transpose(-2, -1).contiguous() if axis == 1 else quant_slice
-    80:         group_size = shaped.shape[-1] if int(group_size) == -1 else int(group_size)
-    81:         original_shape = shaped.shape
-    82:         trailing = shaped.shape[-1]
-    83:         padded = math.ceil(trailing / group_size) * group_size
-    84:         shaped = torch.nn.functional.pad(shaped, (0, padded - trailing)) if padded != trailing else shaped
-    85:         rows = shaped.reshape(-1, group_size)
-    86:         q_max, q_min = 2 ** (bits - 1) - 1, -(2 ** (bits - 1))
-    87:         max_vals = rows.max(dim=1).values
-    88:         min_vals = rows.min(dim=1).values
-    89:         scale = (max_vals - min_vals).clamp(min=1e-5) / (q_max - q_min)
-    90:         zeros = (min_vals / scale).round() - q_min
-    91:         quant = torch.round(rows / scale.unsqueeze(1) - zeros.unsqueeze(1)).clamp(q_min, q_max)
-    92:         dequant = (quant + zeros.unsqueeze(1)) * scale.unsqueeze(1)
-    93:         dequant = dequant.reshape(*original_shape[:-1], padded)[..., :trailing]
-    94:         if axis == 1:
-    95:             dequant = dequant.transpose(-2, -1).contiguous()
-    96:         work[:, :, :quant_end, :] = dequant
-    97:         avg_bits = (quant_end * bits + residual * FP_BITS) / max(seq_len, 1)
-    98:         return work.to(tensor.dtype), float(avg_bits)
-    99: 
-   100:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   101:         return self._signed_asymmetric(key_states, self._PRESET[layer_id]["key"], axis=0, group_size=-1, residual_length=0)
-   102: 
-   103:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   104:         return self._signed_asymmetric(value_states, self._PRESET[layer_id]["value"], axis=0, group_size=-1, residual_length=0)
-   105: 
-   106:     def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-   107:         return float(self._PRESET[layer_id][kv_kind])
-   108: 
-   109: 
-   110: def resolve_task_dir() -> Path:
+    71:     def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+    72:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+    73:         per_row = math.ceil(trailing / group_size)
+    74:         rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+    75:         ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+    76:         return ids, math.prod(lead_shape) * per_row
+    77: 
+    78:     def _layout(self, ids: torch.Tensor, count: int, bits: int) -> dict:
+    79:         return {"group_ids": ids, "group_bits": torch.full((count,), int(bits), dtype=torch.long, device=ids.device)}
+    80: 
+    81:     def _signed_asymmetric(self, tensor: torch.Tensor, bits: int, axis: int, group_size: int, residual_length: int) -> tuple[torch.Tensor, dict | None]:
+    82:         work = tensor.float().clone()
+    83:         _, _, seq_len, _ = work.shape
+    84:         residual = max(0, min(seq_len, int(residual_length)))
+    85:         quant_end = seq_len - residual
+    86:         if quant_end <= 0 or bits >= FP_BITS - 0.5:
+    87:             return work.to(tensor.dtype), None
+    88:         quant_slice = work[:, :, :quant_end, :]
+    89:         shaped = quant_slice.transpose(-2, -1).contiguous() if axis == 1 else quant_slice
+    90:         group_size = shaped.shape[-1] if int(group_size) == -1 else int(group_size)
+    91:         original_shape = shaped.shape
+    92:         trailing = shaped.shape[-1]
+    93:         padded = math.ceil(trailing / group_size) * group_size
+    94:         shaped = torch.nn.functional.pad(shaped, (0, padded - trailing)) if padded != trailing else shaped
+    95:         rows = shaped.reshape(-1, group_size)
+    96:         q_max, q_min = 2 ** (bits - 1) - 1, -(2 ** (bits - 1))
+    97:         max_vals = rows.max(dim=1).values
+    98:         min_vals = rows.min(dim=1).values
+    99:         scale = (max_vals - min_vals).clamp(min=1e-5) / (q_max - q_min)
+   100:         zeros = (min_vals / scale).round() - q_min
+   101:         quant = torch.round(rows / scale.unsqueeze(1) - zeros.unsqueeze(1)).clamp(q_min, q_max)
+   102:         dequant = (quant + zeros.unsqueeze(1)) * scale.unsqueeze(1)
+   103:         dequant = dequant.reshape(*original_shape[:-1], padded)[..., :trailing]
+   104:         if axis == 1:
+   105:             dequant = dequant.transpose(-2, -1).contiguous()
+   106:         work[:, :, :quant_end, :] = dequant
+   107:         ids = torch.full(work.shape, -1, dtype=torch.long, device=work.device)
+   108:         region_ids, count = self._group_layout(original_shape[:-1], trailing, group_size, work.device)
+   109:         ids[:, :, :quant_end, :] = region_ids.transpose(-2, -1) if axis == 1 else region_ids
+   110:         return work.to(tensor.dtype), self._layout(ids, count, bits)
+   111: 
+   112:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   113:         return self._signed_asymmetric(key_states, self._PRESET[layer_id]["key"], axis=0, group_size=-1, residual_length=0)
+   114: 
+   115:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   116:         return self._signed_asymmetric(value_states, self._PRESET[layer_id]["value"], axis=0, group_size=-1, residual_length=0)
+   117: 
+   118: 
+   119: def resolve_task_dir() -> Path:
 ```
 
 ### `kvtuner4_kivi_qwen25_3b` baseline — editable region  [READ-ONLY — reference implementation]
@@ -825,7 +850,7 @@ Lines 41–107:
 In `transformers-kv-lab/custom_quant_eval.py`:
 
 ```python
-Lines 41–114:
+Lines 41–120:
     38:         return [example["prompt"] for example in self.examples]
     39: 
     40: 
@@ -863,49 +888,55 @@ Lines 41–114:
     72:         residual_length = max(0, min(seq_len, int(residual_length)))
     73:         return seq_len % residual_length if residual_length else 0
     74: 
-    75:     def _signed_asymmetric(self, tensor: torch.Tensor, bits: int, axis: int, group_size: int, residual_length: int) -> tuple[torch.Tensor, float]:
-    76:         work = tensor.float().clone()
-    77:         _, _, seq_len, _ = work.shape
-    78:         residual = self._residual_keep_length(seq_len, residual_length)
-    79:         quant_end = seq_len - residual
-    80:         if quant_end <= 0 or bits >= FP_BITS - 0.5:
-    81:             return work.to(tensor.dtype), FP_BITS
-    82:         quant_slice = work[:, :, :quant_end, :]
-    83:         shaped = quant_slice.transpose(-2, -1).contiguous() if axis == 1 else quant_slice
-    84:         group_size = shaped.shape[-1] if int(group_size) == -1 else int(group_size)
-    85:         original_shape = shaped.shape
-    86:         trailing = shaped.shape[-1]
-    87:         padded = math.ceil(trailing / group_size) * group_size
-    88:         shaped = torch.nn.functional.pad(shaped, (0, padded - trailing)) if padded != trailing else shaped
-    89:         rows = shaped.reshape(-1, group_size)
-    90:         q_max, q_min = 2 ** (bits - 1) - 1, -(2 ** (bits - 1))
-    91:         max_vals = rows.max(dim=1).values
-    92:         min_vals = rows.min(dim=1).values
-    93:         scale = (max_vals - min_vals).clamp(min=1e-5) / (q_max - q_min)
-    94:         zeros = (min_vals / scale).round() - q_min
-    95:         quant = torch.round(rows / scale.unsqueeze(1) - zeros.unsqueeze(1)).clamp(q_min, q_max)
-    96:         dequant = (quant + zeros.unsqueeze(1)) * scale.unsqueeze(1)
-    97:         dequant = dequant.reshape(*original_shape[:-1], padded)[..., :trailing]
-    98:         if axis == 1:
-    99:             dequant = dequant.transpose(-2, -1).contiguous()
-   100:         work[:, :, :quant_end, :] = dequant
-   101:         avg_bits = (quant_end * bits + residual * FP_BITS) / max(seq_len, 1)
-   102:         return work.to(tensor.dtype), float(avg_bits)
-   103: 
-   104:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   105:         return self._signed_asymmetric(key_states, self._PRESET[layer_id]["key"], axis=1, group_size=32, residual_length=32)
-   106: 
-   107:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   108:         return self._signed_asymmetric(value_states, self._PRESET[layer_id]["value"], axis=0, group_size=32, residual_length=32)
-   109: 
-   110:     def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-   111:         residual = self._residual_keep_length(seq_len, 32)
-   112:         quant_tokens = max(0, seq_len - residual)
-   113:         bits = self._PRESET[layer_id][kv_kind]
-   114:         return float((quant_tokens * bits + residual * FP_BITS) / max(seq_len, 1))
+    75:     def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+    76:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+    77:         per_row = math.ceil(trailing / group_size)
+    78:         rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+    79:         ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+    80:         return ids, math.prod(lead_shape) * per_row
+    81: 
+    82:     def _layout(self, ids: torch.Tensor, count: int, bits: int) -> dict:
+    83:         return {"group_ids": ids, "group_bits": torch.full((count,), int(bits), dtype=torch.long, device=ids.device)}
+    84: 
+    85:     def _signed_asymmetric(self, tensor: torch.Tensor, bits: int, axis: int, group_size: int, residual_length: int) -> tuple[torch.Tensor, dict | None]:
+    86:         work = tensor.float().clone()
+    87:         _, _, seq_len, _ = work.shape
+    88:         residual = self._residual_keep_length(seq_len, residual_length)
+    89:         quant_end = seq_len - residual
+    90:         if quant_end <= 0 or bits >= FP_BITS - 0.5:
+    91:             return work.to(tensor.dtype), None
+    92:         quant_slice = work[:, :, :quant_end, :]
+    93:         shaped = quant_slice.transpose(-2, -1).contiguous() if axis == 1 else quant_slice
+    94:         group_size = shaped.shape[-1] if int(group_size) == -1 else int(group_size)
+    95:         original_shape = shaped.shape
+    96:         trailing = shaped.shape[-1]
+    97:         padded = math.ceil(trailing / group_size) * group_size
+    98:         shaped = torch.nn.functional.pad(shaped, (0, padded - trailing)) if padded != trailing else shaped
+    99:         rows = shaped.reshape(-1, group_size)
+   100:         q_max, q_min = 2 ** (bits - 1) - 1, -(2 ** (bits - 1))
+   101:         max_vals = rows.max(dim=1).values
+   102:         min_vals = rows.min(dim=1).values
+   103:         scale = (max_vals - min_vals).clamp(min=1e-5) / (q_max - q_min)
+   104:         zeros = (min_vals / scale).round() - q_min
+   105:         quant = torch.round(rows / scale.unsqueeze(1) - zeros.unsqueeze(1)).clamp(q_min, q_max)
+   106:         dequant = (quant + zeros.unsqueeze(1)) * scale.unsqueeze(1)
+   107:         dequant = dequant.reshape(*original_shape[:-1], padded)[..., :trailing]
+   108:         if axis == 1:
+   109:             dequant = dequant.transpose(-2, -1).contiguous()
+   110:         work[:, :, :quant_end, :] = dequant
+   111:         ids = torch.full(work.shape, -1, dtype=torch.long, device=work.device)
+   112:         region_ids, count = self._group_layout(original_shape[:-1], trailing, group_size, work.device)
+   113:         ids[:, :, :quant_end, :] = region_ids.transpose(-2, -1) if axis == 1 else region_ids
+   114:         return work.to(tensor.dtype), self._layout(ids, count, bits)
    115: 
-   116: 
-   117: def resolve_task_dir() -> Path:
+   116:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   117:         return self._signed_asymmetric(key_states, self._PRESET[layer_id]["key"], axis=1, group_size=32, residual_length=32)
+   118: 
+   119:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   120:         return self._signed_asymmetric(value_states, self._PRESET[layer_id]["value"], axis=0, group_size=32, residual_length=32)
+   121: 
+   122: 
+   123: def resolve_task_dir() -> Path:
 ```
 
 ### `squat_subspace_4bit` baseline — editable region  [READ-ONLY — reference implementation]
@@ -913,7 +944,7 @@ Lines 41–114:
 In `transformers-kv-lab/custom_quant_eval.py`:
 
 ```python
-Lines 41–170:
+Lines 41–181:
     38:         return [example["prompt"] for example in self.examples]
     39: 
     40: 
@@ -959,97 +990,108 @@ Lines 41–170:
     80:         residual_length = max(0, min(seq_len, int(self.residual_length)))
     81:         return seq_len % residual_length if residual_length else 0
     82: 
-    83:     def _minmax_last_dim(self, data: torch.Tensor, group_size: int, bits: int) -> torch.Tensor:
-    84:         if data.numel() == 0 or bits >= FP_BITS - 0.5:
-    85:             return data
-    86:         max_int = max(1, 2**int(bits) - 1)
-    87:         trailing = data.shape[-1]
-    88:         group_size = trailing if int(group_size) <= 0 else int(group_size)
-    89:         padded = math.ceil(trailing / group_size) * group_size
-    90:         work = torch.nn.functional.pad(data, (0, padded - trailing)) if padded != trailing else data
-    91:         grouped = work.reshape(*work.shape[:-1], padded // group_size, group_size)
-    92:         gmin = grouped.amin(dim=-1, keepdim=True)
-    93:         gmax = grouped.amax(dim=-1, keepdim=True)
-    94:         scale = (gmax - gmin).clamp(min=1e-5) / max_int
-    95:         q = torch.round((grouped - gmin) / scale).clamp(0, max_int)
-    96:         return q.mul(scale).add(gmin).reshape(*work.shape[:-1], padded)[..., :trailing]
-    97: 
-    98:     def _generate_At_inv(self, query_subspace: torch.Tensor, tol: float = 1e-7):
-    99:         batch, heads, _, head_dim = query_subspace.shape
-   100:         q_group = head_dim if int(self.quant_group_size) <= 0 else int(self.quant_group_size)
-   101:         groups = math.ceil(head_dim / q_group)
-   102:         matrices = [None] * groups
-   103:         eye = torch.eye(head_dim, device=query_subspace.device, dtype=torch.float32)
-   104:         A_t = eye.expand(batch, heads, head_dim, head_dim) + float(self.squat_lambda) * query_subspace.float().transpose(
-   105:             -1, -2
-   106:         ).matmul(query_subspace.float())
-   107:         matrices[groups - 1] = A_t
-   108:         for group_idx in range(groups - 1, 0, -1):
-   109:             current_dim = group_idx * q_group
-   110:             width = min(q_group, A_t.shape[-1] - current_dim)
-   111:             M_t1 = A_t[:, :, :current_dim, :current_dim]
-   112:             N_t1 = A_t[:, :, current_dim : current_dim + width, :current_dim]
-   113:             O_t1 = A_t[:, :, current_dim : current_dim + width, current_dim : current_dim + width]
-   114:             local_eye = torch.eye(width, device=query_subspace.device, dtype=torch.float32)
-   115:             O_inv = torch.inverse(O_t1 + tol * local_eye.expand(batch, heads, width, width))
-   116:             A_t = M_t1 - N_t1.transpose(-1, -2).matmul(O_inv.matmul(N_t1))
-   117:             matrices[group_idx - 1] = A_t[:, :, :, -q_group:]
-   118:         return matrices
-   119: 
-   120:     def _squat_quantize_keys(self, key_states: torch.Tensor, query_subspace: torch.Tensor) -> torch.Tensor:
-   121:         batch, heads, _, head_dim = key_states.shape
-   122:         query_subspace = query_subspace.to(device=key_states.device)
-   123:         if query_subspace.shape[0] == 1 and batch > 1:
-   124:             query_subspace = query_subspace.expand(batch, -1, -1, -1)
-   125:         if query_subspace.shape[1] != heads or query_subspace.shape[-1] != head_dim:
-   126:             raise ValueError("SQuat query subspace shape does not match the key tensor")
-   127:         matrices = self._generate_At_inv(query_subspace)
-   128:         P_inv = torch.inverse(matrices[-1])
-   129:         work = key_states.float().clone()
-   130:         q_group = head_dim if int(self.quant_group_size) <= 0 else int(self.quant_group_size)
-   131:         groups = math.ceil(head_dim / q_group)
-   132:         for group_idx in range(groups):
-   133:             start = group_idx * q_group
-   134:             end = min(head_dim, start + q_group)
-   135:             chunk = work[:, :, :, start:end]
-   136:             dequant = self._minmax_last_dim(chunk.transpose(2, 3).contiguous(), self.group_size, self.bits).transpose(2, 3)
-   137:             if group_idx < groups - 1:
-   138:                 d_vec = (dequant - chunk).float()
-   139:                 next_start = end
-   140:                 H_t = matrices[group_idx]
-   141:                 B_t = P_inv[:, :, next_start:, :next_start]
-   142:                 update = d_vec.matmul(H_t.transpose(-2, -1)).matmul(B_t.transpose(-2, -1))
-   143:                 work[:, :, :, next_start:] = work[:, :, :, next_start:] + update
-   144:             work[:, :, :, start:end] = dequant
-   145:         return work
-   146: 
-   147:     def _quantize_with_residual(self, tensor: torch.Tensor, quant_fn) -> tuple[torch.Tensor, float]:
-   148:         work = tensor.float().clone()
-   149:         _, _, seq_len, _ = work.shape
-   150:         residual = self._residual_keep_length(seq_len)
-   151:         quant_end = seq_len - residual
-   152:         if quant_end <= 0:
-   153:             return work.to(tensor.dtype), FP_BITS
-   154:         work[:, :, :quant_end, :] = quant_fn(work[:, :, :quant_end, :])
-   155:         avg_bits = (quant_end * self.bits + residual * FP_BITS) / max(seq_len, 1)
-   156:         return work.to(tensor.dtype), float(avg_bits)
-   157: 
-   158:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   159:         query_subspace = self.query_subspaces.get(layer_id)
-   160:         if query_subspace is None:
-   161:             raise RuntimeError("SQuat key quantization requires the prefill query observer")
-   162:         return self._quantize_with_residual(key_states, lambda data: self._squat_quantize_keys(data, query_subspace))
-   163: 
-   164:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-   165:         return self._quantize_with_residual(value_states, lambda data: self._minmax_last_dim(data, self.group_size, self.bits))
-   166: 
-   167:     def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-   168:         residual = self._residual_keep_length(seq_len)
-   169:         quant_tokens = max(0, seq_len - residual)
-   170:         return float((quant_tokens * self.bits + residual * FP_BITS) / max(seq_len, 1))
-   171: 
-   172: 
-   173: def resolve_task_dir() -> Path:
+    83:     def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+    84:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+    85:         per_row = math.ceil(trailing / group_size)
+    86:         rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+    87:         ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+    88:         return ids, math.prod(lead_shape) * per_row
+    89: 
+    90:     def _layout(self, ids: torch.Tensor, count: int, bits: int) -> dict:
+    91:         return {"group_ids": ids, "group_bits": torch.full((count,), int(bits), dtype=torch.long, device=ids.device)}
+    92: 
+    93:     def _minmax_last_dim(self, data: torch.Tensor, group_size: int, bits: int) -> torch.Tensor:
+    94:         if data.numel() == 0 or bits >= FP_BITS - 0.5:
+    95:             return data
+    96:         max_int = max(1, 2**int(bits) - 1)
+    97:         trailing = data.shape[-1]
+    98:         group_size = trailing if int(group_size) <= 0 else int(group_size)
+    99:         padded = math.ceil(trailing / group_size) * group_size
+   100:         work = torch.nn.functional.pad(data, (0, padded - trailing)) if padded != trailing else data
+   101:         grouped = work.reshape(*work.shape[:-1], padded // group_size, group_size)
+   102:         gmin = grouped.amin(dim=-1, keepdim=True)
+   103:         gmax = grouped.amax(dim=-1, keepdim=True)
+   104:         scale = (gmax - gmin).clamp(min=1e-5) / max_int
+   105:         q = torch.round((grouped - gmin) / scale).clamp(0, max_int)
+   106:         return q.mul(scale).add(gmin).reshape(*work.shape[:-1], padded)[..., :trailing]
+   107: 
+   108:     def _generate_At_inv(self, query_subspace: torch.Tensor, tol: float = 1e-7):
+   109:         batch, heads, _, head_dim = query_subspace.shape
+   110:         q_group = head_dim if int(self.quant_group_size) <= 0 else int(self.quant_group_size)
+   111:         groups = math.ceil(head_dim / q_group)
+   112:         matrices = [None] * groups
+   113:         eye = torch.eye(head_dim, device=query_subspace.device, dtype=torch.float32)
+   114:         A_t = eye.expand(batch, heads, head_dim, head_dim) + float(self.squat_lambda) * query_subspace.float().transpose(
+   115:             -1, -2
+   116:         ).matmul(query_subspace.float())
+   117:         matrices[groups - 1] = A_t
+   118:         for group_idx in range(groups - 1, 0, -1):
+   119:             current_dim = group_idx * q_group
+   120:             width = min(q_group, A_t.shape[-1] - current_dim)
+   121:             M_t1 = A_t[:, :, :current_dim, :current_dim]
+   122:             N_t1 = A_t[:, :, current_dim : current_dim + width, :current_dim]
+   123:             O_t1 = A_t[:, :, current_dim : current_dim + width, current_dim : current_dim + width]
+   124:             local_eye = torch.eye(width, device=query_subspace.device, dtype=torch.float32)
+   125:             O_inv = torch.inverse(O_t1 + tol * local_eye.expand(batch, heads, width, width))
+   126:             A_t = M_t1 - N_t1.transpose(-1, -2).matmul(O_inv.matmul(N_t1))
+   127:             matrices[group_idx - 1] = A_t[:, :, :, -q_group:]
+   128:         return matrices
+   129: 
+   130:     def _squat_quantize_keys(self, key_states: torch.Tensor, query_subspace: torch.Tensor) -> torch.Tensor:
+   131:         batch, heads, _, head_dim = key_states.shape
+   132:         query_subspace = query_subspace.to(device=key_states.device)
+   133:         if query_subspace.shape[0] == 1 and batch > 1:
+   134:             query_subspace = query_subspace.expand(batch, -1, -1, -1)
+   135:         if query_subspace.shape[1] != heads or query_subspace.shape[-1] != head_dim:
+   136:             raise ValueError("SQuat query subspace shape does not match the key tensor")
+   137:         matrices = self._generate_At_inv(query_subspace)
+   138:         P_inv = torch.inverse(matrices[-1])
+   139:         work = key_states.float().clone()
+   140:         q_group = head_dim if int(self.quant_group_size) <= 0 else int(self.quant_group_size)
+   141:         groups = math.ceil(head_dim / q_group)
+   142:         for group_idx in range(groups):
+   143:             start = group_idx * q_group
+   144:             end = min(head_dim, start + q_group)
+   145:             chunk = work[:, :, :, start:end]
+   146:             dequant = self._minmax_last_dim(chunk.transpose(2, 3).contiguous(), self.group_size, self.bits).transpose(2, 3)
+   147:             if group_idx < groups - 1:
+   148:                 d_vec = (dequant - chunk).float()
+   149:                 next_start = end
+   150:                 H_t = matrices[group_idx]
+   151:                 B_t = P_inv[:, :, next_start:, :next_start]
+   152:                 update = d_vec.matmul(H_t.transpose(-2, -1)).matmul(B_t.transpose(-2, -1))
+   153:                 work[:, :, :, next_start:] = work[:, :, :, next_start:] + update
+   154:             work[:, :, :, start:end] = dequant
+   155:         return work
+   156: 
+   157:     def _quantize_with_residual(self, tensor: torch.Tensor, quant_fn, axis: str) -> tuple[torch.Tensor, dict | None]:
+   158:         work = tensor.float().clone()
+   159:         batch, heads, seq_len, head_dim = work.shape
+   160:         residual = self._residual_keep_length(seq_len)
+   161:         quant_end = seq_len - residual
+   162:         if quant_end <= 0:
+   163:             return work.to(tensor.dtype), None
+   164:         work[:, :, :quant_end, :] = quant_fn(work[:, :, :quant_end, :])
+   165:         ids = torch.full(work.shape, -1, dtype=torch.long, device=work.device)
+   166:         if axis == "channel":
+   167:             region, count = self._group_layout((batch, heads, head_dim), quant_end, self.group_size, work.device)
+   168:             ids[:, :, :quant_end, :] = region.transpose(2, 3)
+   169:         else:
+   170:             region, count = self._group_layout((batch, heads, quant_end), head_dim, self.group_size, work.device)
+   171:             ids[:, :, :quant_end, :] = region
+   172:         return work.to(tensor.dtype), self._layout(ids, count, self.bits)
+   173: 
+   174:     def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   175:         query_subspace = self.query_subspaces.get(layer_id)
+   176:         if query_subspace is None:
+   177:             raise RuntimeError("SQuat key quantization requires the prefill query observer")
+   178:         return self._quantize_with_residual(key_states, lambda data: self._squat_quantize_keys(data, query_subspace), "channel")
+   179: 
+   180:     def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+   181:         return self._quantize_with_residual(value_states, lambda data: self._minmax_last_dim(data, self.group_size, self.bits), "token")
+   182: 
+   183: 
+   184: def resolve_task_dir() -> Path:
 ```
 
 

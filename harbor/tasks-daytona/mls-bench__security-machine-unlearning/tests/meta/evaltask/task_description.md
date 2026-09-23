@@ -39,10 +39,11 @@ Benchmarks:
 Reported metrics:
 - `retain_acc`: accuracy on non-forget test data.
 - `forget_acc`: accuracy on forget-class test data (lower is better).
-- `forget_mia_auc`: membership inference attack AUC on forget set (lower is better).
-- `unlearn_score`: `(retain_acc + (1 - forget_acc) + (1 - forget_mia_auc)) / 3`.
+- `forget_mia_auc`: confidence-based membership inference AUC on the forget class (forget-class training images as members, forget-class test images as non-members, both under the test transform). A model retrained without the forget class sits at chance, 0.5; an AUC below 0.5 leaks membership as much as one above it.
+- `forget_mia_gap`: `|forget_mia_auc - 0.5|` (lower is better).
+- `unlearn_score`: `(retain_acc + (1 - forget_acc) + (1 - 2 * forget_mia_gap)) / 3`, reported for reference.
 
-Primary metric: `unlearn_score` (higher is better).
+Scoring (per benchmark, then the geometric mean across benchmarks): the `retain_acc` term (higher is better), multiplied by penalties that apply when `forget_acc` exceeds 0.01 or `forget_mia_gap` exceeds 0.06. So the forget class must be forgotten as a retrained model would forget it, and within that, retained accuracy decides.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:

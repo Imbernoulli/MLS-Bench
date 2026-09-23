@@ -21,6 +21,7 @@ The `compute_loss` function in `nanoGPT/custom_pretrain.py`:
 - Signature must remain `compute_loss(logits, targets)`.
 - `logits` shape `(B, T, V)`; `targets` shape `(B, T)`.
 - The function is called inside the model's forward pass during training.
+- Evaluation never calls `compute_loss`: validation loss and the WikiText-2/LAMBADA perplexities are plain next-token cross-entropy on the model's raw `lm_head` logits, computed by fixed code (the downstream benchmarks also score the raw logits). Logit processing inside `compute_loss` therefore shapes training only.
 - Stable throughout training; do not lower reported loss by distorting probabilities (e.g., via temperature) without improving the actual modeling distribution.
 
 ## Reference baselines

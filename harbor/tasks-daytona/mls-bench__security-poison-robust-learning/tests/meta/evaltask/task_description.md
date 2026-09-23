@@ -41,7 +41,9 @@ Reported metrics:
 - `poison_fit`: fraction of poisoned samples where model predicts the poisoned (wrong) label.
 - `robust_score = (test_acc + (1 - poison_fit)) / 2`.
 
-Primary metric: `robust_score` (higher is better).
+Primary metric: `robust_score` (higher is better). The score uses its two
+components, `test_acc` (higher is better) and `poison_fit` (lower is better),
+as separate, equally weighted terms per setting.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:

@@ -161,22 +161,45 @@ def main():
     print(f"Initial labeled: {args.nStart}, Query size: {args.nQuery}, Rounds: {args.nRounds}", flush=True)
     print(f"Algorithm: {args.alg}", flush=True)
 
+    # ── Label oracle ────────────────────────────────────────────────────
+    # The strategy only ever sees labels it has bought.  `idxs_lb`, `Y_tr` and
+    # `Y_te` stay private to this runner.  The strategy gets a copy of the
+    # labeled mask and `Y_visible`, in which an unbought row holds a
+    # PLACEHOLDER that cycles 0,1,...,nClasses-1 down the pool in index order:
+    # a fixed function of the row index that carries no information about the
+    # truth but keeps every class present in any slice of the vector, which
+    # Strategy.predict_prob / get_grad_embedding need (they size their output
+    # by len(np.unique(Y))).  Strategy.train reads only labeled rows, so the
+    # classifier trained on the bought set is unaffected.
+    Y_visible = torch.from_numpy(np.arange(n_pool) % nClasses).long()
+    Y_visible[torch.from_numpy(idxs_lb)] = Y_tr[torch.from_numpy(idxs_lb)]
+    # Strategy.predict only uses len(Y); the test labels are never handed over.
+    Y_te_hidden = torch.zeros(len(Y_te)).long()
+
+    def test_accuracy():
+        P = np.asarray(strategy.predict(X_te_np, Y_te_hidden))
+        if P.shape != (len(Y_te),) or P.dtype.kind not in "iu":
+            raise RuntimeError(
+                f"predict() must return {len(Y_te)} integer class ids; "
+                f"got shape {P.shape}, dtype {P.dtype}")
+        return float((Y_te.numpy() == P.astype(np.int64)).sum()) / len(Y_te)
+
     # ── Select strategy ─────────────────────────────────────────────────
     X_tr_np = X_tr.numpy() if isinstance(X_tr, torch.Tensor) else X_tr
     if args.alg == "random":
-        strategy = RandomSampling(X_tr_np, Y_tr, idxs_lb, net, handler, train_args)
+        strategy = RandomSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
     elif args.alg == "least_confidence":
-        strategy = LeastConfidence(X_tr_np, Y_tr, idxs_lb, net, handler, train_args)
+        strategy = LeastConfidence(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
     elif args.alg == "entropy":
-        strategy = EntropySampling(X_tr_np, Y_tr, idxs_lb, net, handler, train_args)
+        strategy = EntropySampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
     elif args.alg == "badge":
-        strategy = BadgeSampling(X_tr_np, Y_tr, idxs_lb, net, handler, train_args)
+        strategy = BadgeSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
     elif args.alg == "bait":
-        strategy = BaitSampling(X_tr_np, Y_tr, idxs_lb, net, handler, train_args)
+        strategy = BaitSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
     elif args.alg == "bald":
-        strategy = BALDDropout(X_tr_np, Y_tr, idxs_lb, net, handler, train_args, n_drop=10)
+        strategy = BALDDropout(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args, n_drop=10)
     elif args.alg == "custom":
-        strategy = CustomSampling(X_tr_np, Y_tr, idxs_lb, net, handler, train_args)
+        strategy = CustomSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
     else:
         raise ValueError(f"Unknown algorithm: {args.alg}")
 
@@ -186,8 +209,7 @@ def main():
 
     # Round 0: train on initial labeled set
     strategy.train()
-    P = strategy.predict(X_te_np, Y_te)
-    acc0 = 1.0 * (Y_te == P).sum().item() / len(Y_te)
+    acc0 = test_accuracy()
     accs.append(acc0)
     n_labeled = int(sum(idxs_lb))
     print(f"TRAIN_METRICS round=0 n_labeled={n_labeled} accuracy={acc0:.6f}", flush=True)
@@ -195,22 +217,33 @@ def main():
     for rd in range(1, args.nRounds + 1):
         gc.collect()
 
-        # Query
-        q_idxs = strategy.query(args.nQuery)
+        # Query: exactly nQuery distinct, currently-unlabeled pool indices.
+        q_idxs = np.asarray(strategy.query(args.nQuery))
+        if q_idxs.dtype.kind not in "iu":
+            raise RuntimeError(
+                f"query() must return integer pool indices; got dtype {q_idxs.dtype}")
+        q_idxs = q_idxs.astype(np.int64).reshape(-1)
+        if (len(q_idxs) != args.nQuery or len(np.unique(q_idxs)) != args.nQuery
+                or (q_idxs < 0).any() or (q_idxs >= n_pool).any()
+                or idxs_lb[q_idxs].any()):
+            raise RuntimeError(
+                f"query() must return {args.nQuery} distinct, currently unlabeled "
+                f"pool indices in [0, {n_pool}); got {len(q_idxs)} indices, "
+                f"{len(np.unique(q_idxs))} distinct")
         idxs_lb[q_idxs] = True
+        Y_visible[torch.from_numpy(q_idxs)] = Y_tr[torch.from_numpy(q_idxs)]
 
         # Update and retrain
-        strategy.update(idxs_lb)
+        strategy.update(idxs_lb.copy())
         strategy.train(verbose=False)
 
         # Evaluate
-        P = strategy.predict(X_te_np, Y_te)
-        acc = 1.0 * (Y_te == P).sum().item() / len(Y_te)
+        acc = test_accuracy()
         accs.append(acc)
         n_labeled = int(sum(idxs_lb))
         print(f"TRAIN_METRICS round={rd} n_labeled={n_labeled} accuracy={acc:.6f}", flush=True)
 
-        if sum(~strategy.idxs_lb) < args.nQuery:
+        if sum(~idxs_lb) < args.nQuery:
             print("Unlabeled pool exhausted, stopping early.", flush=True)
             break
 

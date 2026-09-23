@@ -18,9 +18,13 @@ Edit only `penalized-bilevel-gradient-descent/mlsbench/custom_strategy.py` insid
 2. `TOY_HPARAMS` — scalar knobs for toy convergence.
 3. `HYPERCLEAN_HPARAMS` — scalar knobs for hyper-cleaning; may contain separate `linear` and `mlp` sub-dicts.
 
-For toy mode, `grad_fns` provides `f`, `df`, `g`, `dg_dy`, `dg_dl`, `proj`, and `init_state`. `df` is the outer gradient, `dg_dy` and `dg_dl` are inner gradients with respect to the lower variable `y` and upper variable, and `proj` projects the upper variable onto the feasible set.
+For toy mode, `grad_fns` provides `f`, `df`, `g`, `dg_dy`, `dg_dl`, `gpbgd_penalty_grad`, `proj`, and `init_state`. `df` is the outer gradient, `dg_dy` and `dg_dl` are inner gradients with respect to the lower variable `y` and upper variable, `gpbgd_penalty_grad` is the gradient of the G-PBGD penalty `0.5 * (dg/dy)^2`, and `proj` projects the upper variable onto the feasible set.
+
+Toy metrics are computed by the driver from the `x` and `y` that `algorithm` returns; the other state fields are your own bookkeeping and are not read. Each `algorithm` call is one step, and a call that queries a `grad_fns` oracle (`f`, `df`, `g`, `dg_dy`, `dg_dl`, `gpbgd_penalty_grad`) more than once is charged one step per query of its most-queried oracle, so take all problem information from `grad_fns`. After each call the driver checks the returned point: a run converges once the projected-gradient norm of the penalized objective is at most `1e-5`, using `TOY_HPARAMS["penalty"]` (`"v_pbgd"`, the value-gap penalty and the default, or `"g_pbgd"`, the gradient-norm penalty), the current penalty value from `gams`, and step size `min(alpha0 / gamma, 0.01)`; certifying convergence counts as one more step. A run that does not converge within 20000 steps per penalty value is charged the full budget. The returned `x` must lie in `[0, 3]`, or the run fails.
 
 For hyper-cleaning mode, `grad_fns` provides `outer_grad`, `inner_grad`, `inner_val`, and `init_state`, exposing first-order information for the validation loss, weighted training loss, and initial state.
+
+In hyper-cleaning mode the state holds the training inputs with their noisy labels (`state["train"]`) and the validation split (`state["val"]`); the test split and the ground-truth clean/noisy mask stay with the driver. Every `eval_interval`-th call, the driver scores `state["x"]` (one weight per training example) and the lower-level parameters, taken from `state["model"]` or, if set, from each entry of `state["params_history"]` and run through the fixed architecture.
 
 The fixed scaffold also exposes reference helpers `run_v_pbgd(...)`, `run_g_pbgd(...)`, and `run_rhg_family(...)`. You may call them, wrap them, or implement your own update logic on top of the provided state and gradients.
 

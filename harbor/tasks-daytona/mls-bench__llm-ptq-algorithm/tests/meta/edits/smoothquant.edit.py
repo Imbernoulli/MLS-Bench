@@ -125,6 +125,9 @@ class LayerQuantizer:
 
         # Undo smoothing: W_final = W_dq * s
         W_final = W_dq * s.unsqueeze(0)
+        # W_final / s is on the per-group grid; declare the per-channel scale
+        # (folded into the layer input at inference) to the harness.
+        self.input_scale = 1.0 / s
         return W_final.to(self.layer.weight.dtype)
 
     def free(self):

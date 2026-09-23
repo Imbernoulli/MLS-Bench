@@ -37,13 +37,23 @@ class AdaptiveKVQuantizer:
         residual_length = max(0, min(seq_len, int(residual_length)))
         return seq_len % residual_length if residual_length else 0
 
-    def _signed_asymmetric(self, tensor: torch.Tensor, bits: int, axis: int, group_size: int, residual_length: int) -> tuple[torch.Tensor, float]:
+    def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+        group_size = trailing if int(group_size) <= 0 else int(group_size)
+        per_row = math.ceil(trailing / group_size)
+        rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+        ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+        return ids, math.prod(lead_shape) * per_row
+
+    def _layout(self, ids: torch.Tensor, count: int, bits: int) -> dict:
+        return {"group_ids": ids, "group_bits": torch.full((count,), int(bits), dtype=torch.long, device=ids.device)}
+
+    def _signed_asymmetric(self, tensor: torch.Tensor, bits: int, axis: int, group_size: int, residual_length: int) -> tuple[torch.Tensor, dict | None]:
         work = tensor.float().clone()
         _, _, seq_len, _ = work.shape
         residual = self._residual_keep_length(seq_len, residual_length)
         quant_end = seq_len - residual
         if quant_end <= 0 or bits >= FP_BITS - 0.5:
-            return work.to(tensor.dtype), FP_BITS
+            return work.to(tensor.dtype), None
         quant_slice = work[:, :, :quant_end, :]
         shaped = quant_slice.transpose(-2, -1).contiguous() if axis == 1 else quant_slice
         group_size = shaped.shape[-1] if int(group_size) == -1 else int(group_size)
@@ -63,20 +73,16 @@ class AdaptiveKVQuantizer:
         if axis == 1:
             dequant = dequant.transpose(-2, -1).contiguous()
         work[:, :, :quant_end, :] = dequant
-        avg_bits = (quant_end * bits + residual * FP_BITS) / max(seq_len, 1)
-        return work.to(tensor.dtype), float(avg_bits)
+        ids = torch.full(work.shape, -1, dtype=torch.long, device=work.device)
+        region_ids, count = self._group_layout(original_shape[:-1], trailing, group_size, work.device)
+        ids[:, :, :quant_end, :] = region_ids.transpose(-2, -1) if axis == 1 else region_ids
+        return work.to(tensor.dtype), self._layout(ids, count, bits)
 
-    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
+    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
         return self._signed_asymmetric(key_states, self._PRESET[layer_id]["key"], axis=1, group_size=32, residual_length=32)
 
-    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
+    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
         return self._signed_asymmetric(value_states, self._PRESET[layer_id]["value"], axis=0, group_size=32, residual_length=32)
-
-    def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-        residual = self._residual_keep_length(seq_len, 32)
-        quant_tokens = max(0, seq_len - residual)
-        bits = self._PRESET[layer_id][kv_kind]
-        return float((quant_tokens * bits + residual * FP_BITS) / max(seq_len, 1))
 """
 
 OPS = [

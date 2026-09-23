@@ -47,6 +47,11 @@ Individual interface:
 - `ind.fitness.dominates(other.fitness)` -> bool.
 - `ind.fitness.valid` -> bool (`True` if evaluated).
 
+The scorer does not trust `ind.fitness.values`: it re-evaluates the decision
+vectors of the final non-dominated front with the true objective functions. A
+run whose reported objective values differ from the re-evaluated ones, or whose
+decision variables lie outside the bounds, gets no metrics for that problem.
+
 Available DEAP utilities:
 - `tools.sortNondominated(pop, k)` -> list of fronts.
 - `tools.selTournamentDCD(pop, k)` -> tournament selection (needs crowding distance).

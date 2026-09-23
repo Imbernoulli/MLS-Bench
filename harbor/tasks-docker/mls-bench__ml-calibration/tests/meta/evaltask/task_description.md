@@ -40,3 +40,5 @@ Metrics (all lower is better):
 - **ECE (Expected Calibration Error)** — weighted mean of `|accuracy − confidence|` across probability bins.
 - **Brier score** — mean squared error between predicted probability vector and one-hot label.
 - **NLL (Negative Log-Likelihood)** — cross-entropy between predicted probabilities and true labels.
+
+Calibration must not destroy what the classifier learned: each setting carries a Brier-score ceiling (the uncalibrated classifier's test Brier plus about 0.02), and a run above it is penalized multiplicatively. A near-constant output (e.g. the class prior) has ECE ≈ 0 but a Brier far above the ceiling.

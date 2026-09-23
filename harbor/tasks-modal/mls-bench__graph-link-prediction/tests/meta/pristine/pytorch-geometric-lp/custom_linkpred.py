@@ -95,18 +95,18 @@ def compute_mrr(pos_scores: torch.Tensor, neg_scores: torch.Tensor) -> float:
     # pos_scores: [num_pos], neg_scores: [num_pos, num_neg] or [num_neg]
     if neg_scores.dim() == 1:
         neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
-    # rank = 1 + number of negatives scored higher
+    # rank = 1 + number of negatives scored higher or equal (ties pessimistic)
     ranks = (neg_scores >= pos_scores.unsqueeze(1)).sum(dim=1) + 1
     return (1.0 / ranks.float()).mean().item()
 
 
 def compute_hits_at_k(pos_scores: torch.Tensor, neg_scores: torch.Tensor,
                        k: int = 50) -> float:
-    """Compute Hits@K."""
+    """Hits@K: a positive must score strictly above the K-th best negative."""
     if neg_scores.dim() == 1:
         neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
     kth_neg, _ = neg_scores.kthvalue(max(neg_scores.size(1) - k + 1, 1), dim=1)
-    return (pos_scores >= kth_neg).float().mean().item()
+    return (pos_scores > kth_neg).float().mean().item()
 
 
 # =====================================================================
@@ -218,6 +218,54 @@ class LinkPredictor(nn.Module):
 # FIXED — Training loop, evaluation, CLI
 # =====================================================================
 
+# Test-time scoring and metrics used by the training loops below. They are
+# defined after the editable section, so a same-named definition there
+# cannot replace them.
+# - Positive and negative test candidates are scored in ONE model call, in
+#   a random order, so a score cannot depend on which set an edge is in
+#   (e.g. through per-call statistics or call order).
+# - The scores must be finite and have one entry per candidate edge, or the
+#   run fails.
+# - Ties are scored pessimistically (OGB convention): Hits@K counts a
+#   positive only if it scores strictly above the K-th best negative, and
+#   MRR ranks a positive below every negative with an equal score, so a
+#   constant or tied score earns no hits. AUC counts a tie as half a win.
+
+def _eval_score_jointly(score_fn, pos_eli: torch.Tensor,
+                        neg_eli: torch.Tensor):
+    n_pos, n_all = pos_eli.size(1), pos_eli.size(1) + neg_eli.size(1)
+    # Private generator: the global RNG stream is left untouched.
+    gen = torch.Generator().manual_seed(int.from_bytes(os.urandom(7), "little"))
+    perm = torch.randperm(n_all, generator=gen).to(pos_eli.device)
+    eli = torch.cat([pos_eli, neg_eli], dim=1)[:, perm].contiguous()
+    scores = score_fn(eli)
+    if not isinstance(scores, torch.Tensor) or not scores.is_floating_point():
+        raise TypeError("Test scores must be a floating-point tensor")
+    if tuple(scores.shape) != (n_all,):
+        raise ValueError(f"Test scores have shape {tuple(scores.shape)}, "
+                         f"expected ({n_all},): one score per candidate edge")
+    if not bool(torch.isfinite(scores).all()):
+        raise ValueError("Test scores contain NaN or Inf")
+    unperm = torch.empty_like(scores)
+    unperm[perm] = scores
+    return unperm[:n_pos], unperm[n_pos:]
+
+
+def _eval_mrr(pos_scores: torch.Tensor, neg_scores: torch.Tensor) -> float:
+    if neg_scores.dim() == 1:
+        neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
+    ranks = (neg_scores >= pos_scores.unsqueeze(1)).sum(dim=1) + 1
+    return (1.0 / ranks.float()).mean().item()
+
+
+def _eval_hits_at_k(pos_scores: torch.Tensor, neg_scores: torch.Tensor,
+                    k: int) -> float:
+    if neg_scores.dim() == 1:
+        neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
+    kth_neg, _ = neg_scores.kthvalue(max(neg_scores.size(1) - k + 1, 1), dim=1)
+    return (pos_scores > kth_neg).float().mean().item()
+
+
 def train_planetoid(model, data_bundle, args, device):
     """Train and evaluate on Planetoid (Cora/CiteSeer)."""
     train_data = data_bundle["train"].to(device)
@@ -289,10 +337,9 @@ def train_planetoid(model, data_bundle, args, device):
         model.load_state_dict(best_state)
     model.eval()
     with torch.no_grad():
-        test_pos = model(test_data.x, train_data.edge_index,
-                         test_data.pos_edge_label_index)
-        test_neg = model(test_data.x, train_data.edge_index,
-                         test_data.neg_edge_label_index)
+        test_pos, test_neg = _eval_score_jointly(
+            lambda eli: model(test_data.x, train_data.edge_index, eli),
+            test_data.pos_edge_label_index, test_data.neg_edge_label_index)
 
     # AUC
     scores = torch.cat([test_pos, test_neg]).sigmoid().cpu().numpy()
@@ -302,10 +349,10 @@ def train_planetoid(model, data_bundle, args, device):
     auc = roc_auc_score(labels, scores) * 100
 
     # MRR
-    mrr = compute_mrr(test_pos.cpu(), test_neg.cpu()) * 100
+    mrr = _eval_mrr(test_pos.cpu(), test_neg.cpu()) * 100
 
     # Hits@20
-    hits20 = compute_hits_at_k(test_pos.cpu(), test_neg.cpu(), k=20) * 100
+    hits20 = _eval_hits_at_k(test_pos.cpu(), test_neg.cpu(), k=20) * 100
 
     print(f"TEST_METRICS AUC={auc:.2f} MRR={mrr:.2f} Hits@20={hits20:.2f}",
           flush=True)
@@ -396,7 +443,7 @@ def train_ogbl(model, data_bundle, args, device):
                         edge_index=train_data.edge_index, num_nodes=_N)
                     val_neg_scores = val_neg_scores.view(val_neg.size(0), val_neg.size(1))
 
-            val_hits = compute_hits_at_k(val_pos_scores.cpu(), val_neg_scores.cpu(), k=50) * 100
+            val_hits = _eval_hits_at_k(val_pos_scores.cpu(), val_neg_scores.cpu(), k=50) * 100
 
             print(f"TRAIN_METRICS epoch={epoch} loss={loss.item():.4f} "
                   f"val_hits50={val_hits:.2f}", flush=True)
@@ -434,28 +481,26 @@ def train_ogbl(model, data_bundle, args, device):
 
         _N = train_data.num_nodes
         pos_eli = test_pos.t().contiguous()  # [2, P]
-        pos_scores = model.decode(
-            pos_eli, z, edge_index=test_edge_index, num_nodes=_N)
         if test_neg.dim() == 3:
             tn = test_neg.reshape(-1, 2)
             neg_eli = tn.t().contiguous()
-            neg_scores = model.decode(
-                neg_eli, z, edge_index=test_edge_index, num_nodes=_N)
-            neg_scores = neg_scores.view(test_neg.size(0), test_neg.size(1))
+            neg_shape = (test_neg.size(0), test_neg.size(1))
         elif test_neg.dim() == 2 and test_neg.size(1) == 2:
             neg_eli = test_neg.t().contiguous()
-            neg_scores = model.decode(
-                neg_eli, z, edge_index=test_edge_index, num_nodes=_N)
+            neg_shape = (test_neg.size(0),)
         else:
             src_rep = test_pos[:, 0].unsqueeze(1).expand_as(test_neg).reshape(-1)
             dst_rep = test_neg.reshape(-1)
             neg_eli = torch.stack([src_rep, dst_rep], dim=0)
-            neg_scores = model.decode(
-                neg_eli, z, edge_index=test_edge_index, num_nodes=_N)
-            neg_scores = neg_scores.view(test_neg.size(0), test_neg.size(1))
+            neg_shape = (test_neg.size(0), test_neg.size(1))
+        pos_scores, neg_scores = _eval_score_jointly(
+            lambda eli: model.decode(
+                eli, z, edge_index=test_edge_index, num_nodes=_N),
+            pos_eli, neg_eli)
+        neg_scores = neg_scores.view(neg_shape)
 
-    hits50 = compute_hits_at_k(pos_scores.cpu(), neg_scores.cpu(), k=50) * 100
-    mrr = compute_mrr(pos_scores.cpu(), neg_scores.cpu()) * 100
+    hits50 = _eval_hits_at_k(pos_scores.cpu(), neg_scores.cpu(), k=50) * 100
+    mrr = _eval_mrr(pos_scores.cpu(), neg_scores.cpu()) * 100
 
     print(f"TEST_METRICS Hits@50={hits50:.2f} MRR={mrr:.2f}", flush=True)
 

@@ -52,6 +52,18 @@ combined, how the latent is renoised, or how guidance strength varies with
 time, but it should not change the prompt set, model weights, the number of
 allowed denoiser evaluations, or evaluation code.
 
+The budget is **NFE = 50** denoiser evaluations per image, and it is measured,
+not trusted. The evaluation script replaces the solver's `self.unet` with a
+counting wrapper, so every UNet forward the sampler makes, through
+`self.predict_noise()` or `self.unet(...)` directly, is counted for each image.
+One NFE is one UNet forward on the image's latent: the batched unconditional +
+conditional pair of classifier-free guidance counts as 1, and so does a
+single-branch call. A forward over more than two latent rows counts
+ceil(rows / 2). A run that spends more than 50 NFE on any image is rejected and
+records no FID; spending fewer is allowed. All denoiser evaluations must go
+through `self.unet` / `self.predict_noise()`, and a solver that keeps another
+handle on the UNet is rejected.
+
 ## Baselines
 
 | Baseline   | Description |
@@ -70,9 +82,10 @@ allowed denoiser evaluations, or evaluation code.
 
 Evaluation runs the text-to-image sampling pipeline on the model variants
 above. The task-visible metric and official score use **FID** computed against
-a reference image set (lower is better). The generation script may compute
-CLIP diagnostics internally, but CLIP is not part of the task score or
-agent-visible feedback.
+a reference image set (lower is better). The generation script also computes
+a CLIP score (ViT-B/32 image–prompt similarity, averaged over the generated
+images) for each model; it is shown in the feedback and recorded as
+`clip_<model>`, but it is not currently part of the task score.
 
 A good method should improve image quality without sacrificing the
 prompt-following behaviour provided by guidance.

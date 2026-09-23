@@ -32,6 +32,16 @@ class AdaptiveKVQuantizer:
             return residual_length
         return 0
 
+    def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+        group_size = trailing if int(group_size) <= 0 else int(group_size)
+        per_row = math.ceil(trailing / group_size)
+        rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+        ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+        return ids, math.prod(lead_shape) * per_row
+
+    def _layout(self, ids: torch.Tensor, count: int, bits: int) -> dict:
+        return {"group_ids": ids, "group_bits": torch.full((count,), int(bits), dtype=torch.long, device=ids.device)}
+
     def _minmax_last_dim(self, data: torch.Tensor, bits: int, group_size: int) -> torch.Tensor:
         if data.numel() == 0 or bits >= FP_BITS - 0.5:
             return data
@@ -47,13 +57,14 @@ class AdaptiveKVQuantizer:
         q = torch.round((grouped - gmin) / scale).clamp(0, max_int)
         return q.mul(scale).add(gmin).reshape(*work.shape[:-1], padded)[..., :trailing]
 
-    def _quantize(self, tensor: torch.Tensor, axis: str, residual_policy: str) -> tuple[torch.Tensor, float]:
+    def _quantize(self, tensor: torch.Tensor, axis: str, residual_policy: str) -> tuple[torch.Tensor, dict | None]:
         work = tensor.float().clone()
         batch, heads, seq_len, head_dim = work.shape
         residual = self._residual_keep_length(seq_len, self.key_residual_length, residual_policy)
         quant_end = seq_len - residual
         if quant_end <= 0:
-            return work.to(tensor.dtype), FP_BITS
+            return work.to(tensor.dtype), None
+        ids, count = torch.full(work.shape, -1, dtype=torch.long, device=work.device), 0
         quant_slice = work[:, :, :quant_end, :]
         if axis == "channel":
             usable = quant_slice.shape[-2] - (quant_slice.shape[-2] % self.group_size)
@@ -62,26 +73,21 @@ class AdaptiveKVQuantizer:
                 main = main.reshape(batch, heads, head_dim, usable // self.group_size, self.group_size)
                 main = self._minmax_last_dim(main, self.bits, self.group_size)
                 work[:, :, :usable, :] = main.reshape(batch, heads, head_dim, usable).transpose(2, 3)
-            fp_tokens = residual + (quant_slice.shape[-2] - usable)
-            avg_bits = (usable * self.bits + fp_tokens * FP_BITS) / max(seq_len, 1)
+                region, count = self._group_layout((batch, heads, head_dim), usable, self.group_size, work.device)
+                ids[:, :, :usable, :] = region.transpose(2, 3)
         else:
             flat = quant_slice.transpose(1, 2).reshape(batch, quant_slice.shape[-2], heads * head_dim)
             flat = self._minmax_last_dim(flat, self.bits, self.group_size)
             work[:, :, :quant_end, :] = flat.reshape(batch, quant_slice.shape[-2], heads, head_dim).transpose(1, 2)
-            avg_bits = (quant_end * self.bits + residual * FP_BITS) / max(seq_len, 1)
-        return work.to(tensor.dtype), float(avg_bits)
+            flat_ids, count = self._group_layout((batch, quant_end), heads * head_dim, self.group_size, work.device)
+            ids[:, :, :quant_end, :] = flat_ids.reshape(batch, quant_end, heads, head_dim).transpose(1, 2)
+        return work.to(tensor.dtype), self._layout(ids, count, self.bits)
 
-    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
+    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
         return self._quantize(key_states, "channel", "block_modulo")
 
-    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
+    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
         return self._quantize(value_states, "token", "tail")
-
-    def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-        policy = "block_modulo" if kv_kind == "key" else "tail"
-        residual = self._residual_keep_length(seq_len, self.key_residual_length, policy)
-        quant_tokens = max(0, seq_len - residual)
-        return float((quant_tokens * self.bits + residual * FP_BITS) / max(seq_len, 1))
 """
 
 OPS = [

@@ -49,6 +49,11 @@ Individual interface:
 - `ind.fitness.dominates(other.fitness)` -> bool.
 - `ind.fitness.valid` -> bool (`True` if evaluated).
 
+The scorer does not trust `ind.fitness.values`: it re-evaluates the decision
+vectors of the final non-dominated front with the true objective functions. A
+run whose reported objective values differ from the re-evaluated ones, or whose
+decision variables lie outside the bounds, gets no metrics for that problem.
+
 Available DEAP utilities:
 - `tools.sortNondominated(pop, k)` -> list of fronts.
 - `tools.selTournamentDCD(pop, k)` -> tournament selection (needs crowding distance).
@@ -407,115 +412,124 @@ stay unchanged.
    310:     """Run the custom MOEA on the held-out benchmark problem.
    311: 
    312:     Loads the pre-generated problem spec for ``env_key``, runs the strategy, and
-   313:     emits the final non-dominated population's objective values for the host-side
-   314:     scorer. The true Pareto front and the metrics are computed host-side; this
-   315:     process never sees them.
-   316:     """
-   317:     spec = _load_spec(env_key, seed)
-   318:     n_var = int(spec["n_var"])
-   319:     n_obj = int(spec["n_obj"])
-   320:     bounds = tuple(spec["bounds"])
-   321:     pop_size = int(spec["pop_size"])
-   322:     n_gen = int(spec["n_gen"])
-   323: 
-   324:     # Black-box objective evaluator (legitimate: evaluating candidates is the task)
-   325:     func = _build_objective(spec)
-   326: 
-   327:     # Set seeds
-   328:     random.seed(seed)
-   329:     np.random.seed(seed)
-   330: 
-   331:     # Determine individual class based on number of objectives
-   332:     ind_class = creator.Individual3 if n_obj == 3 else creator.Individual
-   333: 
-   334:     # Initialize algorithm
-   335:     moea = CustomMOEA(
-   336:         pop_size=pop_size,
-   337:         n_obj=n_obj,
-   338:         n_var=n_var,
-   339:         bounds=bounds,
-   340:     )
-   341: 
-   342:     # Create initial population
-   343:     population = [make_individual(n_var, bounds, ind_class) for _ in range(pop_size)]
-   344: 
-   345:     # Evaluate initial population
-   346:     for ind in population:
-   347:         ind.fitness.values = evaluate(ind, func)
-   348: 
-   349:     for gen in range(1, n_gen + 1):
-   350:         # Parent selection
-   351:         parents = moea.select(population, pop_size)
-   352: 
-   353:         # Variation (crossover + mutation)
-   354:         offspring = moea.vary(parents)
-   355: 
-   356:         # Evaluate offspring
-   357:         for ind in offspring:
-   358:             if not ind.fitness.valid:
-   359:                 ind.fitness.values = evaluate(ind, func)
-   360: 
-   361:         # Environmental selection (survival)
-   362:         population = moea.survive(population, offspring)
-   363: 
-   364:         # Optional per-generation callback
-   365:         moea.on_generation(gen, population)
-   366: 
-   367:         # Periodic progress feedback (objective-space extent only, no metrics)
-   368:         if gen % 20 == 0 or gen == n_gen:
-   369:             nd_front = get_nondominated(population)
-   370:             front_values = np.array([ind.fitness.values for ind in nd_front])
-   371:             print(
-   372:                 f"TRAIN_PROGRESS gen={gen} front_size={len(nd_front)} "
-   373:                 f"f_min={np.min(front_values, axis=0).round(4).tolist()} "
-   374:                 f"f_max={np.max(front_values, axis=0).round(4).tolist()}",
-   375:                 flush=True,
-   376:             )
-   377: 
-   378:     # Final non-dominated front
-   379:     nd_front = get_nondominated(population)
-   380:     front_values = np.array([ind.fitness.values for ind in nd_front], dtype=np.float64)
-   381: 
-   382:     # Emit the final population's objective values for the host-side scorer. We do
-   383:     # NOT have the true Pareto front, so we cannot (and do not) compute metrics.
-   384:     payload = base64.b64encode(
-   385:         np.ascontiguousarray(front_values, dtype=np.float64).tobytes()
-   386:     ).decode("ascii")
-   387:     print(
-   388:         f"MOEA_PRED env={env_key} seed={seed} shape={front_values.shape[0]},{front_values.shape[1]} "
-   389:         f"objs={payload}",
-   390:         flush=True,
-   391:     )
-   392: 
-   393:     # Save final front to disk (objective values only)
-   394:     os.makedirs(output_dir, exist_ok=True)
-   395:     np.savetxt(
-   396:         os.path.join(output_dir, f"{env_key}_front.csv"),
-   397:         front_values,
-   398:         delimiter=",",
-   399:         header=",".join(f"f{i+1}" for i in range(n_obj)),
+   313:     emits the final non-dominated population (objective values and decision
+   314:     vectors) for the host-side scorer, which re-evaluates the decision vectors.
+   315:     The true Pareto front and the metrics are computed host-side; this process
+   316:     never sees them.
+   317:     """
+   318:     spec = _load_spec(env_key, seed)
+   319:     n_var = int(spec["n_var"])
+   320:     n_obj = int(spec["n_obj"])
+   321:     bounds = tuple(spec["bounds"])
+   322:     pop_size = int(spec["pop_size"])
+   323:     n_gen = int(spec["n_gen"])
+   324: 
+   325:     # Black-box objective evaluator (legitimate: evaluating candidates is the task)
+   326:     func = _build_objective(spec)
+   327: 
+   328:     # Set seeds
+   329:     random.seed(seed)
+   330:     np.random.seed(seed)
+   331: 
+   332:     # Determine individual class based on number of objectives
+   333:     ind_class = creator.Individual3 if n_obj == 3 else creator.Individual
+   334: 
+   335:     # Initialize algorithm
+   336:     moea = CustomMOEA(
+   337:         pop_size=pop_size,
+   338:         n_obj=n_obj,
+   339:         n_var=n_var,
+   340:         bounds=bounds,
+   341:     )
+   342: 
+   343:     # Create initial population
+   344:     population = [make_individual(n_var, bounds, ind_class) for _ in range(pop_size)]
+   345: 
+   346:     # Evaluate initial population
+   347:     for ind in population:
+   348:         ind.fitness.values = evaluate(ind, func)
+   349: 
+   350:     for gen in range(1, n_gen + 1):
+   351:         # Parent selection
+   352:         parents = moea.select(population, pop_size)
+   353: 
+   354:         # Variation (crossover + mutation)
+   355:         offspring = moea.vary(parents)
+   356: 
+   357:         # Evaluate offspring
+   358:         for ind in offspring:
+   359:             if not ind.fitness.valid:
+   360:                 ind.fitness.values = evaluate(ind, func)
+   361: 
+   362:         # Environmental selection (survival)
+   363:         population = moea.survive(population, offspring)
+   364: 
+   365:         # Optional per-generation callback
+   366:         moea.on_generation(gen, population)
+   367: 
+   368:         # Periodic progress feedback (objective-space extent only, no metrics)
+   369:         if gen % 20 == 0 or gen == n_gen:
+   370:             nd_front = get_nondominated(population)
+   371:             front_values = np.array([ind.fitness.values for ind in nd_front])
+   372:             print(
+   373:                 f"TRAIN_PROGRESS gen={gen} front_size={len(nd_front)} "
+   374:                 f"f_min={np.min(front_values, axis=0).round(4).tolist()} "
+   375:                 f"f_max={np.max(front_values, axis=0).round(4).tolist()}",
+   376:                 flush=True,
+   377:             )
+   378: 
+   379:     # Final non-dominated front
+   380:     nd_front = get_nondominated(population)
+   381:     front_values = np.array([ind.fitness.values for ind in nd_front], dtype=np.float64)
+   382:     # Decision vectors of the same individuals. The host-side scorer re-evaluates
+   383:     # them with the true objective functions and checks the bounds, so the scored
+   384:     # objective values never come from fitness values assigned by the strategy.
+   385:     front_x = np.array([list(ind) for ind in nd_front], dtype=np.float64)
+   386: 
+   387:     # Emit the final population's objective values and decision vectors for the
+   388:     # host-side scorer. We do NOT have the true Pareto front, so we cannot (and
+   389:     # do not) compute metrics.
+   390:     payload = base64.b64encode(
+   391:         np.ascontiguousarray(front_values, dtype=np.float64).tobytes()
+   392:     ).decode("ascii")
+   393:     x_payload = base64.b64encode(
+   394:         np.ascontiguousarray(front_x, dtype=np.float64).tobytes()
+   395:     ).decode("ascii")
+   396:     print(
+   397:         f"MOEA_PRED env={env_key} seed={seed} shape={front_values.shape[0]},{front_values.shape[1]} "
+   398:         f"objs={payload} nvar={n_var} xs={x_payload}",
+   399:         flush=True,
    400:     )
    401: 
-   402:     return front_values
-   403: 
-   404: 
-   405: def main():
-   406:     parser = argparse.ArgumentParser(description="Multi-Objective Optimization Benchmark")
-   407:     parser.add_argument("--env", type=str, default=os.environ.get("ENV", ""))
-   408:     parser.add_argument("--seed", type=int, default=int(os.environ.get("SEED", 42)))
-   409:     parser.add_argument("--output-dir", type=str, default=os.environ.get("OUTPUT_DIR", "./output"))
-   410:     args = parser.parse_args()
-   411: 
-   412:     if not args.env:
-   413:         raise SystemExit("ENV not set")
-   414: 
-   415:     print(f"Running MOEA benchmark: {args.env} (seed={args.seed})", flush=True)
-   416:     run_moea(args.env, args.seed, args.output_dir)
-   417:     print(f"Done {args.env}.", flush=True)
-   418: 
-   419: 
-   420: if __name__ == "__main__":
-   421:     main()
+   402:     # Save final front to disk (objective values only)
+   403:     os.makedirs(output_dir, exist_ok=True)
+   404:     np.savetxt(
+   405:         os.path.join(output_dir, f"{env_key}_front.csv"),
+   406:         front_values,
+   407:         delimiter=",",
+   408:         header=",".join(f"f{i+1}" for i in range(n_obj)),
+   409:     )
+   410: 
+   411:     return front_values
+   412: 
+   413: 
+   414: def main():
+   415:     parser = argparse.ArgumentParser(description="Multi-Objective Optimization Benchmark")
+   416:     parser.add_argument("--env", type=str, default=os.environ.get("ENV", ""))
+   417:     parser.add_argument("--seed", type=int, default=int(os.environ.get("SEED", 42)))
+   418:     parser.add_argument("--output-dir", type=str, default=os.environ.get("OUTPUT_DIR", "./output"))
+   419:     args = parser.parse_args()
+   420: 
+   421:     if not args.env:
+   422:         raise SystemExit("ENV not set")
+   423: 
+   424:     print(f"Running MOEA benchmark: {args.env} (seed={args.seed})", flush=True)
+   425:     run_moea(args.env, args.seed, args.output_dir)
+   426:     print(f"Done {args.env}.", flush=True)
+   427: 
+   428: 
+   429: if __name__ == "__main__":
+   430:     main()
 ```
 
 ## Reference Baselines

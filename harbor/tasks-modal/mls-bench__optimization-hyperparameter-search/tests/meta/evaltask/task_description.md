@@ -68,9 +68,11 @@ Evaluated on three ML model tuning benchmarks (**higher `best_val_score` is bett
 
 Metrics:
 - **best_val_score**: best validation score found within the budget (primary metric).
-- **convergence_auc**: area under the normalized convergence curve (higher = found good configs earlier).
+- **convergence_auc**: anytime performance — the incumbent (best score so far) normalized with fixed per-benchmark references (the score of a constant predictor → 0, a perfect score → 1), averaged over the cost axis from 0 to the budget. It is 0 until the first evaluation completes, and cost spent past the budget is not counted (higher = good configs found earlier).
 
 Each benchmark runs with multiple seeds; mean metrics across seeds are reported.
+
+On SVM every reference baseline reaches the same `best_val_score`, so only `convergence_auc` is scored there.
 
 ## Baselines (paper-cited reference implementations)
 - **random_search** — Bergstra and Bengio (JMLR 2012).

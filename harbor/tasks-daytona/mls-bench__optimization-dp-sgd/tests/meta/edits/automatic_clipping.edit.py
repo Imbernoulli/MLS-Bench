@@ -40,7 +40,7 @@ class DPMechanism:
         # existing learning-rate schedule stable.
         self.gamma = 1.0
 
-    def clip_and_noise(self, per_sample_grads, step, epoch):
+    def clip(self, per_sample_grads, step, epoch):
         batch_size = per_sample_grads[0].shape[0]
 
         # Compute per-sample gradient norms
@@ -51,24 +51,10 @@ class DPMechanism:
         # This bounds sensitivity to 1 (since ||g_i / (||g_i|| + gamma)|| <= 1)
         scale = 1.0 / (norms + self.gamma)  # [B]
 
-        noised_grads = []
-        for g in per_sample_grads:
-            shape = [batch_size] + [1] * (g.dim() - 1)
-            normalized = g * scale.reshape(shape)
+        # Sensitivity bound C=1 for AUTO-S: the harness adds noise sigma * 1 / B
+        return scale, 1.0
 
-            # Average over batch
-            avg = normalized.mean(dim=0)
-
-            # Add noise calibrated to sensitivity=1 (AUTO-S bound)
-            # sigma * C / B where C=1 for AUTO-S
-            noise = torch.randn_like(avg) * (
-                self.noise_multiplier * 1.0 / batch_size
-            )
-            noised_grads.append(avg + noise)
-
-        return noised_grads
-
-    def get_effective_sigma(self, step, epoch):
+    def get_noise_multiplier(self, step, epoch):
         return self.noise_multiplier
 """
 

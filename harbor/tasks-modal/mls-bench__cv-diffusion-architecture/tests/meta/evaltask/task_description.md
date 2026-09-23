@@ -41,6 +41,12 @@ also build a fully custom `nn.Module`.
 Channel widths are passed via the `BLOCK_OUT_CHANNELS` environment variable
 (e.g. `"128,256,256,256"`) so that the same architecture scales across
 evaluation tiers. `LAYERS_PER_BLOCK` (default 2) is also available.
+The model must follow these widths: its size (parameters + buffers) may be at
+most 5% above the `full-attn` baseline built at the same `BLOCK_OUT_CHANNELS`
+and `LAYERS_PER_BLOCK` (Small 10,183,894; Medium 40,650,358; Large 63,489,555),
+and its prediction must come from its registered parameters. The fixed script
+checks the returned model, the parameters the optimizer trains and the model
+evaluated for FID, and rejects a run above the cap (no metrics).
 
 ## Fixed Pipeline
 

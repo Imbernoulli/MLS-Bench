@@ -26,6 +26,7 @@ The DEAP library (`deap.base`, `deap.creator`, `deap.tools`) is available. You m
 - **`run_evolution`** must return `(best_individual, fitness_history)` where `fitness_history` is a list of best fitness per generation.
 - **TRAIN_METRICS**: print `TRAIN_METRICS gen=G best_fitness=F avg_fitness=A` periodically (every 50 generations).
 - Respect the function signature and return types — the evaluation harness below the editable section is fixed.
+- The harness scores `best_individual` by re-evaluating it with the true objective; its `.fitness` attribute is not trusted. A returned individual with the wrong dimension, or with any coordinate that is non-finite or outside the domain, is rejected and the run gets no score.
 
 ## Evaluation
 Strategies are evaluated on benchmarks (all minimization, lower is better):

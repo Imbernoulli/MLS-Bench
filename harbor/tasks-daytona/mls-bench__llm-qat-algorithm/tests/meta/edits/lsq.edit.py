@@ -87,15 +87,6 @@ def fake_quantize_activation(x, num_bits):
     return x
 
 
-def quantize_dequantize_weight(weight, num_bits, group_size):
-    # LSQ stores learned scales on the wrapper; the fixed-region
-    # `apply_real_quantization` would clobber them if we did our own
-    # max-abs QDQ here.  Returning the weight unchanged keeps the float
-    # weight intact, and the wrapper applies LSQ-grid QDQ in eval mode
-    # below -- so evaluation still sees a properly quantized model.
-    return weight.clone()
-
-
 class QATWrapper(nn.Module):
     def __init__(self, linear, num_bits, group_size):
         super().__init__()
@@ -139,6 +130,10 @@ class QATWrapper(nn.Module):
                 w_q = torch.clamp(torch.round(w / s), qmin, qmax) * s
                 w_q = w_q.reshape_as(self.linear.weight).to(self.linear.weight.dtype)
         return F.linear(x, w_q, self.linear.bias)
+
+    def quant_scale(self):
+        # Hand the learned LSQ steps to the fixed final QDQ.
+        return self.lsq_scale
 
 
 def prepare_qat_model(model, num_bits, group_size):

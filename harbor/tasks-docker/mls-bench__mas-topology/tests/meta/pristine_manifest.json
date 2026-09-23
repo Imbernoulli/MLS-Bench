@@ -4047,5 +4047,9 @@
   "chatdev-macnet/misc/topo_example2.png": "eb47f5ef58f9893792b525c38c2a6672b35824f045403582a5f323fdf938dbe0",
   "chatdev-macnet/misc/topo_order.png": "9677b69bdf5d89c8034cef7e517e691b132db0e271a9c72aba020958c6daa534",
   "chatdev-macnet/requirements.txt": "a978b5a462296f893c9ac17a15519383af9968e01ebf7ab2f99825c1d9522743",
-  "chatdev-macnet/run.py": "59d9c24ea804cba93fc09cd0f33507ef12416ed118386b3b0493c5295efb0551"
+  "chatdev-macnet/run.py": "59d9c24ea804cba93fc09cd0f33507ef12416ed118386b3b0493c5295efb0551",
+  "chatdev-macnet/run_humaneval.py": "092b0946cc224dee3a79ddd2df566a13f6fc9150bf78acf36974d34958e15b6d",
+  "chatdev-macnet/run_srdd.py": "692033e6a6980374ad0bb40b251085f15fdbbf4fd9d6a47b6edb0917db6e3e8e",
+  "chatdev-macnet/run_with_topology.py": "805356f63fbe6f63a3718767ad96665506e0e2cb1699adb99ca1ebaf76fc862c",
+  "chatdev-macnet/srdd_queries.json": "333bc9f94935eb6f30104f86c75092dbf13756631178d48a40b75f04b036e42a"
 }

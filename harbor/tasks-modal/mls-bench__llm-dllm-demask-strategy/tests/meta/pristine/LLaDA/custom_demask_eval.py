@@ -157,6 +157,62 @@ class DemaskDecoder:
 
 
 # ---------------------------------------------------------------------------
+# Forward-pass accounting (fixed)
+# ---------------------------------------------------------------------------
+
+def _count_denoiser_forwards(raw_model):
+    """Wrap the denoiser so the harness, not the decoder, counts its forwards.
+
+    Returns (handle, forward_count). The decoder only ever receives `handle`,
+    which exposes what a decoding strategy needs (calling it / `.forward`,
+    `.device`, `.dtype`, `.config`, and `.lm_head` when the model has one)
+    and keeps the raw model in a closure. Every call adds the number of
+    sequences in its batch to a counter that only `forward_count()` reads.
+    avg_steps is computed from this counter, not from the value the decoder
+    reports.
+    """
+    n = [0]
+
+    def _rows(args, kwargs):
+        x = args[0] if args else kwargs.get("input_ids",
+                                            kwargs.get("inputs_embeds"))
+        if torch.is_tensor(x) and x.dim() >= 2:
+            return int(x.shape[0])
+        return 1
+
+    def _forward(*args, **kwargs):
+        n[0] += _rows(args, kwargs)
+        return raw_model(*args, **kwargs)
+
+    class DenoiserHandle:
+        __slots__ = ()
+        device = property(lambda self: raw_model.device)
+        dtype = property(lambda self: raw_model.dtype)
+        config = property(lambda self: raw_model.config)
+
+        def __call__(self, *args, **kwargs):
+            return _forward(*args, **kwargs)
+
+        def forward(self, *args, **kwargs):
+            return _forward(*args, **kwargs)
+
+    if hasattr(raw_model, "lm_head"):
+        DenoiserHandle.lm_head = property(lambda self: raw_model.lm_head)
+    return DenoiserHandle(), (lambda: n[0])
+
+
+def _measured_steps(forward_count, before: int, reported, n_warned: list) -> int:
+    """Forward passes the decoder actually made in one decode() call."""
+    used = forward_count() - before
+    if reported != used and n_warned[0] < 3:
+        n_warned[0] += 1
+        print(f"[WARN] decode() reported used_steps={reported!r} but made "
+              f"{used} denoiser forward passes; avg_steps counts the "
+              f"measured passes.", flush=True)
+    return used
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -184,8 +240,9 @@ def _import_klass_utils():
 
 
 def eval_math(model, tokenizer, decoder: DemaskDecoder, problems: list[dict],
-              gen_length: int, steps: int, block_length: int):
+              gen_length: int, steps: int, block_length: int, forward_count):
     ku = _import_klass_utils()
+    n_warned = [0]
     sys_msg = ("Your task is to answer the question below. Give step by step "
                "reasoning before you answer, and when you're ready to answer, "
                "please use the format 'The final answer is'.")
@@ -199,8 +256,10 @@ def eval_math(model, tokenizer, decoder: DemaskDecoder, problems: list[dict],
         input_ids = torch.tensor(tokenizer(prompt)["input_ids"],
                                  device=model.device).unsqueeze(0)
         gt = ku.extract_math_answer(ex["problem"], ex["solution"])
+        before = forward_count()
         x_out, used = decoder.decode(model, input_ids, gen_length, steps,
                                      block_length)
+        used = _measured_steps(forward_count, before, used, n_warned)
         gen_text = tokenizer.batch_decode(
             x_out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
         pred = ku.extract_math_answer(ex["problem"], gen_text)
@@ -252,7 +311,8 @@ def check_humaneval_code(code: str, problem: dict, timeout: float = 3.0) -> bool
 
 def eval_humaneval(model, tokenizer, decoder: DemaskDecoder,
                    problems: list[dict], gen_length: int, steps: int,
-                   block_length: int):
+                   block_length: int, forward_count):
+    n_warned = [0]
     passed = 0
     total_steps = 0
     for i, p in enumerate(problems):
@@ -262,8 +322,10 @@ def eval_humaneval(model, tokenizer, decoder: DemaskDecoder,
                                                tokenize=False)
         input_ids = torch.tensor(tokenizer(prompt)["input_ids"],
                                  device=model.device).unsqueeze(0)
+        before = forward_count()
         x_out, used = decoder.decode(model, input_ids, gen_length, steps,
                                      block_length)
+        used = _measured_steps(forward_count, before, used, n_warned)
         gen_text = tokenizer.batch_decode(
             x_out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
         eos = tokenizer.eos_token or ""
@@ -368,7 +430,7 @@ def compute_entropy_rep2(texts):
 
 def eval_text(model, tokenizer, decoder: DemaskDecoder, raw_texts: list[str],
               prefix_len: int, gen_length: int, steps: int, block_length: int,
-              n_samples: int, seed: int):
+              n_samples: int, seed: int, forward_count):
     """Prefix-conditioned C4 continuation. Reports gen_ppl/MAUVE/entropy/rep2."""
     import random as _r
     rng = _r.Random(seed)
@@ -389,9 +451,12 @@ def eval_text(model, tokenizer, decoder: DemaskDecoder, raw_texts: list[str],
           f"long enough for prefix={prefix_len}+gen={gen_length}", flush=True)
 
     gen_texts, total_used = [], 0
+    n_warned = [0]
     for i, pids in enumerate(prefix_ids_list):
         ids = torch.tensor([pids], dtype=torch.long, device=model.device)
+        before = forward_count()
         x_out, used = decoder.decode(model, ids, gen_length, steps, block_length)
+        used = _measured_steps(forward_count, before, used, n_warned)
         gen = tokenizer.decode(x_out[0, ids.shape[1]:].tolist(),
                                skip_special_tokens=True)
         gen = _truncate_at_eos(gen)
@@ -442,7 +507,10 @@ def main():
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     print(f"[INFO] Loading {args.model}...", flush=True)
-    model, tokenizer, mask_id = load_instruct_model(args.model, device)
+    raw_model, tokenizer, mask_id = load_instruct_model(args.model, device)
+    # The decoder and eval loops only see the counting handle.
+    model, forward_count = _count_denoiser_forwards(raw_model)
+    del raw_model
 
     decoder = DemaskDecoder(
         mask_id=mask_id,
@@ -462,7 +530,7 @@ def main():
             problems = problems[:args.n_samples]
         acc, avg_steps = eval_math(
             model, tokenizer, decoder, problems,
-            args.gen_length, args.steps, args.block_length)
+            args.gen_length, args.steps, args.block_length, forward_count)
         print(f"TEST_METRICS: accuracy={acc:.4f} avg_steps={avg_steps:.2f} "
               f"n_samples={len(problems)}", flush=True)
     elif args.task == "humaneval":
@@ -471,7 +539,7 @@ def main():
             problems = problems[:args.n_samples]
         acc, avg_steps = eval_humaneval(
             model, tokenizer, decoder, problems,
-            args.gen_length, args.steps, args.block_length)
+            args.gen_length, args.steps, args.block_length, forward_count)
         print(f"TEST_METRICS: accuracy={acc:.4f} avg_steps={avg_steps:.2f} "
               f"n_samples={len(problems)}", flush=True)
     else:  # text
@@ -481,7 +549,7 @@ def main():
         ppl, mauve, ent, rep2, avg_steps = eval_text(
             model, tokenizer, decoder, texts,
             args.prefix_len, args.gen_length, args.steps, args.block_length,
-            n_samples=n, seed=args.seed)
+            n_samples=n, seed=args.seed, forward_count=forward_count)
         print(f"TEST_METRICS: gen_ppl={ppl:.4f} mauve={mauve:.4f} "
               f"entropy={ent:.4f} rep2={rep2:.4f} avg_steps={avg_steps:.2f} "
               f"n_samples={n}", flush=True)

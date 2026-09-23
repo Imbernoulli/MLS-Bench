@@ -22,10 +22,13 @@ The BitLinear module in `nanoGPT/custom_pretrain.py`:
 - `activation_quant(x)` — optional activation quantization; returns `(quantized_x, scale)`.
 - `BitLinear` class — linear layer that uses the above functions.
 
+The default template is a naive binary quantizer: `sign(W)` with a per-tensor absmean scale and no activation quantization.
+
 ### Interface contract
 - `BitLinear.__init__(self, in_features, out_features, bias=True)` must keep `self.weight` as a `Parameter`.
 - `BitLinear.forward(self, x) -> output` where `x` has shape `(..., in_features)` and the output has shape `(..., out_features)`.
 - Quantization is applied in every forward pass (no separate train/eval path).
+- **Level budget (enforced): at most 5 weight levels.** In every output row of the effective weight a `BitLinear` applies in its forward pass, at most 5 distinct values may occur. This admits binary, ternary and the 5-level grid {-1, -2/3, 0, 2/3, 1} that the `int2_uniform` reference rounds to; a per-tensor or per-output-channel scale is allowed. Fixed code recovers each `BitLinear`'s effective weight by probing it with one-hot inputs at initialization, at every evaluation interval and before the final evaluation, in both train and eval mode, and aborts the run if any row exceeds 5 levels; such a run gets no score. Transforms that mix input features (e.g. rotations) and per-group scales make the effective weight continuous, so they are not allowed.
 - `weight_quant` should return `(quantized_weight, scale)` such that `quantized_weight * scale` approximates the original weight; same convention for `activation_quant`.
 - All linear projections in the model (attention, MLP, lm_head) use `BitLinear`.
 - Helper classes (`autograd.Function`s, learned parameters) may be added.
@@ -111,8 +114,8 @@ Other files you may **read** for context (do not modify):
     43:     Estimator (STE) to flow gradients through the non-differentiable
     44:     quantization.
     45: 
-    46:     The default implementation is a pass-through (no quantization).
-    47:     Replace this with your low-bit quantization scheme, e.g.:
+    46:     The default implementation is a naive binary {-1, +1} sign quantizer
+    47:     with a per-tensor absmean scale. Replace it with your scheme, e.g.:
     48:     - Binary: {-1, +1} via sign function
     49:     - Ternary: {-1, 0, +1} via absmean thresholding
     50:     - 2-bit: {-1, -1/3, +1/3, +1} via uniform quantization
@@ -124,8 +127,8 @@ Other files you may **read** for context (do not modify):
     56:             or per-channel scale factor used to rescale the output.
     57:             quantized_weight * scale should approximate the original weight.
     58:     """
-    59:     scale = weight.detach().abs().mean()
-    60:     return weight, scale
+    59:     scale = weight.detach().abs().mean().clamp(min=1e-12)
+    60:     return (weight.sign() - weight).detach() + weight, scale
     61: 
     62: 
     63: def activation_quant(x):
@@ -139,7 +142,7 @@ Other files you may **read** for context (do not modify):
     71:     Returns:
     72:         (quantized_x, scale): quantized activation and scale factor.
     73:     """
-    74:     scale = x.detach().abs().max().clamp(min=1e-12)
+    74:     scale = torch.ones((), device=x.device, dtype=x.dtype)
     75:     return x, scale
     76: 
     77: 
@@ -176,7 +179,7 @@ Other files you may **read** for context (do not modify):
    108:         # Perform matmul with quantized values, then rescale
    109:         out = F.linear(x_q, w_q, None)
    110:         # Rescale output: the true output ~ (x_scale * w_scale) * out_quantized
-   111:         # But since default is pass-through, just add bias
+   111:         out = out * (w_scale * x_scale)
    112:         if self.bias is not None:
    113:             out = out + self.bias
    114:         return out
@@ -455,117 +458,117 @@ Other files you may **read** for context (do not modify):
    387:     model = GPT(gptconf)
    388:     model.to(device)
    389: 
-   390: 
-   391:     scaler = torch.amp.GradScaler(enabled=(dtype == 'float16'))
-   392:     optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
-   393: 
-   394:     if ddp:
-   395:         model = DDP(model, device_ids=[ddp_local_rank], find_unused_parameters=True)
-   396: 
-   397:     if compile_model:
-   398:         if master_process:
-   399:             print("compiling the model...")
-   400:         model = torch.compile(model)
+   390:     # -- Low-bit weight check (fixed code, outside the editable region) --
+   391:     # Budget: at most 5 weight levels (binary, ternary, and the 5-level grid
+   392:     # {-1, -2/3, 0, 2/3, 1} the int2_uniform reference rounds to). Every
+   393:     # BitLinear is probed with one-hot inputs, which recovers the effective
+   394:     # weight its forward pass applies (whatever activation quantizer is used),
+   395:     # and each output row of that weight may take at most LOWBIT_MAX_LEVELS
+   396:     # distinct values; a per-tensor or per-output-channel scale is allowed.
+   397:     # The check runs at init, at every eval_interval and before the final
+   398:     # evaluation, in train and eval mode; a violation aborts the run.
+   399:     LOWBIT_MAX_LEVELS = 5
+   400:     LOWBIT_REL_TOL = 1e-3
    401: 
-   402:     # -- Evaluation --
-   403:     @torch.no_grad()
-   404:     def estimate_loss():
-   405:         out = {}
-   406:         raw = model.module if ddp else model
-   407:         raw_inner = raw._orig_mod if hasattr(raw, '_orig_mod') else raw
-   408:         raw_inner.eval()
-   409:         for split, data in [('train', train_data), ('val', val_data)]:
-   410:             losses = torch.zeros(eval_iters)
-   411:             for k in range(eval_iters):
-   412:                 X, Y = get_batch(data, batch_size, block_size, device)
-   413:                 with ctx:
-   414:                     logits, loss = raw_inner(X, Y)
-   415:                 losses[k] = loss.item()
-   416:             out[split] = losses.mean()
-   417:         raw_inner.train()
-   418:         return out
-   419: 
-   420:     # -- Training Loop --
-   421:     t0 = time.time()
-   422:     best_val_loss = 1e9
+   402:     def _lowbit_slots(m):
+   403:         slots = []
+   404:         for i, blk in enumerate(m.transformer.h):
+   405:             slots += [(f'h.{i}.attn.c_attn', blk.attn.c_attn, m.config.n_embd),
+   406:                       (f'h.{i}.attn.c_proj', blk.attn.c_proj, m.config.n_embd),
+   407:                       (f'h.{i}.mlp.c_fc', blk.mlp.c_fc, m.config.n_embd),
+   408:                       (f'h.{i}.mlp.c_proj', blk.mlp.c_proj, 4 * m.config.n_embd)]
+   409:         return slots + [('lm_head', m.lm_head, m.config.n_embd)]
+   410: 
+   411:     @torch.no_grad()
+   412:     def _lowbit_row_levels(w_eff):
+   413:         # Levels per row: sorted values split wherever the gap exceeds
+   414:         # LOWBIT_REL_TOL * max|row|; the within-level spread must stay below
+   415:         # the same tolerance per level, so a continuum cannot chain into one.
+   416:         v, _ = torch.sort(w_eff.float(), dim=1)
+   417:         tol = LOWBIT_REL_TOL * v.abs().amax(dim=1, keepdim=True)
+   418:         gaps = v[:, 1:] - v[:, :-1]
+   419:         big = gaps > tol
+   420:         levels = 1 + big.sum(dim=1)
+   421:         spread = torch.where(big, torch.zeros_like(gaps), gaps).sum(dim=1)
+   422:         return levels, spread > tol.squeeze(1) * levels
    423: 
-   424:     for iter_num in range(max_iters + 1):
-   425:         lr = get_lr(iter_num, warmup_iters, lr_decay_iters, learning_rate, min_lr)
-   426:         for param_group in optimizer.param_groups:
-   427:             param_group['lr'] = lr
-   428: 
-   429:         if iter_num % eval_interval == 0 and master_process:
-   430:             losses = estimate_loss()
-   431:             train_loss = losses['train'].item()
-   432:             val_loss = losses['val'].item()
-   433:             print(f"step {iter_num}: train loss {train_loss:.4f}, val loss {val_loss:.4f}")
-   434:             print(f"TRAIN_METRICS: step={iter_num}, train_loss={train_loss:.4f}, val_loss={val_loss:.4f}", flush=True)
-   435:             if val_loss < best_val_loss:
-   436:                 best_val_loss = val_loss
-   437: 
-   438:         for micro_step in range(gradient_accumulation_steps):
-   439:             if ddp:
-   440:                 model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
-   441:             with ctx:
-   442:                 X, Y = get_batch(train_data, batch_size, block_size, device)
-   443:                 logits, loss = model(X, Y)
-   444:                 loss = loss / gradient_accumulation_steps
-   445:             scaler.scale(loss).backward()
-   446: 
-   447:         if grad_clip != 0.0:
-   448:             scaler.unscale_(optimizer)
-   449:             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-   450:         scaler.step(optimizer)
-   451:         scaler.update()
-   452:         optimizer.zero_grad(set_to_none=True)
-   453: 
-   454:         t1 = time.time()
-   455:         dt = t1 - t0
-   456:         t0 = t1
-   457:         if iter_num % log_interval == 0 and iter_num > 0 and master_process:
-   458:             lossf = loss.item() * gradient_accumulation_steps
-   459:             print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, lr {lr:.6f}")
-   460: 
-   461:     # -- Free training state to reclaim GPU memory --
-   462:     del optimizer, scaler
-   463:     import gc; gc.collect()
-   464:     torch.cuda.empty_cache()
+   424:     @torch.no_grad()
+   425:     def verify_lowbit(m, when):
+   426:         t_check = time.time()
+   427:         worst = (0, '')
+   428:         for name, mod, d_in in _lowbit_slots(m):
+   429:             saved = {k: t.detach().clone() for k, t in mod.state_dict().items()}
+   430:             was_training = mod.training
+   431:             try:
+   432:                 for train_mode in (True, False):
+   433:                     mod.train(train_mode)
+   434:                     with torch.autocast(device_type='cuda', enabled=False):
+   435:                         eye = torch.eye(d_in, device=device, dtype=torch.float32)
+   436:                         base = mod(torch.zeros(1, 1, d_in, device=device)).float()
+   437:                         base = torch.where(torch.isfinite(base), base, torch.zeros_like(base))
+   438:                         w_eff = (mod(eye.unsqueeze(0)).float() - base)[0].t()
+   439:                     if not torch.isfinite(w_eff).all():
+   440:                         raise RuntimeError(f"LOWBIT_CHECK FAILED ({when}): {name} forward is non-finite on one-hot probes")
+   441:                     levels, smeared = _lowbit_row_levels(w_eff)
+   442:                     n_max = int(levels.max())
+   443:                     if n_max > LOWBIT_MAX_LEVELS or bool(smeared.any()):
+   444:                         raise RuntimeError(
+   445:                             f"LOWBIT_CHECK FAILED ({when}): {name} "
+   446:                             f"({'train' if train_mode else 'eval'} mode) effective forward weight has "
+   447:                             f"{n_max} distinct values in a row (max {LOWBIT_MAX_LEVELS}), "
+   448:                             f"{int(smeared.sum())} rows with smeared levels; "
+   449:                             f"forward weights must be discrete")
+   450:                     worst = max(worst, (n_max, name))
+   451:             finally:
+   452:                 mod.train(was_training)
+   453:                 mod.load_state_dict(saved)
+   454:         print(f"LOWBIT_CHECK: {when}: ok, max levels per row = {worst[0]} ({worst[1]}), "
+   455:               f"{time.time() - t_check:.1f}s", flush=True)
+   456: 
+   457:     lowbit_model = model  # bare GPT; DDP / torch.compile wrap these same modules
+   458:     if master_process:
+   459:         verify_lowbit(lowbit_model, 'init')
+   460:     scaler = torch.amp.GradScaler(enabled=(dtype == 'float16'))
+   461:     optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
+   462: 
+   463:     if ddp:
+   464:         model = DDP(model, device_ids=[ddp_local_rank], find_unused_parameters=True)
    465: 
-   466:     # -- Final Evaluation --
-   467:     if master_process:
-   468:         losses = estimate_loss()
-   469:         val_loss = losses['val'].item()
-   470:         train_loss = losses['train'].item()
-   471:         print(f"Final: train loss {train_loss:.4f}, val loss {val_loss:.4f}, best val loss {best_val_loss:.4f}")
-   472: 
-   473:         # -- PPL on benchmark datasets --
-   474:         eval_dir = os.environ.get('EVAL_DIR', '/data/eval')
+   466:     if compile_model:
+   467:         if master_process:
+   468:             print("compiling the model...")
+   469:         model = torch.compile(model)
+   470: 
+   471:     # -- Evaluation --
+   472:     @torch.no_grad()
+   473:     def estimate_loss():
+   474:         out = {}
    475:         raw = model.module if ddp else model
    476:         raw_inner = raw._orig_mod if hasattr(raw, '_orig_mod') else raw
    477:         raw_inner.eval()
-   478:         eval_datasets = ['wikitext2', 'lambada']
-   479:         ppl_results = {}
-   480:         for ds_name in eval_datasets:
-   481:             ds_path = os.path.join(eval_dir, f'{ds_name}.bin')
-   482:             if not os.path.exists(ds_path):
-   483:                 print(f"Eval dataset not found: {ds_path}")
-   484:                 continue
-   485:             data = np.memmap(ds_path, dtype=np.uint16, mode='r')
-   486:             n_tokens = len(data)
-   487:             total_loss = 0.0
-   488:             n_chunks = 0
-   489:             with torch.no_grad():
-   490:                 for start in range(0, n_tokens - block_size, block_size):
-   491:                     x = torch.from_numpy(data[start:start+block_size].astype(np.int64)).unsqueeze(0).to(device)
-   492:                     y = torch.from_numpy(data[start+1:start+1+block_size].astype(np.int64)).unsqueeze(0).to(device)
-   493:                     with ctx:
-   494:                         _, loss = raw_inner(x, y)
-   495:                     total_loss += loss.item()
-   496:                     n_chunks += 1
-   497:             avg_loss = total_loss / n_chunks
-   498:             ppl = math.exp(avg_loss)
-   499:             ppl_results[ds_name] = ppl
-   500:             print(f"PPL {ds_name}: {ppl:.2f} (avg_loss={avg_loss:.4f}, {n_chunks} chunks)")
+   478:         for split, data in [('train', train_data), ('val', val_data)]:
+   479:             losses = torch.zeros(eval_iters)
+   480:             for k in range(eval_iters):
+   481:                 X, Y = get_batch(data, batch_size, block_size, device)
+   482:                 with ctx:
+   483:                     logits, loss = raw_inner(X, Y)
+   484:                 losses[k] = loss.item()
+   485:             out[split] = losses.mean()
+   486:         raw_inner.train()
+   487:         return out
+   488: 
+   489:     # -- Training Loop --
+   490:     t0 = time.time()
+   491:     best_val_loss = 1e9
+   492: 
+   493:     for iter_num in range(max_iters + 1):
+   494:         lr = get_lr(iter_num, warmup_iters, lr_decay_iters, learning_rate, min_lr)
+   495:         for param_group in optimizer.param_groups:
+   496:             param_group['lr'] = lr
+   497: 
+   498:         if iter_num % eval_interval == 0 and master_process:
+   499:             losses = estimate_loss()
+   500:             train_loss = losses['train'].item()
 
 [truncated: showing at most 500 lines / 60000 bytes from nanoGPT/custom_pretrain.py]
 ```

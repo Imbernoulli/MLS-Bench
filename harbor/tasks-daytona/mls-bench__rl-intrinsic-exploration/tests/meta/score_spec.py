@@ -2,7 +2,14 @@
 from mlsbench.scoring.dsl import *
 
 # auc = area under return curve: higher better, unbounded -> sigmoid (NOT bounded_power)
-# nonzero_rate: bounded [0,1] -> bounded_power is correct
+# nonzero_rate: fraction of eval episodes with a POSITIVE return (fixed eval
+#   code; a negative Private Eye return from hitting hazards used to count as
+#   "nonzero"), bounded [0,1] -> bounded_power.
+#   Frostbite is saturated on this term: every baseline seed scores 1.0, so the
+#   standard anchors (worst == best == bound) made it a step (anything below 1.0
+#   -> 0). It is scored as a no-regression check instead: bound=0 lies below the
+#   worst baseline, so bounded_power maps 1.0 to 1 and falls linearly to 0 at a
+#   rate of 0 (ref=0.5 -> 0.5).
 # eval_return, best_eval_return: higher better, unbounded -> sigmoid
 
 term("eval_return_frostbite_v5",
@@ -15,7 +22,7 @@ term("auc_frostbite_v5",
 
 term("nonzero_rate_frostbite_v5",
     col("nonzero_rate_frostbite_v5").higher().id()
-    .bounded_power(bound=1.0))
+    .bounded_power(bound=0.0, ref=0.5))
 
 term("best_eval_return_frostbite_v5",
     col("best_eval_return_frostbite_v5").higher().id()

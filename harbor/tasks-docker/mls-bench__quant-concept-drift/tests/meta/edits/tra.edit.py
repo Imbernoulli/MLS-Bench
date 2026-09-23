@@ -831,6 +831,11 @@ _TRA_DATASET_HEADER = """\
     class: MTSDatasetH
     module_path: qlib.contrib.data.dataset
     kwargs:
+      seq_len: 60
+      num_states: 3
+      batch_size: 1024
+      memory_mode: "sample"
+      drop_last: true
       handler:
         class: Alpha158
         module_path: qlib.contrib.data.handler
@@ -874,12 +879,6 @@ _TRA_DATASET_CONFIG = """\
             - class: CSRankNorm
               kwargs:
                 fields_group: label
-          label: ["Ref($close, -2) / Ref($close, -1) - 1"]
-      seq_len: 60
-      num_states: 3
-      batch_size: 1024
-      memory_mode: "sample"
-      drop_last: true
 """
 
 OPS = [
@@ -890,18 +889,19 @@ OPS = [
         "end_line": 103,
         "content": _TRA_MODEL,
     },
+    # Bottom-up: the header op below adds lines, so apply the later range first.
+    {
+        "op": "replace",
+        "file": _WORKFLOW_FILE,
+        "start_line": 32,
+        "end_line": 44,
+        "content": _TRA_DATASET_CONFIG,
+    },
     {
         "op": "replace",
         "file": _WORKFLOW_FILE,
         "start_line": 19,
         "end_line": 26,
         "content": _TRA_DATASET_HEADER,
-    },
-    {
-        "op": "replace",
-        "file": _WORKFLOW_FILE,
-        "start_line": 32,
-        "end_line": 45,
-        "content": _TRA_DATASET_CONFIG,
     },
 ]

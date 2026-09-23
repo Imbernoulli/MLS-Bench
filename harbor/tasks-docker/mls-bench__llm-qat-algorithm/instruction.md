@@ -56,14 +56,14 @@ you may only edit the `# EDITABLE REGION START / END` block. It contains:
   the original weight.
 - `fake_quantize_activation(x, num_bits)`: optional (default identity for
   weight-only QAT).
-- `quantize_dequantize_weight(weight, num_bits, group_size)`: REAL
-  (no-grad) per-group symmetric QDQ used after training to materialize the
-  integer model for evaluation.
 - `class QATWrapper(nn.Module)`: wraps an `nn.Linear`; applies fake quant
   in `forward`; may hold extra learnable parameters (per-group scales for
   LSQ, EMA buffers for StableQAT, etc.). May expose an
   `aux_loss(step, total_steps)` method that the training loop adds to the
-  cross-entropy loss.
+  cross-entropy loss. May expose `quant_scale()` returning its learned
+  per-group quantization steps (one finite, nonzero step per row and
+  group of `group_size` columns) for the final quantizer; returning
+  `None` (the default) selects the max-abs RTN step.
 - `prepare_qat_model(model, num_bits, group_size)`: replace every
   `nn.Linear` (and HF GPT-2 `Conv1D`) in the model with `QATWrapper`,
   initializing any extra learnable parameters. The function must restore
@@ -103,7 +103,6 @@ CONFIG_OVERRIDES = {
 
 def fake_quantize_weight(weight, num_bits, group_size): ...   # differentiable
 def fake_quantize_activation(x, num_bits): ...                # optional, default id
-def quantize_dequantize_weight(weight, num_bits, group_size): # no-grad QDQ
 
 class QATWrapper(nn.Module):
     def __init__(self, linear, num_bits, group_size): ...
@@ -112,6 +111,7 @@ class QATWrapper(nn.Module):
     @property
     def bias(self): ...
     def forward(self, x): ...
+    def quant_scale(self): ...   # optional learned per-group steps, or None
 
 def prepare_qat_model(model, num_bits, group_size): ...
 ```
@@ -121,10 +121,18 @@ Constraints:
 - The forward path of every wrapped `nn.Linear` must use
   `fake_quantize_weight` (or an equivalent inside `QATWrapper.forward`)
   so the QAT signal actually trains the integer grid.
-- After training, `quantize_dequantize_weight` is applied to every
-  `linear.weight` of every `QATWrapper`, then perplexity is measured.
-  Your method must produce weights that, after this real QDQ roundtrip,
-  still give a low perplexity.
+- After training, fixed (non-editable) code applies the real
+  quantize-dequantize to every `linear.weight` of every `QATWrapper`:
+  symmetric signed `num_bits` codes `clamp(round(w / s), qmin, qmax)`
+  per row and group of `group_size` columns, with `s` taken from
+  `QATWrapper.quant_scale()` or the max-abs RTN step. Each wrapper is then
+  replaced by a plain `nn.Linear` holding the quantized weight (bias in
+  full precision) and perplexity is measured, so `QATWrapper.forward` and
+  the fake-quant functions only affect training. Your method must produce
+  weights that, after this real QDQ roundtrip, still give a low
+  perplexity. The run fails if any transformer-block `nn.Linear` was not
+  wrapped, or if non-stock modules or forward hooks remain in the model
+  at evaluation.
 - Keep the LM head at full precision (the template already excludes
   `embed_out` / `lm_head`).
 - Available imports in the editable region: `torch`, `torch.nn` (as
@@ -267,56 +275,56 @@ stay unchanged.
     83:     return x
     84: 
     85: 
-    86: def quantize_dequantize_weight(weight, num_bits, group_size):
-    87:     """REAL (non-differentiable) symmetric per-group QDQ for post-training.
-    88: 
-    89:     Used after QAT finetune to materialize the quantized weights for eval.
-    90:     Returns the same shape/dtype as `weight`.
-    91:     """
-    92:     qmin, qmax = _qrange(num_bits)
-    93:     out_features, in_features = weight.shape
-    94:     assert in_features % group_size == 0
-    95:     with torch.no_grad():
-    96:         w = weight.float().reshape(out_features, -1, group_size)
-    97:         w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
-    98:         scale = w_max / qmax
-    99:         w_q = torch.clamp(torch.round(w / scale), qmin, qmax) * scale
-   100:         return w_q.reshape(out_features, in_features).to(weight.dtype)
+    86: # NOTE: the final quantize-dequantize used for evaluation is FIXED code
+    87: # (`apply_real_quantization`, below the editable region).  It rounds every
+    88: # QATWrapper's `linear.weight` to the symmetric signed per-group grid:
+    89: #     codes = clamp(round(w / s), qmin, qmax),   w_q = codes * s
+    90: # with one step `s` per (row, group of `group_size` columns).  By default
+    91: # `s = |w|.amax(group) / qmax` (max-abs RTN).  A wrapper may instead supply
+    92: # its own learned steps (LSQ scales, learned clipping, ...) through
+    93: # `QATWrapper.quant_scale()`.  Evaluation then runs plain `nn.Linear` layers
+    94: # holding `w_q` (bias kept in full precision), so `QATWrapper.forward`,
+    95: # `fake_quantize_weight` and `fake_quantize_activation` are training-only.
+    96: # The returned steps must be finite and nonzero, one per group.
+    97: 
+    98: 
+    99: class QATWrapper(nn.Module):
+   100:     """Wraps an nn.Linear and applies fake-quant to its weight in forward.
    101: 
-   102: 
-   103: class QATWrapper(nn.Module):
-   104:     """Wraps an nn.Linear and applies fake-quant to its weight in forward.
+   102:     The wrapped module exposes the original Linear's weight/bias as
+   103:     submodule parameters so the QAT optimizer can update them; the bias
+   104:     is left in full precision.
    105: 
-   106:     The wrapped module exposes the original Linear's weight/bias as
-   107:     submodule parameters so the QAT optimizer can update them; the bias
-   108:     is left in full precision.
-   109: 
-   110:     Attributes
-   111:     ----------
-   112:     linear : nn.Linear
-   113:         Underlying linear layer.  `linear.weight` is the trainable param.
-   114:     num_bits : int
-   115:     group_size : int
-   116:     """
-   117: 
-   118:     def __init__(self, linear, num_bits, group_size):
-   119:         super().__init__()
-   120:         self.linear = linear
-   121:         self.num_bits = num_bits
-   122:         self.group_size = group_size
+   106:     Attributes
+   107:     ----------
+   108:     linear : nn.Linear
+   109:         Underlying linear layer.  `linear.weight` is the trainable param.
+   110:     num_bits : int
+   111:     group_size : int
+   112:     """
+   113: 
+   114:     def __init__(self, linear, num_bits, group_size):
+   115:         super().__init__()
+   116:         self.linear = linear
+   117:         self.num_bits = num_bits
+   118:         self.group_size = group_size
+   119: 
+   120:     @property
+   121:     def weight(self):
+   122:         return self.linear.weight
    123: 
    124:     @property
-   125:     def weight(self):
-   126:         return self.linear.weight
+   125:     def bias(self):
+   126:         return self.linear.bias
    127: 
-   128:     @property
-   129:     def bias(self):
-   130:         return self.linear.bias
-   131: 
-   132:     def forward(self, x):
-   133:         x = fake_quantize_activation(x, self.num_bits)
-   134:         w_q = fake_quantize_weight(self.linear.weight, self.num_bits, self.group_size)
-   135:         return F.linear(x, w_q, self.linear.bias)
+   128:     def forward(self, x):
+   129:         x = fake_quantize_activation(x, self.num_bits)
+   130:         w_q = fake_quantize_weight(self.linear.weight, self.num_bits, self.group_size)
+   131:         return F.linear(x, w_q, self.linear.bias)
+   132: 
+   133:     def quant_scale(self):
+   134:         """Per-group step for the fixed final QDQ; None = max-abs RTN."""
+   135:         return None
    136: 
    137: 
    138: def prepare_qat_model(model, num_bits, group_size):
@@ -515,120 +523,228 @@ stay unchanged.
    331:     return time.time() - t0
    332: 
    333: 
-   334: # ── Real-quant materialization ────────────────────────────────────────────────
+   334: # ── Real-quant materialization (fixed) ────────────────────────────────────────
    335: 
-   336: @torch.no_grad()
-   337: def apply_real_quantization(model, num_bits, group_size):
-   338:     """After QAT, replace each QATWrapper weight with the real QDQ value.
+   336: _HEAD_ATTRS = ("lm_head", "embed_out")
+   337: _TRUSTED_MODULE_PREFIXES = ("torch.", "transformers.")
+   338: 
    339: 
-   340:     The wrapper still applies fake-quant in forward, but with the weight
-   341:     already materialized to the quantization grid the result is the true
-   342:     INT-N model output (no train-time noise / scale drift).
-   343:     """
-   344:     wrappers = find_qat_wrappers(model)
-   345:     for name, w in wrappers.items():
-   346:         w_dq = quantize_dequantize_weight(w.linear.weight.data, num_bits, group_size)
-   347:         w.linear.weight.data.copy_(w_dq)
-   348:     return len(wrappers)
-   349: 
-   350: 
-   351: # ── Perplexity evaluation ─────────────────────────────────────────────────────
+   340: def snapshot_quant_targets(model):
+   341:     """Record every nn.Linear (except the LM head) of the pristine model.
+   342: 
+   343:     Called before ``prepare_qat_model``; ``apply_real_quantization`` later
+   344:     requires each of these layers to come back as a quantized Linear.
+   345:     """
+   346:     heads = {id(getattr(model, a)) for a in _HEAD_ATTRS if getattr(model, a, None) is not None}
+   347:     return {
+   348:         name: (tuple(m.weight.shape), m.bias is not None)
+   349:         for name, m in model.named_modules()
+   350:         if isinstance(m, nn.Linear) and id(m) not in heads
+   351:     }
    352: 
-   353: @torch.no_grad()
-   354: def evaluate_perplexity(model, tokenizer, dev, seqlen):
-   355:     model.eval()
-   356:     ids = load_wikitext2(tokenizer, seqlen, split="test").to(dev)
-   357:     nsamples = ids.shape[1] // seqlen
-   358:     if nsamples == 0:
-   359:         return float("nan")
-   360:     nlls = []
-   361:     for i in range(nsamples):
-   362:         x = ids[:, i * seqlen:(i + 1) * seqlen]
-   363:         logits = model(x).logits
-   364:         shift_logits = logits[:, :-1, :].float().contiguous()
-   365:         shift_labels = x[:, 1:]
-   366:         loss = F.cross_entropy(
-   367:             shift_logits.reshape(-1, shift_logits.size(-1)),
-   368:             shift_labels.reshape(-1),
-   369:         )
-   370:         nlls.append(loss.float() * (seqlen - 1))
-   371:     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * (seqlen - 1)))
-   372:     return ppl.item()
-   373: 
-   374: 
-   375: # ── Main ──────────────────────────────────────────────────────────────────────
-   376: 
-   377: def main():
-   378:     p = argparse.ArgumentParser(description="QAT for Pythia-1.4B")
-   379:     p.add_argument("--model-path", type=str, default="/data/pythia-1.4b")
-   380:     p.add_argument("--num-bits", type=int, default=4)
-   381:     p.add_argument("--group-size", type=int, default=128)
-   382:     p.add_argument("--seqlen", type=int, default=2048)
-   383:     p.add_argument("--seed", type=int, default=int(os.environ.get("SEED", "42")))
-   384:     args = p.parse_args()
-   385: 
-   386:     torch.manual_seed(args.seed)
-   387:     np.random.seed(args.seed)
-   388: 
-   389:     dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
-   390:     overall_t0 = time.time()
+   353: 
+   354: @torch.no_grad()
+   355: def fixed_group_qdq(weight, num_bits, group_size, scale=None):
+   356:     """Symmetric signed per-group ``num_bits`` QDQ with a verified grid.
+   357: 
+   358:     ``scale`` is None (max-abs RTN step) or one finite nonzero step per
+   359:     (row, group).  Returns the dequantized weight in ``weight``'s dtype.
+   360:     """
+   361:     qmax = (1 << (num_bits - 1)) - 1
+   362:     qmin = -(1 << (num_bits - 1))
+   363:     out_features, in_features = weight.shape
+   364:     if in_features % group_size != 0:
+   365:         raise ValueError(f"in_features {in_features} not divisible by group_size {group_size}")
+   366:     n_groups = in_features // group_size
+   367:     w = weight.detach().float().reshape(out_features, n_groups, group_size)
+   368:     if scale is None:
+   369:         w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
+   370:         s = w_max / qmax
+   371:     else:
+   372:         s = torch.as_tensor(scale).detach().to(device=w.device, dtype=torch.float32)
+   373:         if s.numel() != out_features * n_groups:
+   374:             raise ValueError(
+   375:                 f"quant_scale() returned {s.numel()} steps, expected "
+   376:                 f"{out_features}x{n_groups} (one per row and group)"
+   377:             )
+   378:         s = s.reshape(out_features, n_groups, 1)
+   379:         if not bool(torch.isfinite(s).all()) or bool((s == 0).any()):
+   380:             raise ValueError("quant_scale() steps must be finite and nonzero")
+   381:     if not bool(torch.isfinite(w).all()):
+   382:         raise ValueError("non-finite weight entering the final QDQ")
+   383:     codes = torch.clamp(torch.round(w / s), qmin, qmax)
+   384:     w_q = (codes * s).reshape(out_features, in_features).to(weight.dtype)
+   385:     # Verify the stored tensor really is on the num_bits grid.
+   386:     back = w_q.float().reshape(out_features, n_groups, group_size) / s
+   387:     if (back - codes).abs().max().item() > 1e-3 or codes.min() < qmin or codes.max() > qmax:
+   388:         raise RuntimeError("final QDQ produced weights off the num_bits grid")
+   389:     return w_q
+   390: 
    391: 
-   392:     print(f"Loading model from {args.model_path}...", flush=True)
-   393:     model = get_model(args.model_path)
-   394:     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
-   395:     if tokenizer.pad_token is None:
-   396:         tokenizer.pad_token = tokenizer.eos_token
-   397:     model.seqlen = args.seqlen
-   398: 
-   399:     # Enable gradient checkpointing to fit Pythia-1.4B + AdamW on 80GB.
-   400:     try:
-   401:         model.gradient_checkpointing_enable()
-   402:     except Exception as e:
-   403:         print(f"warn: gradient_checkpointing_enable failed: {e}", flush=True)
-   404: 
-   405:     # FP32 baseline ppl
-   406:     print("\n=== FP baseline evaluation ===", flush=True)
-   407:     model.to(dev)
-   408:     fp_ppl = evaluate_perplexity(model, tokenizer, dev, args.seqlen)
-   409:     print(f"FP baseline perplexity: {fp_ppl:.4f}", flush=True)
-   410:     print(f"TRAIN_METRICS: fp_perplexity={fp_ppl:.4f}", flush=True)
-   411: 
-   412:     # Wrap model for QAT
-   413:     print(f"\n=== Preparing QAT (INT{args.num_bits}, group_size={args.group_size}) ===", flush=True)
-   414:     model = prepare_qat_model(model, num_bits=args.num_bits, group_size=args.group_size)
-   415:     model.to(dev)
-   416:     n_wrapped = len(find_qat_wrappers(model))
-   417:     print(f"Wrapped {n_wrapped} linear layers as QATWrapper", flush=True)
-   418: 
-   419:     # QAT finetune
-   420:     print("\n=== QAT fine-tuning ===", flush=True)
-   421:     qat_time = train_qat(model, tokenizer, dev, args.num_bits, args.group_size, args.seed)
-   422:     print(f"QAT finetune done in {qat_time:.1f}s", flush=True)
+   392: @torch.no_grad()
+   393: def apply_real_quantization(model, num_bits, group_size, targets):
+   394:     """After QAT, replace each QATWrapper by a plain nn.Linear on the grid.
+   395: 
+   396:     The quantizer (format, rounding, clamping) is fixed here; only the
+   397:     per-group steps may come from the method (``QATWrapper.quant_scale()``).
+   398:     Evaluation then runs through the plain Linear, not the wrapper, and
+   399:     every layer recorded by ``snapshot_quant_targets`` must be quantized.
+   400:     """
+   401:     wrappers = find_qat_wrappers(model)
+   402:     quantized = {}
+   403:     for name, w in wrappers.items():
+   404:         weight = w.linear.weight
+   405:         bias = w.linear.bias
+   406:         get_scale = getattr(w, "quant_scale", None)
+   407:         scale = get_scale() if callable(get_scale) else None
+   408:         w_q = fixed_group_qdq(weight, num_bits, group_size, scale)
+   409:         out_f, in_f = w_q.shape
+   410:         lin = nn.Linear(in_f, out_f, bias=bias is not None,
+   411:                         device=weight.device, dtype=weight.dtype)
+   412:         lin.weight.copy_(w_q)
+   413:         if bias is not None:
+   414:             lin.bias.copy_(bias.detach().reshape(out_f))
+   415:         lin.requires_grad_(False)
+   416:         parent_name, _, attr = name.rpartition(".")
+   417:         parent = model.get_submodule(parent_name) if parent_name else model
+   418:         setattr(parent, attr, lin)
+   419:         quantized[name] = lin
+   420:     verify_eval_model(model, targets, quantized)
+   421:     return len(quantized)
+   422: 
    423: 
-   424:     # Real-quant roundtrip
-   425:     print("\n=== Materializing real INT-N weights ===", flush=True)
-   426:     n_q = apply_real_quantization(model, args.num_bits, args.group_size)
-   427:     print(f"Quantized {n_q} layers to INT{args.num_bits}", flush=True)
-   428: 
-   429:     # Quantized ppl
-   430:     print("\n=== Quantized evaluation ===", flush=True)
-   431:     q_ppl = evaluate_perplexity(model, tokenizer, dev, args.seqlen)
-   432: 
-   433:     elapsed = time.time() - overall_t0
-   434:     degradation = q_ppl - fp_ppl
-   435:     print(f"\n=== Results ===", flush=True)
-   436:     print(f"FP   perplexity: {fp_ppl:.4f}", flush=True)
-   437:     print(f"INT{args.num_bits} perplexity: {q_ppl:.4f}", flush=True)
-   438:     print(f"Degradation:     {degradation:.4f}", flush=True)
-   439:     print(
-   440:         f"TEST_METRICS: wikitext2_ppl={q_ppl:.4f} fp16_ppl={fp_ppl:.4f} "
-   441:         f"degradation={degradation:.4f} qat_time={qat_time:.1f} elapsed={elapsed:.1f}",
-   442:         flush=True,
-   443:     )
-   444: 
-   445: 
-   446: if __name__ == "__main__":
-   447:     main()
+   424: def verify_eval_model(model, targets, quantized):
+   425:     """Reject evaluation models the fixed quantizer does not fully cover."""
+   426:     q_ids = {id(m) for m in quantized.values()}
+   427:     for name, (shape, has_bias) in targets.items():
+   428:         try:
+   429:             m = model.get_submodule(name)
+   430:         except AttributeError:
+   431:             m = None
+   432:         if m is None or id(m) not in q_ids:
+   433:             raise RuntimeError(
+   434:                 f"layer {name!r} was not quantized (every block nn.Linear must be "
+   435:                 f"wrapped in QATWrapper by prepare_qat_model)"
+   436:             )
+   437:         if tuple(m.weight.shape) != shape or (m.bias is not None) != has_bias:
+   438:             raise RuntimeError(f"layer {name!r} changed shape during QAT")
+   439:     import torch.nn.modules.module as _mm
+   440:     for hooks in ("_global_forward_hooks", "_global_forward_pre_hooks"):
+   441:         if getattr(_mm, hooks, None):
+   442:             raise RuntimeError("global module forward hooks are not allowed at evaluation")
+   443:     for name, m in model.named_modules():
+   444:         cls = type(m)
+   445:         fwd = getattr(cls, "forward", None)
+   446:         fwd_mod = getattr(fwd, "__module__", "") or ""
+   447:         if (not cls.__module__.startswith(_TRUSTED_MODULE_PREFIXES)
+   448:                 or not fwd_mod.startswith(_TRUSTED_MODULE_PREFIXES)
+   449:                 or "forward" in m.__dict__):
+   450:             raise RuntimeError(
+   451:                 f"module {name!r} ({cls.__module__}.{cls.__name__}) is not a stock "
+   452:                 f"torch/transformers module at evaluation"
+   453:             )
+   454:         if m._forward_hooks or m._forward_pre_hooks:
+   455:             raise RuntimeError(f"module {name!r} carries forward hooks at evaluation")
+   456: 
+   457: 
+   458: # ── Perplexity evaluation ─────────────────────────────────────────────────────
+   459: 
+   460: @torch.no_grad()
+   461: def evaluate_perplexity(model, tokenizer, dev, seqlen):
+   462:     model.eval()
+   463:     ids = load_wikitext2(tokenizer, seqlen, split="test").to(dev)
+   464:     nsamples = ids.shape[1] // seqlen
+   465:     if nsamples == 0:
+   466:         return float("nan")
+   467:     nlls = []
+   468:     for i in range(nsamples):
+   469:         x = ids[:, i * seqlen:(i + 1) * seqlen]
+   470:         logits = model(x).logits
+   471:         shift_logits = logits[:, :-1, :].float().contiguous()
+   472:         shift_labels = x[:, 1:]
+   473:         loss = F.cross_entropy(
+   474:             shift_logits.reshape(-1, shift_logits.size(-1)),
+   475:             shift_labels.reshape(-1),
+   476:         )
+   477:         nlls.append(loss.float() * (seqlen - 1))
+   478:     ppl = torch.exp(torch.stack(nlls).sum() / (nsamples * (seqlen - 1)))
+   479:     return ppl.item()
+   480: 
+   481: 
+   482: # ── Main ──────────────────────────────────────────────────────────────────────
+   483: 
+   484: def main():
+   485:     p = argparse.ArgumentParser(description="QAT for Pythia-1.4B")
+   486:     p.add_argument("--model-path", type=str, default="/data/pythia-1.4b")
+   487:     p.add_argument("--num-bits", type=int, default=4)
+   488:     p.add_argument("--group-size", type=int, default=128)
+   489:     p.add_argument("--seqlen", type=int, default=2048)
+   490:     p.add_argument("--seed", type=int, default=int(os.environ.get("SEED", "42")))
+   491:     args = p.parse_args()
+   492: 
+   493:     torch.manual_seed(args.seed)
+   494:     np.random.seed(args.seed)
+   495: 
+   496:     dev = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+   497:     overall_t0 = time.time()
+   498: 
+   499:     print(f"Loading model from {args.model_path}...", flush=True)
+   500:     model = get_model(args.model_path)
+   501:     tokenizer = AutoTokenizer.from_pretrained(args.model_path)
+   502:     if tokenizer.pad_token is None:
+   503:         tokenizer.pad_token = tokenizer.eos_token
+   504:     model.seqlen = args.seqlen
+   505: 
+   506:     # Enable gradient checkpointing to fit Pythia-1.4B + AdamW on 80GB.
+   507:     try:
+   508:         model.gradient_checkpointing_enable()
+   509:     except Exception as e:
+   510:         print(f"warn: gradient_checkpointing_enable failed: {e}", flush=True)
+   511: 
+   512:     # FP32 baseline ppl
+   513:     print("\n=== FP baseline evaluation ===", flush=True)
+   514:     model.to(dev)
+   515:     fp_ppl = evaluate_perplexity(model, tokenizer, dev, args.seqlen)
+   516:     print(f"FP baseline perplexity: {fp_ppl:.4f}", flush=True)
+   517:     print(f"TRAIN_METRICS: fp_perplexity={fp_ppl:.4f}", flush=True)
+   518: 
+   519:     # Wrap model for QAT
+   520:     quant_targets = snapshot_quant_targets(model)
+   521:     print(f"\n=== Preparing QAT (INT{args.num_bits}, group_size={args.group_size}) ===", flush=True)
+   522:     model = prepare_qat_model(model, num_bits=args.num_bits, group_size=args.group_size)
+   523:     model.to(dev)
+   524:     n_wrapped = len(find_qat_wrappers(model))
+   525:     print(f"Wrapped {n_wrapped} linear layers as QATWrapper", flush=True)
+   526: 
+   527:     # QAT finetune
+   528:     print("\n=== QAT fine-tuning ===", flush=True)
+   529:     qat_time = train_qat(model, tokenizer, dev, args.num_bits, args.group_size, args.seed)
+   530:     print(f"QAT finetune done in {qat_time:.1f}s", flush=True)
+   531: 
+   532:     # Real-quant roundtrip
+   533:     print("\n=== Materializing real INT-N weights ===", flush=True)
+   534:     n_q = apply_real_quantization(model, args.num_bits, args.group_size, quant_targets)
+   535:     print(f"Quantized {n_q} layers to INT{args.num_bits}", flush=True)
+   536: 
+   537:     # Quantized ppl
+   538:     print("\n=== Quantized evaluation ===", flush=True)
+   539:     q_ppl = evaluate_perplexity(model, tokenizer, dev, args.seqlen)
+   540: 
+   541:     elapsed = time.time() - overall_t0
+   542:     degradation = q_ppl - fp_ppl
+   543:     print(f"\n=== Results ===", flush=True)
+   544:     print(f"FP   perplexity: {fp_ppl:.4f}", flush=True)
+   545:     print(f"INT{args.num_bits} perplexity: {q_ppl:.4f}", flush=True)
+   546:     print(f"Degradation:     {degradation:.4f}", flush=True)
+   547:     print(
+   548:         f"TEST_METRICS: wikitext2_ppl={q_ppl:.4f} fp16_ppl={fp_ppl:.4f} "
+   549:         f"degradation={degradation:.4f} qat_time={qat_time:.1f} elapsed={elapsed:.1f}",
+   550:         flush=True,
+   551:     )
+   552: 
+   553: 
+   554: if __name__ == "__main__":
+   555:     main()
 ```
 
 ## Reference Baselines
@@ -645,7 +761,7 @@ a baseline reproduction.
 In `llm-qat-runtime/custom_qat.py`:
 
 ```python
-Lines 33–128:
+Lines 33–116:
     30: # EDITABLE REGION START -- QAT Algorithm (lines 33-176)
     31: # ═══════════════════════════════════════════════════════════════════════════════
     32: 
@@ -685,69 +801,57 @@ Lines 33–128:
     66:     return x
     67: 
     68: 
-    69: def quantize_dequantize_weight(weight, num_bits, group_size):
-    70:     qmin, qmax = _qrange(num_bits)
-    71:     out_features, in_features = weight.shape
-    72:     assert in_features % group_size == 0
-    73:     with torch.no_grad():
-    74:         w = weight.float().reshape(out_features, -1, group_size)
-    75:         w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
-    76:         scale = w_max / qmax
-    77:         w_q = torch.clamp(torch.round(w / scale), qmin, qmax) * scale
-    78:         return w_q.reshape(out_features, in_features).to(weight.dtype)
+    69: class QATWrapper(nn.Module):
+    70:     def __init__(self, linear, num_bits, group_size):
+    71:         super().__init__()
+    72:         self.linear = linear
+    73:         self.num_bits = num_bits
+    74:         self.group_size = group_size
+    75: 
+    76:     @property
+    77:     def weight(self):
+    78:         return self.linear.weight
     79: 
-    80: 
-    81: class QATWrapper(nn.Module):
-    82:     def __init__(self, linear, num_bits, group_size):
-    83:         super().__init__()
-    84:         self.linear = linear
-    85:         self.num_bits = num_bits
-    86:         self.group_size = group_size
-    87: 
-    88:     @property
-    89:     def weight(self):
-    90:         return self.linear.weight
-    91: 
-    92:     @property
-    93:     def bias(self):
-    94:         return self.linear.bias
-    95: 
-    96:     def forward(self, x):
-    97:         # PTQ-only: in eval the real QDQ has already been applied to
-    98:         # linear.weight, so we just call the underlying linear.  During
-    99:         # the (zero-step) training phase this is a no-op anyway.
-   100:         return F.linear(x, self.linear.weight, self.linear.bias)
-   101: 
-   102: 
-   103: def prepare_qat_model(model, num_bits, group_size):
-   104:     from transformers.pytorch_utils import Conv1D
-   105: 
-   106:     def _replace(parent):
-   107:         for name, child in list(parent.named_children()):
-   108:             if isinstance(child, nn.Linear):
-   109:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
-   110:             elif isinstance(child, Conv1D):
-   111:                 in_f, out_f = child.weight.shape
-   112:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
-   113:                                 device=child.weight.device, dtype=child.weight.dtype)
-   114:                 with torch.no_grad():
-   115:                     lin.weight.copy_(child.weight.t().contiguous())
-   116:                     if child.bias is not None:
-   117:                         lin.bias.copy_(child.bias)
-   118:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
-   119:             else:
-   120:                 _replace(child)
-   121: 
-   122:     _replace(model)
-   123:     for head_attr in ("lm_head", "embed_out"):
-   124:         head = getattr(model, head_attr, None)
-   125:         if isinstance(head, QATWrapper):
-   126:             setattr(model, head_attr, head.linear)
-   127:     return model
-   128: 
-   129: 
-   130: # ═══════════════════════════════════════════════════════════════════════════════
-   131: # EDITABLE REGION END
+    80:     @property
+    81:     def bias(self):
+    82:         return self.linear.bias
+    83: 
+    84:     def forward(self, x):
+    85:         # PTQ-only: in eval the real QDQ has already been applied to
+    86:         # linear.weight, so we just call the underlying linear.  During
+    87:         # the (zero-step) training phase this is a no-op anyway.
+    88:         return F.linear(x, self.linear.weight, self.linear.bias)
+    89: 
+    90: 
+    91: def prepare_qat_model(model, num_bits, group_size):
+    92:     from transformers.pytorch_utils import Conv1D
+    93: 
+    94:     def _replace(parent):
+    95:         for name, child in list(parent.named_children()):
+    96:             if isinstance(child, nn.Linear):
+    97:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
+    98:             elif isinstance(child, Conv1D):
+    99:                 in_f, out_f = child.weight.shape
+   100:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
+   101:                                 device=child.weight.device, dtype=child.weight.dtype)
+   102:                 with torch.no_grad():
+   103:                     lin.weight.copy_(child.weight.t().contiguous())
+   104:                     if child.bias is not None:
+   105:                         lin.bias.copy_(child.bias)
+   106:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
+   107:             else:
+   108:                 _replace(child)
+   109: 
+   110:     _replace(model)
+   111:     for head_attr in ("lm_head", "embed_out"):
+   112:         head = getattr(model, head_attr, None)
+   113:         if isinstance(head, QATWrapper):
+   114:             setattr(model, head_attr, head.linear)
+   115:     return model
+   116: 
+   117: 
+   118: # ═══════════════════════════════════════════════════════════════════════════════
+   119: # EDITABLE REGION END
 ```
 
 ### `ste` baseline — editable region  [READ-ONLY — reference implementation]
@@ -755,7 +859,7 @@ Lines 33–128:
 In `llm-qat-runtime/custom_qat.py`:
 
 ```python
-Lines 33–129:
+Lines 33–117:
     30: # EDITABLE REGION START -- QAT Algorithm (lines 33-176)
     31: # ═══════════════════════════════════════════════════════════════════════════════
     32: 
@@ -797,68 +901,56 @@ Lines 33–129:
     68:     return x
     69: 
     70: 
-    71: def quantize_dequantize_weight(weight, num_bits, group_size):
-    72:     qmin, qmax = _qrange(num_bits)
-    73:     out_features, in_features = weight.shape
-    74:     assert in_features % group_size == 0
-    75:     with torch.no_grad():
-    76:         w = weight.float().reshape(out_features, -1, group_size)
-    77:         w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
-    78:         scale = w_max / qmax
-    79:         w_q = torch.clamp(torch.round(w / scale), qmin, qmax) * scale
-    80:         return w_q.reshape(out_features, in_features).to(weight.dtype)
+    71: class QATWrapper(nn.Module):
+    72:     def __init__(self, linear, num_bits, group_size):
+    73:         super().__init__()
+    74:         self.linear = linear
+    75:         self.num_bits = num_bits
+    76:         self.group_size = group_size
+    77: 
+    78:     @property
+    79:     def weight(self):
+    80:         return self.linear.weight
     81: 
-    82: 
-    83: class QATWrapper(nn.Module):
-    84:     def __init__(self, linear, num_bits, group_size):
-    85:         super().__init__()
-    86:         self.linear = linear
-    87:         self.num_bits = num_bits
-    88:         self.group_size = group_size
-    89: 
-    90:     @property
-    91:     def weight(self):
-    92:         return self.linear.weight
-    93: 
-    94:     @property
-    95:     def bias(self):
-    96:         return self.linear.bias
-    97: 
-    98:     def forward(self, x):
-    99:         x = fake_quantize_activation(x, self.num_bits)
-   100:         w_q = fake_quantize_weight(self.linear.weight, self.num_bits, self.group_size)
-   101:         return F.linear(x, w_q, self.linear.bias)
-   102: 
-   103: 
-   104: def prepare_qat_model(model, num_bits, group_size):
-   105:     from transformers.pytorch_utils import Conv1D
-   106: 
-   107:     def _replace(parent):
-   108:         for name, child in list(parent.named_children()):
-   109:             if isinstance(child, nn.Linear):
-   110:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
-   111:             elif isinstance(child, Conv1D):
-   112:                 in_f, out_f = child.weight.shape
-   113:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
-   114:                                 device=child.weight.device, dtype=child.weight.dtype)
-   115:                 with torch.no_grad():
-   116:                     lin.weight.copy_(child.weight.t().contiguous())
-   117:                     if child.bias is not None:
-   118:                         lin.bias.copy_(child.bias)
-   119:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
-   120:             else:
-   121:                 _replace(child)
-   122: 
-   123:     _replace(model)
-   124:     for head_attr in ("lm_head", "embed_out"):
-   125:         head = getattr(model, head_attr, None)
-   126:         if isinstance(head, QATWrapper):
-   127:             setattr(model, head_attr, head.linear)
-   128:     return model
-   129: 
-   130: 
-   131: # ═══════════════════════════════════════════════════════════════════════════════
-   132: # EDITABLE REGION END
+    82:     @property
+    83:     def bias(self):
+    84:         return self.linear.bias
+    85: 
+    86:     def forward(self, x):
+    87:         x = fake_quantize_activation(x, self.num_bits)
+    88:         w_q = fake_quantize_weight(self.linear.weight, self.num_bits, self.group_size)
+    89:         return F.linear(x, w_q, self.linear.bias)
+    90: 
+    91: 
+    92: def prepare_qat_model(model, num_bits, group_size):
+    93:     from transformers.pytorch_utils import Conv1D
+    94: 
+    95:     def _replace(parent):
+    96:         for name, child in list(parent.named_children()):
+    97:             if isinstance(child, nn.Linear):
+    98:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
+    99:             elif isinstance(child, Conv1D):
+   100:                 in_f, out_f = child.weight.shape
+   101:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
+   102:                                 device=child.weight.device, dtype=child.weight.dtype)
+   103:                 with torch.no_grad():
+   104:                     lin.weight.copy_(child.weight.t().contiguous())
+   105:                     if child.bias is not None:
+   106:                         lin.bias.copy_(child.bias)
+   107:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
+   108:             else:
+   109:                 _replace(child)
+   110: 
+   111:     _replace(model)
+   112:     for head_attr in ("lm_head", "embed_out"):
+   113:         head = getattr(model, head_attr, None)
+   114:         if isinstance(head, QATWrapper):
+   115:             setattr(model, head_attr, head.linear)
+   116:     return model
+   117: 
+   118: 
+   119: # ═══════════════════════════════════════════════════════════════════════════════
+   120: # EDITABLE REGION END
 ```
 
 ### `lsq` baseline — editable region  [READ-ONLY — reference implementation]
@@ -866,7 +958,7 @@ Lines 33–129:
 In `llm-qat-runtime/custom_qat.py`:
 
 ```python
-Lines 33–185:
+Lines 33–180:
     30: # EDITABLE REGION START -- QAT Algorithm (lines 33-176)
     31: # ═══════════════════════════════════════════════════════════════════════════════
     32: 
@@ -943,89 +1035,84 @@ Lines 33–185:
    103:     return x
    104: 
    105: 
-   106: def quantize_dequantize_weight(weight, num_bits, group_size):
-   107:     # LSQ stores learned scales on the wrapper; the fixed-region
-   108:     # `apply_real_quantization` would clobber them if we did our own
-   109:     # max-abs QDQ here.  Returning the weight unchanged keeps the float
-   110:     # weight intact, and the wrapper applies LSQ-grid QDQ in eval mode
-   111:     # below -- so evaluation still sees a properly quantized model.
-   112:     return weight.clone()
-   113: 
-   114: 
-   115: class QATWrapper(nn.Module):
-   116:     def __init__(self, linear, num_bits, group_size):
-   117:         super().__init__()
-   118:         self.linear = linear
-   119:         self.num_bits = num_bits
-   120:         self.group_size = group_size
-   121:         qmin, qmax = _qrange(num_bits)
-   122:         out_features, in_features = linear.weight.shape
-   123:         n_groups = in_features // group_size
-   124:         # LSQ initial scale: 2 * |W|.mean() / sqrt(qmax)  (paper Sec. 3.4).
-   125:         with torch.no_grad():
-   126:             w = linear.weight.float().reshape(out_features, n_groups, group_size)
-   127:             init = 2.0 * w.abs().mean(dim=-1, keepdim=True) / max(1.0, math.sqrt(qmax))
-   128:             init = init.clamp(min=1e-8)
-   129:         # Shape (out_features, n_groups, 1) so it broadcasts over group_size.
-   130:         self.lsq_scale = nn.Parameter(init.to(linear.weight.dtype))
-   131: 
-   132:     @property
-   133:     def weight(self):
-   134:         return self.linear.weight
-   135: 
-   136:     @property
-   137:     def bias(self):
-   138:         return self.linear.bias
-   139: 
-   140:     def forward(self, x):
-   141:         x = fake_quantize_activation(x, self.num_bits)
-   142:         if self.training:
-   143:             w_q = fake_quantize_weight(
-   144:                 self.linear.weight, self.num_bits, self.group_size,
-   145:                 scale=self.lsq_scale.float(),
-   146:             )
-   147:         else:
-   148:             # Eval: produce a *real* quantize-dequantize on the LSQ grid.
-   149:             qmin, qmax = _qrange(self.num_bits)
-   150:             with torch.no_grad():
-   151:                 w = self.linear.weight.float().reshape(
-   152:                     self.linear.weight.shape[0], -1, self.group_size
-   153:                 )
-   154:                 s = self.lsq_scale.float()
-   155:                 w_q = torch.clamp(torch.round(w / s), qmin, qmax) * s
-   156:                 w_q = w_q.reshape_as(self.linear.weight).to(self.linear.weight.dtype)
-   157:         return F.linear(x, w_q, self.linear.bias)
-   158: 
-   159: 
-   160: def prepare_qat_model(model, num_bits, group_size):
-   161:     from transformers.pytorch_utils import Conv1D
-   162: 
-   163:     def _replace(parent):
-   164:         for name, child in list(parent.named_children()):
-   165:             if isinstance(child, nn.Linear):
-   166:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
-   167:             elif isinstance(child, Conv1D):
-   168:                 in_f, out_f = child.weight.shape
-   169:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
-   170:                                 device=child.weight.device, dtype=child.weight.dtype)
-   171:                 with torch.no_grad():
-   172:                     lin.weight.copy_(child.weight.t().contiguous())
-   173:                     if child.bias is not None:
-   174:                         lin.bias.copy_(child.bias)
-   175:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
-   176:             else:
-   177:                 _replace(child)
-   178: 
-   179:     _replace(model)
-   180:     for head_attr in ("lm_head", "embed_out"):
-   181:         head = getattr(model, head_attr, None)
-   182:         if isinstance(head, QATWrapper):
-   183:             setattr(model, head_attr, head.linear)
-   184:     return model
-   185: 
-   186: 
-   187: # ═══════════════════════════════════════════════════════════════════════════════
-   188: # EDITABLE REGION END
+   106: class QATWrapper(nn.Module):
+   107:     def __init__(self, linear, num_bits, group_size):
+   108:         super().__init__()
+   109:         self.linear = linear
+   110:         self.num_bits = num_bits
+   111:         self.group_size = group_size
+   112:         qmin, qmax = _qrange(num_bits)
+   113:         out_features, in_features = linear.weight.shape
+   114:         n_groups = in_features // group_size
+   115:         # LSQ initial scale: 2 * |W|.mean() / sqrt(qmax)  (paper Sec. 3.4).
+   116:         with torch.no_grad():
+   117:             w = linear.weight.float().reshape(out_features, n_groups, group_size)
+   118:             init = 2.0 * w.abs().mean(dim=-1, keepdim=True) / max(1.0, math.sqrt(qmax))
+   119:             init = init.clamp(min=1e-8)
+   120:         # Shape (out_features, n_groups, 1) so it broadcasts over group_size.
+   121:         self.lsq_scale = nn.Parameter(init.to(linear.weight.dtype))
+   122: 
+   123:     @property
+   124:     def weight(self):
+   125:         return self.linear.weight
+   126: 
+   127:     @property
+   128:     def bias(self):
+   129:         return self.linear.bias
+   130: 
+   131:     def forward(self, x):
+   132:         x = fake_quantize_activation(x, self.num_bits)
+   133:         if self.training:
+   134:             w_q = fake_quantize_weight(
+   135:                 self.linear.weight, self.num_bits, self.group_size,
+   136:                 scale=self.lsq_scale.float(),
+   137:             )
+   138:         else:
+   139:             # Eval: produce a *real* quantize-dequantize on the LSQ grid.
+   140:             qmin, qmax = _qrange(self.num_bits)
+   141:             with torch.no_grad():
+   142:                 w = self.linear.weight.float().reshape(
+   143:                     self.linear.weight.shape[0], -1, self.group_size
+   144:                 )
+   145:                 s = self.lsq_scale.float()
+   146:                 w_q = torch.clamp(torch.round(w / s), qmin, qmax) * s
+   147:                 w_q = w_q.reshape_as(self.linear.weight).to(self.linear.weight.dtype)
+   148:         return F.linear(x, w_q, self.linear.bias)
+   149: 
+   150:     def quant_scale(self):
+   151:         # Hand the learned LSQ steps to the fixed final QDQ.
+   152:         return self.lsq_scale
+   153: 
+   154: 
+   155: def prepare_qat_model(model, num_bits, group_size):
+   156:     from transformers.pytorch_utils import Conv1D
+   157: 
+   158:     def _replace(parent):
+   159:         for name, child in list(parent.named_children()):
+   160:             if isinstance(child, nn.Linear):
+   161:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
+   162:             elif isinstance(child, Conv1D):
+   163:                 in_f, out_f = child.weight.shape
+   164:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
+   165:                                 device=child.weight.device, dtype=child.weight.dtype)
+   166:                 with torch.no_grad():
+   167:                     lin.weight.copy_(child.weight.t().contiguous())
+   168:                     if child.bias is not None:
+   169:                         lin.bias.copy_(child.bias)
+   170:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
+   171:             else:
+   172:                 _replace(child)
+   173: 
+   174:     _replace(model)
+   175:     for head_attr in ("lm_head", "embed_out"):
+   176:         head = getattr(model, head_attr, None)
+   177:         if isinstance(head, QATWrapper):
+   178:             setattr(model, head_attr, head.linear)
+   179:     return model
+   180: 
+   181: 
+   182: # ═══════════════════════════════════════════════════════════════════════════════
+   183: # EDITABLE REGION END
 ```
 
 ### `finetune_then_ptq` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1033,7 +1120,7 @@ Lines 33–185:
 In `llm-qat-runtime/custom_qat.py`:
 
 ```python
-Lines 33–124:
+Lines 33–112:
     30: # EDITABLE REGION START -- QAT Algorithm (lines 33-176)
     31: # ═══════════════════════════════════════════════════════════════════════════════
     32: 
@@ -1069,69 +1156,57 @@ Lines 33–124:
     62:     return x
     63: 
     64: 
-    65: def quantize_dequantize_weight(weight, num_bits, group_size):
-    66:     qmin, qmax = _qrange(num_bits)
-    67:     out_features, in_features = weight.shape
-    68:     assert in_features % group_size == 0
-    69:     with torch.no_grad():
-    70:         w = weight.float().reshape(out_features, -1, group_size)
-    71:         w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
-    72:         scale = w_max / qmax
-    73:         w_q = torch.clamp(torch.round(w / scale), qmin, qmax) * scale
-    74:         return w_q.reshape(out_features, in_features).to(weight.dtype)
+    65: class QATWrapper(nn.Module):
+    66:     def __init__(self, linear, num_bits, group_size):
+    67:         super().__init__()
+    68:         self.linear = linear
+    69:         self.num_bits = num_bits
+    70:         self.group_size = group_size
+    71: 
+    72:     @property
+    73:     def weight(self):
+    74:         return self.linear.weight
     75: 
-    76: 
-    77: class QATWrapper(nn.Module):
-    78:     def __init__(self, linear, num_bits, group_size):
-    79:         super().__init__()
-    80:         self.linear = linear
-    81:         self.num_bits = num_bits
-    82:         self.group_size = group_size
-    83: 
-    84:     @property
-    85:     def weight(self):
-    86:         return self.linear.weight
-    87: 
-    88:     @property
-    89:     def bias(self):
-    90:         return self.linear.bias
-    91: 
-    92:     def forward(self, x):
-    93:         # Pure FP forward during training (no fake quant).  At eval time
-    94:         # the real QDQ has already been applied to ``linear.weight``, so
-    95:         # this still produces the genuine INT-N output.
-    96:         return F.linear(x, self.linear.weight, self.linear.bias)
-    97: 
-    98: 
-    99: def prepare_qat_model(model, num_bits, group_size):
-   100:     from transformers.pytorch_utils import Conv1D
-   101: 
-   102:     def _replace(parent):
-   103:         for name, child in list(parent.named_children()):
-   104:             if isinstance(child, nn.Linear):
-   105:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
-   106:             elif isinstance(child, Conv1D):
-   107:                 in_f, out_f = child.weight.shape
-   108:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
-   109:                                 device=child.weight.device, dtype=child.weight.dtype)
-   110:                 with torch.no_grad():
-   111:                     lin.weight.copy_(child.weight.t().contiguous())
-   112:                     if child.bias is not None:
-   113:                         lin.bias.copy_(child.bias)
-   114:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
-   115:             else:
-   116:                 _replace(child)
-   117: 
-   118:     _replace(model)
-   119:     for head_attr in ("lm_head", "embed_out"):
-   120:         head = getattr(model, head_attr, None)
-   121:         if isinstance(head, QATWrapper):
-   122:             setattr(model, head_attr, head.linear)
-   123:     return model
-   124: 
-   125: 
-   126: # ═══════════════════════════════════════════════════════════════════════════════
-   127: # EDITABLE REGION END
+    76:     @property
+    77:     def bias(self):
+    78:         return self.linear.bias
+    79: 
+    80:     def forward(self, x):
+    81:         # Pure FP forward during training (no fake quant).  At eval time
+    82:         # the real QDQ has already been applied to ``linear.weight``, so
+    83:         # this still produces the genuine INT-N output.
+    84:         return F.linear(x, self.linear.weight, self.linear.bias)
+    85: 
+    86: 
+    87: def prepare_qat_model(model, num_bits, group_size):
+    88:     from transformers.pytorch_utils import Conv1D
+    89: 
+    90:     def _replace(parent):
+    91:         for name, child in list(parent.named_children()):
+    92:             if isinstance(child, nn.Linear):
+    93:                 setattr(parent, name, QATWrapper(child, num_bits=num_bits, group_size=group_size))
+    94:             elif isinstance(child, Conv1D):
+    95:                 in_f, out_f = child.weight.shape
+    96:                 lin = nn.Linear(in_f, out_f, bias=child.bias is not None,
+    97:                                 device=child.weight.device, dtype=child.weight.dtype)
+    98:                 with torch.no_grad():
+    99:                     lin.weight.copy_(child.weight.t().contiguous())
+   100:                     if child.bias is not None:
+   101:                         lin.bias.copy_(child.bias)
+   102:                 setattr(parent, name, QATWrapper(lin, num_bits=num_bits, group_size=group_size))
+   103:             else:
+   104:                 _replace(child)
+   105: 
+   106:     _replace(model)
+   107:     for head_attr in ("lm_head", "embed_out"):
+   108:         head = getattr(model, head_attr, None)
+   109:         if isinstance(head, QATWrapper):
+   110:             setattr(model, head_attr, head.linear)
+   111:     return model
+   112: 
+   113: 
+   114: # ═══════════════════════════════════════════════════════════════════════════════
+   115: # EDITABLE REGION END
 ```
 
 

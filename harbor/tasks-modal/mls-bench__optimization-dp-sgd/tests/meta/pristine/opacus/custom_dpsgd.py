@@ -152,28 +152,35 @@ def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
 # =====================================================================
 # EDITABLE SECTION START (lines 152-233)
 # =====================================================================
-# DPMechanism: Controls how per-sample gradients are clipped and noised.
+# DPMechanism: decides how per-sample gradients are clipped and how much
+# noise each step gets. The FIXED harness (`privatize_step`, below) applies
+# your per-sample scaling, checks the clipping bound, adds the Gaussian
+# noise and does the privacy accounting with the values it actually used.
 #
 # Interface contract:
 #   __init__(self, max_grad_norm, noise_multiplier, n_params, dataset_size,
 #            batch_size, epochs, target_epsilon, target_delta)
-#   clip_and_noise(self, per_sample_grads, step, epoch) -> noised_gradient
-#   get_effective_sigma(self, step, epoch) -> float
+#   clip(self, per_sample_grads, step, epoch) -> (scale, clip_norm)
+#   get_noise_multiplier(self, step, epoch) -> float
 #
-# The mechanism receives per-sample gradients (list of tensors, each [B, *param_shape])
-# and must return aggregated + noised gradients (list of tensors, each [*param_shape]).
+# clip() receives a copy of the per-sample gradients (list of tensors, each
+# [B, *param_shape]) and returns `scale`, the per-sample multipliers (a [B]
+# tensor, or a list with one [B] tensor per parameter), and `clip_norm`, the
+# L2 bound C_t that every scaled per-sample gradient satisfies. The harness
+# averages the scaled gradients over the batch and adds N(0, (sigma_t*C_t/B)^2)
+# noise, where sigma_t = get_noise_multiplier(step, epoch) (called after clip).
 #
 # IMPORTANT:
-# - The total privacy budget (target_epsilon, target_delta) is FIXED.
-# - Your mechanism must not exceed it. The accounting is checked externally.
-# - You may adapt clipping thresholds, noise schedules, or gradient processing
-#   as long as privacy guarantees hold.
+# - The total privacy budget (target_epsilon, target_delta) is FIXED. The
+#   harness accounts every step with the sigma_t it applied and aborts a run
+#   whose epsilon exceeds the target; a scaled per-sample gradient whose norm
+#   exceeds clip_norm also aborts the run.
 
 class DPMechanism:
     """Differentially private gradient mechanism.
 
-    Standard DP-SGD: clip per-sample gradients to max_grad_norm,
-    then add Gaussian noise calibrated to (noise_multiplier * max_grad_norm).
+    Standard DP-SGD: clip per-sample gradients to max_grad_norm and use the
+    calibrated constant noise multiplier (noise std = sigma * C / B).
     """
 
     def __init__(self, max_grad_norm, noise_multiplier, n_params,
@@ -187,16 +194,18 @@ class DPMechanism:
         self.target_epsilon = target_epsilon
         self.target_delta = target_delta
 
-    def clip_and_noise(self, per_sample_grads, step, epoch):
-        """Clip per-sample gradients and add noise.
+    def clip(self, per_sample_grads, step, epoch):
+        """Choose per-sample clipping multipliers.
 
         Args:
-            per_sample_grads: list of tensors, each [B, *param_shape]
+            per_sample_grads: list of tensors, each [B, *param_shape] (a copy)
             step: current global training step
             epoch: current epoch number
 
         Returns:
-            list of noised gradient tensors, each [*param_shape]
+            (scale, clip_norm): scale is a [B] tensor of per-sample multipliers
+            (or a list of [B] tensors, one per parameter); clip_norm is the L2
+            bound of every scaled per-sample gradient.
         """
         batch_size = per_sample_grads[0].shape[0]
 
@@ -204,33 +213,133 @@ class DPMechanism:
         flat = torch.cat([g.reshape(batch_size, -1) for g in per_sample_grads], dim=1)
         norms = flat.norm(2, dim=1)  # [B]
 
-        # Clip per-sample gradients
+        # Clip per-sample gradients to max_grad_norm
         clip_factor = (self.max_grad_norm / norms.clamp(min=1e-8)).clamp(max=1.0)  # [B]
 
-        noised_grads = []
-        for g in per_sample_grads:
-            # Apply clipping: g[i] *= clip_factor[i]
-            shape = [batch_size] + [1] * (g.dim() - 1)
-            clipped = g * clip_factor.reshape(shape)
+        return clip_factor, self.max_grad_norm
 
-            # Average over batch
-            avg = clipped.mean(dim=0)
-
-            # Add calibrated Gaussian noise
-            noise = torch.randn_like(avg) * (
-                self.noise_multiplier * self.max_grad_norm / batch_size
-            )
-            noised_grads.append(avg + noise)
-
-        return noised_grads
-
-    def get_effective_sigma(self, step, epoch):
-        """Return the effective noise multiplier for privacy accounting."""
+    def get_noise_multiplier(self, step, epoch):
+        """Return the noise multiplier sigma_t used (and accounted) this step."""
         return self.noise_multiplier
+
+    # Design space: per-sample / per-layer clipping or normalization,
+    # adaptive thresholds (C_t), and noise schedules (sigma_t). Helper
+    # methods and module-level helpers may live in this section too.
+    # The noise itself and the epsilon accounting are done by the harness.
+
 
 # =====================================================================
 # EDITABLE SECTION END
 # =====================================================================
+
+
+# =====================================================================
+# FIXED: DP privatization and privacy accounting (DO NOT MODIFY)
+# =====================================================================
+# The Gaussian mechanism and the accountant live here, outside the editable
+# section, so the reported epsilon is always computed from the clipping bound
+# and noise multiplier that were actually applied. Modules are re-bound under
+# private names so that names reassigned in the editable section cannot
+# change the mechanism.
+import math as _math
+import torch as _torch
+
+_CLIP_NORM_RTOL = 1e-4  # float slack on the per-sample L2 bound check
+_EPSILON_RTOL = 1e-2    # slack for the sigma calibration's binary-search tolerance
+
+
+def _rdp_epsilon(steps, sigma, q, delta):
+    """Same RDP bound and conversion as compute_epsilon (kept private here)."""
+    alphas = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
+    best_eps = float("inf")
+    for alpha in alphas:
+        if alpha <= 1:
+            continue
+        rdp = steps * min(
+            q * q * alpha / (2 * sigma * sigma),
+            alpha * q * q / (2 * sigma * sigma),
+        )
+        eps = rdp - _math.log(delta) / (alpha - 1) + _math.log(1 - 1 / alpha)
+        if eps < best_eps:
+            best_eps = eps
+    return max(0, best_eps)
+
+
+class _PrivacyLedger:
+    """Composes the per-step noise multipliers the harness actually applied.
+
+    Under this RDP bound a step with multiplier sigma_t costs
+    alpha * q^2 / (2 sigma_t^2), so T steps compose to the cost of T steps at
+    sigma_eff = sqrt(T / sum_t 1/sigma_t^2).
+    """
+
+    def __init__(self, q, delta):
+        self.q = float(q)
+        self.delta = float(delta)
+        self.steps = 0
+        self.inv_sq_sum = 0.0
+
+    def record(self, sigma):
+        self.steps += 1
+        self.inv_sq_sum += 1.0 / (sigma * sigma)
+
+    def effective_sigma(self):
+        return (self.steps / self.inv_sq_sum) ** 0.5
+
+    def epsilon(self):
+        return _rdp_epsilon(self.steps, self.effective_sigma(), self.q, self.delta)
+
+
+def _positive_finite(value, name):
+    value = float(value)
+    if not _math.isfinite(value) or value <= 0:
+        raise RuntimeError(f"DPMechanism returned invalid {name}={value!r}; "
+                           f"it must be a finite positive number")
+    return value
+
+
+def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger):
+    """One step of the Gaussian mechanism with the mechanism's C_t and sigma_t.
+
+    The mechanism sees a copy of the per-sample gradients and returns
+    per-sample multipliers plus the bound C_t; the harness scales the
+    original gradients, verifies ||scaled_i|| <= C_t for every sample, averages
+    over the batch, adds N(0, (sigma_t * C_t / B)^2) noise and records sigma_t.
+    """
+    batch_size = per_sample_grads[0].shape[0]
+    scale, clip_norm = dp_mechanism.clip(
+        [g.clone() for g in per_sample_grads], step, epoch
+    )
+    clip_norm = _positive_finite(clip_norm, "clip_norm")
+    sigma = _positive_finite(dp_mechanism.get_noise_multiplier(step, epoch),
+                             "noise multiplier")
+
+    scales = list(scale) if isinstance(scale, (list, tuple)) else [scale] * len(per_sample_grads)
+    if len(scales) != len(per_sample_grads):
+        raise RuntimeError(f"DPMechanism.clip returned {len(scales)} scale tensors "
+                           f"for {len(per_sample_grads)} parameters")
+    clipped = []
+    for g, s in zip(per_sample_grads, scales):
+        if type(s) is not _torch.Tensor or tuple(s.shape) != (batch_size,):
+            raise RuntimeError("DPMechanism.clip must return per-sample scales as "
+                               f"plain torch.Tensor of shape [{batch_size}]")
+        shape = [batch_size] + [1] * (g.dim() - 1)
+        clipped.append(g * s.detach().reshape(shape))
+
+    norms = _torch.cat([c.reshape(batch_size, -1) for c in clipped], dim=1).norm(2, dim=1)
+    if not bool((norms <= clip_norm * (1 + _CLIP_NORM_RTOL)).all()):
+        raise RuntimeError(
+            f"DP violation at step {step}: a scaled per-sample gradient has norm "
+            f"{norms.max().item():.6g} > clip_norm={clip_norm:.6g}"
+        )
+
+    noised_grads = []
+    for c in clipped:
+        avg = c.mean(dim=0)
+        noise = _torch.randn_like(avg) * (sigma * clip_norm / batch_size)
+        noised_grads.append(avg + noise)
+    ledger.record(sigma)
+    return noised_grads
 
 
 # =====================================================================
@@ -354,7 +463,7 @@ def compute_per_sample_gradients_fast(model, data, target, criterion):
 # =====================================================================
 
 def train_epoch(model, train_loader, optimizer, criterion, dp_mechanism, device,
-                epoch, total_steps, log_interval=50):
+                epoch, total_steps, ledger, log_interval=50):
     """Train one epoch with DP mechanism."""
     model.train()
     running_loss = 0.0
@@ -369,8 +478,9 @@ def train_epoch(model, train_loader, optimizer, criterion, dp_mechanism, device,
         # Compute per-sample gradients
         per_sample_grads = compute_per_sample_gradients(model, data, target, criterion)
 
-        # Apply DP mechanism (EDITABLE part)
-        noised_grads = dp_mechanism.clip_and_noise(per_sample_grads, step, epoch)
+        # Apply the DP mechanism: clipping/schedule from DPMechanism (EDITABLE),
+        # noise and accounting from privatize_step (FIXED)
+        noised_grads = privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger)
 
         # Set model gradients
         optimizer.zero_grad()
@@ -500,6 +610,10 @@ def main():
         target_delta=args.target_delta,
     )
 
+    # Privacy ledger (FIXED): records the sigma_t applied at every step
+    ledger = _PrivacyLedger(q, args.target_delta)
+    epsilon_limit = args.target_epsilon * (1 + _EPSILON_RTOL)
+
     # Training loop
     global_step = 0
     best_acc = 0.0
@@ -507,13 +621,13 @@ def main():
     for epoch in range(1, args.epochs + 1):
         global_step, train_loss, train_acc = train_epoch(
             model, train_loader, optimizer, criterion, dp_mechanism, device,
-            epoch, global_step, log_interval=50,
+            epoch, global_step, ledger, log_interval=50,
         )
         test_loss, test_acc = evaluate(model, test_loader, criterion, device)
 
-        # Compute current epsilon spend
-        effective_sigma = dp_mechanism.get_effective_sigma(global_step, epoch)
-        eps_spent, best_alpha = compute_epsilon(global_step, effective_sigma, q, args.target_delta)
+        # Compute current epsilon spend from the noise actually applied
+        effective_sigma = ledger.effective_sigma()
+        eps_spent = ledger.epsilon()
 
         print(
             f"Epoch {epoch}/{args.epochs}: "
@@ -523,6 +637,12 @@ def main():
             flush=True,
         )
 
+        if eps_spent > epsilon_limit:
+            raise RuntimeError(
+                f"Privacy budget exceeded: epsilon={eps_spent:.4f} > "
+                f"target_epsilon={args.target_epsilon} after {ledger.steps} steps"
+            )
+
         if test_acc > best_acc:
             best_acc = test_acc
 
@@ -530,7 +650,7 @@ def main():
 
     # Print final test metrics
     final_test_loss, final_test_acc = evaluate(model, test_loader, criterion, device)
-    eps_final, _ = compute_epsilon(global_step, effective_sigma, q, args.target_delta)
+    eps_final = ledger.epsilon()
 
     print(f"\nTEST_METRICS accuracy={final_test_acc:.4f} "
           f"epsilon={eps_final:.4f} best_accuracy={best_acc:.4f}",

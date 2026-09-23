@@ -25,18 +25,26 @@ def _add_setting(label):
         col(f"auroc_{label}").higher().id()
         .bounded_power(bound=1.0))
 
-    # coverage_at80 is included in scoring because broken implementations can
-    # silently land far from the 0.80 target (e.g. a method that accepts only
-    # 20% of samples gets an unearned tiny selective_risk on the 20% it kept).
-    # All correct baselines hit ~0.795-0.811 so the coverage term has near-zero
-    # spread between them; any agent that drifts to 0.20 / 1.00 takes a real hit.
+    # The 0.80 coverage is a hard budget, enforced multiplicatively. As one
+    # term of the mean it was not: both risk terms are measured on accepted
+    # samples only, so accepting just the most confident 20% gained more on
+    # risk than it lost on coverage and outscored every correct method.
+    # All baselines land at 0.77-0.81, inside [0.75, 0.85], so the penalty is
+    # 1.0 for them; coverage 0.20 gets x0.004 and 1.00 gets x0.22.
+    term(f"coverage_min_{label}",
+        penalty_lower(col(f"coverage_at80_{label}").higher().id(),
+                      target=0.75, sharpness=10.0))
+    term(f"coverage_max_{label}",
+        penalty_upper(col(f"coverage_at80_{label}").higher().id(),
+                      target=0.85, sharpness=10.0))
+
     setting(label, weighted_mean(
         (f"selective_risk_at80_{label}", 1.0),
         (f"coverage_at80_{label}", 1.0),
         (f"worst_group_selective_risk_{label}", 1.0),
         (f"deferral_rate_gap_{label}", 1.0),
         (f"auroc_{label}", 1.0),
-    ))
+    ), constraints=[f"coverage_min_{label}", f"coverage_max_{label}"])
 
 
 for _label in ("adult", "compas", "law_school"):

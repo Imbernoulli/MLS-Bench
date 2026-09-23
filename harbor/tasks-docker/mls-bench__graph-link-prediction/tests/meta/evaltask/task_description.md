@@ -72,7 +72,11 @@ Datasets:
 | CiteSeer      | 3,327   | 9,104     | 3,703    | 85/5/10 link split; AUC, MRR, Hits@20 |
 | ogbl-collab   | 235,868 | 1,285,465 | 128      | Official OGB split; Hits@50, MRR      |
 
-All metrics are higher-is-better.
+All metrics are higher-is-better. Positive and negative test candidates are
+scored together in one shuffled model call. Ties are counted pessimistically
+(OGB convention): Hits@K counts a positive only if it scores strictly above
+the K-th best negative, and MRR ranks a positive below every negative with an
+equal score. Non-finite scores fail the run.
 
 The scientific contribution may improve the encoder, the edge decoder, or the
 structural features used for candidate edges. The method should avoid assuming

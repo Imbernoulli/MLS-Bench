@@ -93,6 +93,7 @@ cache state:
 | Field | Status | Notes |
 |---|---|---|
 | `compression_ratio` | enforced | Harness force-overrides to its own value at the call site (`PrefillSelectionCompressor.forward_hook`). Policies cannot lie about the budget. |
+| `n_kept` | enforced | `select_cache` must return keys and values that keep at most `n_kept` tokens along the sequence dimension and leave every other dimension unchanged; a larger or malformed selection aborts the run. The retained fraction is measured from the returned tensors. |
 | `disable_compression` | enforced | If `True`, harness skips `score_tokens`/`select_cache` entirely and retains all tokens. Used by the `full_attention` anchor. |
 | `method` | logged only | Recorded for provenance. |
 | `sink_tokens`, `lag_size`, `n_future_positions`, `subspace_dim`, etc. | advisory | Used internally by the policy's own `score_tokens`. The harness does not verify that declared "sinks" are actually preserved by `select_cache`'s top-K output. |

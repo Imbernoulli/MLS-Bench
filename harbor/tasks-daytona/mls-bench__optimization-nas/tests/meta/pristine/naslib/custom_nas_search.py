@@ -118,25 +118,22 @@ def path_encoding(op_indices):
 
 
 class BenchmarkAPI:
-    """Wrapper for querying NAS-Bench-201 with a hard validation-query budget.
+    """Client for NAS-Bench-201 validation queries with a hard budget.
 
-    Only the VALIDATION-accuracy table for the active dataset exists in this
-    process, captured privately below. The held-out TEST accuracy of the
-    final architecture is looked up by the harness afterwards, outside this
-    process (see the FINAL_ARCH report in the main entry point).
+    The validation table is NOT in this process: a separate FIXED oracle
+    process (the harness's nas_oracle_entry.py) holds it, counts every query
+    and enforces the budget; this object only forwards architecture strings
+    to it over a pipe. ``query_count`` here is a local mirror for logging;
+    the oracle's own count is authoritative. The held-out TEST accuracy of
+    the final architecture is looked up by the harness afterwards, outside
+    this process (see the FINAL_ARCH report in the main entry point).
     """
 
-    def __init__(self, val_table, dataset_key, query_budget):
+    def __init__(self, oracle, dataset_key, query_budget):
         self.dataset_key = dataset_key
         self.query_budget = int(query_budget)
         self.query_count = 0
-        self._cache = {}  # repeated queries don't cost extra but still count
-        val = dict(val_table)
-
-        def _val_lookup(arch_str):
-            return val[arch_str]
-
-        self._val_lookup = _val_lookup
+        self._oracle = oracle  # _OracleClient (FIXED, defined below)
 
     @property
     def remaining_budget(self):
@@ -148,13 +145,16 @@ class BenchmarkAPI:
         For cifar10, validation accuracy is from the 'cifar10-valid' split.
         For cifar100 and ImageNet16-120, validation accuracy uses 'eval_acc1es'
         from the respective split (standard NAS-Bench-201 search protocol).
+        The oracle process counts this query and refuses every query past
+        the budget, whatever the local mirror ``query_count`` says (it may
+        be reset or overwritten; that does not buy extra queries).
         """
         if self.query_count >= self.query_budget:
             raise BudgetExceededError(
                 f"Validation query budget of {self.query_budget} exhausted."
             )
         self.query_count += 1
-        return self._val_lookup(op_indices_to_arch_str(op_indices))
+        return self._oracle.query(op_indices_to_arch_str(op_indices))
 
 
 # =====================================================================
@@ -236,41 +236,45 @@ class NASOptimizer:
 # =====================================================================
 # FIXED: Main entry point — search + final-architecture report
 # =====================================================================
-# Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
-# unlinked the staged validation table and BEFORE this module was imported:
-# maps blob basename -> file content. None when the module is launched
-# directly — _load_val_table then reads the on-disk table (legacy flow).
-_PRELOADED_INPUTS: dict[str, str] | None = None
+class _OracleClient:
+    """FIXED pipe client for the out-of-process validation oracle.
+
+    The harness (nas_oracle_entry.py) starts this program with two pipe file
+    descriptors in MLSBENCH_NAS_ORACLE_FDS ("<request>,<reply>"). The oracle
+    process on the other end holds the only copy of the validation table,
+    counts every request and refuses those past the budget.
+    """
+
+    def __init__(self, spec):
+        req_fd, resp_fd = (int(x) for x in spec.split(","))
+        self._req = os.fdopen(req_fd, "w", encoding="utf-8", newline="\n")
+        self._resp = os.fdopen(resp_fd, "r", encoding="utf-8", newline="\n")
+
+    def query(self, arch_str):
+        self._req.write(arch_str + "\n")
+        self._req.flush()
+        reply = self._resp.readline().rstrip("\n")
+        if reply.startswith("OK "):
+            return float(reply[3:])
+        if reply.startswith("BUDGET"):
+            raise BudgetExceededError(
+                f"Validation query budget of {reply.split()[-1]} exhausted "
+                "(refused by the oracle)."
+            )
+        if reply == "KEYERR":
+            raise KeyError(arch_str)
+        raise RuntimeError(f"validation oracle failed (reply={reply!r})")
 
 
-def _load_val_table(env_name, seed):
-    """Load this run's validation table. Prefers the payload preloaded by the
-    FIXED wrapper (which read and unlinked the table before any editable code
-    could run); falls back to the on-disk copy when launched directly, deleting
-    it after loading when the harness marks the materialized inputs as
-    ephemeral (i.e. re-created for every evaluation)."""
-    global _PRELOADED_INPUTS
-    name = f"nb201_tables_{env_name}_s{seed}.json"
-    preloaded = _PRELOADED_INPUTS
-    # Drop the raw payloads before any editable code runs: from here on the
-    # table lives only in this fixed entry's scope (handed to BenchmarkAPI).
-    _PRELOADED_INPUTS = None
-    payload = (preloaded or {}).pop(name, None)
-    if payload is not None:
-        tables = json.loads(payload)
-        return tables["val"]
-    path = Path(__file__).resolve().parent / "naslib" / "data" / name
-    if not path.exists():
-        print(f"ERROR: validation table not found: {path}", flush=True)
+def _connect_oracle():
+    """Connect to the harness's out-of-process validation oracle."""
+    spec = os.environ.get("MLSBENCH_NAS_ORACLE_FDS")
+    if not spec:
+        print("ERROR: no validation oracle (MLSBENCH_NAS_ORACLE_FDS unset); "
+              "run this program through the harness's nas_oracle_entry.py.",
+              flush=True)
         sys.exit(1)
-    with open(path) as f:
-        tables = json.load(f)
-    if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-    return tables["val"]
+    return _OracleClient(spec)
 
 
 def _main():
@@ -292,14 +296,12 @@ def _main():
         print(f"ERROR: Unknown environment '{env_name}'. Must be one of: {list(DATASET_MAP.keys())}")
         sys.exit(1)
 
-    # ── Load this run's validation table (test accuracies stay outside) ──
-    val_table = _load_val_table(env_name, seed)
-    print(f"Loaded validation table for {env_name} "
-          f"({len(val_table)} architectures).", flush=True)
+    # ── Connect to the out-of-process validation oracle (the table and the ──
+    # ── authoritative query count live there; test accuracies stay outside) ──
+    oracle = _connect_oracle()
 
     # ── Create benchmark API with strict budget ──
-    api = BenchmarkAPI(val_table, dataset_key, query_budget=num_epochs)
-    del val_table
+    api = BenchmarkAPI(oracle, dataset_key, query_budget=num_epochs)
 
     # ── Run search ──
     print(f"Starting sample-efficient NAS on {env_name} (dataset={dataset_key}) "

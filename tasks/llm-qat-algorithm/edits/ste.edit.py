@@ -50,18 +50,6 @@ def fake_quantize_activation(x, num_bits):
     return x
 
 
-def quantize_dequantize_weight(weight, num_bits, group_size):
-    qmin, qmax = _qrange(num_bits)
-    out_features, in_features = weight.shape
-    assert in_features % group_size == 0
-    with torch.no_grad():
-        w = weight.float().reshape(out_features, -1, group_size)
-        w_max = w.abs().amax(dim=-1, keepdim=True).clamp(min=1e-12)
-        scale = w_max / qmax
-        w_q = torch.clamp(torch.round(w / scale), qmin, qmax) * scale
-        return w_q.reshape(out_features, in_features).to(weight.dtype)
-
-
 class QATWrapper(nn.Module):
     def __init__(self, linear, num_bits, group_size):
         super().__init__()

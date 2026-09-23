@@ -43,8 +43,8 @@ def weight_quant(weight):
     Estimator (STE) to flow gradients through the non-differentiable
     quantization.
 
-    The default implementation is a pass-through (no quantization).
-    Replace this with your low-bit quantization scheme, e.g.:
+    The default implementation is a naive binary {-1, +1} sign quantizer
+    with a per-tensor absmean scale. Replace it with your scheme, e.g.:
     - Binary: {-1, +1} via sign function
     - Ternary: {-1, 0, +1} via absmean thresholding
     - 2-bit: {-1, -1/3, +1/3, +1} via uniform quantization
@@ -56,8 +56,8 @@ def weight_quant(weight):
             or per-channel scale factor used to rescale the output.
             quantized_weight * scale should approximate the original weight.
     """
-    scale = weight.detach().abs().mean()
-    return weight, scale
+    scale = weight.detach().abs().mean().clamp(min=1e-12)
+    return (weight.sign() - weight).detach() + weight, scale
 
 
 def activation_quant(x):
@@ -71,7 +71,7 @@ def activation_quant(x):
     Returns:
         (quantized_x, scale): quantized activation and scale factor.
     """
-    scale = x.detach().abs().max().clamp(min=1e-12)
+    scale = torch.ones((), device=x.device, dtype=x.dtype)
     return x, scale
 
 
@@ -108,7 +108,7 @@ class BitLinear(nn.Module):
         # Perform matmul with quantized values, then rescale
         out = F.linear(x_q, w_q, None)
         # Rescale output: the true output ~ (x_scale * w_scale) * out_quantized
-        # But since default is pass-through, just add bias
+        out = out * (w_scale * x_scale)
         if self.bias is not None:
             out = out + self.bias
         return out
@@ -387,7 +387,76 @@ if __name__ == '__main__':
     model = GPT(gptconf)
     model.to(device)
 
+    # -- Low-bit weight check (fixed code, outside the editable region) --
+    # Budget: at most 5 weight levels (binary, ternary, and the 5-level grid
+    # {-1, -2/3, 0, 2/3, 1} the int2_uniform reference rounds to). Every
+    # BitLinear is probed with one-hot inputs, which recovers the effective
+    # weight its forward pass applies (whatever activation quantizer is used),
+    # and each output row of that weight may take at most LOWBIT_MAX_LEVELS
+    # distinct values; a per-tensor or per-output-channel scale is allowed.
+    # The check runs at init, at every eval_interval and before the final
+    # evaluation, in train and eval mode; a violation aborts the run.
+    LOWBIT_MAX_LEVELS = 5
+    LOWBIT_REL_TOL = 1e-3
 
+    def _lowbit_slots(m):
+        slots = []
+        for i, blk in enumerate(m.transformer.h):
+            slots += [(f'h.{i}.attn.c_attn', blk.attn.c_attn, m.config.n_embd),
+                      (f'h.{i}.attn.c_proj', blk.attn.c_proj, m.config.n_embd),
+                      (f'h.{i}.mlp.c_fc', blk.mlp.c_fc, m.config.n_embd),
+                      (f'h.{i}.mlp.c_proj', blk.mlp.c_proj, 4 * m.config.n_embd)]
+        return slots + [('lm_head', m.lm_head, m.config.n_embd)]
+
+    @torch.no_grad()
+    def _lowbit_row_levels(w_eff):
+        # Levels per row: sorted values split wherever the gap exceeds
+        # LOWBIT_REL_TOL * max|row|; the within-level spread must stay below
+        # the same tolerance per level, so a continuum cannot chain into one.
+        v, _ = torch.sort(w_eff.float(), dim=1)
+        tol = LOWBIT_REL_TOL * v.abs().amax(dim=1, keepdim=True)
+        gaps = v[:, 1:] - v[:, :-1]
+        big = gaps > tol
+        levels = 1 + big.sum(dim=1)
+        spread = torch.where(big, torch.zeros_like(gaps), gaps).sum(dim=1)
+        return levels, spread > tol.squeeze(1) * levels
+
+    @torch.no_grad()
+    def verify_lowbit(m, when):
+        t_check = time.time()
+        worst = (0, '')
+        for name, mod, d_in in _lowbit_slots(m):
+            saved = {k: t.detach().clone() for k, t in mod.state_dict().items()}
+            was_training = mod.training
+            try:
+                for train_mode in (True, False):
+                    mod.train(train_mode)
+                    with torch.autocast(device_type='cuda', enabled=False):
+                        eye = torch.eye(d_in, device=device, dtype=torch.float32)
+                        base = mod(torch.zeros(1, 1, d_in, device=device)).float()
+                        base = torch.where(torch.isfinite(base), base, torch.zeros_like(base))
+                        w_eff = (mod(eye.unsqueeze(0)).float() - base)[0].t()
+                    if not torch.isfinite(w_eff).all():
+                        raise RuntimeError(f"LOWBIT_CHECK FAILED ({when}): {name} forward is non-finite on one-hot probes")
+                    levels, smeared = _lowbit_row_levels(w_eff)
+                    n_max = int(levels.max())
+                    if n_max > LOWBIT_MAX_LEVELS or bool(smeared.any()):
+                        raise RuntimeError(
+                            f"LOWBIT_CHECK FAILED ({when}): {name} "
+                            f"({'train' if train_mode else 'eval'} mode) effective forward weight has "
+                            f"{n_max} distinct values in a row (max {LOWBIT_MAX_LEVELS}), "
+                            f"{int(smeared.sum())} rows with smeared levels; "
+                            f"forward weights must be discrete")
+                    worst = max(worst, (n_max, name))
+            finally:
+                mod.train(was_training)
+                mod.load_state_dict(saved)
+        print(f"LOWBIT_CHECK: {when}: ok, max levels per row = {worst[0]} ({worst[1]}), "
+              f"{time.time() - t_check:.1f}s", flush=True)
+
+    lowbit_model = model  # bare GPT; DDP / torch.compile wrap these same modules
+    if master_process:
+        verify_lowbit(lowbit_model, 'init')
     scaler = torch.amp.GradScaler(enabled=(dtype == 'float16'))
     optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
 
@@ -434,6 +503,7 @@ if __name__ == '__main__':
             print(f"TRAIN_METRICS: step={iter_num}, train_loss={train_loss:.4f}, val_loss={val_loss:.4f}", flush=True)
             if val_loss < best_val_loss:
                 best_val_loss = val_loss
+            verify_lowbit(lowbit_model, f'step {iter_num}')
 
         for micro_step in range(gradient_accumulation_steps):
             if ddp:
@@ -465,6 +535,7 @@ if __name__ == '__main__':
 
     # -- Final Evaluation --
     if master_process:
+        verify_lowbit(lowbit_model, 'final')
         losses = estimate_loss()
         val_loss = losses['val'].item()
         train_loss = losses['train'].item()

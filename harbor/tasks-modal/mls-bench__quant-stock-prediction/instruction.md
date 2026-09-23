@@ -61,7 +61,7 @@ stay unchanged.
 - editable lines **16–103**
 - `qlib/workflow_config.yaml`
 - editable lines **13–25**
-- editable lines **31–44**
+- editable lines **31–43**
 
 
 Other files you may **read** for context (do not modify):
@@ -179,7 +179,7 @@ Other files you may **read** for context (do not modify):
    103:         return pd.Series(preds, index=index, name="score")
 ```
 
-### `qlib/workflow_config.yaml`  [EDITABLE — lines 13–25, lines 31–44 only]
+### `qlib/workflow_config.yaml`  [EDITABLE — lines 13–25, lines 31–43 only]
 
 ```yaml
      1: # Qlib workflow configuration for CSI300 stock prediction benchmark.
@@ -938,7 +938,7 @@ Lines 13–25:
     27:           end_time: "2020-08-01"
     28:           fit_start_time: "2008-01-01"
 
-Lines 31–37:
+Lines 31–36:
     28:           fit_start_time: "2008-01-01"
     29:           fit_end_time: "2014-12-31"
     30:           instruments: csi300
@@ -951,7 +951,6 @@ Lines 31–37:
     37:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
     38:       segments:
     39:         train: ["2008-01-01", "2014-12-31"]
-    40:         valid: ["2015-01-01", "2016-12-31"]
 ```
 
 

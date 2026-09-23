@@ -95,6 +95,19 @@ class _BlockedLoader:
         raise PermissionError("data_loader is disabled inside predict().")
 
 
+def _shallow_copy(obj):
+    """Shallow copy that keeps EVERY attribute.
+
+    ``copy.copy`` goes through qlib ``Serializable.__getstate__``, which drops
+    all ``_``-prefixed attributes (e.g. ``MTSDatasetH._index`` / ``_data`` /
+    ``_batch_slices``), so the copied dataset could not ``prepare()`` anymore
+    and every MTSDatasetH model (the TRA baseline) crashed in ``predict()``.
+    """
+    new = object.__new__(type(obj))
+    new.__dict__.update(obj.__dict__)
+    return new
+
+
 def _build_label_free_dataset(real_ds):
     """Shallow-copy ``real_ds`` + its handler, swapping the cached frames for
     label-nulled copies and neutering the loader.
@@ -107,7 +120,7 @@ def _build_label_free_dataset(real_ds):
     if handler is None:
         return real_ds  # not a DatasetH-with-handler; nothing to guard
 
-    new_handler = copy.copy(handler)  # shallow: keeps refs we then overwrite
+    new_handler = _shallow_copy(handler)  # shallow: keeps refs we then overwrite
     for attr in ("_data", "_infer", "_learn"):
         if hasattr(handler, attr):
             setattr(new_handler, attr, _null_label_columns(getattr(handler, attr)))
@@ -117,7 +130,7 @@ def _build_label_free_dataset(real_ds):
         except Exception:
             pass
 
-    new_ds = copy.copy(real_ds)
+    new_ds = _shallow_copy(real_ds)
     new_ds.handler = new_handler
     return new_ds
 

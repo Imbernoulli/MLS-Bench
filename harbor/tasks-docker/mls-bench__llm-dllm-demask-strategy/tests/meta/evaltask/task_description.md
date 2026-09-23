@@ -41,7 +41,7 @@ class DemaskDecoder:
         # Returns (x_output [1, prompt_len + gen_length], used_steps)
 ```
 
-`get_num_transfer_tokens(mask, steps)` is available outside the editable region — it returns the uniform schedule (`mask.sum() // steps` per step). Always return shape `[1, prompt_len + gen_length]`. `used_steps` counts model forward passes (lower = more efficient).
+`get_num_transfer_tokens(mask, steps)` is available outside the editable region — it returns the uniform schedule (`mask.sum() // steps` per step). Always return shape `[1, prompt_len + gen_length]`. `used_steps` counts model forward passes (lower = more efficient). The harness measures `avg_steps` itself: `model` is a handle that counts every forward call (each sequence in a batched call counts as one pass), and the counted passes, not the returned `used_steps`, are what gets scored.
 
 ## Reference baseline strategies
 - `confidence_greedy` — LLaDA's `low_confidence` remasking: top-k by max prob.

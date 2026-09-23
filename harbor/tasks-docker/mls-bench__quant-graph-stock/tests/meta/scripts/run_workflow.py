@@ -21,6 +21,107 @@ from qlib.config import REG_CN
 from qlib.model.trainer import task_train
 
 
+# The prediction target is FIXED by the task. IC / ICIR / Rank IC / Rank ICIR
+# are scored against this expression, computed here in non-editable code,
+# not against whatever label the (partly editable) dataset config produces.
+CANONICAL_LABEL = "Ref($close, -2) / Ref($close, -1) - 1"
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that rejects duplicate mapping keys.
+
+    PyYAML silently keeps the LAST duplicate, so a key repeated inside an
+    editable block could override a fixed line (instruments, dates, label,
+    segments, record). Duplicate keys are never legitimate here.
+    """
+
+
+def _construct_unique_map(loader, node):
+    data = {}
+    yield data
+    seen = set()
+    for key_node, _ in node.value:
+        if key_node.tag == "tag:yaml.org,2002:merge":
+            continue
+        key = loader.construct_object(key_node, deep=True)
+        if key in seen:
+            raise yaml.constructor.ConstructorError(
+                None, None,
+                f"duplicate key {key!r} in workflow_config.yaml "
+                "(a key may not be repeated to override a fixed line)",
+                key_node.start_mark,
+            )
+        seen.add(key)
+    data.update(loader.construct_mapping(node))
+
+
+_UniqueKeyLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, _construct_unique_map
+)
+
+
+def check_fixed_label(config):
+    """Fail loudly if the handler label is not the task's fixed label."""
+    handler_kwargs = config["task"]["dataset"]["kwargs"]["handler"]["kwargs"]
+    label = handler_kwargs.get("label")
+    if label != [CANONICAL_LABEL]:
+        raise ValueError(
+            f"workflow_config.yaml: the dataset label is fixed to "
+            f"[{CANONICAL_LABEL!r}], got {label!r}"
+        )
+
+
+def load_canonical_test_label(config):
+    """Fixed test-segment label, read straight from the qlib provider.
+
+    Runs BEFORE task_train() imports the editable model module, so the label
+    is independent of the dataset / handler classes and processors chosen in
+    the editable config. Indexed (datetime, instrument) like qlib predictions.
+    """
+    import pandas as pd
+    from qlib.data import D
+
+    handler_kwargs = config["task"]["dataset"]["kwargs"]["handler"]["kwargs"]
+    test_start, test_end = config["task"]["dataset"]["kwargs"]["segments"]["test"]
+    start = pd.Timestamp(test_start)
+    end = pd.Timestamp(test_end)
+    if handler_kwargs.get("start_time") is not None:
+        start = max(start, pd.Timestamp(handler_kwargs["start_time"]))
+    if handler_kwargs.get("end_time") is not None:
+        end = min(end, pd.Timestamp(handler_kwargs["end_time"]))
+    instruments = handler_kwargs["instruments"]
+    if isinstance(instruments, str):
+        instruments = D.instruments(instruments)
+    df = D.features(instruments, [CANONICAL_LABEL], start_time=start,
+                    end_time=end, freq="day")
+    label = df.iloc[:, 0]
+    label = label.swaplevel("instrument", "datetime").sort_index()
+    return label
+
+
+def canonical_signal_metrics(pred, label):
+    """Same statistics as qlib's SigAnaRecord (calc_ic), on the fixed label."""
+    import pandas as pd
+
+    if isinstance(pred, pd.DataFrame):
+        pred = pred.iloc[:, 0]
+    names = list(pred.index.names or [])
+    if names != ["datetime", "instrument"] and set(names) == {"datetime", "instrument"}:
+        pred = pred.reorder_levels(["datetime", "instrument"])
+    label = label.reindex(pred.index)
+    df = pd.DataFrame({"pred": pred, "label": label})
+    ic = df.groupby("datetime", group_keys=False).apply(
+        lambda d: d["pred"].corr(d["label"]))
+    ric = df.groupby("datetime", group_keys=False).apply(
+        lambda d: d["pred"].corr(d["label"], method="spearman"))
+    return {
+        "IC": ic.mean(),
+        "ICIR": ic.mean() / ic.std(),
+        "Rank IC": ric.mean(),
+        "Rank ICIR": ric.mean() / ric.std(),
+    }
+
+
 def set_seed(seed: int):
     random.seed(seed)
     np.random.seed(seed)
@@ -86,10 +187,11 @@ def main():
     if not os.path.exists(config_path):
         config_path = os.path.join(os.path.dirname(__file__), "..", "workflow_config.yaml")
     with open(config_path) as f:
-        config = yaml.safe_load(f)
+        config = yaml.load(f, Loader=_UniqueKeyLoader)
 
     # Apply CLI overrides
     apply_overrides(config, args)
+    check_fixed_label(config)
 
     # Apply sys.rel_path (same as qlib.cli.run.sys_config)
     for rel_path in config.get("sys", {}).get("rel_path", []):
@@ -113,12 +215,27 @@ def main():
 
     print(f"SEED={seed}")
 
+    # Fixed scoring label, loaded before the editable model module is imported.
+    canonical_label = load_canonical_test_label(config)
+
     # Run the workflow
     task_config = config["task"]
     recorder = task_train(task_config, experiment_name=args.experiment_name)
 
     # Extract metrics from recorder
     metrics = recorder.list_metrics()
+
+    # IC-family metrics against the FIXED label (not the dataset's own label,
+    # which SigAnaRecord uses). Honest configs give identical values.
+    canonical = canonical_signal_metrics(recorder.load_object("pred.pkl"),
+                                         canonical_label)
+    for key, val in canonical.items():
+        rec = metrics.get(key)
+        if rec is not None and not (abs(rec - val) <= 1e-6):
+            print(f"WARNING: SigAnaRecord {key}={rec} was computed against the "
+                  f"dataset's own label and differs from the fixed-label value "
+                  f"{val}; reporting the fixed-label value.")
+    metrics.update(canonical)
     print("=" * 60)
     print("EVALUATION RESULTS")
     print("=" * 60)

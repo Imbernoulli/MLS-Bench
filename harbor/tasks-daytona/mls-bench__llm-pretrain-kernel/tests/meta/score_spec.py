@@ -6,6 +6,15 @@ Reference baseline: relu_sq_torch (seed=mean)
 """
 from mlsbench.scoring.dsl import *
 
+# gpt_345m.sh also reports mlp_speedup (fixed benchmark scripts/mlp_bench.py:
+# t_unfused_reference / t_submission for the MLP forward+backward on one GPU).
+# It is not scored yet: the baselines have no mlp_speedup anchors, and an
+# objective term without anchors zeroes the gpt-345m setting. Once the three
+# baselines' mlp_speedup is measured on an idle GPU and added to
+# leaderboard.csv, add
+#   term("mlp_speedup", col("mlp_speedup_gpt-345m").higher().log().sigmoid())
+# with weight 1.0 in the gpt-345m setting.
+
 term("val_loss",
     col("val_loss_gpt-345m").lower().id()
     .bounded_power(bound=0.0))

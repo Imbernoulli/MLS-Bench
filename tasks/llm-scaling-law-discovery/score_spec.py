@@ -4,88 +4,65 @@ Scaling law discovery task: predict LLM performance from compute/data/model
 parameters. Three harder dataset settings recommended by the SLDBench
 authors: sld-vocab, sld-lrbsz, sld-dataconstrained.
 
-Each setting has four metrics:
-  - r2: higher is better, bounded above by 1.0 (can be negative), bounded_power
-  - mae: lower is better, bounded at 0, bounded_power
-  - rmse: lower is better, bounded at 0, bounded_power
-  - nmae: lower is better, bounded at 0, bounded_power
+The parser reports four metrics per setting (r2, mae, rmse, nmae), all computed
+on the setting's fixed held-out test set. Only two of them are independent:
+  - r2   = 1 - rmse^2 / Var(y_test)   -> a monotone function of rmse
+  - nmae = mae / Std(y_test)          -> a constant multiple of mae
+Each setting is therefore scored on two terms, keeping the original 3:2 split
+between the squared-error family (r2 weight 2 + rmse weight 1) and the
+absolute-error family (mae weight 1 + nmae weight 1):
 
-Reference baselines (symbolic, fit per-group) on seed=42 — rough numbers from
-an initial human_exact / sldagent_style dry run; refresh after a full baseline
-sweep:
-  sld-vocab:             r2 ~ 0.928, mae ~ 0.169, rmse ~ 0.226, nmae ~ 0.200
-  sld-lrbsz:             r2 often < 0 on held-out split (hard!); use mae/rmse
-                         as primary diagnostic. Refs below are conservative.
-  sld-dataconstrained:   r2 ~ 0.93 (best symbolic), mae ~ 0.13, rmse ~ 0.15,
-                         nmae ~ 0.24
+  - fvu: log of the fraction of variance unexplained, 1 - r2. Since
+    log(1 - r2) = 2*log(rmse) - log(Var(y_test)) and the sigmoid calibration
+    below is invariant to that affine change, the term reads the rmse column
+    with a log transform and scores exactly as a sigmoid of -log(1 - r2) would.
+  - mae: log mae (equivalent to log nmae for the same reason).
 
-r2 uses bounded_power with bound=1.0 (theoretical maximum). For r2,
-higher is better and bound is the best possible value, so the transform
-maps improvement toward bound=1.0.
+Both terms use a sigmoid in log-error space, floored at the worst baseline and
+calibrated so the best baseline scores 0.5; a perfect fit approaches 1.0.
+
+Why log space: the kernel_ridge baseline is an outlier (r2 = -413.7 on
+sld-lrbsz, -13.4 on sld-dataconstrained). Raw r2 with bounded_power(bound=1)
+put every honest fit in the top 0.5 % of the [floor, 1] interval, so all three
+r2 terms fell into the pathological-ref sigmoid fallback and scored ~0.5 for
+any r2 in [-1, 1] (a perfect fit reached only ~0.505). The linear-space
+mae/rmse terms needed gamma > 10 on sld-lrbsz and were clamped. In log space
+the outlier is a factor ~20 in rmse rather than ~400 in r2, and relative error
+improvements keep their resolution near r2 = 1.
 """
 from mlsbench.scoring.dsl import *
 
 # ---- sld-vocab ----
-term("r2_vocab",
-    col("r2_sld_vocab").higher().id()
-    .bounded_power(bound=1.0))
+term("fvu_vocab",
+    col("rmse_sld_vocab").lower().log().sigmoid())
 term("mae_vocab",
-    col("mae_sld_vocab").lower().id()
-    .bounded_power(bound=0.0))
-term("rmse_vocab",
-    col("rmse_sld_vocab").lower().id()
-    .bounded_power(bound=0.0))
-term("nmae_vocab",
-    col("nmae_sld_vocab").lower().id()
-    .bounded_power(bound=0.0))
+    col("mae_sld_vocab").lower().log().sigmoid())
 
 setting("sld-vocab", weighted_mean(
-    ("r2_vocab", 2.0),
-    ("mae_vocab", 1.0),
-    ("rmse_vocab", 1.0),
-    ("nmae_vocab", 1.0),
+    ("fvu_vocab", 3.0),
+    ("mae_vocab", 2.0),
 ))
 
 # ---- sld-lrbsz ----
-term("r2_lrbsz",
-    col("r2_sld_lrbsz").higher().id()
-    .bounded_power(bound=1.0))
+term("fvu_lrbsz",
+    col("rmse_sld_lrbsz").lower().log().sigmoid())
 term("mae_lrbsz",
-    col("mae_sld_lrbsz").lower().id()
-    .bounded_power(bound=0.0))
-term("rmse_lrbsz",
-    col("rmse_sld_lrbsz").lower().id()
-    .bounded_power(bound=0.0))
-term("nmae_lrbsz",
-    col("nmae_sld_lrbsz").lower().id()
-    .bounded_power(bound=0.0))
+    col("mae_sld_lrbsz").lower().log().sigmoid())
 
 setting("sld-lrbsz", weighted_mean(
-    ("r2_lrbsz", 2.0),
-    ("mae_lrbsz", 1.0),
-    ("rmse_lrbsz", 1.0),
-    ("nmae_lrbsz", 1.0),
+    ("fvu_lrbsz", 3.0),
+    ("mae_lrbsz", 2.0),
 ))
 
 # ---- sld-dataconstrained ----
-term("r2_dataconstrained",
-    col("r2_sld_dataconstrained").higher().id()
-    .bounded_power(bound=1.0))
+term("fvu_dataconstrained",
+    col("rmse_sld_dataconstrained").lower().log().sigmoid())
 term("mae_dataconstrained",
-    col("mae_sld_dataconstrained").lower().id()
-    .bounded_power(bound=0.0))
-term("rmse_dataconstrained",
-    col("rmse_sld_dataconstrained").lower().id()
-    .bounded_power(bound=0.0))
-term("nmae_dataconstrained",
-    col("nmae_sld_dataconstrained").lower().id()
-    .bounded_power(bound=0.0))
+    col("mae_sld_dataconstrained").lower().log().sigmoid())
 
 setting("sld-dataconstrained", weighted_mean(
-    ("r2_dataconstrained", 2.0),
-    ("mae_dataconstrained", 1.0),
-    ("rmse_dataconstrained", 1.0),
-    ("nmae_dataconstrained", 1.0),
+    ("fvu_dataconstrained", 3.0),
+    ("mae_dataconstrained", 2.0),
 ))
 
 # Task: geometric mean across scaling law datasets

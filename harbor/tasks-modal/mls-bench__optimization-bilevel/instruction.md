@@ -20,9 +20,13 @@ Edit only `penalized-bilevel-gradient-descent/mlsbench/custom_strategy.py` insid
 2. `TOY_HPARAMS` — scalar knobs for toy convergence.
 3. `HYPERCLEAN_HPARAMS` — scalar knobs for hyper-cleaning; may contain separate `linear` and `mlp` sub-dicts.
 
-For toy mode, `grad_fns` provides `f`, `df`, `g`, `dg_dy`, `dg_dl`, `proj`, and `init_state`. `df` is the outer gradient, `dg_dy` and `dg_dl` are inner gradients with respect to the lower variable `y` and upper variable, and `proj` projects the upper variable onto the feasible set.
+For toy mode, `grad_fns` provides `f`, `df`, `g`, `dg_dy`, `dg_dl`, `gpbgd_penalty_grad`, `proj`, and `init_state`. `df` is the outer gradient, `dg_dy` and `dg_dl` are inner gradients with respect to the lower variable `y` and upper variable, `gpbgd_penalty_grad` is the gradient of the G-PBGD penalty `0.5 * (dg/dy)^2`, and `proj` projects the upper variable onto the feasible set.
+
+Toy metrics are computed by the driver from the `x` and `y` that `algorithm` returns; the other state fields are your own bookkeeping and are not read. Each `algorithm` call is one step, and a call that queries a `grad_fns` oracle (`f`, `df`, `g`, `dg_dy`, `dg_dl`, `gpbgd_penalty_grad`) more than once is charged one step per query of its most-queried oracle, so take all problem information from `grad_fns`. After each call the driver checks the returned point: a run converges once the projected-gradient norm of the penalized objective is at most `1e-5`, using `TOY_HPARAMS["penalty"]` (`"v_pbgd"`, the value-gap penalty and the default, or `"g_pbgd"`, the gradient-norm penalty), the current penalty value from `gams`, and step size `min(alpha0 / gamma, 0.01)`; certifying convergence counts as one more step. A run that does not converge within 20000 steps per penalty value is charged the full budget. The returned `x` must lie in `[0, 3]`, or the run fails.
 
 For hyper-cleaning mode, `grad_fns` provides `outer_grad`, `inner_grad`, `inner_val`, and `init_state`, exposing first-order information for the validation loss, weighted training loss, and initial state.
+
+In hyper-cleaning mode the state holds the training inputs with their noisy labels (`state["train"]`) and the validation split (`state["val"]`); the test split and the ground-truth clean/noisy mask stay with the driver. Every `eval_interval`-th call, the driver scores `state["x"]` (one weight per training example) and the lower-level parameters, taken from `state["model"]` or, if set, from each entry of `state["params_history"]` and run through the fixed architecture.
 
 The fixed scaffold also exposes reference helpers `run_v_pbgd(...)`, `run_g_pbgd(...)`, and `run_rhg_family(...)`. You may call them, wrap them, or implement your own update logic on top of the provided state and gradients.
 
@@ -398,185 +402,185 @@ Other files you may **read** for context (do not modify):
    319: 
    320: 
    321: def run_toy(seed: int, output_dir: Path, label: str) -> dict[str, float]:
-   322:     config = DEFAULT_TOY
-   323:     hparams = _resolve_hparams_for_state(TOY_HPARAMS, {"task": "toy"})
-   324:     grad_fns = _make_toy_grad_fns(config)
-   325:     rng = random.Random(seed)
-   326:     start_time = time.perf_counter()
-   327: 
-   328:     convergence_steps: list[int] = []
-   329:     residuals: list[float] = []
-   330:     projected_grads: list[float] = []
-   331:     objectives: list[float] = []
-   332:     successes = 0
-   333: 
-   334:     for run_idx in range(config.num_runs):
-   335:         x = rng.uniform(config.init_x_lower, config.init_x_upper)
-   336:         y = rng.uniform(config.init_y_lower, config.init_y_upper)
-   337:         state = grad_fns["init_state"](x, y)
-   338:         max_total_steps = _toy_max_steps(hparams, config)
-   339: 
-   340:         while not bool(state.get("done", False)):
-   341:             previous_steps = int(state.get("total_steps", 0))
-   342:             state = algorithm(state, hparams, grad_fns)
-   343:             if not isinstance(state, dict):
-   344:                 raise TypeError("algorithm must return an updated state dict.")
-   345:             current_steps = int(state.get("total_steps", previous_steps))
-   346:             if current_steps <= previous_steps:
-   347:                 raise RuntimeError("algorithm must advance state['total_steps'] for toy mode.")
-   348:             projected_grad = float(state.get("projected_grad", float("inf")))
-   349:             if projected_grad <= config.stationarity_tol:
-   350:                 state["success"] = True
-   351:                 state["done"] = True
-   352:             if current_steps >= max_total_steps:
-   353:                 state["total_steps"] = max_total_steps
-   354:                 state["done"] = True
-   355: 
-   356:         x = float(state["x"])
-   357:         y = float(state["y"])
-   358:         total_steps = int(state.get("total_steps", max_total_steps))
-   359:         upper_value = float(state.get("upper_value", grad_fns["f"](x, y)))
-   360:         residual = float(state.get("residual", abs(x + y)))
-   361:         projected_grad = float(state.get("projected_grad", float("inf")))
-   362:         success = bool(state.get("success", projected_grad <= config.stationarity_tol))
-   363: 
-   364:         successes += int(success)
-   365:         convergence_steps.append(total_steps)
-   366:         residuals.append(residual)
-   367:         projected_grads.append(projected_grad)
-   368:         objectives.append(upper_value)
-   369:         print(
-   370:             "TRAIN_METRICS "
-   371:             f"run={run_idx} step={total_steps} objective={upper_value:.6f} "
-   372:             f"residual={residual:.6f} projected_grad={projected_grad:.6f} success={int(success)}",
-   373:             flush=True,
-   374:         )
-   375: 
-   376:     total_runtime = time.perf_counter() - start_time
-   377:     metrics = {
-   378:         "convergence_steps": float(sum(convergence_steps) / len(convergence_steps)),
-   379:         "median_steps": float(sorted(convergence_steps)[len(convergence_steps) // 2]),
-   380:         "final_residual": float(sum(residuals) / len(residuals)),
-   381:         "final_projected_grad": float(sum(projected_grads) / len(projected_grads)),
-   382:         "success_rate": float(successes / len(convergence_steps)),
-   383:         "runtime_sec": float(total_runtime),
-   384:         "score": float(sum(convergence_steps) / len(convergence_steps)),
-   385:     }
-   386:     print(
-   387:         "FINAL_METRICS " + " ".join(
-   388:             f"{key}={value:.6f}" if isinstance(value, float) else f"{key}={value}"
-   389:             for key, value in metrics.items()
-   390:         ),
-   391:         flush=True,
-   392:     )
-   393:     write_json(output_dir / f"{label}_metrics.json", metrics)
-   394:     return metrics
-   395: 
-   396: 
-   397: # =====================================================================
-   398: # FIXED: data hyper-cleaning setup
-   399: # =====================================================================
-   400: def resolve_dataset_root(config: HypercleanConfig) -> str:
-   401:     preferred = Path(config.dataset_root)
-   402:     if preferred.exists():
-   403:         return str(preferred)
-   404:     for candidate in (Path("/tmp/mnist"), Path("./data/mnist")):
-   405:         if candidate.exists():
-   406:             return str(candidate)
-   407:     return str(preferred)
-   408: 
-   409: 
-   410: def load_hyperclean_splits(seed: int, device: torch.device) -> tuple[HypercleanSplit, HypercleanSplit, HypercleanSplit]:
-   411:     set_global_seed(seed)
-   412:     config = DEFAULT_HYPERCLEAN
-   413:     dataset = datasets.MNIST(root=resolve_dataset_root(config), train=True, download=False)
-   414:     number_list = list(range(dataset.targets.shape[0]))
-   415:     random.shuffle(number_list)
-   416: 
-   417:     tr_end = config.train_size
-   418:     val_end = tr_end + config.val_size
-   419:     test_end = val_end + config.test_size
-   420: 
-   421:     train = HypercleanSplit(dataset.data[number_list[:tr_end], :, :], dataset.targets[number_list[:tr_end]])
-   422:     val = HypercleanSplit(dataset.data[number_list[tr_end:val_end], :, :], dataset.targets[number_list[tr_end:val_end]])
-   423:     test = HypercleanSplit(dataset.data[number_list[val_end:test_end], :, :], dataset.targets[number_list[val_end:test_end]])
-   424: 
-   425:     train.pollute(config.pollute_rate)
-   426:     train.flatten()
-   427:     val.flatten()
-   428:     test.flatten()
-   429:     train.to_device(device)
-   430:     val.to_device(device)
-   431:     test.to_device(device)
-   432:     return train, val, test
-   433: 
-   434: 
-   435: def make_model(net: str, device: torch.device) -> nn.Module:
-   436:     if net == "linear":
-   437:         return nn.Sequential(nn.Linear(784, 10)).to(device)
-   438:     if net == "mlp":
-   439:         return nn.Sequential(nn.Linear(784, 300), nn.Sigmoid(), nn.Linear(300, 10)).to(device)
-   440:     raise ValueError(f"Unsupported network: {net}")
-   441: 
-   442: 
-   443: def compute_accuracy(logits: torch.Tensor, target: torch.Tensor) -> float:
-   444:     pred = logits.argmax(dim=1, keepdim=True)
-   445:     return 100.0 * pred.eq(target.view_as(pred)).sum().item() / len(target)
-   446: 
+   322:     """Toy convergence driver.
+   323: 
+   324:     Every scored quantity is recomputed here from the iterate ``(x, y)`` that
+   325:     ``algorithm`` returns; the bookkeeping fields of the state dict
+   326:     (``total_steps``, ``projected_grad``, ``residual``, ``success``, ...) are
+   327:     never read. A step is one ``algorithm`` call, and a call that queries the
+   328:     ``grad_fns`` oracles more than once is charged one step per query of its
+   329:     most-used oracle. A run converges once the returned iterate is
+   330:     ``stationarity_tol``-stationary for the declared penalty problem; certifying
+   331:     that costs one more gradient evaluation, which is charged as one step (the
+   332:     reference PBGD loop spends exactly that step to detect convergence).
+   333:     """
+   334:     config = DEFAULT_TOY
+   335:     hparams = _resolve_hparams_for_state(TOY_HPARAMS, {"task": "toy"})
+   336:     oracle_counts: dict[str, int] = {}
+   337:     grad_fns = _make_toy_grad_fns(config, oracle_counts)
+   338:     penalty = _toy_penalty(hparams)
+   339:     gams = _toy_gams(hparams)
+   340:     alpha0 = _toy_strategy_from_hparams(hparams, penalty).alpha0
+   341:     max_total_steps = _toy_max_steps(hparams, config)
+   342:     rng = random.Random(seed)
+   343:     start_time = time.perf_counter()
+   344: 
+   345:     convergence_steps: list[int] = []
+   346:     residuals: list[float] = []
+   347:     projected_grads: list[float] = []
+   348:     objectives: list[float] = []
+   349:     successes = 0
+   350: 
+   351:     for run_idx in range(config.num_runs):
+   352:         x = rng.uniform(config.init_x_lower, config.init_x_upper)
+   353:         y = rng.uniform(config.init_y_lower, config.init_y_upper)
+   354:         state = grad_fns["init_state"](x, y)
+   355:         counts_at_start = dict(oracle_counts)
+   356:         calls = 0
+   357:         charged_steps = 0
+   358:         success = False
+   359:         agent_done = False
+   360:         projected_grad = float("inf")
+   361: 
+   362:         while charged_steps < max_total_steps:
+   363:             gamma = gams[min(charged_steps // config.max_steps_per_gamma, len(gams) - 1)]
+   364:             projected_grad = _toy_gradient_mapping_norm(x, y, penalty, gamma, alpha0, config)
+   365:             if projected_grad <= config.stationarity_tol:
+   366:                 success = True
+   367:                 charged_steps += 1
+   368:                 break
+   369:             if agent_done:
+   370:                 break
+   371:             state = algorithm(state, hparams, grad_fns)
+   372:             if not isinstance(state, dict):
+   373:                 raise TypeError("algorithm must return an updated state dict.")
+   374:             calls += 1
+   375:             x, y = _toy_checked_iterate(state, config)
+   376:             oracle_queries = max(
+   377:                 (oracle_counts.get(name, 0) - counts_at_start.get(name, 0) for name in oracle_counts),
+   378:                 default=0,
+   379:             )
+   380:             charged_steps = max(calls, oracle_queries)
+   381:             agent_done = bool(state.get("done", False))
+   382: 
+   383:         total_steps = min(charged_steps, max_total_steps) if success else max_total_steps
+   384:         upper_value = toy_f(x, y)
+   385:         residual = abs(x + y)
+   386: 
+   387:         successes += int(success)
+   388:         convergence_steps.append(total_steps)
+   389:         residuals.append(residual)
+   390:         projected_grads.append(projected_grad)
+   391:         objectives.append(upper_value)
+   392:         print(
+   393:             "TRAIN_METRICS "
+   394:             f"run={run_idx} step={total_steps} objective={upper_value:.6f} "
+   395:             f"residual={residual:.6f} projected_grad={projected_grad:.6f} success={int(success)}",
+   396:             flush=True,
+   397:         )
+   398: 
+   399:     total_runtime = time.perf_counter() - start_time
+   400:     metrics = {
+   401:         "convergence_steps": float(sum(convergence_steps) / len(convergence_steps)),
+   402:         "median_steps": float(sorted(convergence_steps)[len(convergence_steps) // 2]),
+   403:         "final_residual": float(sum(residuals) / len(residuals)),
+   404:         "final_projected_grad": float(sum(projected_grads) / len(projected_grads)),
+   405:         "success_rate": float(successes / len(convergence_steps)),
+   406:         "runtime_sec": float(total_runtime),
+   407:         "score": float(sum(convergence_steps) / len(convergence_steps)),
+   408:     }
+   409:     print(
+   410:         "FINAL_METRICS " + " ".join(
+   411:             f"{key}={value:.6f}" if isinstance(value, float) else f"{key}={value}"
+   412:             for key, value in metrics.items()
+   413:         ),
+   414:         flush=True,
+   415:     )
+   416:     write_json(output_dir / f"{label}_metrics.json", metrics)
+   417:     return metrics
+   418: 
+   419: 
+   420: # =====================================================================
+   421: # FIXED: data hyper-cleaning setup
+   422: # =====================================================================
+   423: def resolve_dataset_root(config: HypercleanConfig) -> str:
+   424:     preferred = Path(config.dataset_root)
+   425:     if preferred.exists():
+   426:         return str(preferred)
+   427:     for candidate in (Path("/tmp/mnist"), Path("./data/mnist")):
+   428:         if candidate.exists():
+   429:             return str(candidate)
+   430:     return str(preferred)
+   431: 
+   432: 
+   433: def load_hyperclean_splits(seed: int, device: torch.device) -> tuple[HypercleanSplit, HypercleanSplit, HypercleanSplit]:
+   434:     set_global_seed(seed)
+   435:     config = DEFAULT_HYPERCLEAN
+   436:     dataset = datasets.MNIST(root=resolve_dataset_root(config), train=True, download=False)
+   437:     number_list = list(range(dataset.targets.shape[0]))
+   438:     random.shuffle(number_list)
+   439: 
+   440:     tr_end = config.train_size
+   441:     val_end = tr_end + config.val_size
+   442:     test_end = val_end + config.test_size
+   443: 
+   444:     train = HypercleanSplit(dataset.data[number_list[:tr_end], :, :], dataset.targets[number_list[:tr_end]])
+   445:     val = HypercleanSplit(dataset.data[number_list[tr_end:val_end], :, :], dataset.targets[number_list[tr_end:val_end]])
+   446:     test = HypercleanSplit(dataset.data[number_list[val_end:test_end], :, :], dataset.targets[number_list[val_end:test_end]])
    447: 
-   448: def compute_cleaner_metrics(x: torch.Tensor, clean_indicator: torch.Tensor, rho: float) -> tuple[float, float, float]:
-   449:     x_bi = (x >= 0).float()
-   450:     clean = x_bi * clean_indicator
-   451:     precision = clean.mean() / (x_bi.mean() + 1e-8)
-   452:     recall = clean.mean() / (1.0 - rho + 1e-8)
-   453:     f1 = 100.0 * 2.0 * precision * recall / (precision + recall + 1e-8)
-   454:     return scalar_to_float(precision), scalar_to_float(recall), scalar_to_float(f1)
-   455: 
+   448:     train.pollute(config.pollute_rate)
+   449:     train.flatten()
+   450:     val.flatten()
+   451:     test.flatten()
+   452:     train.to_device(device)
+   453:     val.to_device(device)
+   454:     test.to_device(device)
+   455:     return train, val, test
    456: 
-   457: def make_eval_record(
-   458:     step: int,
-   459:     train_loss: torch.Tensor | float,
-   460:     val_loss: torch.Tensor | float,
-   461:     test_accuracy: float,
-   462:     f1_score: float,
-   463:     cleaner_precision: float,
-   464:     cleaner_recall: float,
-   465:     aux_value: torch.Tensor | float,
-   466:     runtime_sec: float,
-   467: ) -> HypercleanEval:
-   468:     return HypercleanEval(
-   469:         step=step,
-   470:         train_loss=scalar_to_float(train_loss),
-   471:         val_loss=scalar_to_float(val_loss),
-   472:         test_accuracy=float(test_accuracy),
-   473:         f1_score=float(f1_score),
-   474:         cleaner_precision=float(cleaner_precision),
-   475:         cleaner_recall=float(cleaner_recall),
-   476:         aux_value=scalar_to_float(aux_value),
-   477:         runtime_sec=float(runtime_sec),
-   478:     )
+   457: 
+   458: def make_model(net: str, device: torch.device) -> nn.Module:
+   459:     if net == "linear":
+   460:         return nn.Sequential(nn.Linear(784, 10)).to(device)
+   461:     if net == "mlp":
+   462:         return nn.Sequential(nn.Linear(784, 300), nn.Sigmoid(), nn.Linear(300, 10)).to(device)
+   463:     raise ValueError(f"Unsupported network: {net}")
+   464: 
+   465: 
+   466: def compute_accuracy(logits: torch.Tensor, target: torch.Tensor) -> float:
+   467:     pred = logits.argmax(dim=1, keepdim=True)
+   468:     return 100.0 * pred.eq(target.view_as(pred)).sum().item() / len(target)
+   469: 
+   470: 
+   471: def compute_cleaner_metrics(x: torch.Tensor, clean_indicator: torch.Tensor, rho: float) -> tuple[float, float, float]:
+   472:     x_bi = (x >= 0).float()
+   473:     clean = x_bi * clean_indicator
+   474:     precision = clean.mean() / (x_bi.mean() + 1e-8)
+   475:     recall = clean.mean() / (1.0 - rho + 1e-8)
+   476:     f1 = 100.0 * 2.0 * precision * recall / (precision + recall + 1e-8)
+   477:     return scalar_to_float(precision), scalar_to_float(recall), scalar_to_float(f1)
+   478: 
    479: 
-   480: 
-   481: def update_best_by_accuracy(best: HypercleanEval | None, current: HypercleanEval) -> HypercleanEval:
-   482:     if best is None:
-   483:         return current
-   484:     if current.test_accuracy > best.test_accuracy + 1e-12:
-   485:         return current
-   486:     if abs(current.test_accuracy - best.test_accuracy) <= 1e-12 and current.f1_score > best.f1_score:
-   487:         return current
-   488:     return best
-   489: 
-   490: 
-   491: def update_best_by_f1(best: HypercleanEval | None, current: HypercleanEval) -> HypercleanEval:
-   492:     if best is None:
-   493:         return current
-   494:     if current.f1_score > best.f1_score + 1e-12:
-   495:         return current
-   496:     if abs(current.f1_score - best.f1_score) <= 1e-12 and current.test_accuracy > best.test_accuracy:
-   497:         return current
-   498:     return best
-   499: 
-   500: 
+   480: def make_eval_record(
+   481:     step: int,
+   482:     train_loss: torch.Tensor | float,
+   483:     val_loss: torch.Tensor | float,
+   484:     test_accuracy: float,
+   485:     f1_score: float,
+   486:     cleaner_precision: float,
+   487:     cleaner_recall: float,
+   488:     aux_value: torch.Tensor | float,
+   489:     runtime_sec: float,
+   490: ) -> HypercleanEval:
+   491:     return HypercleanEval(
+   492:         step=step,
+   493:         train_loss=scalar_to_float(train_loss),
+   494:         val_loss=scalar_to_float(val_loss),
+   495:         test_accuracy=float(test_accuracy),
+   496:         f1_score=float(f1_score),
+   497:         cleaner_precision=float(cleaner_precision),
+   498:         cleaner_recall=float(cleaner_recall),
+   499:         aux_value=scalar_to_float(aux_value),
+   500:         runtime_sec=float(runtime_sec),
 
 [truncated: showing at most 500 lines / 60000 bytes from penalized-bilevel-gradient-descent/mlsbench/custom_strategy.py]
 ```
@@ -595,45 +599,46 @@ a baseline reproduction.
 In `penalized-bilevel-gradient-descent/mlsbench/custom_strategy.py`:
 
 ```python
-Lines 227–258:
+Lines 227–259:
    224: # EDITABLE: define one algorithm and per-task hyperparameters
    225: # =====================================================================
    226: # BEGIN MLSBENCH_EDITABLE_ALGORITHM_REGION
    227: TOY_HPARAMS = {
    228:     "gams": (10.0,),
    229:     "alpha0": 0.1,
-   230: }
-   231: 
+   230:     "penalty": "g_pbgd",
+   231: }
    232: 
-   233: HYPERCLEAN_HPARAMS = {
-   234:     "linear": {
-   235:         "lrx": 0.3,
-   236:         "lry": 0.5,
-   237:         "gamma_init": 0.0,
-   238:         "gamma_max": 37.0,
-   239:         "gamma_argmax_step": 5_000,
-   240:         "outer_itr": 40_000,
-   241:         "reg": 0.0,
-   242:         "eval_interval": 10,
-   243:     },
-   244:     "mlp": {
-   245:         "lrx": 0.5,
-   246:         "lry": 0.5,
-   247:         "gamma_init": 0.0,
-   248:         "gamma_max": 37.0,
-   249:         "gamma_argmax_step": 30_000,
-   250:         "outer_itr": 50_000,
-   251:         "reg": 0.0,
-   252:         "eval_interval": 10,
-   253:     },
-   254: }
-   255: 
+   233: 
+   234: HYPERCLEAN_HPARAMS = {
+   235:     "linear": {
+   236:         "lrx": 0.3,
+   237:         "lry": 0.5,
+   238:         "gamma_init": 0.0,
+   239:         "gamma_max": 37.0,
+   240:         "gamma_argmax_step": 5_000,
+   241:         "outer_itr": 40_000,
+   242:         "reg": 0.0,
+   243:         "eval_interval": 10,
+   244:     },
+   245:     "mlp": {
+   246:         "lrx": 0.5,
+   247:         "lry": 0.5,
+   248:         "gamma_init": 0.0,
+   249:         "gamma_max": 37.0,
+   250:         "gamma_argmax_step": 30_000,
+   251:         "outer_itr": 50_000,
+   252:         "reg": 0.0,
+   253:         "eval_interval": 10,
+   254:     },
+   255: }
    256: 
-   257: def algorithm(state: dict, hparams: dict, grad_fns: dict) -> dict:
-   258:     return run_g_pbgd(state, hparams, grad_fns)
-   259: # END MLSBENCH_EDITABLE_ALGORITHM_REGION
-   260: 
+   257: 
+   258: def algorithm(state: dict, hparams: dict, grad_fns: dict) -> dict:
+   259:     return run_g_pbgd(state, hparams, grad_fns)
+   260: # END MLSBENCH_EDITABLE_ALGORITHM_REGION
    261: 
+   262: 
 ```
 
 ### `rhg` baseline — editable region  [READ-ONLY — reference implementation]

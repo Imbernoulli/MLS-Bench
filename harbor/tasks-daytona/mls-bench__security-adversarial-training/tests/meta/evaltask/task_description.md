@@ -42,6 +42,8 @@ After training, models are evaluated on:
 - **Robust accuracy (FGSM)**: accuracy under one-step FGSM attack.
 - **Robust accuracy (PGD-50)**: accuracy under a 50-step PGD attack — primary metric.
 
+Each attack is run with two losses, cross-entropy and the Carlini-Wagner logit margin (`max_{j != y} z_j - z_y`, which does not depend on the logit scale), and a test image counts as robust only if it survives both. Evaluation runs in a separate process after training has exited: the harness builds a fresh model of the fixed architecture, loads only the trained `state_dict` into it (strict key and shape match), and evaluates it in eval mode, so anything other than the trained weights (hooks, patched methods or functions, wrapper modules) is not part of the evaluated model.
+
 Scenarios (model + dataset):
 - SmallCNN on MNIST (`eps = 0.3`)
 - PreActResNet-18 on CIFAR-10 (`eps = 8/255`)

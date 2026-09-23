@@ -80,6 +80,7 @@ class SparseAttention(nn.Module):
         mask = self._build_mask(N, q.device, is_causal)  # (N, N)
         denom = (N * (N + 1) / 2.0) if is_causal else float(N * N)
         self.last_density = float(mask.sum().item()) / max(denom, 1.0)
+        self.last_mask = mask  # harness computes density from this mask
 
         # Broadcast (N,N) mask across (B,H).
         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale

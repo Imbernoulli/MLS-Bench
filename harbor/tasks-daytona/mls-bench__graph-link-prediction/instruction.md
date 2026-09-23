@@ -195,18 +195,18 @@ stay unchanged.
     95:     # pos_scores: [num_pos], neg_scores: [num_pos, num_neg] or [num_neg]
     96:     if neg_scores.dim() == 1:
     97:         neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
-    98:     # rank = 1 + number of negatives scored higher
+    98:     # rank = 1 + number of negatives scored higher or equal (ties pessimistic)
     99:     ranks = (neg_scores >= pos_scores.unsqueeze(1)).sum(dim=1) + 1
    100:     return (1.0 / ranks.float()).mean().item()
    101: 
    102: 
    103: def compute_hits_at_k(pos_scores: torch.Tensor, neg_scores: torch.Tensor,
    104:                        k: int = 50) -> float:
-   105:     """Compute Hits@K."""
+   105:     """Hits@K: a positive must score strictly above the K-th best negative."""
    106:     if neg_scores.dim() == 1:
    107:         neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
    108:     kth_neg, _ = neg_scores.kthvalue(max(neg_scores.size(1) - k + 1, 1), dim=1)
-   109:     return (pos_scores >= kth_neg).float().mean().item()
+   109:     return (pos_scores > kth_neg).float().mean().item()
    110: 
    111: 
    112: # =====================================================================
@@ -318,286 +318,286 @@ stay unchanged.
    218: # FIXED — Training loop, evaluation, CLI
    219: # =====================================================================
    220: 
-   221: def train_planetoid(model, data_bundle, args, device):
-   222:     """Train and evaluate on Planetoid (Cora/CiteSeer)."""
-   223:     train_data = data_bundle["train"].to(device)
-   224:     val_data = data_bundle["val"].to(device)
-   225:     test_data = data_bundle["test"].to(device)
-   226: 
-   227:     model = model.to(device)
-   228:     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
-   229:                                   weight_decay=args.weight_decay)
-   230: 
-   231:     best_val_auc = 0.0
-   232:     best_state = None
-   233:     patience_counter = 0
-   234: 
-   235:     for epoch in range(1, args.epochs + 1):
-   236:         model.train()
-   237:         optimizer.zero_grad()
-   238: 
-   239:         # Positive edges from split; resample negatives each epoch
-   240:         pos_ei = train_data.pos_edge_label_index
-   241:         neg_ei = negative_sampling(
-   242:             train_data.edge_index,
-   243:             num_nodes=train_data.num_nodes,
-   244:             num_neg_samples=pos_ei.size(1),
-   245:         )
-   246: 
-   247:         pos_scores = model(train_data.x, train_data.edge_index, pos_ei)
-   248:         neg_scores = model(train_data.x, train_data.edge_index, neg_ei)
-   249: 
-   250:         pos_loss = F.binary_cross_entropy_with_logits(
-   251:             pos_scores, torch.ones_like(pos_scores))
-   252:         neg_loss = F.binary_cross_entropy_with_logits(
-   253:             neg_scores, torch.zeros_like(neg_scores))
-   254:         loss = pos_loss + neg_loss
-   255:         loss.backward()
-   256: 
-   257:         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-   258:         optimizer.step()
+   221: # Test-time scoring and metrics used by the training loops below. They are
+   222: # defined after the editable section, so a same-named definition there
+   223: # cannot replace them.
+   224: # - Positive and negative test candidates are scored in ONE model call, in
+   225: #   a random order, so a score cannot depend on which set an edge is in
+   226: #   (e.g. through per-call statistics or call order).
+   227: # - The scores must be finite and have one entry per candidate edge, or the
+   228: #   run fails.
+   229: # - Ties are scored pessimistically (OGB convention): Hits@K counts a
+   230: #   positive only if it scores strictly above the K-th best negative, and
+   231: #   MRR ranks a positive below every negative with an equal score, so a
+   232: #   constant or tied score earns no hits. AUC counts a tie as half a win.
+   233: 
+   234: def _eval_score_jointly(score_fn, pos_eli: torch.Tensor,
+   235:                         neg_eli: torch.Tensor):
+   236:     n_pos, n_all = pos_eli.size(1), pos_eli.size(1) + neg_eli.size(1)
+   237:     # Private generator: the global RNG stream is left untouched.
+   238:     gen = torch.Generator().manual_seed(int.from_bytes(os.urandom(7), "little"))
+   239:     perm = torch.randperm(n_all, generator=gen).to(pos_eli.device)
+   240:     eli = torch.cat([pos_eli, neg_eli], dim=1)[:, perm].contiguous()
+   241:     scores = score_fn(eli)
+   242:     if not isinstance(scores, torch.Tensor) or not scores.is_floating_point():
+   243:         raise TypeError("Test scores must be a floating-point tensor")
+   244:     if tuple(scores.shape) != (n_all,):
+   245:         raise ValueError(f"Test scores have shape {tuple(scores.shape)}, "
+   246:                          f"expected ({n_all},): one score per candidate edge")
+   247:     if not bool(torch.isfinite(scores).all()):
+   248:         raise ValueError("Test scores contain NaN or Inf")
+   249:     unperm = torch.empty_like(scores)
+   250:     unperm[perm] = scores
+   251:     return unperm[:n_pos], unperm[n_pos:]
+   252: 
+   253: 
+   254: def _eval_mrr(pos_scores: torch.Tensor, neg_scores: torch.Tensor) -> float:
+   255:     if neg_scores.dim() == 1:
+   256:         neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
+   257:     ranks = (neg_scores >= pos_scores.unsqueeze(1)).sum(dim=1) + 1
+   258:     return (1.0 / ranks.float()).mean().item()
    259: 
-   260:         # Validation
-   261:         if epoch % args.eval_every == 0:
-   262:             model.eval()
-   263:             with torch.no_grad():
-   264:                 val_pos = model(val_data.x, train_data.edge_index,
-   265:                                 val_data.pos_edge_label_index)
-   266:                 val_neg = model(val_data.x, train_data.edge_index,
-   267:                                 val_data.neg_edge_label_index)
-   268:             val_scores = torch.cat([val_pos, val_neg]).sigmoid().cpu().numpy()
-   269:             val_labels = np.concatenate([
-   270:                 np.ones(val_pos.size(0)), np.zeros(val_neg.size(0))
-   271:             ])
-   272:             val_auc = roc_auc_score(val_labels, val_scores) * 100
-   273: 
-   274:             print(f"TRAIN_METRICS epoch={epoch} loss={loss.item():.4f} "
-   275:                   f"val_auc={val_auc:.2f}", flush=True)
-   276: 
-   277:             if val_auc > best_val_auc:
-   278:                 best_val_auc = val_auc
-   279:                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
-   280:                 patience_counter = 0
-   281:             else:
-   282:                 patience_counter += 1
-   283:                 if patience_counter >= args.patience:
-   284:                     print(f"Early stopping at epoch {epoch}.", flush=True)
-   285:                     break
+   260: 
+   261: def _eval_hits_at_k(pos_scores: torch.Tensor, neg_scores: torch.Tensor,
+   262:                     k: int) -> float:
+   263:     if neg_scores.dim() == 1:
+   264:         neg_scores = neg_scores.unsqueeze(0).expand(pos_scores.size(0), -1)
+   265:     kth_neg, _ = neg_scores.kthvalue(max(neg_scores.size(1) - k + 1, 1), dim=1)
+   266:     return (pos_scores > kth_neg).float().mean().item()
+   267: 
+   268: 
+   269: def train_planetoid(model, data_bundle, args, device):
+   270:     """Train and evaluate on Planetoid (Cora/CiteSeer)."""
+   271:     train_data = data_bundle["train"].to(device)
+   272:     val_data = data_bundle["val"].to(device)
+   273:     test_data = data_bundle["test"].to(device)
+   274: 
+   275:     model = model.to(device)
+   276:     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
+   277:                                   weight_decay=args.weight_decay)
+   278: 
+   279:     best_val_auc = 0.0
+   280:     best_state = None
+   281:     patience_counter = 0
+   282: 
+   283:     for epoch in range(1, args.epochs + 1):
+   284:         model.train()
+   285:         optimizer.zero_grad()
    286: 
-   287:     # Test evaluation
-   288:     if best_state is not None:
-   289:         model.load_state_dict(best_state)
-   290:     model.eval()
-   291:     with torch.no_grad():
-   292:         test_pos = model(test_data.x, train_data.edge_index,
-   293:                          test_data.pos_edge_label_index)
-   294:         test_neg = model(test_data.x, train_data.edge_index,
-   295:                          test_data.neg_edge_label_index)
-   296: 
-   297:     # AUC
-   298:     scores = torch.cat([test_pos, test_neg]).sigmoid().cpu().numpy()
-   299:     labels = np.concatenate([
-   300:         np.ones(test_pos.size(0)), np.zeros(test_neg.size(0))
-   301:     ])
-   302:     auc = roc_auc_score(labels, scores) * 100
-   303: 
-   304:     # MRR
-   305:     mrr = compute_mrr(test_pos.cpu(), test_neg.cpu()) * 100
-   306: 
-   307:     # Hits@20
-   308:     hits20 = compute_hits_at_k(test_pos.cpu(), test_neg.cpu(), k=20) * 100
-   309: 
-   310:     print(f"TEST_METRICS AUC={auc:.2f} MRR={mrr:.2f} Hits@20={hits20:.2f}",
-   311:           flush=True)
-   312: 
-   313: 
-   314: def train_ogbl(model, data_bundle, args, device):
-   315:     """Train and evaluate on ogbl-collab."""
-   316:     from ogb.linkproppred import Evaluator
-   317:     evaluator = Evaluator(name="ogbl-collab")
-   318: 
-   319:     train_data = data_bundle["train_data"].to(device)
-   320:     split_edge = data_bundle["split_edge"]
+   287:         # Positive edges from split; resample negatives each epoch
+   288:         pos_ei = train_data.pos_edge_label_index
+   289:         neg_ei = negative_sampling(
+   290:             train_data.edge_index,
+   291:             num_nodes=train_data.num_nodes,
+   292:             num_neg_samples=pos_ei.size(1),
+   293:         )
+   294: 
+   295:         pos_scores = model(train_data.x, train_data.edge_index, pos_ei)
+   296:         neg_scores = model(train_data.x, train_data.edge_index, neg_ei)
+   297: 
+   298:         pos_loss = F.binary_cross_entropy_with_logits(
+   299:             pos_scores, torch.ones_like(pos_scores))
+   300:         neg_loss = F.binary_cross_entropy_with_logits(
+   301:             neg_scores, torch.zeros_like(neg_scores))
+   302:         loss = pos_loss + neg_loss
+   303:         loss.backward()
+   304: 
+   305:         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+   306:         optimizer.step()
+   307: 
+   308:         # Validation
+   309:         if epoch % args.eval_every == 0:
+   310:             model.eval()
+   311:             with torch.no_grad():
+   312:                 val_pos = model(val_data.x, train_data.edge_index,
+   313:                                 val_data.pos_edge_label_index)
+   314:                 val_neg = model(val_data.x, train_data.edge_index,
+   315:                                 val_data.neg_edge_label_index)
+   316:             val_scores = torch.cat([val_pos, val_neg]).sigmoid().cpu().numpy()
+   317:             val_labels = np.concatenate([
+   318:                 np.ones(val_pos.size(0)), np.zeros(val_neg.size(0))
+   319:             ])
+   320:             val_auc = roc_auc_score(val_labels, val_scores) * 100
    321: 
-   322:     model = model.to(device)
-   323:     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
-   324:                                   weight_decay=args.weight_decay)
-   325: 
-   326:     best_val_hits = 0.0
-   327:     best_state = None
-   328:     patience_counter = 0
-   329: 
-   330:     for epoch in range(1, args.epochs + 1):
-   331:         model.train()
-   332:         optimizer.zero_grad()
-   333: 
-   334:         # Sample positive and negative training edges
-   335:         pos_train = split_edge["train"]["edge"].to(device)
-   336:         # Subsample for efficiency
-   337:         n_pos = min(pos_train.size(0), args.batch_size)
-   338:         idx = torch.randperm(pos_train.size(0))[:n_pos]
-   339:         pos_ei = pos_train[idx].t()  # [2, n_pos]
-   340: 
-   341:         neg_ei = negative_sampling(
-   342:             train_data.edge_index, num_nodes=train_data.num_nodes,
-   343:             num_neg_samples=n_pos,
-   344:         )
-   345: 
-   346:         x = train_data.x
-   347:         if x is None:
-   348:             x = torch.ones(train_data.num_nodes, 1, device=device)
-   349: 
-   350:         pos_scores = model(x, train_data.edge_index, pos_ei)
-   351:         neg_scores = model(x, train_data.edge_index, neg_ei)
-   352: 
-   353:         pos_loss = F.binary_cross_entropy_with_logits(
-   354:             pos_scores, torch.ones_like(pos_scores))
-   355:         neg_loss = F.binary_cross_entropy_with_logits(
-   356:             neg_scores, torch.zeros_like(neg_scores))
-   357:         loss = pos_loss + neg_loss
-   358:         loss.backward()
+   322:             print(f"TRAIN_METRICS epoch={epoch} loss={loss.item():.4f} "
+   323:                   f"val_auc={val_auc:.2f}", flush=True)
+   324: 
+   325:             if val_auc > best_val_auc:
+   326:                 best_val_auc = val_auc
+   327:                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
+   328:                 patience_counter = 0
+   329:             else:
+   330:                 patience_counter += 1
+   331:                 if patience_counter >= args.patience:
+   332:                     print(f"Early stopping at epoch {epoch}.", flush=True)
+   333:                     break
+   334: 
+   335:     # Test evaluation
+   336:     if best_state is not None:
+   337:         model.load_state_dict(best_state)
+   338:     model.eval()
+   339:     with torch.no_grad():
+   340:         test_pos, test_neg = _eval_score_jointly(
+   341:             lambda eli: model(test_data.x, train_data.edge_index, eli),
+   342:             test_data.pos_edge_label_index, test_data.neg_edge_label_index)
+   343: 
+   344:     # AUC
+   345:     scores = torch.cat([test_pos, test_neg]).sigmoid().cpu().numpy()
+   346:     labels = np.concatenate([
+   347:         np.ones(test_pos.size(0)), np.zeros(test_neg.size(0))
+   348:     ])
+   349:     auc = roc_auc_score(labels, scores) * 100
+   350: 
+   351:     # MRR
+   352:     mrr = _eval_mrr(test_pos.cpu(), test_neg.cpu()) * 100
+   353: 
+   354:     # Hits@20
+   355:     hits20 = _eval_hits_at_k(test_pos.cpu(), test_neg.cpu(), k=20) * 100
+   356: 
+   357:     print(f"TEST_METRICS AUC={auc:.2f} MRR={mrr:.2f} Hits@20={hits20:.2f}",
+   358:           flush=True)
    359: 
-   360:         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-   361:         optimizer.step()
-   362: 
-   363:         # Validation
-   364:         if epoch % args.eval_every == 0:
-   365:             model.eval()
-   366:             with torch.no_grad():
-   367:                 z = model.encode(x, train_data.edge_index)
+   360: 
+   361: def train_ogbl(model, data_bundle, args, device):
+   362:     """Train and evaluate on ogbl-collab."""
+   363:     from ogb.linkproppred import Evaluator
+   364:     evaluator = Evaluator(name="ogbl-collab")
+   365: 
+   366:     train_data = data_bundle["train_data"].to(device)
+   367:     split_edge = data_bundle["split_edge"]
    368: 
-   369:                 val_pos = split_edge["valid"]["edge"].to(device)
-   370:                 val_neg = split_edge["valid"]["edge_neg"].to(device)
-   371: 
-   372:                 _N = train_data.num_nodes
-   373:                 pos_eli = val_pos.t().contiguous()  # [2, P]
-   374:                 val_pos_scores = model.decode(
-   375:                     pos_eli, z,
-   376:                     edge_index=train_data.edge_index, num_nodes=_N)
-   377:                 if val_neg.dim() == 3:
-   378:                     vn = val_neg.reshape(-1, 2)
-   379:                     neg_eli = vn.t().contiguous()
-   380:                     val_neg_scores = model.decode(
-   381:                         neg_eli, z,
-   382:                         edge_index=train_data.edge_index, num_nodes=_N)
-   383:                     val_neg_scores = val_neg_scores.view(val_neg.size(0), val_neg.size(1))
-   384:                 elif val_neg.dim() == 2 and val_neg.size(1) == 2:
-   385:                     neg_eli = val_neg.t().contiguous()
-   386:                     val_neg_scores = model.decode(
-   387:                         neg_eli, z,
-   388:                         edge_index=train_data.edge_index, num_nodes=_N)
-   389:                 else:
-   390:                     # [num_pos, K] format: destinations only, source = val_pos source
-   391:                     src_rep = val_pos[:, 0].unsqueeze(1).expand_as(val_neg).reshape(-1)
-   392:                     dst_rep = val_neg.reshape(-1)
-   393:                     neg_eli = torch.stack([src_rep, dst_rep], dim=0)
-   394:                     val_neg_scores = model.decode(
-   395:                         neg_eli, z,
-   396:                         edge_index=train_data.edge_index, num_nodes=_N)
-   397:                     val_neg_scores = val_neg_scores.view(val_neg.size(0), val_neg.size(1))
-   398: 
-   399:             val_hits = compute_hits_at_k(val_pos_scores.cpu(), val_neg_scores.cpu(), k=50) * 100
-   400: 
-   401:             print(f"TRAIN_METRICS epoch={epoch} loss={loss.item():.4f} "
-   402:                   f"val_hits50={val_hits:.2f}", flush=True)
-   403: 
-   404:             if val_hits > best_val_hits:
-   405:                 best_val_hits = val_hits
-   406:                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
-   407:                 patience_counter = 0
-   408:             else:
-   409:                 patience_counter += 1
-   410:                 if patience_counter >= args.patience:
-   411:                     print(f"Early stopping at epoch {epoch}.", flush=True)
-   412:                     break
-   413: 
-   414:     # Test evaluation
-   415:     # OGB standard: include validation edges in the adjacency at test time
-   416:     if best_state is not None:
-   417:         model.load_state_dict(best_state)
-   418:     model.eval()
-   419:     with torch.no_grad():
-   420:         x = train_data.x
-   421:         if x is None:
-   422:             x = torch.ones(train_data.num_nodes, 1, device=device)
-   423: 
-   424:         # Build test-time adjacency: train + validation edges
-   425:         val_edge = split_edge["valid"]["edge"].to(device)
-   426:         val_ei = torch.cat([val_edge, val_edge.flip(1)], dim=0).t()
-   427:         test_edge_index = coalesce(
-   428:             torch.cat([train_data.edge_index, val_ei], dim=1))
-   429: 
-   430:         z = model.encode(x, test_edge_index)
-   431: 
-   432:         test_pos = split_edge["test"]["edge"].to(device)
-   433:         test_neg = split_edge["test"]["edge_neg"].to(device)
-   434: 
-   435:         _N = train_data.num_nodes
-   436:         pos_eli = test_pos.t().contiguous()  # [2, P]
-   437:         pos_scores = model.decode(
-   438:             pos_eli, z, edge_index=test_edge_index, num_nodes=_N)
-   439:         if test_neg.dim() == 3:
-   440:             tn = test_neg.reshape(-1, 2)
-   441:             neg_eli = tn.t().contiguous()
-   442:             neg_scores = model.decode(
-   443:                 neg_eli, z, edge_index=test_edge_index, num_nodes=_N)
-   444:             neg_scores = neg_scores.view(test_neg.size(0), test_neg.size(1))
-   445:         elif test_neg.dim() == 2 and test_neg.size(1) == 2:
-   446:             neg_eli = test_neg.t().contiguous()
-   447:             neg_scores = model.decode(
-   448:                 neg_eli, z, edge_index=test_edge_index, num_nodes=_N)
-   449:         else:
-   450:             src_rep = test_pos[:, 0].unsqueeze(1).expand_as(test_neg).reshape(-1)
-   451:             dst_rep = test_neg.reshape(-1)
-   452:             neg_eli = torch.stack([src_rep, dst_rep], dim=0)
-   453:             neg_scores = model.decode(
-   454:                 neg_eli, z, edge_index=test_edge_index, num_nodes=_N)
-   455:             neg_scores = neg_scores.view(test_neg.size(0), test_neg.size(1))
-   456: 
-   457:     hits50 = compute_hits_at_k(pos_scores.cpu(), neg_scores.cpu(), k=50) * 100
-   458:     mrr = compute_mrr(pos_scores.cpu(), neg_scores.cpu()) * 100
-   459: 
-   460:     print(f"TEST_METRICS Hits@50={hits50:.2f} MRR={mrr:.2f}", flush=True)
-   461: 
-   462: 
-   463: def main():
-   464:     parser = argparse.ArgumentParser(description="Graph Link Prediction")
-   465:     parser.add_argument("--dataset", type=str, required=True,
-   466:                         choices=["Cora", "CiteSeer", "ogbl-collab"])
-   467:     parser.add_argument("--data-dir", type=str, default="/data")
-   468:     parser.add_argument("--hidden-channels", type=int, default=256)
-   469:     parser.add_argument("--num-layers", type=int, default=2)
-   470:     parser.add_argument("--dropout", type=float, default=0.0)
-   471:     parser.add_argument("--lr", type=float, default=0.01)
-   472:     parser.add_argument("--weight-decay", type=float, default=0.0)
-   473:     parser.add_argument("--epochs", type=int, default=200)
-   474:     parser.add_argument("--batch-size", type=int, default=65536)
-   475:     parser.add_argument("--eval-every", type=int, default=10)
-   476:     parser.add_argument("--patience", type=int, default=20)
-   477:     parser.add_argument("--seed", type=int, default=42)
-   478:     parser.add_argument("--output-dir", type=str, default="./output")
-   479:     args = parser.parse_args()
-   480: 
-   481:     # Seed
-   482:     torch.manual_seed(args.seed)
-   483:     np.random.seed(args.seed)
-   484:     if torch.cuda.is_available():
-   485:         torch.cuda.manual_seed_all(args.seed)
-   486: 
-   487:     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-   488:     os.makedirs(args.output_dir, exist_ok=True)
-   489: 
-   490:     # ── Parameter Budget Check ──
-   491:     # Budget = 1.05x the largest baseline.
-   492:     # Neo-GNN is the largest GNN-based baseline, but node2vec uses
-   493:     # nn.Embedding(max_num_nodes, H) which can be 50000*H = 12.8M+ params,
-   494:     # fundamentally different from GNN methods (~500K params).
-   495:     # We take max(gnn_budget, embedding_budget).
-   496:     def _check_param_budget(model, in_ch, H):
-   497:         # Neo-GNN: GCN encoder(2 layers + 2 BN) + 3 struct_layers + hop_weights + decoder
-   498:         _neo_gnn_params = (
-   499:             in_ch * H + H * H + 6 * H     # GCN encoder (2 layers + BN)
-   500:             + 3 * H * H + 9 * H            # struct_layers (3 NeoGNNLayers)
+   369:     model = model.to(device)
+   370:     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr,
+   371:                                   weight_decay=args.weight_decay)
+   372: 
+   373:     best_val_hits = 0.0
+   374:     best_state = None
+   375:     patience_counter = 0
+   376: 
+   377:     for epoch in range(1, args.epochs + 1):
+   378:         model.train()
+   379:         optimizer.zero_grad()
+   380: 
+   381:         # Sample positive and negative training edges
+   382:         pos_train = split_edge["train"]["edge"].to(device)
+   383:         # Subsample for efficiency
+   384:         n_pos = min(pos_train.size(0), args.batch_size)
+   385:         idx = torch.randperm(pos_train.size(0))[:n_pos]
+   386:         pos_ei = pos_train[idx].t()  # [2, n_pos]
+   387: 
+   388:         neg_ei = negative_sampling(
+   389:             train_data.edge_index, num_nodes=train_data.num_nodes,
+   390:             num_neg_samples=n_pos,
+   391:         )
+   392: 
+   393:         x = train_data.x
+   394:         if x is None:
+   395:             x = torch.ones(train_data.num_nodes, 1, device=device)
+   396: 
+   397:         pos_scores = model(x, train_data.edge_index, pos_ei)
+   398:         neg_scores = model(x, train_data.edge_index, neg_ei)
+   399: 
+   400:         pos_loss = F.binary_cross_entropy_with_logits(
+   401:             pos_scores, torch.ones_like(pos_scores))
+   402:         neg_loss = F.binary_cross_entropy_with_logits(
+   403:             neg_scores, torch.zeros_like(neg_scores))
+   404:         loss = pos_loss + neg_loss
+   405:         loss.backward()
+   406: 
+   407:         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+   408:         optimizer.step()
+   409: 
+   410:         # Validation
+   411:         if epoch % args.eval_every == 0:
+   412:             model.eval()
+   413:             with torch.no_grad():
+   414:                 z = model.encode(x, train_data.edge_index)
+   415: 
+   416:                 val_pos = split_edge["valid"]["edge"].to(device)
+   417:                 val_neg = split_edge["valid"]["edge_neg"].to(device)
+   418: 
+   419:                 _N = train_data.num_nodes
+   420:                 pos_eli = val_pos.t().contiguous()  # [2, P]
+   421:                 val_pos_scores = model.decode(
+   422:                     pos_eli, z,
+   423:                     edge_index=train_data.edge_index, num_nodes=_N)
+   424:                 if val_neg.dim() == 3:
+   425:                     vn = val_neg.reshape(-1, 2)
+   426:                     neg_eli = vn.t().contiguous()
+   427:                     val_neg_scores = model.decode(
+   428:                         neg_eli, z,
+   429:                         edge_index=train_data.edge_index, num_nodes=_N)
+   430:                     val_neg_scores = val_neg_scores.view(val_neg.size(0), val_neg.size(1))
+   431:                 elif val_neg.dim() == 2 and val_neg.size(1) == 2:
+   432:                     neg_eli = val_neg.t().contiguous()
+   433:                     val_neg_scores = model.decode(
+   434:                         neg_eli, z,
+   435:                         edge_index=train_data.edge_index, num_nodes=_N)
+   436:                 else:
+   437:                     # [num_pos, K] format: destinations only, source = val_pos source
+   438:                     src_rep = val_pos[:, 0].unsqueeze(1).expand_as(val_neg).reshape(-1)
+   439:                     dst_rep = val_neg.reshape(-1)
+   440:                     neg_eli = torch.stack([src_rep, dst_rep], dim=0)
+   441:                     val_neg_scores = model.decode(
+   442:                         neg_eli, z,
+   443:                         edge_index=train_data.edge_index, num_nodes=_N)
+   444:                     val_neg_scores = val_neg_scores.view(val_neg.size(0), val_neg.size(1))
+   445: 
+   446:             val_hits = _eval_hits_at_k(val_pos_scores.cpu(), val_neg_scores.cpu(), k=50) * 100
+   447: 
+   448:             print(f"TRAIN_METRICS epoch={epoch} loss={loss.item():.4f} "
+   449:                   f"val_hits50={val_hits:.2f}", flush=True)
+   450: 
+   451:             if val_hits > best_val_hits:
+   452:                 best_val_hits = val_hits
+   453:                 best_state = {k: v.clone() for k, v in model.state_dict().items()}
+   454:                 patience_counter = 0
+   455:             else:
+   456:                 patience_counter += 1
+   457:                 if patience_counter >= args.patience:
+   458:                     print(f"Early stopping at epoch {epoch}.", flush=True)
+   459:                     break
+   460: 
+   461:     # Test evaluation
+   462:     # OGB standard: include validation edges in the adjacency at test time
+   463:     if best_state is not None:
+   464:         model.load_state_dict(best_state)
+   465:     model.eval()
+   466:     with torch.no_grad():
+   467:         x = train_data.x
+   468:         if x is None:
+   469:             x = torch.ones(train_data.num_nodes, 1, device=device)
+   470: 
+   471:         # Build test-time adjacency: train + validation edges
+   472:         val_edge = split_edge["valid"]["edge"].to(device)
+   473:         val_ei = torch.cat([val_edge, val_edge.flip(1)], dim=0).t()
+   474:         test_edge_index = coalesce(
+   475:             torch.cat([train_data.edge_index, val_ei], dim=1))
+   476: 
+   477:         z = model.encode(x, test_edge_index)
+   478: 
+   479:         test_pos = split_edge["test"]["edge"].to(device)
+   480:         test_neg = split_edge["test"]["edge_neg"].to(device)
+   481: 
+   482:         _N = train_data.num_nodes
+   483:         pos_eli = test_pos.t().contiguous()  # [2, P]
+   484:         if test_neg.dim() == 3:
+   485:             tn = test_neg.reshape(-1, 2)
+   486:             neg_eli = tn.t().contiguous()
+   487:             neg_shape = (test_neg.size(0), test_neg.size(1))
+   488:         elif test_neg.dim() == 2 and test_neg.size(1) == 2:
+   489:             neg_eli = test_neg.t().contiguous()
+   490:             neg_shape = (test_neg.size(0),)
+   491:         else:
+   492:             src_rep = test_pos[:, 0].unsqueeze(1).expand_as(test_neg).reshape(-1)
+   493:             dst_rep = test_neg.reshape(-1)
+   494:             neg_eli = torch.stack([src_rep, dst_rep], dim=0)
+   495:             neg_shape = (test_neg.size(0), test_neg.size(1))
+   496:         pos_scores, neg_scores = _eval_score_jointly(
+   497:             lambda eli: model.decode(
+   498:                 eli, z, edge_index=test_edge_index, num_nodes=_N),
+   499:             pos_eli, neg_eli)
+   500:         neg_scores = neg_scores.view(neg_shape)
 
 [truncated: showing at most 500 lines / 60000 bytes from pytorch-geometric-lp/custom_linkpred.py]
 ```

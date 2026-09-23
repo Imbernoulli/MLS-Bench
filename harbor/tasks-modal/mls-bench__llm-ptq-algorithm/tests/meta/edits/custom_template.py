@@ -162,6 +162,180 @@ class LayerQuantizer:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+# ── Quantization-format enforcement (fixed) ──────────────────────────────────
+#
+# `LayerQuantizer.quantize()` hands back a dequantized weight, so its return
+# type alone cannot stop it from returning a higher-precision matrix (returning
+# `W` unchanged would score the FP16 perplexity). Every returned weight is
+# therefore checked against the format this task scores:
+#
+#   * each output row is split into groups of `group_size` consecutive input
+#     columns (the whole row when group_size == -1);
+#   * within a group the values lie on ONE uniform grid  a + delta * k  with
+#     integer k in [0, 2**num_bits - 1]: at most 2**num_bits levels and one
+#     scale / zero-point per group (the symmetric grid is a special case);
+#   * a quantizer may also set `self.input_scale`, a positive vector of shape
+#     (in_features,): the grid must then hold for `W_hat * input_scale`. This
+#     is the AWQ / SmoothQuant form  W_hat = Q(W * s) / s,  whose per-channel
+#     `s` is folded into the layer input at inference.
+#
+# A group that is off every such grid by more than _GRID_TOL grid steps raises
+# QuantizationFormatError and the run reports no metrics. An accepted weight is
+# snapped to its fitted grid (a + delta * k, then / s): an entry more than two
+# fp16 ulps from its grid point is replaced by the grid point, so at most two
+# ulps of freedom survive off the grid. An honest quantizer's own fp16 rounding
+# stays within that, so its weights pass through bit for bit. Each written weight is fingerprinted and
+# the whole model is re-checked before evaluation, so a weight cannot be
+# swapped back after it was checked.
+
+_GRID_TOL = 0.1  # grid steps; fp16 rounding of an honest grid is ~0.02
+
+
+class QuantizationFormatError(RuntimeError):
+    """A quantizer produced a weight that is not a valid num_bits quantization."""
+
+
+def _read_input_scale(quantizer, in_features, device, name):
+    s = getattr(quantizer, "input_scale", None)
+    if s is None:
+        return None
+    if not torch.is_tensor(s):
+        raise QuantizationFormatError(
+            f"{name}: input_scale must be a tensor, got {type(s).__name__}")
+    s = s.detach().reshape(-1).to(device=device, dtype=torch.float32).clone()
+    if s.numel() != in_features:
+        raise QuantizationFormatError(
+            f"{name}: input_scale has {s.numel()} entries; expected {in_features}")
+    if not bool(torch.isfinite(s).all()) or bool((s <= 0).any()):
+        raise QuantizationFormatError(
+            f"{name}: input_scale must be finite and strictly positive")
+    return s
+
+
+@torch.no_grad()
+def _project_to_grid(W_ret, W_ref, num_bits, group_size, s, name):
+    """Check W_ret is a num_bits group quantization; return it rebuilt on its grid."""
+    if not torch.is_tensor(W_ret):
+        raise QuantizationFormatError(
+            f"{name}: quantize() must return a tensor, got {type(W_ret).__name__}")
+    if tuple(W_ret.shape) != tuple(W_ref.shape) or W_ret.dtype != W_ref.dtype:
+        raise QuantizationFormatError(
+            f"{name}: quantize() returned {tuple(W_ret.shape)} {W_ret.dtype}; "
+            f"expected {tuple(W_ref.shape)} {W_ref.dtype}")
+    V = W_ret.detach().to(device=W_ref.device, dtype=torch.float32)
+    if not bool(torch.isfinite(V).all()):
+        raise QuantizationFormatError(f"{name}: quantized weight is not finite")
+    out_f, in_f = V.shape
+    gs = group_size if group_size > 0 else in_f
+    if in_f % gs != 0:
+        raise QuantizationFormatError(
+            f"{name}: in_features {in_f} is not divisible by group_size {gs}")
+    if s is not None:
+        V = V * s.unsqueeze(0)
+    V = V.reshape(out_f, in_f // gs, gs)
+    vmin = V.amin(dim=-1, keepdim=True)
+    span = V.amax(dim=-1, keepdim=True) - vmin
+    flat = span <= 0
+    u = (V - vmin) / torch.where(flat, torch.ones_like(span), span)
+    # Pick, per group, the number of grid steps m (<= 2**num_bits - 1) spanning
+    # the group whose grid the values sit on most closely (deviation measured
+    # in units of the group span, so a coarse grid cannot fit by accident),
+    # then require that deviation to be at most _GRID_TOL of one grid step.
+    best_dev = torch.full_like(span, float("inf"))
+    best_m = torch.ones_like(span)
+    for m in range(1, 1 << num_bits):
+        um = u * m
+        dev_m = (um - torch.round(um)).abs().amax(dim=-1, keepdim=True)
+        better = dev_m / m < best_dev / best_m
+        best_dev = torch.where(better, dev_m, best_dev)
+        best_m = torch.where(better, torch.full_like(best_m, m), best_m)
+        del um, dev_m, better
+    bad = (best_dev > _GRID_TOL) & ~flat
+    if bool(bad.any()):
+        n_bad = int(bad.sum().item())
+        r, g = [int(x) for x in bad.squeeze(-1).nonzero()[0].tolist()]
+        n_lv = int(torch.unique(V[r, g]).numel())
+        raise QuantizationFormatError(
+            f"{name}: {n_bad} of {bad.numel()} (row, group) blocks are not a "
+            f"{num_bits}-bit quantization with group_size={group_size}: e.g. row "
+            f"{r}, group {g} has {n_lv} distinct values that do not fit one "
+            f"uniform grid of at most {1 << num_bits} levels")
+    k = torch.where(flat, torch.zeros_like(u), torch.round(u * best_m))
+    del u
+    # Fit the grid in fp32, anchored at the level nearest zero (so small grid
+    # points are not lost to cancellation):  v = v0 + delta * (k - k0),  with
+    # v0 the mean value at level k0 and delta the least-squares step.
+    k0 = k.gather(-1, V.abs().argmin(dim=-1, keepdim=True))
+    at0 = (k == k0).float()
+    v0 = (V * at0).sum(dim=-1, keepdim=True) / at0.sum(dim=-1, keepdim=True)
+    kd = k - k0
+    denom = (kd * kd).sum(dim=-1, keepdim=True)
+    delta = torch.where(
+        denom > 0,
+        (kd * (V - v0)).sum(dim=-1, keepdim=True) / denom.clamp(min=1e-30),
+        torch.zeros_like(denom))
+    W_grid = (v0 + delta * kd).reshape(out_f, in_f)
+    del at0, kd
+    del k, V
+    if s is not None:
+        W_grid = W_grid / s.unsqueeze(0)
+    # A returned value within two fp16 ulps of its fitted grid point is that
+    # grid point as rounded by the quantizer's own arithmetic (plus the fit's
+    # own fp32 error), and is kept bit for bit; anything further off is
+    # replaced by the grid point itself.
+    _, e = torch.frexp(W_grid)
+    ulp = torch.where(
+        W_grid == 0, torch.full_like(W_grid, 2.0 ** -24),
+        torch.ldexp(torch.ones_like(W_grid), e - 11).clamp(min=2.0 ** -24))
+    W_ret32 = W_ret.detach().to(device=W_ref.device, dtype=torch.float32)
+    keep = (W_ret32 - W_grid).abs() <= 2 * ulp
+    del ulp, e, W_ret32
+    return torch.where(
+        keep, W_ret.detach().to(W_ref.device), W_grid.to(W_ref.dtype))
+
+
+def _fingerprint(lin):
+    import hashlib
+    h = hashlib.blake2b(digest_size=16)
+    for t in (lin.weight, lin.bias):
+        if t is None:
+            h.update(b"none")
+            continue
+        t = t.detach()
+        h.update(repr((tuple(t.shape), str(t.dtype))).encode())
+        h.update(t.contiguous().cpu().reshape(-1).view(torch.uint8).numpy())
+    return h.hexdigest()
+
+
+def _check_linear_intact(lin, key):
+    if type(lin) is not nn.Linear or "forward" in vars(lin):
+        raise QuantizationFormatError(f"{key}: the linear layer was replaced")
+    if lin._forward_hooks or lin._forward_pre_hooks:
+        raise QuantizationFormatError(f"{key}: a forward hook is attached")
+
+
+def _verify_quantized_model(layers, fingerprints):
+    """Re-check every quantized linear against the fingerprint taken when written."""
+    from torch.nn.modules import module as _module
+    if _module._global_forward_hooks or _module._global_forward_pre_hooks:
+        raise QuantizationFormatError("a global module forward hook is registered")
+    seen = set()
+    for i in range(len(layers)):
+        for name, lin in find_linear_layers(layers[i]).items():
+            key = f"layers.{i}.{name}"
+            if key not in fingerprints:
+                raise QuantizationFormatError(f"{key}: linear layer was never quantized")
+            _check_linear_intact(lin, key)
+            if _fingerprint(lin) != fingerprints[key]:
+                raise QuantizationFormatError(
+                    f"{key}: weight changed after it was quantized and checked")
+            seen.add(key)
+    missing = set(fingerprints) - seen
+    if missing:
+        raise QuantizationFormatError(
+            f"quantized layers disappeared: {sorted(missing)[:3]}")
+
+
 # ── Model loading ─────────────────────────────────────────────────────────────
 
 def get_model(model_path):
@@ -327,6 +501,9 @@ def quantize_model(model, calibration_data, dev, num_bits=4, group_size=-1):
     position_ids = cache["position_ids"]
 
     quant_errors = {}
+    fingerprints = {}
+    n_checked = 0
+    n_rebuilt = 0
 
     for i in range(len(layers)):
         print(f"Quantizing layer {i}/{len(layers)}...", flush=True)
@@ -364,14 +541,30 @@ def quantize_model(model, calibration_data, dev, num_bits=4, group_size=-1):
         for h in handles:
             h.remove()
 
-        # Quantize each sublayer
+        # Quantize each sublayer. Every returned weight is checked and rebuilt
+        # on its grid by the fixed code above, and the weights are written only
+        # after every quantizer of this block has run.
+        W_checked = {}
         for name in subset:
+            key = f"layers.{i}.{name}"
             W_orig = subset[name].weight.data.clone()
-            W_quant = quantizers[name].quantize()
+            W_ret = quantizers[name].quantize()
+            s_in = _read_input_scale(
+                quantizers[name], W_orig.shape[1], W_orig.device, key)
+            W_quant = _project_to_grid(
+                W_ret, W_orig, num_bits, group_size, s_in, key)
+            n_checked += W_quant.numel()
+            n_rebuilt += int((W_quant != W_ret.to(W_quant.device)).sum().item())
+            del W_ret, s_in
             error = (W_orig.float() - W_quant.float()).norm().item()
-            quant_errors[f"layers.{i}.{name}"] = error
-            subset[name].weight.data = W_quant
+            quant_errors[key] = error
+            W_checked[name] = W_quant
             quantizers[name].free()
+        for name in subset:
+            _check_linear_intact(subset[name], f"layers.{i}.{name}")
+            subset[name].weight.data = W_checked[name]
+            fingerprints[f"layers.{i}.{name}"] = _fingerprint(subset[name])
+        del W_checked
 
         # Re-run calibration through quantized layer to get outputs for next layer
         for j in range(nsamples):
@@ -392,6 +585,10 @@ def quantize_model(model, calibration_data, dev, num_bits=4, group_size=-1):
 
         inps, outs = outs, inps
 
+    _verify_quantized_model(layers, fingerprints)
+    print(f"Quantization format check passed: {n_checked} weights are "
+          f"{num_bits}-bit, group_size={group_size} ({n_rebuilt} snapped "
+          f"onto their grid)", flush=True)
     model.config.use_cache = use_cache
     print("Quantization complete.", flush=True)
     return quant_errors

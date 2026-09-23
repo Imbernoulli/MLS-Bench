@@ -256,6 +256,9 @@ class LayerQuantizer:
         W_dq = dequantize_tensor(W_q, scale_q, zp)
         W_final = W_dq / best_s.unsqueeze(0)
 
+        # W_final * best_s is on the per-group grid; declare the per-channel
+        # scale (folded into the layer input at inference) to the harness.
+        self.input_scale = best_s
         return W_final.to(self.layer.weight.dtype)
 
     def free(self):

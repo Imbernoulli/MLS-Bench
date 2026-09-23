@@ -26,8 +26,8 @@ export PYTHONHASHSEED="$SEED"
 # multiple test rounds within a single agent run do NOT overwrite each
 # other (qa_pipeline's --overwrite wipes output_answer_file at start).
 # The TEST_TS is embedded in the TEST_METRICS line so the parser can
-# correlate the leaderboard row back to the exact answer files (needed
-# for per-row post-hoc SoPR computation).
+# correlate the leaderboard row back to the exact answer files (used by
+# compute_sopr.sh to re-judge or backfill a row's SoPR).
 LABEL="${ENV:-I1-instruction}"
 OUTPUT_DIR="${OUTPUT_DIR:-./results}"
 TEST_TS="${TEST_TS:-$(date -u +%Y%m%dT%H%M%SZ)}"
@@ -111,32 +111,47 @@ COMMON_ARGS=(
 # split (shipped as tasks/agent-tool-reasoning/scripts/test_50q.json). The
 # full 163-query run was too expensive at ~100+ h per agent given
 # max_tests=3 and 3 settings.
-QUERY_FILE="${MLSBENCH_TASK_DIR:-$(cd "$(dirname "$0")/.." && pwd)}/scripts/test_50q.json"
+SCRIPTS_DIR="${MLSBENCH_TASK_DIR:-$(cd "$(dirname "$0")/.." && pwd)}/scripts"
+QUERY_FILE="${SCRIPTS_DIR}/test_50q.json"
 if [ ! -f "${QUERY_FILE}" ]; then
     echo "ERROR: query file not found: ${QUERY_FILE}" >&2
     exit 1
 fi
+# The SoPR judge (Step 4) needs the OpenRouter key; fail before inference,
+# not after hours of it. _common.sh resolves it from the env or .openrouter_key.
+: "${OPENROUTER_API_KEY_NEW:?OPENROUTER_API_KEY_NEW not set — the SoPR judge needs it (invoke via a launcher script)}"
 echo "=== Running inference (label=${LABEL}, queries=${QUERY_FILE}) ==="
-python toolbench/inference/qa_pipeline_multithread.py \
+# The search policy runs inside this process: it does not get the judge key,
+# and a metrics line it prints is defused so only the lines printed by the
+# fixed steps below reach the parser.
+env -u OPENROUTER_API_KEY_NEW python toolbench/inference/qa_pipeline_multithread.py \
     "${COMMON_ARGS[@]}" \
     --input_query_file "${QUERY_FILE}" \
-    --output_answer_file "${SETTING_OUT}/G1_instruction" || true
+    --output_answer_file "${SETTING_OUT}/G1_instruction" 2>&1 \
+    | sed -u 's/TEST_METRICS/TEST-METRICS(untrusted)/g' || true
 
 # ── Step 3: Calculate metrics ─────────────────────────────────────────
 echo "=== Calculating metrics ==="
-SETTING_OUT="${SETTING_OUT}" python3 << 'PYEOF'
+SETTING_OUT="${SETTING_OUT}" QUERY_FILE="${QUERY_FILE}" python3 << 'PYEOF'
 import os, json, sys
 
-def compute_metrics(result_dir):
-    total = passed = total_queries = gave_up = 0
+def compute_metrics(result_dir, query_file):
+    # The denominator is every query in the fixed query file, not the answer
+    # files that happen to exist: a query whose run crashed or wrote no answer
+    # file counts as a failure, and stray files are ignored.
+    with open(query_file) as fh:
+        query_ids = [q["query_id"] for q in json.load(fh)]
+    total = passed = total_queries = gave_up = missing = 0
     if not os.path.isdir(result_dir):
         print(f"WARNING: {result_dir} not found", file=sys.stderr)
         return None
-    for f in sorted(os.listdir(result_dir)):
-        if not f.endswith('.json'):
-            continue
+    for qid in query_ids:
         total += 1
-        with open(os.path.join(result_dir, f)) as fh:
+        path = os.path.join(result_dir, f"{qid}_CustomSearch.json")
+        if not os.path.isfile(path):
+            missing += 1
+            continue
+        with open(path) as fh:
             data = json.load(fh)
         if data.get('win', False):
             passed += 1
@@ -144,7 +159,10 @@ def compute_metrics(result_dir):
         total_queries += ag.get('query_count', 0)
         if ag.get('finish_type', '') == 'give_up':
             gave_up += 1
-    if total == 0:
+    if missing:
+        print(f"WARNING: {missing}/{total} queries have no answer file; "
+              f"they are scored as failures", file=sys.stderr)
+    if total == missing:
         return None
     return {
         'total': total,
@@ -156,7 +174,7 @@ def compute_metrics(result_dir):
 
 setting_out = os.environ['SETTING_OUT']
 test_ts = os.environ.get('TEST_TS', '')
-m = compute_metrics(os.path.join(setting_out, 'G1_instruction'))
+m = compute_metrics(os.path.join(setting_out, 'G1_instruction'), os.environ['QUERY_FILE'])
 if m:
     # answer_ts lets downstream tools (e.g. compute_sopr) locate the exact
     # answer-file directory that produced these metrics, even across many
@@ -169,3 +187,19 @@ PYEOF
 
 # ── Cleanup ───────────────────────────────────────────────────────────
 kill $SERVER_PID 2>/dev/null || true
+
+# ── Step 4: Solvable Pass Rate (LLM judge) ────────────────────────────
+# StableToolBench's judge, meta-llama/llama-3.3-70b-instruct via OpenRouter,
+# evaluate_times=1 — the settings behind the leaderboard's sopr_* values —
+# on exactly the <qid>_CustomSearch.json files of the fixed query ids scored
+# above. Prints `TEST_METRICS: sopr=... sopr_n_scored=...`; a judge failure
+# exits non-zero, leaving sopr unset (the setting then scores 0).
+echo "=== Judging answers (SoPR) ==="
+env -u PYTHONPATH python "${SCRIPTS_DIR}/judge_sopr.py" \
+    --answer_dir "${SETTING_OUT}/G1_instruction" \
+    --query_file "${QUERY_FILE}" \
+    --pkg_root "$(pwd)" \
+    --eval_model meta-llama/llama-3.3-70b-instruct \
+    --evaluate_times 1 \
+    --max_eval_threads 4 \
+    --save_path "${SETTING_OUT}/sopr_G1_instruction.json"

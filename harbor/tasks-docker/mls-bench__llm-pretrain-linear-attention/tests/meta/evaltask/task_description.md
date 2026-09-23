@@ -31,6 +31,14 @@ Two editable regions in `nanoGPT/custom_pretrain.py`:
 - If your attention does not use learned absolute position embeddings, set `self.use_pos_emb = False` in `__init__`; the model then skips adding `wpe` in the forward pass.
 - `torch.compile` is disabled for this task because FLA's Triton kernels are not compatible with it.
 
+### Subquadratic requirement (checked)
+Before training, a fixed check runs your model forward on a GPU at three sequence lengths with the same token count. The run is invalid if any `Block`:
+- materializes a tensor with two sequence-length dimensions (a T×T score, mask, or decay matrix; chunk×chunk blocks are fine),
+- spends matmul / attention FLOPs per token that grow linearly with the sequence length (softmax attention via `scaled_dot_product_attention`, including query-chunked variants), or
+- launches one of FLA's quadratic kernels (`fla.ops.attn`, any `parallel` mode, forgetting / path attention, DeltaFormer, NSA, MoBA).
+
+Chunkwise, recurrent, convolutional, and sliding-window mechanisms pass. The model must run at any sequence length up to `block_size`.
+
 ## Reference baselines
 - `gla` — Gated Linear Attention.
 - `retnet` — Retentive Network / MultiScaleRetention.

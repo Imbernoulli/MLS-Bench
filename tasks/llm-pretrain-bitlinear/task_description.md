@@ -20,10 +20,13 @@ The BitLinear module in `nanoGPT/custom_pretrain.py`:
 - `activation_quant(x)` — optional activation quantization; returns `(quantized_x, scale)`.
 - `BitLinear` class — linear layer that uses the above functions.
 
+The default template is a naive binary quantizer: `sign(W)` with a per-tensor absmean scale and no activation quantization.
+
 ### Interface contract
 - `BitLinear.__init__(self, in_features, out_features, bias=True)` must keep `self.weight` as a `Parameter`.
 - `BitLinear.forward(self, x) -> output` where `x` has shape `(..., in_features)` and the output has shape `(..., out_features)`.
 - Quantization is applied in every forward pass (no separate train/eval path).
+- **Level budget (enforced): at most 5 weight levels.** In every output row of the effective weight a `BitLinear` applies in its forward pass, at most 5 distinct values may occur. This admits binary, ternary and the 5-level grid {-1, -2/3, 0, 2/3, 1} that the `int2_uniform` reference rounds to; a per-tensor or per-output-channel scale is allowed. Fixed code recovers each `BitLinear`'s effective weight by probing it with one-hot inputs at initialization, at every evaluation interval and before the final evaluation, in both train and eval mode, and aborts the run if any row exceeds 5 levels; such a run gets no score. Transforms that mix input features (e.g. rotations) and per-group scales make the effective weight continuous, so they are not allowed.
 - `weight_quant` should return `(quantized_weight, scale)` such that `quantized_weight * scale` approximates the original weight; same convention for `activation_quant`.
 - All linear projections in the model (attention, MLP, lm_head) use `BitLinear`.
 - Helper classes (`autograd.Function`s, learned parameters) may be added.

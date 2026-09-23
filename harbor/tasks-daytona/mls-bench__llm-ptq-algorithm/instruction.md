@@ -93,6 +93,7 @@ class LayerQuantizer:
     def quantize(self):
         # Returns: quantized-dequantized weight tensor
         # Must respect self.num_bits and self.group_size
+        # Optional: set self.input_scale (see Constraints)
         return W_dq
 
     def free(self):
@@ -108,6 +109,19 @@ Constraints:
   `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`)
 - Embeddings, LayerNorm, and the LM head are NOT quantized
 - The returned weight must have the same shape and dtype as the original
+- The returned weight must be a genuine `num_bits` group quantization, and
+  the fixed code checks it: in every output row, each group of `group_size`
+  consecutive input columns must lie on one uniform grid `a + delta * k`
+  with integer `k` in `[0, 2**num_bits - 1]`, i.e. at most `2**num_bits`
+  levels and one scale and zero-point per group (symmetric or asymmetric).
+  A per-input-channel scaling folded into the layer input (the AWQ /
+  SmoothQuant form `Q(W * s) / s`) is allowed if `quantize()` sets
+  `self.input_scale = s`, a positive tensor of shape `(in_features,)`; the
+  grid must then hold for `W_dq * s`. A weight that violates this aborts the
+  run with no score. Entries of an accepted weight more than two fp16 ulps
+  off its fitted grid are snapped onto it, and the model is re-checked
+  before evaluation, so weights must not be changed after `quantize()`
+  returns (no forward hooks or replaced `nn.Linear` modules either)
 - `copy`, `math`, `torch`, `torch.nn`, `F`, `np`, `os`, `time` are
   available
 - Your algorithm must work for both INT4 and INT3, and for different
@@ -304,342 +318,342 @@ stay unchanged.
    162: # ═══════════════════════════════════════════════════════════════════════════════
    163: 
    164: 
-   165: # ── Model loading ─────────────────────────────────────────────────────────────
-   166: 
-   167: def get_model(model_path):
-   168:     """Load a pretrained causal LM with weight initialization skipped."""
-   169:     def skip(*args, **kwargs):
-   170:         pass
-   171:     torch.nn.init.kaiming_uniform_ = skip
-   172:     torch.nn.init.uniform_ = skip
-   173:     torch.nn.init.normal_ = skip
-   174: 
-   175:     model = AutoModelForCausalLM.from_pretrained(
-   176:         model_path, torch_dtype=torch.float16, device_map="cpu"
-   177:     )
-   178:     model.seqlen = min(getattr(model.config, "max_position_embeddings", 4096), 4096)
-   179:     model.eval()
-   180:     return model
-   181: 
-   182: 
-   183: def find_linear_layers(module, prefix=""):
-   184:     """Recursively find all nn.Linear layers in the model."""
-   185:     result = {}
-   186:     for name, child in module.named_children():
-   187:         full_name = f"{prefix}.{name}" if prefix else name
-   188:         if isinstance(child, nn.Linear):
-   189:             result[full_name] = child
-   190:         else:
-   191:             result.update(find_linear_layers(child, full_name))
-   192:     return result
+   165: # ── Quantization-format enforcement (fixed) ──────────────────────────────────
+   166: #
+   167: # `LayerQuantizer.quantize()` hands back a dequantized weight, so its return
+   168: # type alone cannot stop it from returning a higher-precision matrix (returning
+   169: # `W` unchanged would score the FP16 perplexity). Every returned weight is
+   170: # therefore checked against the format this task scores:
+   171: #
+   172: #   * each output row is split into groups of `group_size` consecutive input
+   173: #     columns (the whole row when group_size == -1);
+   174: #   * within a group the values lie on ONE uniform grid  a + delta * k  with
+   175: #     integer k in [0, 2**num_bits - 1]: at most 2**num_bits levels and one
+   176: #     scale / zero-point per group (the symmetric grid is a special case);
+   177: #   * a quantizer may also set `self.input_scale`, a positive vector of shape
+   178: #     (in_features,): the grid must then hold for `W_hat * input_scale`. This
+   179: #     is the AWQ / SmoothQuant form  W_hat = Q(W * s) / s,  whose per-channel
+   180: #     `s` is folded into the layer input at inference.
+   181: #
+   182: # A group that is off every such grid by more than _GRID_TOL grid steps raises
+   183: # QuantizationFormatError and the run reports no metrics. An accepted weight is
+   184: # snapped to its fitted grid (a + delta * k, then / s): an entry more than two
+   185: # fp16 ulps from its grid point is replaced by the grid point, so at most two
+   186: # ulps of freedom survive off the grid. An honest quantizer's own fp16 rounding
+   187: # stays within that, so its weights pass through bit for bit. Each written weight is fingerprinted and
+   188: # the whole model is re-checked before evaluation, so a weight cannot be
+   189: # swapped back after it was checked.
+   190: 
+   191: _GRID_TOL = 0.1  # grid steps; fp16 rounding of an honest grid is ~0.02
+   192: 
    193: 
-   194: 
-   195: # ── Calibration data ──────────────────────────────────────────────────────────
+   194: class QuantizationFormatError(RuntimeError):
+   195:     """A quantizer produced a weight that is not a valid num_bits quantization."""
    196: 
-   197: def get_calibration_data(tokenizer, nsamples=128, seqlen=2048, seed=0):
-   198:     """Load WikiText-2 calibration data."""
-   199:     from datasets import load_dataset
-   200: 
-   201:     # Load from pre-downloaded cache (compute nodes have no network)
-   202:     cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
-   203:     try:
-   204:         traindata = load_dataset(
-   205:             "wikitext", "wikitext-2-raw-v1", split="train", cache_dir=cache_dir
-   206:         )
-   207:     except Exception:
-   208:         # Fallback: load directly from arrow files in cache
-   209:         from datasets import Dataset
-   210:         import glob
-   211:         arrow = glob.glob(f"{cache_dir}/**/wikitext-train.arrow", recursive=True)
-   212:         if arrow:
-   213:             traindata = Dataset.from_file(arrow[0])
-   214:         else:
-   215:             raise FileNotFoundError(f"WikiText-2 train data not found in {cache_dir}")
-   216: 
-   217:     import random
-   218:     random.seed(seed)
-   219: 
-   220:     trainenc = tokenizer("\n\n".join(traindata["text"]), return_tensors="pt")
-   221: 
-   222:     trainloader = []
-   223:     for _ in range(nsamples):
-   224:         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
-   225:         j = i + seqlen
-   226:         inp = trainenc.input_ids[:, i:j]
-   227:         trainloader.append(inp)
-   228: 
-   229:     return trainloader
-   230: 
-   231: 
-   232: def get_eval_data(tokenizer, seqlen=2048):
-   233:     """Load WikiText-2 test data for perplexity evaluation."""
-   234:     from datasets import load_dataset
-   235: 
-   236:     cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
-   237:     try:
-   238:         testdata = load_dataset(
-   239:             "wikitext", "wikitext-2-raw-v1", split="test", cache_dir=cache_dir
-   240:         )
-   241:     except Exception:
-   242:         from datasets import Dataset
-   243:         import glob
-   244:         arrow = glob.glob(f"{cache_dir}/**/wikitext-test.arrow", recursive=True)
-   245:         if arrow:
-   246:             testdata = Dataset.from_file(arrow[0])
-   247:         else:
-   248:             raise FileNotFoundError(f"WikiText-2 test data not found in {cache_dir}")
-   249: 
-   250:     testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
-   251:     return testenc
-   252: 
-   253: 
-   254: # ── Layer-by-layer quantization ───────────────────────────────────────────────
-   255: 
-   256: @torch.no_grad()
-   257: def quantize_model(model, calibration_data, dev, num_bits=4, group_size=-1):
-   258:     """Quantize all linear layers in the model using LayerQuantizer.
-   259: 
-   260:     Processes the model layer-by-layer (transformer block by block) to
-   261:     minimize GPU memory usage. For each block:
-   262:       1. Move block to GPU
-   263:       2. Run calibration data through to collect Hessian statistics
-   264:       3. Quantize each linear sublayer using LayerQuantizer
-   265:       4. Replace weights with quantized-dequantized values
-   266:       5. Move block back to CPU
-   267: 
-   268:     Args:
-   269:         model: pretrained causal LM
-   270:         calibration_data: list of input_ids tensors for calibration
-   271:         dev: torch device (GPU)
-   272:         num_bits: target bit width
-   273:         group_size: quantization group size; -1 for per-channel
-   274: 
-   275:     Returns:
-   276:         dict mapping layer name -> quantization error (Frobenius norm)
-   277:     """
-   278:     print("Starting quantization...", flush=True)
-   279:     use_cache = model.config.use_cache
-   280:     model.config.use_cache = False
-   281: 
-   282:     layers = model.model.layers
-   283:     model.model.embed_tokens = model.model.embed_tokens.to(dev)
-   284:     if hasattr(model.model, "rotary_emb"):
-   285:         model.model.rotary_emb = model.model.rotary_emb.to(dev)
-   286:     layers[0] = layers[0].to(dev)
-   287: 
-   288:     dtype = next(iter(model.parameters())).dtype
-   289:     nsamples = len(calibration_data)
-   290:     seqlen = calibration_data[0].shape[1]
-   291:     hidden_size = model.config.hidden_size
-   292: 
-   293:     # Capture inputs to first layer
-   294:     inps = torch.zeros(
-   295:         (nsamples, seqlen, hidden_size), dtype=dtype, device=dev
-   296:     )
-   297:     cache = {"i": 0, "attention_mask": None, "position_ids": None}
-   298: 
-   299:     class Catcher(nn.Module):
-   300:         def __init__(self, module):
-   301:             super().__init__()
-   302:             self.module = module
-   303:         def forward(self, inp, **kwargs):
-   304:             inps[cache["i"]] = inp
-   305:             cache["i"] += 1
-   306:             cache["attention_mask"] = kwargs.get("attention_mask")
-   307:             cache["position_ids"] = kwargs.get("position_ids")
-   308:             cache["position_embeddings"] = kwargs.get("position_embeddings")
-   309:             raise ValueError
-   310: 
-   311:     layers[0] = Catcher(layers[0])
-   312:     for batch in calibration_data:
-   313:         try:
-   314:             model(batch.to(dev))
-   315:         except ValueError:
-   316:             pass
-   317:     layers[0] = layers[0].module
-   318: 
-   319:     layers[0] = layers[0].cpu()
-   320:     model.model.embed_tokens = model.model.embed_tokens.cpu()
-   321:     if hasattr(model.model, "rotary_emb"):
-   322:         model.model.rotary_emb = model.model.rotary_emb.cpu()
-   323:     torch.cuda.empty_cache()
-   324: 
-   325:     outs = torch.zeros_like(inps)
-   326:     attention_mask = cache["attention_mask"]
-   327:     position_ids = cache["position_ids"]
-   328: 
-   329:     quant_errors = {}
-   330: 
-   331:     for i in range(len(layers)):
-   332:         print(f"Quantizing layer {i}/{len(layers)}...", flush=True)
-   333:         layer = layers[i].to(dev)
-   334: 
-   335:         # Find all linear sublayers in this transformer block
-   336:         subset = find_linear_layers(layer)
+   197: 
+   198: def _read_input_scale(quantizer, in_features, device, name):
+   199:     s = getattr(quantizer, "input_scale", None)
+   200:     if s is None:
+   201:         return None
+   202:     if not torch.is_tensor(s):
+   203:         raise QuantizationFormatError(
+   204:             f"{name}: input_scale must be a tensor, got {type(s).__name__}")
+   205:     s = s.detach().reshape(-1).to(device=device, dtype=torch.float32).clone()
+   206:     if s.numel() != in_features:
+   207:         raise QuantizationFormatError(
+   208:             f"{name}: input_scale has {s.numel()} entries; expected {in_features}")
+   209:     if not bool(torch.isfinite(s).all()) or bool((s <= 0).any()):
+   210:         raise QuantizationFormatError(
+   211:             f"{name}: input_scale must be finite and strictly positive")
+   212:     return s
+   213: 
+   214: 
+   215: @torch.no_grad()
+   216: def _project_to_grid(W_ret, W_ref, num_bits, group_size, s, name):
+   217:     """Check W_ret is a num_bits group quantization; return it rebuilt on its grid."""
+   218:     if not torch.is_tensor(W_ret):
+   219:         raise QuantizationFormatError(
+   220:             f"{name}: quantize() must return a tensor, got {type(W_ret).__name__}")
+   221:     if tuple(W_ret.shape) != tuple(W_ref.shape) or W_ret.dtype != W_ref.dtype:
+   222:         raise QuantizationFormatError(
+   223:             f"{name}: quantize() returned {tuple(W_ret.shape)} {W_ret.dtype}; "
+   224:             f"expected {tuple(W_ref.shape)} {W_ref.dtype}")
+   225:     V = W_ret.detach().to(device=W_ref.device, dtype=torch.float32)
+   226:     if not bool(torch.isfinite(V).all()):
+   227:         raise QuantizationFormatError(f"{name}: quantized weight is not finite")
+   228:     out_f, in_f = V.shape
+   229:     gs = group_size if group_size > 0 else in_f
+   230:     if in_f % gs != 0:
+   231:         raise QuantizationFormatError(
+   232:             f"{name}: in_features {in_f} is not divisible by group_size {gs}")
+   233:     if s is not None:
+   234:         V = V * s.unsqueeze(0)
+   235:     V = V.reshape(out_f, in_f // gs, gs)
+   236:     vmin = V.amin(dim=-1, keepdim=True)
+   237:     span = V.amax(dim=-1, keepdim=True) - vmin
+   238:     flat = span <= 0
+   239:     u = (V - vmin) / torch.where(flat, torch.ones_like(span), span)
+   240:     # Pick, per group, the number of grid steps m (<= 2**num_bits - 1) spanning
+   241:     # the group whose grid the values sit on most closely (deviation measured
+   242:     # in units of the group span, so a coarse grid cannot fit by accident),
+   243:     # then require that deviation to be at most _GRID_TOL of one grid step.
+   244:     best_dev = torch.full_like(span, float("inf"))
+   245:     best_m = torch.ones_like(span)
+   246:     for m in range(1, 1 << num_bits):
+   247:         um = u * m
+   248:         dev_m = (um - torch.round(um)).abs().amax(dim=-1, keepdim=True)
+   249:         better = dev_m / m < best_dev / best_m
+   250:         best_dev = torch.where(better, dev_m, best_dev)
+   251:         best_m = torch.where(better, torch.full_like(best_m, m), best_m)
+   252:         del um, dev_m, better
+   253:     bad = (best_dev > _GRID_TOL) & ~flat
+   254:     if bool(bad.any()):
+   255:         n_bad = int(bad.sum().item())
+   256:         r, g = [int(x) for x in bad.squeeze(-1).nonzero()[0].tolist()]
+   257:         n_lv = int(torch.unique(V[r, g]).numel())
+   258:         raise QuantizationFormatError(
+   259:             f"{name}: {n_bad} of {bad.numel()} (row, group) blocks are not a "
+   260:             f"{num_bits}-bit quantization with group_size={group_size}: e.g. row "
+   261:             f"{r}, group {g} has {n_lv} distinct values that do not fit one "
+   262:             f"uniform grid of at most {1 << num_bits} levels")
+   263:     k = torch.where(flat, torch.zeros_like(u), torch.round(u * best_m))
+   264:     del u
+   265:     # Fit the grid in fp32, anchored at the level nearest zero (so small grid
+   266:     # points are not lost to cancellation):  v = v0 + delta * (k - k0),  with
+   267:     # v0 the mean value at level k0 and delta the least-squares step.
+   268:     k0 = k.gather(-1, V.abs().argmin(dim=-1, keepdim=True))
+   269:     at0 = (k == k0).float()
+   270:     v0 = (V * at0).sum(dim=-1, keepdim=True) / at0.sum(dim=-1, keepdim=True)
+   271:     kd = k - k0
+   272:     denom = (kd * kd).sum(dim=-1, keepdim=True)
+   273:     delta = torch.where(
+   274:         denom > 0,
+   275:         (kd * (V - v0)).sum(dim=-1, keepdim=True) / denom.clamp(min=1e-30),
+   276:         torch.zeros_like(denom))
+   277:     W_grid = (v0 + delta * kd).reshape(out_f, in_f)
+   278:     del at0, kd
+   279:     del k, V
+   280:     if s is not None:
+   281:         W_grid = W_grid / s.unsqueeze(0)
+   282:     # A returned value within two fp16 ulps of its fitted grid point is that
+   283:     # grid point as rounded by the quantizer's own arithmetic (plus the fit's
+   284:     # own fp32 error), and is kept bit for bit; anything further off is
+   285:     # replaced by the grid point itself.
+   286:     _, e = torch.frexp(W_grid)
+   287:     ulp = torch.where(
+   288:         W_grid == 0, torch.full_like(W_grid, 2.0 ** -24),
+   289:         torch.ldexp(torch.ones_like(W_grid), e - 11).clamp(min=2.0 ** -24))
+   290:     W_ret32 = W_ret.detach().to(device=W_ref.device, dtype=torch.float32)
+   291:     keep = (W_ret32 - W_grid).abs() <= 2 * ulp
+   292:     del ulp, e, W_ret32
+   293:     return torch.where(
+   294:         keep, W_ret.detach().to(W_ref.device), W_grid.to(W_ref.dtype))
+   295: 
+   296: 
+   297: def _fingerprint(lin):
+   298:     import hashlib
+   299:     h = hashlib.blake2b(digest_size=16)
+   300:     for t in (lin.weight, lin.bias):
+   301:         if t is None:
+   302:             h.update(b"none")
+   303:             continue
+   304:         t = t.detach()
+   305:         h.update(repr((tuple(t.shape), str(t.dtype))).encode())
+   306:         h.update(t.contiguous().cpu().reshape(-1).view(torch.uint8).numpy())
+   307:     return h.hexdigest()
+   308: 
+   309: 
+   310: def _check_linear_intact(lin, key):
+   311:     if type(lin) is not nn.Linear or "forward" in vars(lin):
+   312:         raise QuantizationFormatError(f"{key}: the linear layer was replaced")
+   313:     if lin._forward_hooks or lin._forward_pre_hooks:
+   314:         raise QuantizationFormatError(f"{key}: a forward hook is attached")
+   315: 
+   316: 
+   317: def _verify_quantized_model(layers, fingerprints):
+   318:     """Re-check every quantized linear against the fingerprint taken when written."""
+   319:     from torch.nn.modules import module as _module
+   320:     if _module._global_forward_hooks or _module._global_forward_pre_hooks:
+   321:         raise QuantizationFormatError("a global module forward hook is registered")
+   322:     seen = set()
+   323:     for i in range(len(layers)):
+   324:         for name, lin in find_linear_layers(layers[i]).items():
+   325:             key = f"layers.{i}.{name}"
+   326:             if key not in fingerprints:
+   327:                 raise QuantizationFormatError(f"{key}: linear layer was never quantized")
+   328:             _check_linear_intact(lin, key)
+   329:             if _fingerprint(lin) != fingerprints[key]:
+   330:                 raise QuantizationFormatError(
+   331:                     f"{key}: weight changed after it was quantized and checked")
+   332:             seen.add(key)
+   333:     missing = set(fingerprints) - seen
+   334:     if missing:
+   335:         raise QuantizationFormatError(
+   336:             f"quantized layers disappeared: {sorted(missing)[:3]}")
    337: 
-   338:         # Create quantizers and register hooks to collect calibration stats
-   339:         quantizers = {}
-   340:         for name in subset:
-   341:             quantizers[name] = LayerQuantizer(subset[name], num_bits=num_bits, group_size=group_size)
-   342: 
-   343:         def make_hook(name):
-   344:             def hook(_, inp, out):
-   345:                 quantizers[name].add_batch(inp[0].data)
-   346:             return hook
-   347: 
-   348:         handles = []
-   349:         for name in subset:
-   350:             handles.append(subset[name].register_forward_hook(make_hook(name)))
-   351: 
-   352:         # Run calibration data through this layer
-   353:         for j in range(nsamples):
-   354:             kwargs = {}
-   355:             if attention_mask is not None:
-   356:                 kwargs["attention_mask"] = attention_mask
-   357:             if position_ids is not None:
-   358:                 kwargs["position_ids"] = position_ids
-   359:             position_embeddings = cache.get("position_embeddings")
-   360:             if position_embeddings is not None:
-   361:                 kwargs["position_embeddings"] = position_embeddings
-   362:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
-   363: 
-   364:         for h in handles:
-   365:             h.remove()
-   366: 
-   367:         # Quantize each sublayer
-   368:         for name in subset:
-   369:             W_orig = subset[name].weight.data.clone()
-   370:             W_quant = quantizers[name].quantize()
-   371:             error = (W_orig.float() - W_quant.float()).norm().item()
-   372:             quant_errors[f"layers.{i}.{name}"] = error
-   373:             subset[name].weight.data = W_quant
-   374:             quantizers[name].free()
-   375: 
-   376:         # Re-run calibration through quantized layer to get outputs for next layer
-   377:         for j in range(nsamples):
-   378:             kwargs = {}
-   379:             if attention_mask is not None:
-   380:                 kwargs["attention_mask"] = attention_mask
-   381:             if position_ids is not None:
-   382:                 kwargs["position_ids"] = position_ids
-   383:             position_embeddings = cache.get("position_embeddings")
-   384:             if position_embeddings is not None:
-   385:                 kwargs["position_embeddings"] = position_embeddings
-   386:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
-   387: 
-   388:         layers[i] = layer.cpu()
-   389:         del layer
-   390:         del quantizers
-   391:         torch.cuda.empty_cache()
-   392: 
-   393:         inps, outs = outs, inps
-   394: 
-   395:     model.config.use_cache = use_cache
-   396:     print("Quantization complete.", flush=True)
-   397:     return quant_errors
-   398: 
-   399: 
-   400: # ── Perplexity evaluation ─────────────────────────────────────────────────────
-   401: 
-   402: @torch.no_grad()
-   403: def evaluate_perplexity(model, testenc, dev):
-   404:     """Evaluate perplexity on test data (layer-by-layer to save memory).
+   338: 
+   339: # ── Model loading ─────────────────────────────────────────────────────────────
+   340: 
+   341: def get_model(model_path):
+   342:     """Load a pretrained causal LM with weight initialization skipped."""
+   343:     def skip(*args, **kwargs):
+   344:         pass
+   345:     torch.nn.init.kaiming_uniform_ = skip
+   346:     torch.nn.init.uniform_ = skip
+   347:     torch.nn.init.normal_ = skip
+   348: 
+   349:     model = AutoModelForCausalLM.from_pretrained(
+   350:         model_path, torch_dtype=torch.float16, device_map="cpu"
+   351:     )
+   352:     model.seqlen = min(getattr(model.config, "max_position_embeddings", 4096), 4096)
+   353:     model.eval()
+   354:     return model
+   355: 
+   356: 
+   357: def find_linear_layers(module, prefix=""):
+   358:     """Recursively find all nn.Linear layers in the model."""
+   359:     result = {}
+   360:     for name, child in module.named_children():
+   361:         full_name = f"{prefix}.{name}" if prefix else name
+   362:         if isinstance(child, nn.Linear):
+   363:             result[full_name] = child
+   364:         else:
+   365:             result.update(find_linear_layers(child, full_name))
+   366:     return result
+   367: 
+   368: 
+   369: # ── Calibration data ──────────────────────────────────────────────────────────
+   370: 
+   371: def get_calibration_data(tokenizer, nsamples=128, seqlen=2048, seed=0):
+   372:     """Load WikiText-2 calibration data."""
+   373:     from datasets import load_dataset
+   374: 
+   375:     # Load from pre-downloaded cache (compute nodes have no network)
+   376:     cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
+   377:     try:
+   378:         traindata = load_dataset(
+   379:             "wikitext", "wikitext-2-raw-v1", split="train", cache_dir=cache_dir
+   380:         )
+   381:     except Exception:
+   382:         # Fallback: load directly from arrow files in cache
+   383:         from datasets import Dataset
+   384:         import glob
+   385:         arrow = glob.glob(f"{cache_dir}/**/wikitext-train.arrow", recursive=True)
+   386:         if arrow:
+   387:             traindata = Dataset.from_file(arrow[0])
+   388:         else:
+   389:             raise FileNotFoundError(f"WikiText-2 train data not found in {cache_dir}")
+   390: 
+   391:     import random
+   392:     random.seed(seed)
+   393: 
+   394:     trainenc = tokenizer("\n\n".join(traindata["text"]), return_tensors="pt")
+   395: 
+   396:     trainloader = []
+   397:     for _ in range(nsamples):
+   398:         i = random.randint(0, trainenc.input_ids.shape[1] - seqlen - 1)
+   399:         j = i + seqlen
+   400:         inp = trainenc.input_ids[:, i:j]
+   401:         trainloader.append(inp)
+   402: 
+   403:     return trainloader
+   404: 
    405: 
-   406:     Args:
-   407:         model: (possibly quantized) causal LM
-   408:         testenc: tokenized test data
-   409:         dev: torch device
-   410: 
-   411:     Returns:
-   412:         float perplexity value
-   413:     """
-   414:     print("Evaluating perplexity...", flush=True)
-   415:     testenc = testenc.input_ids
-   416:     seqlen = model.seqlen
-   417:     nsamples = testenc.numel() // seqlen
-   418: 
-   419:     use_cache = model.config.use_cache
-   420:     model.config.use_cache = False
-   421:     layers = model.model.layers
-   422: 
-   423:     model.model.embed_tokens = model.model.embed_tokens.to(dev)
-   424:     if hasattr(model.model, "rotary_emb"):
-   425:         model.model.rotary_emb = model.model.rotary_emb.to(dev)
-   426:     layers[0] = layers[0].to(dev)
+   406: def get_eval_data(tokenizer, seqlen=2048):
+   407:     """Load WikiText-2 test data for perplexity evaluation."""
+   408:     from datasets import load_dataset
+   409: 
+   410:     cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
+   411:     try:
+   412:         testdata = load_dataset(
+   413:             "wikitext", "wikitext-2-raw-v1", split="test", cache_dir=cache_dir
+   414:         )
+   415:     except Exception:
+   416:         from datasets import Dataset
+   417:         import glob
+   418:         arrow = glob.glob(f"{cache_dir}/**/wikitext-test.arrow", recursive=True)
+   419:         if arrow:
+   420:             testdata = Dataset.from_file(arrow[0])
+   421:         else:
+   422:             raise FileNotFoundError(f"WikiText-2 test data not found in {cache_dir}")
+   423: 
+   424:     testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
+   425:     return testenc
+   426: 
    427: 
-   428:     dtype = next(iter(model.parameters())).dtype
-   429:     hidden_size = model.config.hidden_size
-   430:     inps = torch.zeros(
-   431:         (nsamples, seqlen, hidden_size), dtype=dtype, device=dev
-   432:     )
-   433:     cache = {"i": 0, "attention_mask": None, "position_ids": None}
-   434: 
-   435:     class Catcher(nn.Module):
-   436:         def __init__(self, module):
-   437:             super().__init__()
-   438:             self.module = module
-   439:         def forward(self, inp, **kwargs):
-   440:             inps[cache["i"]] = inp
-   441:             cache["i"] += 1
-   442:             cache["attention_mask"] = kwargs.get("attention_mask")
-   443:             cache["position_ids"] = kwargs.get("position_ids")
-   444:             cache["position_embeddings"] = kwargs.get("position_embeddings")
-   445:             raise ValueError
-   446: 
-   447:     layers[0] = Catcher(layers[0])
-   448:     for i in range(nsamples):
-   449:         batch = testenc[:, (i * seqlen):((i + 1) * seqlen)].to(dev)
-   450:         try:
-   451:             model(batch)
-   452:         except ValueError:
-   453:             pass
-   454:     layers[0] = layers[0].module
+   428: # ── Layer-by-layer quantization ───────────────────────────────────────────────
+   429: 
+   430: @torch.no_grad()
+   431: def quantize_model(model, calibration_data, dev, num_bits=4, group_size=-1):
+   432:     """Quantize all linear layers in the model using LayerQuantizer.
+   433: 
+   434:     Processes the model layer-by-layer (transformer block by block) to
+   435:     minimize GPU memory usage. For each block:
+   436:       1. Move block to GPU
+   437:       2. Run calibration data through to collect Hessian statistics
+   438:       3. Quantize each linear sublayer using LayerQuantizer
+   439:       4. Replace weights with quantized-dequantized values
+   440:       5. Move block back to CPU
+   441: 
+   442:     Args:
+   443:         model: pretrained causal LM
+   444:         calibration_data: list of input_ids tensors for calibration
+   445:         dev: torch device (GPU)
+   446:         num_bits: target bit width
+   447:         group_size: quantization group size; -1 for per-channel
+   448: 
+   449:     Returns:
+   450:         dict mapping layer name -> quantization error (Frobenius norm)
+   451:     """
+   452:     print("Starting quantization...", flush=True)
+   453:     use_cache = model.config.use_cache
+   454:     model.config.use_cache = False
    455: 
-   456:     layers[0] = layers[0].cpu()
-   457:     model.model.embed_tokens = model.model.embed_tokens.cpu()
+   456:     layers = model.model.layers
+   457:     model.model.embed_tokens = model.model.embed_tokens.to(dev)
    458:     if hasattr(model.model, "rotary_emb"):
-   459:         model.model.rotary_emb = model.model.rotary_emb.cpu()
-   460:     torch.cuda.empty_cache()
+   459:         model.model.rotary_emb = model.model.rotary_emb.to(dev)
+   460:     layers[0] = layers[0].to(dev)
    461: 
-   462:     outs = torch.zeros_like(inps)
-   463:     attention_mask = cache["attention_mask"]
-   464:     position_ids = cache["position_ids"]
-   465: 
-   466:     for i in range(len(layers)):
-   467:         layer = layers[i].to(dev)
-   468:         for j in range(nsamples):
-   469:             kwargs = {}
-   470:             if attention_mask is not None:
-   471:                 kwargs["attention_mask"] = attention_mask
-   472:             if position_ids is not None:
-   473:                 kwargs["position_ids"] = position_ids
-   474:             position_embeddings = cache.get("position_embeddings")
-   475:             if position_embeddings is not None:
-   476:                 kwargs["position_embeddings"] = position_embeddings
-   477:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
-   478:         layers[i] = layer.cpu()
-   479:         del layer
-   480:         torch.cuda.empty_cache()
-   481:         inps, outs = outs, inps
-   482: 
-   483:     if model.model.norm is not None:
-   484:         model.model.norm = model.model.norm.to(dev)
-   485:     model.lm_head = model.lm_head.to(dev)
-   486: 
-   487:     testenc = testenc.to(dev)
-   488:     nlls = []
-   489:     for i in range(nsamples):
-   490:         hidden_states = inps[i].unsqueeze(0)
-   491:         if model.model.norm is not None:
-   492:             hidden_states = model.model.norm(hidden_states)
-   493:         lm_logits = model.lm_head(hidden_states)
-   494:         shift_logits = lm_logits[:, :-1, :].contiguous()
-   495:         shift_labels = testenc[:, (i * seqlen):((i + 1) * seqlen)][:, 1:]
-   496:         loss_fct = nn.CrossEntropyLoss()
-   497:         loss = loss_fct(
-   498:             shift_logits.view(-1, shift_logits.size(-1)),
-   499:             shift_labels.view(-1)
-   500:         )
+   462:     dtype = next(iter(model.parameters())).dtype
+   463:     nsamples = len(calibration_data)
+   464:     seqlen = calibration_data[0].shape[1]
+   465:     hidden_size = model.config.hidden_size
+   466: 
+   467:     # Capture inputs to first layer
+   468:     inps = torch.zeros(
+   469:         (nsamples, seqlen, hidden_size), dtype=dtype, device=dev
+   470:     )
+   471:     cache = {"i": 0, "attention_mask": None, "position_ids": None}
+   472: 
+   473:     class Catcher(nn.Module):
+   474:         def __init__(self, module):
+   475:             super().__init__()
+   476:             self.module = module
+   477:         def forward(self, inp, **kwargs):
+   478:             inps[cache["i"]] = inp
+   479:             cache["i"] += 1
+   480:             cache["attention_mask"] = kwargs.get("attention_mask")
+   481:             cache["position_ids"] = kwargs.get("position_ids")
+   482:             cache["position_embeddings"] = kwargs.get("position_embeddings")
+   483:             raise ValueError
+   484: 
+   485:     layers[0] = Catcher(layers[0])
+   486:     for batch in calibration_data:
+   487:         try:
+   488:             model(batch.to(dev))
+   489:         except ValueError:
+   490:             pass
+   491:     layers[0] = layers[0].module
+   492: 
+   493:     layers[0] = layers[0].cpu()
+   494:     model.model.embed_tokens = model.model.embed_tokens.cpu()
+   495:     if hasattr(model.model, "rotary_emb"):
+   496:         model.model.rotary_emb = model.model.rotary_emb.cpu()
+   497:     torch.cuda.empty_cache()
+   498: 
+   499:     outs = torch.zeros_like(inps)
+   500:     attention_mask = cache["attention_mask"]
 
 [truncated: showing at most 500 lines / 60000 bytes from gptq/custom_ptq.py]
 ```
@@ -939,7 +953,7 @@ Lines 26–192:
 In `gptq/custom_ptq.py`:
 
 ```python
-Lines 26–272:
+Lines 26–275:
     23: # ═══════════════════════════════════════════════════════════════════════════════
     24: # EDITABLE REGION START -- Quantization Algorithm (lines 26-157)
     25: # ═══════════════════════════════════════════════════════════════════════════════
@@ -1179,20 +1193,23 @@ Lines 26–272:
    259:         W_dq = dequantize_tensor(W_q, scale_q, zp)
    260:         W_final = W_dq / best_s.unsqueeze(0)
    261: 
-   262:         return W_final.to(self.layer.weight.dtype)
-   263: 
-   264:     def free(self):
-   265:         """Release calibration buffers."""
-   266:         del self.H
-   267:         del self.act_sum
-   268:         del self._x_buf
-   269:         self.H = None
-   270:         self.act_sum = None
-   271:         self._x_buf = None
-   272: 
-   273: 
-   274: 
-   275: # ═══════════════════════════════════════════════════════════════════════════════
+   262:         # W_final * best_s is on the per-group grid; declare the per-channel
+   263:         # scale (folded into the layer input at inference) to the harness.
+   264:         self.input_scale = best_s
+   265:         return W_final.to(self.layer.weight.dtype)
+   266: 
+   267:     def free(self):
+   268:         """Release calibration buffers."""
+   269:         del self.H
+   270:         del self.act_sum
+   271:         del self._x_buf
+   272:         self.H = None
+   273:         self.act_sum = None
+   274:         self._x_buf = None
+   275: 
+   276: 
+   277: 
+   278: # ═══════════════════════════════════════════════════════════════════════════════
 ```
 
 

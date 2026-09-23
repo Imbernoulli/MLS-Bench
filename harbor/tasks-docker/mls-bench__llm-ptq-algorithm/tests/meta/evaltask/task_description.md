@@ -97,6 +97,7 @@ class LayerQuantizer:
     def quantize(self):
         # Returns: quantized-dequantized weight tensor
         # Must respect self.num_bits and self.group_size
+        # Optional: set self.input_scale (see Constraints)
         return W_dq
 
     def free(self):
@@ -112,6 +113,19 @@ Constraints:
   `k_proj`, `v_proj`, `o_proj`, `gate_proj`, `up_proj`, `down_proj`)
 - Embeddings, LayerNorm, and the LM head are NOT quantized
 - The returned weight must have the same shape and dtype as the original
+- The returned weight must be a genuine `num_bits` group quantization, and
+  the fixed code checks it: in every output row, each group of `group_size`
+  consecutive input columns must lie on one uniform grid `a + delta * k`
+  with integer `k` in `[0, 2**num_bits - 1]`, i.e. at most `2**num_bits`
+  levels and one scale and zero-point per group (symmetric or asymmetric).
+  A per-input-channel scaling folded into the layer input (the AWQ /
+  SmoothQuant form `Q(W * s) / s`) is allowed if `quantize()` sets
+  `self.input_scale = s`, a positive tensor of shape `(in_features,)`; the
+  grid must then hold for `W_dq * s`. A weight that violates this aborts the
+  run with no score. Entries of an accepted weight more than two fp16 ulps
+  off its fitted grid are snapped onto it, and the model is re-checked
+  before evaluation, so weights must not be changed after `quantize()`
+  returns (no forward hooks or replaced `nn.Linear` modules either)
 - `copy`, `math`, `torch`, `torch.nn`, `F`, `np`, `os`, `time` are
   available
 - Your algorithm must work for both INT4 and INT3, and for different

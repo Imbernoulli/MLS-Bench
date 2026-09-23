@@ -42,6 +42,13 @@ One editable region in `custom_pretrain.py`:
      the attention block, including the internal query/KV projection and
      attention mixing path
 
+   Every tensor the attention keeps for past tokens (its KV cache) must be
+   passed through the fixed helper `kv_cache(...)`, laid out as
+   `(batch, seq_len, ...)`, and the attention must use the tensors it
+   returns (the dense baselines call `k, v = kv_cache(k, v)`; MLA passes its
+   compressed latent and rotary key). A layer that reuses an earlier layer's
+   returned cache makes no call of its own.
+
 ## Intended Task Boundary
 
 - This task studies KV-state reduction inside the attention block.
@@ -54,6 +61,20 @@ One editable region in `custom_pretrain.py`:
   may appear in the editable span. That keeps edits inside the attention
   block, even though the internal contents of `CausalSelfAttention` remain
   flexible.
+- The evaluator measures the KV footprint from the tensors passed to
+  `kv_cache(...)`, not from module attributes. It then re-runs every
+  attention layer with unrelated inputs at all other positions while
+  replaying the recorded cache, and rejects the run (before training and
+  again at the end) if a layer's output changes, i.e. if attention reads
+  past tokens through anything other than its declared cache.
+- KV budget: the submitted structure must realize at least a 4x KV
+  reduction relative to the dense MHA control, i.e.
+  `kv_bytes_per_token <= 1024` at 345M (dense MHA, which is what the
+  unmodified template implements, measures 4096). A run above the budget
+  has its score multiplied by `exp(-0.003 * (kv_bytes_per_token - 1024))`
+  in every regime, so a dense-MHA submission scores near zero. Within the
+  budget, further KV reduction is rewarded on a log scale (each halving
+  counts the same) and traded off against model quality.
 
 ## Baselines
 
@@ -141,88 +162,88 @@ stay unchanged.
     42: 
     43: 
     44: def cross_layer_share(layer_idx, config):
-    45:     """Optionally reuse KV structure across layers.
+    45:     """Optionally reuse the previous layer's KV cache (default: no sharing)."""
     46: 
-    47:     Default: no cross-layer KV sharing.
-    48:     """
+    47:     return False
+    48: 
     49: 
-    50:     return False
-    51: 
+    50: def latent_kv_project(k, v, config):
+    51:     """Optional latent KV bottleneck.
     52: 
-    53: def latent_kv_project(k, v, config):
-    54:     """Optional latent KV bottleneck.
+    53:     Default: identity projection.
+    54:     """
     55: 
-    56:     Default: identity projection.
-    57:     """
+    56:     return k, v, 1.0
+    57: 
     58: 
-    59:     return k, v, 1.0
-    60: 
+    59: def expand_kv_to_q_heads(tensor, target_heads):
+    60:     """Expand KV heads to query heads while remaining safe for any head count."""
     61: 
-    62: def expand_kv_to_q_heads(tensor, target_heads):
-    63:     """Expand KV heads to query heads while remaining safe for any head count."""
-    64: 
-    65:     current_heads = tensor.size(1)
-    66:     if current_heads == target_heads:
-    67:         return tensor
-    68:     full_repeats = target_heads // current_heads
-    69:     remainder = target_heads % current_heads
-    70:     parts = []
-    71:     if full_repeats > 0:
-    72:         parts.append(tensor.repeat_interleave(full_repeats, dim=1))
-    73:     if remainder > 0:
-    74:         parts.append(tensor[:, :remainder, :, :])
-    75:     return torch.cat(parts, dim=1)
-    76: 
+    62:     current_heads = tensor.size(1)
+    63:     if current_heads == target_heads:
+    64:         return tensor
+    65:     full_repeats = target_heads // current_heads
+    66:     remainder = target_heads % current_heads
+    67:     parts = []
+    68:     if full_repeats > 0:
+    69:         parts.append(tensor.repeat_interleave(full_repeats, dim=1))
+    70:     if remainder > 0:
+    71:         parts.append(tensor[:, :remainder, :, :])
+    72:     return torch.cat(parts, dim=1)
+    73: 
+    74: 
+    75: class CausalSelfAttention(nn.Module):
+    76:     _shared_kv_cache = {}
     77: 
-    78: class CausalSelfAttention(nn.Module):
-    79:     _shared_kv_cache = {}
-    80: 
-    81:     def __init__(self, config, layer_idx=0):
-    82:         super().__init__()
-    83:         assert config.n_embd % config.n_head == 0
-    84:         self.n_head = config.n_head
-    85:         self.n_embd = config.n_embd
-    86:         self.dropout = config.dropout
-    87:         self.layer_idx = layer_idx
-    88:         self.n_kv_head, self.head_dim = build_kv_heads(config)
-    89:         self.share_across_layers = cross_layer_share(layer_idx, config)
-    90: 
-    91:         q_dim = config.n_embd
-    92:         kv_dim = 2 * self.n_kv_head * self.head_dim
-    93:         self.c_attn = nn.Linear(config.n_embd, q_dim + kv_dim, bias=config.bias)
-    94:         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-    95:         self.attn_dropout = nn.Dropout(config.dropout)
-    96:         self.resid_dropout = nn.Dropout(config.dropout)
-    97:         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
-    98:         if not self.flash:
-    99:             self.register_buffer(
-   100:                 "bias",
-   101:                 torch.tril(torch.ones(config.block_size, config.block_size)).view(
-   102:                     1, 1, config.block_size, config.block_size
-   103:                 ),
-   104:             )
-   105:         self.use_pos_emb = True
-   106:         self.head_sharing_ratio = self.n_head / max(self.n_kv_head, 1)
-   107: 
-   108:     def forward(self, x):
-   109:         bsz, seq_len, channels = x.size()
-   110:         qkv = self.c_attn(x)
-   111:         q, kv = qkv.split(
-   112:             [self.n_embd, 2 * self.n_kv_head * self.head_dim],
-   113:             dim=2,
-   114:         )
-   115:         k, v = kv.chunk(2, dim=2)
-   116: 
-   117:         q = q.view(bsz, seq_len, self.n_head, self.head_dim).transpose(1, 2)
-   118:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-   119:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-   120: 
-   121:         reused_previous = False
-   122:         if self.share_across_layers and (self.layer_idx - 1) in self._shared_kv_cache:
-   123:             k, v = self._shared_kv_cache[self.layer_idx - 1]
-   124:             reused_previous = True
-   125:         else:
-   126:             self._shared_kv_cache[self.layer_idx] = (k.detach(), v.detach())
+    78:     def __init__(self, config, layer_idx=0):
+    79:         super().__init__()
+    80:         assert config.n_embd % config.n_head == 0
+    81:         self.n_head = config.n_head
+    82:         self.n_embd = config.n_embd
+    83:         self.dropout = config.dropout
+    84:         self.layer_idx = layer_idx
+    85:         self.n_kv_head, self.head_dim = build_kv_heads(config)
+    86:         self.share_across_layers = cross_layer_share(layer_idx, config)
+    87: 
+    88:         q_dim = config.n_embd
+    89:         kv_dim = 2 * self.n_kv_head * self.head_dim
+    90:         self.c_attn = nn.Linear(config.n_embd, q_dim + kv_dim, bias=config.bias)
+    91:         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+    92:         self.attn_dropout = nn.Dropout(config.dropout)
+    93:         self.resid_dropout = nn.Dropout(config.dropout)
+    94:         self.flash = hasattr(torch.nn.functional, "scaled_dot_product_attention")
+    95:         if not self.flash:
+    96:             self.register_buffer(
+    97:                 "bias",
+    98:                 torch.tril(torch.ones(config.block_size, config.block_size)).view(
+    99:                     1, 1, config.block_size, config.block_size
+   100:                 ),
+   101:             )
+   102:         self.use_pos_emb = True
+   103:         self.head_sharing_ratio = self.n_head / max(self.n_kv_head, 1)
+   104: 
+   105:     def forward(self, x):
+   106:         bsz, seq_len, channels = x.size()
+   107:         qkv = self.c_attn(x)
+   108:         q, kv = qkv.split(
+   109:             [self.n_embd, 2 * self.n_kv_head * self.head_dim],
+   110:             dim=2,
+   111:         )
+   112:         k, v = kv.chunk(2, dim=2)
+   113: 
+   114:         q = q.view(bsz, seq_len, self.n_head, self.head_dim).transpose(1, 2)
+   115:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+   116:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+   117: 
+   118:         reused_previous = False
+   119:         if self.share_across_layers and (self.layer_idx - 1) in self._shared_kv_cache:
+   120:             k, v = self._shared_kv_cache[self.layer_idx - 1]
+   121:             reused_previous = True
+   122:         else:
+   123:             # Declare the per-token KV state (B, T, ...) that this layer caches.
+   124:             k, v = kv_cache(k, v)
+   125:             self._shared_kv_cache[self.layer_idx] = (k.detach(), v.detach())
+   126:         k, v = k.transpose(1, 2), v.transpose(1, 2)
    127: 
    128:         if self.n_kv_head != self.n_head:
    129:             k = expand_kv_to_q_heads(k, self.n_head)
@@ -305,298 +326,298 @@ stay unchanged.
    206: _validate_kv_editable_region()
    207: 
    208: 
-   209: class MLP(nn.Module):
-   210:     def __init__(self, config):
-   211:         super().__init__()
-   212:         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-   213:         self.gelu = nn.GELU()
-   214:         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-   215:         self.dropout = nn.Dropout(config.dropout)
-   216: 
-   217:     def forward(self, x):
-   218:         x = self.c_fc(x)
-   219:         x = self.gelu(x)
-   220:         x = self.c_proj(x)
-   221:         x = self.dropout(x)
-   222:         return x
-   223: 
-   224: 
-   225: class Block(nn.Module):
-   226:     def __init__(self, config, layer_idx):
-   227:         super().__init__()
-   228:         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-   229:         self.attn = CausalSelfAttention(config, layer_idx=layer_idx)
-   230:         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-   231:         self.mlp = MLP(config)
-   232: 
-   233:     def forward(self, x):
-   234:         x = x + self.attn(self.ln_1(x))
-   235:         x = x + self.mlp(self.ln_2(x))
-   236:         return x
-   237: 
-   238: 
-   239: @dataclass
-   240: class GPTConfig:
-   241:     block_size: int = 1024
-   242:     vocab_size: int = 50304
-   243:     n_layer: int = 12
-   244:     n_head: int = 12
-   245:     n_embd: int = 768
-   246:     dropout: float = 0.0
-   247:     bias: bool = False
-   248: 
-   249: 
-   250: class GPT(nn.Module):
-   251:     def __init__(self, config):
-   252:         super().__init__()
-   253:         self.config = config
-   254:         self.transformer = nn.ModuleDict(
-   255:             dict(
-   256:                 wte=nn.Embedding(config.vocab_size, config.n_embd),
-   257:                 wpe=nn.Embedding(config.block_size, config.n_embd),
-   258:                 drop=nn.Dropout(config.dropout),
-   259:                 h=nn.ModuleList([Block(config, layer_idx=i) for i in range(config.n_layer)]),
-   260:                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
-   261:             )
-   262:         )
-   263:         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-   264:         self.transformer.wte.weight = self.lm_head.weight
-   265:         self.apply(self._init_weights)
-   266:         for pn, p in self.named_parameters():
-   267:             if pn.endswith("c_proj.weight"):
-   268:                 torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
-   269:         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
-   270: 
-   271:     def get_num_params(self, non_embedding=True):
-   272:         n_params = sum(p.numel() for p in self.parameters())
-   273:         if non_embedding:
-   274:             n_params -= self.transformer.wpe.weight.numel()
-   275:         return n_params
-   276: 
-   277:     def _init_weights(self, module):
-   278:         if isinstance(module, nn.Linear):
-   279:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-   280:             if module.bias is not None:
-   281:                 torch.nn.init.zeros_(module.bias)
-   282:         elif isinstance(module, nn.Embedding):
-   283:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-   284: 
-   285:     def structural_metrics(self):
-   286:         head_sharing = []
-   287:         latent_rank = []
-   288:         kv_bytes = []
-   289:         for block in self.transformer.h:
-   290:             attn = block.attn
-   291:             n_head = int(getattr(attn, "n_head", self.config.n_head))
-   292:             n_kv_head = int(getattr(attn, "n_kv_head", n_head))
-   293:             head_dim = int(getattr(attn, "head_dim", self.config.n_embd // self.config.n_head))
-   294:             head_sharing.append(n_head / max(n_kv_head, 1))
-   295: 
-   296:             if getattr(attn, "share_across_layers", False):
-   297:                 # This layer borrows KV from the previous layer; no new KV storage needed.
-   298:                 latent_rank.append(0.0)
-   299:                 kv_bytes.append(0.0)
-   300:             elif hasattr(attn, "kv_a_proj_with_mqa") and hasattr(attn, "kv_b_proj"):
-   301:                 if hasattr(attn, "kv_a_layernorm"):
-   302:                     kv_lora_rank = int(attn.kv_a_layernorm.weight.numel())
-   303:                 else:
-   304:                     kv_lora_rank = int(getattr(attn, "kv_lora_rank", head_dim))
-   305:                 qk_rope_head_dim = int(attn.kv_a_proj_with_mqa.out_features - kv_lora_rank)
-   306:                 qk_head_dim = int(getattr(attn, "qk_head_dim", head_dim + qk_rope_head_dim))
-   307:                 latent_rank.append(kv_lora_rank / max(qk_head_dim, 1))
-   308:                 kv_bytes.append(float(2 * (kv_lora_rank + qk_rope_head_dim)))
-   309:             else:
-   310:                 latent_rank.append(1.0)
-   311:                 kv_bytes.append(float(2 * n_kv_head * head_dim * 2))
-   312:         return {
-   313:             "head_sharing_ratio": sum(head_sharing) / len(head_sharing),
-   314:             "latent_rank_ratio": sum(latent_rank) / len(latent_rank),
-   315:             "kv_bytes_per_token": sum(kv_bytes) / len(kv_bytes),
-   316:         }
-   317: 
-   318:     def forward(self, idx, targets=None):
-   319:         device = idx.device
-   320:         _, t = idx.size()
-   321:         assert t <= self.config.block_size
-   322:         tok_emb = self.transformer.wte(idx)
-   323:         x = self.transformer.drop(tok_emb)
-   324:         use_pos = getattr(self.transformer.h[0].attn, "use_pos_emb", True)
-   325:         if use_pos:
-   326:             pos = torch.arange(0, t, dtype=torch.long, device=device)
-   327:             x = x + self.transformer.wpe(pos)
-   328:         for block in self.transformer.h:
-   329:             x = block(x)
-   330:         x = self.transformer.ln_f(x)
-   331:         if targets is not None:
-   332:             logits = self.lm_head(x)
-   333:             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-   334:         else:
-   335:             logits = self.lm_head(x[:, [-1], :])
-   336:             loss = None
-   337:         return logits, loss
-   338: 
-   339:     @torch.no_grad()
-   340:     def generate(self, idx, max_new_tokens):
-   341:         for _ in range(max_new_tokens):
-   342:             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size :]
-   343:             logits, _ = self(idx_cond)
-   344:             next_token = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
-   345:             idx = torch.cat((idx, next_token), dim=1)
-   346:         return idx
-   347: 
-   348:     def configure_optimizers(self, weight_decay, learning_rate, betas, device_type):
-   349:         param_dict = {pn: p for pn, p in self.named_parameters() if p.requires_grad}
-   350:         decay_params = [p for n, p in param_dict.items() if p.dim() >= 2]
-   351:         nodecay_params = [p for n, p in param_dict.items() if p.dim() < 2]
-   352:         optim_groups = [
-   353:             {"params": decay_params, "weight_decay": weight_decay},
-   354:             {"params": nodecay_params, "weight_decay": 0.0},
-   355:         ]
-   356:         fused_available = "fused" in inspect.signature(torch.optim.AdamW).parameters
-   357:         use_fused = fused_available and device_type == "cuda"
-   358:         extra_args = dict(fused=True) if use_fused else dict()
-   359:         optimizer = torch.optim.AdamW(optim_groups, lr=learning_rate, betas=betas, **extra_args)
-   360:         print(f"using fused AdamW: {use_fused}")
-   361:         return optimizer
-   362: 
-   363: 
-   364: def get_lr(it, warmup_iters, lr_decay_iters, learning_rate, min_lr):
-   365:     if it < warmup_iters:
-   366:         return learning_rate * (it + 1) / (warmup_iters + 1)
-   367:     if it > lr_decay_iters:
-   368:         return min_lr
-   369:     decay_ratio = (it - warmup_iters) / (lr_decay_iters - warmup_iters)
-   370:     coeff = 0.5 * (1.0 + math.cos(math.pi * decay_ratio))
-   371:     return min_lr + coeff * (learning_rate - min_lr)
-   372: 
-   373: 
-   374: def get_batch(split, data_dir, batch_size, block_size, device):
-   375:     data = np.memmap(os.path.join(data_dir, f"{split}.bin"), dtype=np.uint16, mode="r")
-   376:     ix = torch.randint(len(data) - block_size, (batch_size,))
-   377:     x = torch.stack([torch.from_numpy((data[i : i + block_size]).astype(np.int64)) for i in ix])
-   378:     y = torch.stack([torch.from_numpy((data[i + 1 : i + 1 + block_size]).astype(np.int64)) for i in ix])
-   379:     if "cuda" in str(device):
-   380:         x = x.pin_memory().to(device, non_blocking=True)
-   381:         y = y.pin_memory().to(device, non_blocking=True)
-   382:     else:
-   383:         x = x.to(device)
-   384:         y = y.to(device)
-   385:     return x, y
-   386: 
-   387: 
-   388: def get_named_eval_batch(dataset_path, batch_size, block_size, device):
-   389:     data = np.memmap(dataset_path, dtype=np.uint16, mode="r")
-   390:     ix = torch.randint(len(data) - block_size - 1, (batch_size,))
-   391:     x = torch.stack([torch.from_numpy((data[i : i + block_size]).astype(np.int64)) for i in ix])
-   392:     y = torch.stack([torch.from_numpy((data[i + 1 : i + 1 + block_size]).astype(np.int64)) for i in ix])
-   393:     if "cuda" in str(device):
-   394:         x = x.pin_memory().to(device, non_blocking=True)
-   395:         y = y.pin_memory().to(device, non_blocking=True)
-   396:     else:
-   397:         x = x.to(device)
-   398:         y = y.to(device)
-   399:     return x, y
-   400: 
-   401: 
-   402: if __name__ == "__main__":
-   403:     output_dir = os.environ.get("OUTPUT_DIR", "out")
-   404:     seed = int(os.environ.get("SEED", 1337))
-   405:     _DATA_ROOT = os.environ.get("DATA_ROOT", "/data")
-   406:     data_dir = os.environ.get("DATA_DIR", os.path.join(_DATA_ROOT, "climbmix"))
-   407:     eval_dir = os.environ.get("EVAL_DIR", os.path.join(_DATA_ROOT, "eval"))
-   408:     n_layer = int(os.environ.get("N_LAYER", 12))
-   409:     n_head = int(os.environ.get("N_HEAD", 12))
-   410:     n_embd = int(os.environ.get("N_EMBD", 768))
-   411:     max_iters = int(os.environ.get("MAX_ITERS", 5000))
-   412:     eval_interval = int(os.environ.get("EVAL_INTERVAL", 500))
-   413:     eval_iters = 200
-   414:     log_interval = 10
-   415:     batch_size = int(os.environ.get("BATCH_SIZE", 12))
-   416:     block_size = int(os.environ.get("BLOCK_SIZE", 1024))
-   417:     gradient_accumulation_steps = int(os.environ.get("GRAD_ACCUM", 5))
-   418:     run_aux_eval = os.environ.get("RUN_AUX_EVAL", "0") == "1"
-   419:     aux_eval_datasets = [
-   420:         item.strip() for item in os.environ.get("AUX_EVAL_DATASETS", "wikitext2").split(",") if item.strip()
-   421:     ]
-   422:     aux_eval_iters = int(os.environ.get("AUX_EVAL_ITERS", 64))
-   423:     aux_eval_batch_size = int(os.environ.get("AUX_EVAL_BATCH_SIZE", 4))
-   424:     learning_rate = float(os.environ.get("LEARNING_RATE", 6e-4))
-   425:     min_lr = learning_rate / 10
-   426:     weight_decay = 1e-1
-   427:     beta1 = 0.9
-   428:     beta2 = 0.95
-   429:     grad_clip = 1.0
-   430:     warmup_iters = int(max_iters * 0.04)
-   431:     lr_decay_iters = max_iters
-   432:     # torch.compile on MLA-style dynamic split/reshape (qk_nope+qk_rope,
-   433:     # kv_a_proj split, broadcast-expand across heads) generated more graph
-   434:     # breaks than speedup (6s/iter compiled vs 3.4s eager on H200). Keep
-   435:     # compile off here; sibling llm-pretrain-attention etc. are free to flip.
-   436:     compile_model = False
-   437:     dtype = "bfloat16"
-   438: 
-   439:     ddp = int(os.environ.get("RANK", -1)) != -1
-   440:     if ddp:
-   441:         import torch.distributed as dist
-   442:         from torch.nn.parallel import DistributedDataParallel as DDP
-   443: 
-   444:         dist.init_process_group(backend="nccl")
-   445:         ddp_rank = int(os.environ["RANK"])
-   446:         ddp_local_rank = int(os.environ["LOCAL_RANK"])
-   447:         ddp_world_size = int(os.environ["WORLD_SIZE"])
-   448:         device = f"cuda:{ddp_local_rank}"
-   449:         torch.cuda.set_device(device)
-   450:         master_process = ddp_rank == 0
-   451:         seed_offset = ddp_rank
-   452:     else:
-   453:         master_process = True
-   454:         seed_offset = 0
-   455:         ddp_world_size = 1
-   456:         device = "cuda" if torch.cuda.is_available() else "cpu"
-   457: 
-   458:     assert gradient_accumulation_steps % ddp_world_size == 0
-   459:     gradient_accumulation_steps //= ddp_world_size
-   460: 
-   461:     os.makedirs(output_dir, exist_ok=True)
-   462:     torch.manual_seed(seed + seed_offset)
-   463:     torch.backends.cuda.matmul.allow_tf32 = True
-   464:     torch.backends.cudnn.allow_tf32 = True
-   465:     device_type = "cuda" if "cuda" in device else "cpu"
-   466:     ptdtype = {"float32": torch.float32, "bfloat16": torch.bfloat16, "float16": torch.float16}[dtype]
-   467:     ctx = nullcontext() if device_type == "cpu" else torch.amp.autocast(device_type=device_type, dtype=ptdtype)
-   468: 
-   469:     tokens_per_iter = gradient_accumulation_steps * ddp_world_size * batch_size * block_size
-   470:     if master_process:
-   471:         print(f"tokens per iteration will be: {tokens_per_iter:,}")
-   472: 
-   473:     model_args = dict(
-   474:         n_layer=n_layer,
-   475:         n_head=n_head,
-   476:         n_embd=n_embd,
-   477:         block_size=block_size,
-   478:         bias=False,
-   479:         vocab_size=50304,
-   480:         dropout=0.0,
-   481:     )
-   482:     gptconf = GPTConfig(**model_args)
-   483:     model = GPT(gptconf)
-   484:     model.to(device)
-   485:     scaler = torch.cuda.amp.GradScaler(enabled=False)
-   486:     optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
-   487:     if ddp:
-   488:         model = DDP(model, device_ids=[ddp_local_rank], find_unused_parameters=True)
-   489:     raw_model = model.module if ddp else model
-   490: 
-   491:     @torch.no_grad()
-   492:     def estimate_loss():
-   493:         out = {}
-   494:         model.eval()
-   495:         for split in ["train", "val"]:
-   496:             losses = torch.zeros(eval_iters)
-   497:             for k in range(eval_iters):
-   498:                 x, y = get_batch(split, data_dir, batch_size, block_size, device)
-   499:                 with ctx:
-   500:                     _, loss = model(x, y)
+   209: # ── Fixed KV-cache accounting (not editable) ──────────────────────────────
+   210: # kv_bytes_per_token is measured here from the tensors the attention layers
+   211: # actually cache, never from attributes the editable code sets.  Every tensor
+   212: # an attention layer keeps for past tokens must pass through kv_cache(...),
+   213: # and the attention must use what kv_cache returns.  The probe below records
+   214: # those tensors, then re-runs each layer with every other position's input
+   215: # replaced by an unrelated sequence while replaying the recorded cache: if
+   216: # the output at the probed position changes, the layer reads past tokens
+   217: # through something other than its declared cache and the run is rejected.
+   218: class _KVCacheProbe:
+   219:     mode = None  # None (identity), "record" or "replay"
+   220:     layer = None
+   221:     shape = None
+   222:     recorded = {}
+   223:     replay = []
+   224:     cursor = 0
+   225: 
+   226: 
+   227: _KV_PROBE = _KVCacheProbe()
+   228: _KV_PROBE_POSITIONS = (7, 511, 1023)
+   229: _KV_PROBE_TOL = 1e-2
+   230: 
+   231: 
+   232: def kv_cache(*tensors):
+   233:     """Declare the per-token KV state an attention layer caches.
+   234: 
+   235:     Pass every tensor the layer keeps for past tokens, laid out as
+   236:     (batch, seq_len, ...), and use the returned tensors (same order; a single
+   237:     tensor is returned unpacked).  Outside the evaluator's probe this is the
+   238:     identity.  kv_bytes_per_token is the per-token size of these tensors,
+   239:     counted at max(2, element_size) bytes per element, summed within a layer
+   240:     and averaged over layers.  A layer that reuses an earlier layer's
+   241:     returned cache without calling kv_cache adds no bytes.
+   242:     """
+   243:     if not tensors:
+   244:         raise RuntimeError("kv_cache() needs at least one tensor")
+   245:     for t in tensors:
+   246:         if type(t) is not torch.Tensor or not t.is_floating_point() or t.dim() < 2:
+   247:             raise RuntimeError(
+   248:                 "kv_cache() takes plain floating-point tensors laid out as (batch, seq_len, ...)"
+   249:             )
+   250:     probe = _KV_PROBE
+   251:     if probe.mode is None:
+   252:         out = tensors
+   253:     elif probe.layer is None:
+   254:         raise RuntimeError("kv_cache() called outside an attention layer during the KV probe")
+   255:     elif probe.mode == "record":
+   256:         for t in tensors:
+   257:             if tuple(t.shape[:2]) != probe.shape:
+   258:                 raise RuntimeError(
+   259:                     f"kv_cache() tensors must be laid out as (batch, seq_len, ...) = "
+   260:                     f"{probe.shape}; got {tuple(t.shape)}"
+   261:                 )
+   262:             probe.recorded[probe.layer].append(t.detach().clone())
+   263:         out = tensors
+   264:     elif probe.mode == "replay":
+   265:         out = []
+   266:         for t in tensors:
+   267:             if probe.cursor >= len(probe.replay):
+   268:                 raise RuntimeError("attention layer called kv_cache() more often than when recorded")
+   269:             ref = probe.replay[probe.cursor]
+   270:             probe.cursor += 1
+   271:             if t.shape != ref.shape or t.dtype != ref.dtype:
+   272:                 raise RuntimeError("attention layer changed its kv_cache() tensors between calls")
+   273:             out.append(ref.clone())
+   274:     else:
+   275:         raise RuntimeError(f"invalid KV probe mode {probe.mode!r}")
+   276:     return out[0] if len(out) == 1 else tuple(out)
+   277: 
+   278: 
+   279: @torch.no_grad()
+   280: def measure_kv_cache(model, idx, ctx, _kv_cache_fn=kv_cache, _probe=_KV_PROBE):
+   281:     """Measure kv_bytes_per_token from the realized cache and verify that the
+   282:     cache is the only path by which attention reads past tokens.  Raises on
+   283:     any violation."""
+   284:     if globals().get("kv_cache") is not _kv_cache_fn or globals().get("_KV_PROBE") is not _probe:
+   285:         raise RuntimeError("kv_cache / _KV_PROBE must not be rebound")
+   286:     bsz, seq_len = idx.shape
+   287:     if bsz < 2:
+   288:         raise RuntimeError("the KV probe needs a batch of at least 2 sequences")
+   289:     positions = sorted({min(p, seq_len - 1) for p in _KV_PROBE_POSITIONS})
+   290:     blocks = model.transformer.h
+   291:     was_training = model.training
+   292:     model.eval()
+   293: 
+   294:     def embed(tokens):
+   295:         x = model.transformer.drop(model.transformer.wte(tokens))
+   296:         if getattr(blocks[0].attn, "use_pos_emb", True):
+   297:             pos = torch.arange(0, tokens.size(1), dtype=torch.long, device=tokens.device)
+   298:             x = x + model.transformer.wpe(pos)
+   299:         return x
+   300: 
+   301:     try:
+   302:         with ctx:
+   303:             # Pass 1: record every layer's declared cache (same math as Block.forward).
+   304:             _probe.mode, _probe.shape, _probe.recorded = "record", (bsz, seq_len), {}
+   305:             inputs, outputs = [], []
+   306:             x = embed(idx)
+   307:             for li, block in enumerate(blocks):
+   308:                 h = block.ln_1(x)
+   309:                 _probe.layer = li
+   310:                 _probe.recorded[li] = []
+   311:                 a = block.attn(h)
+   312:                 _probe.layer = None
+   313:                 inputs.append(h)
+   314:                 outputs.append(a)
+   315:                 x = x + a
+   316:                 x = x + block.mlp(block.ln_2(x))
+   317:             _probe.mode = None
+   318:             # Overwrite whatever state a layer kept from the recorded pass.
+   319:             model(torch.flip(idx, dims=[1]))
+   320:             # Pass 2: for each probed position s, feed every layer an unrelated
+   321:             # sequence everywhere except s, and replay the recorded cache up to
+   322:             # s (an unrelated cache after s).  The output at s must not move.
+   323:             for s in positions:
+   324:                 for li, block in enumerate(blocks):
+   325:                     h = inputs[li].roll(1, dims=0).clone()
+   326:                     h[:, s] = inputs[li][:, s]
+   327:                     replay = []
+   328:                     for t in _probe.recorded[li]:
+   329:                         r = t.roll(1, dims=0).clone()
+   330:                         r[:, : s + 1] = t[:, : s + 1]
+   331:                         replay.append(r)
+   332:                     _probe.mode, _probe.replay, _probe.cursor, _probe.layer = "replay", replay, 0, li
+   333:                     a = block.attn(h)
+   334:                     if _probe.cursor != len(replay):
+   335:                         raise RuntimeError(
+   336:                             f"layer {li}: kv_cache() received {_probe.cursor} tensors, "
+   337:                             f"{len(replay)} when recorded"
+   338:                         )
+   339:                     _probe.mode, _probe.layer = None, None
+   340:                     ref = outputs[li][:, s].float()
+   341:                     err = (a[:, s].float() - ref).abs().max().item()
+   342:                     scale = ref.abs().max().item() + 1e-6
+   343:                     if not err <= _KV_PROBE_TOL * scale:
+   344:                         raise RuntimeError(
+   345:                             f"layer {li}: attention output at position {s} depends on past tokens "
+   346:                             f"through state not declared via kv_cache() (max |diff| {err:.3g}, "
+   347:                             f"output scale {scale:.3g}); kv_bytes_per_token cannot be measured"
+   348:                         )
+   349:     finally:
+   350:         _probe.mode, _probe.layer, _probe.shape = None, None, None
+   351:         _probe.replay, _probe.cursor = [], 0
+   352:         model.train(was_training)
+   353: 
+   354:     per_layer = [
+   355:         float(
+   356:             sum(t.numel() // (bsz * seq_len) * max(2, t.element_size()) for t in _probe.recorded[li])
+   357:         )
+   358:         for li in range(len(blocks))
+   359:     ]
+   360:     _probe.recorded = {}
+   361:     return {
+   362:         "kv_bytes_per_token": sum(per_layer) / len(per_layer),
+   363:         "kv_bytes_per_layer": per_layer,
+   364:     }
+   365: 
+   366: 
+   367: class MLP(nn.Module):
+   368:     def __init__(self, config):
+   369:         super().__init__()
+   370:         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+   371:         self.gelu = nn.GELU()
+   372:         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+   373:         self.dropout = nn.Dropout(config.dropout)
+   374: 
+   375:     def forward(self, x):
+   376:         x = self.c_fc(x)
+   377:         x = self.gelu(x)
+   378:         x = self.c_proj(x)
+   379:         x = self.dropout(x)
+   380:         return x
+   381: 
+   382: 
+   383: class Block(nn.Module):
+   384:     def __init__(self, config, layer_idx):
+   385:         super().__init__()
+   386:         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+   387:         self.attn = CausalSelfAttention(config, layer_idx=layer_idx)
+   388:         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+   389:         self.mlp = MLP(config)
+   390: 
+   391:     def forward(self, x):
+   392:         x = x + self.attn(self.ln_1(x))
+   393:         x = x + self.mlp(self.ln_2(x))
+   394:         return x
+   395: 
+   396: 
+   397: @dataclass
+   398: class GPTConfig:
+   399:     block_size: int = 1024
+   400:     vocab_size: int = 50304
+   401:     n_layer: int = 12
+   402:     n_head: int = 12
+   403:     n_embd: int = 768
+   404:     dropout: float = 0.0
+   405:     bias: bool = False
+   406: 
+   407: 
+   408: class GPT(nn.Module):
+   409:     def __init__(self, config):
+   410:         super().__init__()
+   411:         self.config = config
+   412:         self.transformer = nn.ModuleDict(
+   413:             dict(
+   414:                 wte=nn.Embedding(config.vocab_size, config.n_embd),
+   415:                 wpe=nn.Embedding(config.block_size, config.n_embd),
+   416:                 drop=nn.Dropout(config.dropout),
+   417:                 h=nn.ModuleList([Block(config, layer_idx=i) for i in range(config.n_layer)]),
+   418:                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
+   419:             )
+   420:         )
+   421:         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+   422:         self.transformer.wte.weight = self.lm_head.weight
+   423:         self.apply(self._init_weights)
+   424:         for pn, p in self.named_parameters():
+   425:             if pn.endswith("c_proj.weight"):
+   426:                 torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
+   427:         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+   428: 
+   429:     def get_num_params(self, non_embedding=True):
+   430:         n_params = sum(p.numel() for p in self.parameters())
+   431:         if non_embedding:
+   432:             n_params -= self.transformer.wpe.weight.numel()
+   433:         return n_params
+   434: 
+   435:     def _init_weights(self, module):
+   436:         if isinstance(module, nn.Linear):
+   437:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+   438:             if module.bias is not None:
+   439:                 torch.nn.init.zeros_(module.bias)
+   440:         elif isinstance(module, nn.Embedding):
+   441:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+   442: 
+   443:     def structural_metrics(self):
+   444:         # Descriptive only.  kv_bytes_per_token is measured by measure_kv_cache().
+   445:         head_sharing = []
+   446:         latent_rank = []
+   447:         for block in self.transformer.h:
+   448:             attn = block.attn
+   449:             n_head = int(getattr(attn, "n_head", self.config.n_head))
+   450:             n_kv_head = int(getattr(attn, "n_kv_head", n_head))
+   451:             head_dim = int(getattr(attn, "head_dim", self.config.n_embd // self.config.n_head))
+   452:             head_sharing.append(n_head / max(n_kv_head, 1))
+   453: 
+   454:             if getattr(attn, "share_across_layers", False):
+   455:                 latent_rank.append(0.0)
+   456:             elif hasattr(attn, "kv_a_proj_with_mqa") and hasattr(attn, "kv_b_proj"):
+   457:                 if hasattr(attn, "kv_a_layernorm"):
+   458:                     kv_lora_rank = int(attn.kv_a_layernorm.weight.numel())
+   459:                 else:
+   460:                     kv_lora_rank = int(getattr(attn, "kv_lora_rank", head_dim))
+   461:                 qk_rope_head_dim = int(attn.kv_a_proj_with_mqa.out_features - kv_lora_rank)
+   462:                 qk_head_dim = int(getattr(attn, "qk_head_dim", head_dim + qk_rope_head_dim))
+   463:                 latent_rank.append(kv_lora_rank / max(qk_head_dim, 1))
+   464:             else:
+   465:                 latent_rank.append(1.0)
+   466:         return {
+   467:             "head_sharing_ratio": sum(head_sharing) / len(head_sharing),
+   468:             "latent_rank_ratio": sum(latent_rank) / len(latent_rank),
+   469:         }
+   470: 
+   471:     def forward(self, idx, targets=None):
+   472:         device = idx.device
+   473:         _, t = idx.size()
+   474:         assert t <= self.config.block_size
+   475:         tok_emb = self.transformer.wte(idx)
+   476:         x = self.transformer.drop(tok_emb)
+   477:         use_pos = getattr(self.transformer.h[0].attn, "use_pos_emb", True)
+   478:         if use_pos:
+   479:             pos = torch.arange(0, t, dtype=torch.long, device=device)
+   480:             x = x + self.transformer.wpe(pos)
+   481:         for block in self.transformer.h:
+   482:             x = block(x)
+   483:         x = self.transformer.ln_f(x)
+   484:         if targets is not None:
+   485:             logits = self.lm_head(x)
+   486:             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
+   487:         else:
+   488:             logits = self.lm_head(x[:, [-1], :])
+   489:             loss = None
+   490:         return logits, loss
+   491: 
+   492:     @torch.no_grad()
+   493:     def generate(self, idx, max_new_tokens):
+   494:         for _ in range(max_new_tokens):
+   495:             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size :]
+   496:             logits, _ = self(idx_cond)
+   497:             next_token = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
+   498:             idx = torch.cat((idx, next_token), dim=1)
+   499:         return idx
+   500: 
 
 [truncated: showing at most 500 lines / 60000 bytes from nanoGPT/custom_pretrain.py]
 ```
@@ -619,7 +640,7 @@ a baseline reproduction.
 In `nanoGPT/custom_pretrain.py`:
 
 ```python
-Lines 36–111:
+Lines 36–113:
     33: 
     34: # ── Editable region: KV structure design ──────────────────────────────────
     35: # BEGIN KV EDITABLE REGION
@@ -687,21 +708,23 @@ Lines 36–111:
     97:         q, kv = qkv.split([self.n_embd, 2 * self.n_kv_head * self.head_dim], dim=2)
     98:         k, v = kv.chunk(2, dim=2)
     99:         q = q.view(bsz, seq_len, self.n_head, self.head_dim).transpose(1, 2)
-   100:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-   101:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-   102:         k, v, latent_ratio = latent_kv_project(k, v, self)
-   103:         self._last_latent_rank_ratio = float(latent_ratio)
-   104:         self._last_kv_storage_ratio = 1.0
-   105:         self._uses_latent_compression = False
-   106:         y = torch.nn.functional.scaled_dot_product_attention(
-   107:             q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True
-   108:         )
-   109:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, channels)
-   110:         y = self.resid_dropout(self.c_proj(y))
-   111:         return y
-   112: # END KV EDITABLE REGION
-   113: 
-   114: 
+   100:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+   101:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+   102:         k, v = kv_cache(k, v)  # the per-token KV state this layer caches
+   103:         k, v = k.transpose(1, 2), v.transpose(1, 2)
+   104:         k, v, latent_ratio = latent_kv_project(k, v, self)
+   105:         self._last_latent_rank_ratio = float(latent_ratio)
+   106:         self._last_kv_storage_ratio = 1.0
+   107:         self._uses_latent_compression = False
+   108:         y = torch.nn.functional.scaled_dot_product_attention(
+   109:             q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True
+   110:         )
+   111:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, channels)
+   112:         y = self.resid_dropout(self.c_proj(y))
+   113:         return y
+   114: # END KV EDITABLE REGION
+   115: 
+   116: 
 ```
 
 ### `mqa` baseline — editable region  [READ-ONLY — reference implementation]
@@ -709,7 +732,7 @@ Lines 36–111:
 In `nanoGPT/custom_pretrain.py`:
 
 ```python
-Lines 36–115:
+Lines 36–117:
     33: 
     34: # ── Editable region: KV structure design ──────────────────────────────────
     35: # BEGIN KV EDITABLE REGION
@@ -780,22 +803,24 @@ Lines 36–115:
    100:         )
    101:         k, v = kv.chunk(2, dim=2)
    102:         q = q.view(bsz, seq_len, self.n_head, self.head_dim).transpose(1, 2)
-   103:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-   104:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-   105:         k = expand_kv_to_q_heads(k, self.n_head)
-   106:         v = expand_kv_to_q_heads(v, self.n_head)
-   107:         self._last_latent_rank_ratio = 1.0
-   108:         self._last_kv_storage_ratio = 1.0
-   109:         self._uses_latent_compression = False
-   110:         y = torch.nn.functional.scaled_dot_product_attention(
-   111:             q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True
-   112:         )
-   113:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, channels)
-   114:         y = self.resid_dropout(self.c_proj(y))
-   115:         return y
-   116: # END KV EDITABLE REGION
-   117: 
-   118: 
+   103:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+   104:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+   105:         k, v = kv_cache(k, v)  # the per-token KV state this layer caches
+   106:         k, v = k.transpose(1, 2), v.transpose(1, 2)
+   107:         k = expand_kv_to_q_heads(k, self.n_head)
+   108:         v = expand_kv_to_q_heads(v, self.n_head)
+   109:         self._last_latent_rank_ratio = 1.0
+   110:         self._last_kv_storage_ratio = 1.0
+   111:         self._uses_latent_compression = False
+   112:         y = torch.nn.functional.scaled_dot_product_attention(
+   113:             q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True
+   114:         )
+   115:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, channels)
+   116:         y = self.resid_dropout(self.c_proj(y))
+   117:         return y
+   118: # END KV EDITABLE REGION
+   119: 
+   120: 
 ```
 
 ### `gqa` baseline — editable region  [READ-ONLY — reference implementation]
@@ -803,7 +828,7 @@ Lines 36–115:
 In `nanoGPT/custom_pretrain.py`:
 
 ```python
-Lines 36–104:
+Lines 36–106:
     33: 
     34: # ── Editable region: KV structure design ──────────────────────────────────
     35: # BEGIN KV EDITABLE REGION
@@ -862,23 +887,25 @@ Lines 36–104:
     88:         )
     89:         k, v = kv.chunk(2, dim=2)
     90:         q = q.view(bsz, seq_len, self.n_head, self.head_dim).transpose(1, 2)
-    91:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-    92:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-    93:         repeat_factor = self.n_head // self.n_kv_head
-    94:         k = k.repeat_interleave(repeat_factor, dim=1)
-    95:         v = v.repeat_interleave(repeat_factor, dim=1)
-    96:         self._last_latent_rank_ratio = 1.0
-    97:         self._last_kv_storage_ratio = 1.0
-    98:         self._uses_latent_compression = False
-    99:         y = torch.nn.functional.scaled_dot_product_attention(
-   100:             q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True
-   101:         )
-   102:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, channels)
-   103:         y = self.resid_dropout(self.c_proj(y))
-   104:         return y
-   105: # END KV EDITABLE REGION
-   106: 
-   107: 
+    91:         k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+    92:         v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+    93:         k, v = kv_cache(k, v)  # the per-token KV state this layer caches
+    94:         k, v = k.transpose(1, 2), v.transpose(1, 2)
+    95:         repeat_factor = self.n_head // self.n_kv_head
+    96:         k = k.repeat_interleave(repeat_factor, dim=1)
+    97:         v = v.repeat_interleave(repeat_factor, dim=1)
+    98:         self._last_latent_rank_ratio = 1.0
+    99:         self._last_kv_storage_ratio = 1.0
+   100:         self._uses_latent_compression = False
+   101:         y = torch.nn.functional.scaled_dot_product_attention(
+   102:             q, k, v, attn_mask=None, dropout_p=self.dropout if self.training else 0.0, is_causal=True
+   103:         )
+   104:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, channels)
+   105:         y = self.resid_dropout(self.c_proj(y))
+   106:         return y
+   107: # END KV EDITABLE REGION
+   108: 
+   109: 
 ```
 
 ### `mla` baseline — editable region  [READ-ONLY — reference implementation]
@@ -886,7 +913,7 @@ Lines 36–104:
 In `nanoGPT/custom_pretrain.py`:
 
 ```python
-Lines 36–216:
+Lines 36–218:
     33: 
     34: # ── Editable region: KV structure design ──────────────────────────────────
     35: # BEGIN KV EDITABLE REGION
@@ -1017,63 +1044,65 @@ Lines 36–216:
    160:         kv_latent, k_rot = torch.split(
    161:             compressed_kv, [self.kv_lora_rank, self.qk_rope_head_dim], dim=-1
    162:         )
-   163:         kv_states = self.kv_b_proj(self.kv_a_layernorm(kv_latent))
-   164:         kv_states = kv_states.view(
-   165:             bsz, seq_len, self.n_head, self.qk_nope_head_dim + self.v_head_dim
-   166:         ).transpose(1, 2)
-   167:         k_nope, value_states = torch.split(
-   168:             kv_states, [self.qk_nope_head_dim, self.v_head_dim], dim=-1
-   169:         )
-   170: 
-   171:         k_rot = k_rot.view(bsz, seq_len, 1, self.qk_rope_head_dim).transpose(1, 2)
-   172:         cos, sin = build_rotary_cache(
-   173:             seq_len, self.qk_rope_head_dim, x.device, q_rot.dtype
-   174:         )
-   175:         q_rot, k_rot = apply_rotary_pos_emb_interleave(q_rot, k_rot, cos, sin)
-   176: 
-   177:         # DeepSeek-V2 official pattern: new_empty + slice-assign.
-   178:         # Avoids k_rot.expand(-1, n_head, -1, -1) materialization (saves the
-   179:         # expanded-contiguous intermediate) and the subsequent torch.cat's
-   180:         # transient output buffer. slice __setitem__ is autograd-safe — the
-   181:         # backward scatters gradients back into q_nope / q_rot / k_nope / k_rot
-   182:         # (broadcast along head axis for k_rot).
-   183:         query_states = q_states.new_empty(bsz, self.n_head, seq_len, self.qk_head_dim)
-   184:         query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
-   185:         query_states[:, :, :, self.qk_nope_head_dim :] = q_rot
-   186: 
-   187:         key_states = q_states.new_empty(bsz, self.n_head, seq_len, self.qk_head_dim)
-   188:         key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
-   189:         key_states[:, :, :, self.qk_nope_head_dim :] = k_rot  # broadcasts over n_head
-   190: 
-   191:         if self.flash:
-   192:             y = torch.nn.functional.scaled_dot_product_attention(
-   193:                 query_states,
-   194:                 key_states,
-   195:                 value_states,
-   196:                 attn_mask=None,
-   197:                 dropout_p=self.dropout if self.training else 0.0,
-   198:                 is_causal=True,
-   199:                 scale=self.scaling,
-   200:             )
-   201:         else:
-   202:             att = torch.matmul(query_states, key_states.transpose(-2, -1)) * self.scaling
-   203:             att = att.masked_fill(self.bias[:, :, :seq_len, :seq_len] == 0, float("-inf"))
-   204:             att = F.softmax(att, dim=-1)
-   205:             att = self.attn_dropout(att)
-   206:             y = torch.matmul(att, value_states)
-   207: 
-   208:         latent_ratio = self.kv_lora_rank / self.qk_head_dim
-   209:         storage_ratio = (self.kv_lora_rank + self.qk_rope_head_dim) / (2 * self.head_dim)
-   210:         self._last_latent_rank_ratio = float(latent_ratio)
-   211:         self._last_kv_storage_ratio = float(storage_ratio)
-   212:         self._uses_latent_compression = True
-   213: 
-   214:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, self.n_head * self.v_head_dim)
-   215:         y = self.resid_dropout(self.o_proj(y))
-   216:         return y
-   217: # END KV EDITABLE REGION
-   218: 
-   219: 
+   163:         # MLA caches only the compressed latent and the shared rotary key.
+   164:         kv_latent, k_rot = kv_cache(kv_latent, k_rot)
+   165:         kv_states = self.kv_b_proj(self.kv_a_layernorm(kv_latent))
+   166:         kv_states = kv_states.view(
+   167:             bsz, seq_len, self.n_head, self.qk_nope_head_dim + self.v_head_dim
+   168:         ).transpose(1, 2)
+   169:         k_nope, value_states = torch.split(
+   170:             kv_states, [self.qk_nope_head_dim, self.v_head_dim], dim=-1
+   171:         )
+   172: 
+   173:         k_rot = k_rot.view(bsz, seq_len, 1, self.qk_rope_head_dim).transpose(1, 2)
+   174:         cos, sin = build_rotary_cache(
+   175:             seq_len, self.qk_rope_head_dim, x.device, q_rot.dtype
+   176:         )
+   177:         q_rot, k_rot = apply_rotary_pos_emb_interleave(q_rot, k_rot, cos, sin)
+   178: 
+   179:         # DeepSeek-V2 official pattern: new_empty + slice-assign.
+   180:         # Avoids k_rot.expand(-1, n_head, -1, -1) materialization (saves the
+   181:         # expanded-contiguous intermediate) and the subsequent torch.cat's
+   182:         # transient output buffer. slice __setitem__ is autograd-safe — the
+   183:         # backward scatters gradients back into q_nope / q_rot / k_nope / k_rot
+   184:         # (broadcast along head axis for k_rot).
+   185:         query_states = q_states.new_empty(bsz, self.n_head, seq_len, self.qk_head_dim)
+   186:         query_states[:, :, :, : self.qk_nope_head_dim] = q_nope
+   187:         query_states[:, :, :, self.qk_nope_head_dim :] = q_rot
+   188: 
+   189:         key_states = q_states.new_empty(bsz, self.n_head, seq_len, self.qk_head_dim)
+   190:         key_states[:, :, :, : self.qk_nope_head_dim] = k_nope
+   191:         key_states[:, :, :, self.qk_nope_head_dim :] = k_rot  # broadcasts over n_head
+   192: 
+   193:         if self.flash:
+   194:             y = torch.nn.functional.scaled_dot_product_attention(
+   195:                 query_states,
+   196:                 key_states,
+   197:                 value_states,
+   198:                 attn_mask=None,
+   199:                 dropout_p=self.dropout if self.training else 0.0,
+   200:                 is_causal=True,
+   201:                 scale=self.scaling,
+   202:             )
+   203:         else:
+   204:             att = torch.matmul(query_states, key_states.transpose(-2, -1)) * self.scaling
+   205:             att = att.masked_fill(self.bias[:, :, :seq_len, :seq_len] == 0, float("-inf"))
+   206:             att = F.softmax(att, dim=-1)
+   207:             att = self.attn_dropout(att)
+   208:             y = torch.matmul(att, value_states)
+   209: 
+   210:         latent_ratio = self.kv_lora_rank / self.qk_head_dim
+   211:         storage_ratio = (self.kv_lora_rank + self.qk_rope_head_dim) / (2 * self.head_dim)
+   212:         self._last_latent_rank_ratio = float(latent_ratio)
+   213:         self._last_kv_storage_ratio = float(storage_ratio)
+   214:         self._uses_latent_compression = True
+   215: 
+   216:         y = y.transpose(1, 2).contiguous().view(bsz, seq_len, self.n_head * self.v_head_dim)
+   217:         y = self.resid_dropout(self.o_proj(y))
+   218:         return y
+   219: # END KV EDITABLE REGION
+   220: 
+   221: 
 ```
 
 

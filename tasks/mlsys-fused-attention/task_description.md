@@ -59,6 +59,13 @@ def custom_attention_forward(q, k, v, causal=True, sm_scale=None):
 Correctness constraint: max absolute difference from reference (PyTorch
 SDPA) must be `< 1e-2`.
 
+The kernel must be your own: `custom_attention_forward` may not call the
+reference (`F.scaled_dot_product_attention` or any of its backend ops) or
+a packaged attention kernel (flash-attn, xformers, cuDNN, ...); such a
+call fails the run. Every timed call receives freshly drawn inputs and its
+output may be checked against the reference too, so each call must
+compute the attention it is given.
+
 ## Evaluation
 
 Benchmarked on multiple causal configurations aligned with the FA3 paper

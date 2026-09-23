@@ -39,7 +39,7 @@
   "cleanrl/cleanrl/c51_atari.py": "9662ae7cd512dc6521f687cf95f3953925e3e6648a32ddfe023b71c142e9a907",
   "cleanrl/cleanrl/c51_atari_jax.py": "19eeb270e11a027eec43e07b4a82523dc2b2ecc46bfd3c058809b576917eed48",
   "cleanrl/cleanrl/c51_jax.py": "076decbdd10bb92a9b86463799ddb74e6072987bb297d668e3dd9697b2be77a5",
-  "cleanrl/cleanrl/custom_intrinsic_exploration.py": "ea03f2aa6cd8ccab703f79d254d2c9da6e5e959a0670170be1cd4321981ee4f1",
+  "cleanrl/cleanrl/custom_intrinsic_exploration.py": "d7f0483257003e0aa38645323c3c6fb5b207e5214bcb35eab427435ae7670353",
   "cleanrl/cleanrl/ddpg_continuous_action.py": "1c858cf0e89747df76644d32c0c2cb41fff00382724f5fce785f5368735865c5",
   "cleanrl/cleanrl/ddpg_continuous_action_jax.py": "7a07e6bfd611bbb8324b085f29e761f6dca184a88fc3f78e51dc11dbb4a6f7bc",
   "cleanrl/cleanrl/dqn.py": "a0effc7d087264da1644c3c79eb99cc3ab02b214a758ebf6e9c1443b21ad57d3",

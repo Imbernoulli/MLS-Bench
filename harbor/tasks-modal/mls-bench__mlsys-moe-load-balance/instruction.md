@@ -71,7 +71,13 @@ Constraints:
 - Each GPU must receive exactly `num_replicas // num_gpus` physical
   experts
 - Every logical expert must have at least one replica
-- `logcnt.sum(-1)` must equal `num_replicas` for every layer
+- `logcnt.sum(-1)` must equal `num_replicas` for every layer, and
+  `logcnt` must match the replica counts in `phy2log`
+- `log2phy[l, e]` must list exactly the physical slots holding expert `e`
+  (padded with -1)
+
+The fixed harness checks all of these on every trial; an invalid placement
+aborts the run for that configuration.
 
 ## Reference baselines
 
@@ -91,6 +97,12 @@ Flat (non-hierarchical) zigzag: skips the group-to-node Stage 1 entirely
 and does a single global zigzag assignment of all replicas to all GPUs
 directly. Faster than the hierarchical approach but may lose `locality`
 in multi-node settings because it ignores inter-node topology.
+
+### static
+Load-oblivious static placement: each node hosts a contiguous block of
+experts, spare slots hold round-robin copies of the node's own experts.
+Not a load balancer; it is the naive reference that anchors the zero
+point of the balance terms.
 
 
 ## Your Workspace
@@ -443,131 +455,180 @@ stay unchanged.
    321:     num_replicas: int,
    322:     num_experts: int,
    323:     num_gpus: int,
-   324: ) -> bool:
-   325:     """Verify that the placement is valid."""
-   326:     L = phy2log.shape[0]
-   327: 
-   328:     if phy2log.shape != (L, num_replicas):
-   329:         return False
-   330:     if logcnt.shape != (L, num_experts):
-   331:         return False
-   332:     if (phy2log < 0).any() or (phy2log >= num_experts).any():
-   333:         return False
-   334: 
-   335:     for layer in range(L):
-   336:         for e in range(num_experts):
-   337:             actual = (phy2log[layer] == e).sum().item()
-   338:             if actual != logcnt[layer, e].item():
-   339:                 return False
-   340: 
-   341:     if logcnt.sum(-1).ne(num_replicas).any():
-   342:         return False
+   324: ) -> str:
+   325:     """Check that the placement is valid. Returns "" if valid, else the reason.
+   326: 
+   327:     Enforces the interface contract: integer tensors of the documented
+   328:     shapes; every physical slot holds a real expert (slot ``s`` sits on GPU
+   329:     ``s // (num_replicas // num_gpus)``, so each GPU gets exactly
+   330:     ``num_replicas // num_gpus`` replicas); every logical expert has at least
+   331:     one replica; ``logcnt`` matches ``phy2log``; and ``log2phy`` lists
+   332:     exactly the physical slots of each expert.
+   333:     """
+   334:     if not all(isinstance(t, torch.Tensor) for t in (phy2log, log2phy, logcnt)):
+   335:         return "outputs must be torch tensors"
+   336:     for name, t in (("phy2log", phy2log), ("log2phy", log2phy), ("logcnt", logcnt)):
+   337:         if t.dtype not in (torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8):
+   338:             return f"{name} must be an integer tensor, got {t.dtype}"
+   339:     phy2log = phy2log.detach().cpu().long()
+   340:     log2phy = log2phy.detach().cpu().long()
+   341:     logcnt = logcnt.detach().cpu().long()
+   342:     L = phy2log.shape[0] if phy2log.dim() == 2 else -1
    343: 
-   344:     return True
-   345: 
-   346: 
-   347: def evaluate(config_name: str, seed: int, num_trials: int = 10, num_timing: int = 20):
-   348:     """Run evaluation for a given MoE model configuration."""
-   349:     cfg = CONFIGS[config_name]
-   350:     L = cfg["num_layers"]
-   351:     E = cfg["num_experts"]
-   352:     G = cfg["num_groups"]
-   353:     N = cfg["num_nodes"]
-   354:     D = cfg["num_gpus"]
-   355:     R = cfg["num_replicas"]
-   356:     za = cfg["zipf_alpha"]
-   357:     sr = cfg["skew_ratio"]
-   358: 
-   359:     print(f"Config: {config_name} (L={L}, E={E}, G={G}, N={N}, D={D}, R={R})")
-   360:     print(f"Seed: {seed}, Trials: {num_trials}, Timing iters: {num_timing}")
-   361: 
-   362:     balances_gpu = []
-   363:     balances_node = []
-   364:     localities = []
-   365:     runtimes = []
-   366: 
-   367:     for trial in range(num_trials):
-   368:         trial_seed = seed * 10000 + trial
-   369:         weight = generate_workload(L, E, trial_seed, za, sr)
-   370: 
-   371:         # Warm up
-   372:         for _ in range(3):
-   373:             rebalance_experts(weight.clone(), R, G, N, D)
-   374: 
-   375:         # Time the algorithm
-   376:         times = []
-   377:         for _ in range(num_timing):
-   378:             w = weight.clone()
-   379:             t0 = time.perf_counter()
-   380:             phy2log, log2phy, logcnt = rebalance_experts(w, R, G, N, D)
-   381:             t1 = time.perf_counter()
-   382:             times.append((t1 - t0) * 1000)
-   383: 
-   384:         runtime_ms = np.median(times)
-   385: 
-   386:         # Verify correctness
-   387:         valid = verify_placement(phy2log, log2phy, logcnt, R, E, D)
-   388:         if not valid:
-   389:             print(f"  Trial {trial}: INVALID placement!", flush=True)
-   390:             balances_gpu.append(0.0)
-   391:             balances_node.append(0.0)
-   392:             localities.append(1.0 / N)
-   393:             runtimes.append(runtime_ms)
-   394:             continue
-   395: 
-   396:         # Compute balance at GPU and node level + locality
-   397:         bal_gpu, bal_node = compute_balance(weight, phy2log, logcnt, D, N, R)
-   398:         loc = compute_locality(weight, phy2log, D, N, R)
-   399:         balances_gpu.append(bal_gpu)
-   400:         balances_node.append(bal_node)
-   401:         localities.append(loc)
-   402:         runtimes.append(runtime_ms)
-   403: 
-   404:         if trial % 3 == 0:
-   405:             print(
-   406:                 f"TRAIN_METRICS trial={trial} balance={bal_gpu:.4f} "
-   407:                 f"balance_node={bal_node:.4f} locality={loc:.4f} "
-   408:                 f"runtime_ms={runtime_ms:.3f} valid={int(valid)}",
-   409:                 flush=True,
-   410:             )
-   411: 
-   412:     mean_balance = float(np.mean(balances_gpu))
-   413:     mean_balance_node = float(np.mean(balances_node))
-   414:     mean_locality = float(np.mean(localities))
-   415:     mean_runtime = float(np.mean(runtimes))
-   416:     std_balance = float(np.std(balances_gpu))
-   417:     std_balance_node = float(np.std(balances_node))
-   418:     std_locality = float(np.std(localities))
-   419:     std_runtime = float(np.std(runtimes))
+   344:     if phy2log.shape != (L, num_replicas):
+   345:         return f"phy2log shape {tuple(phy2log.shape)} != (L, {num_replicas})"
+   346:     if logcnt.shape != (L, num_experts):
+   347:         return f"logcnt shape {tuple(logcnt.shape)} != ({L}, {num_experts})"
+   348:     if (phy2log < 0).any() or (phy2log >= num_experts).any():
+   349:         return "phy2log holds an out-of-range expert id"
+   350: 
+   351:     actual = torch.zeros(L, num_experts, dtype=torch.int64)
+   352:     actual.scatter_add_(1, phy2log, torch.ones_like(phy2log))
+   353:     if (actual < 1).any():
+   354:         return "some logical expert has no replica"
+   355:     if not torch.equal(actual, logcnt):
+   356:         return "logcnt does not match the replica counts in phy2log"
+   357:     if logcnt.sum(-1).ne(num_replicas).any():
+   358:         return "logcnt does not sum to num_replicas"
+   359: 
+   360:     if log2phy.dim() != 3 or log2phy.shape[:2] != (L, num_experts):
+   361:         return f"log2phy shape {tuple(log2phy.shape)} != ({L}, {num_experts}, max_rep)"
+   362:     used = log2phy >= 0
+   363:     if (log2phy < -1).any() or (log2phy >= num_replicas).any():
+   364:         return "log2phy holds an out-of-range physical id"
+   365:     if not torch.equal(used.sum(-1), logcnt):
+   366:         return "log2phy replica lists do not match logcnt"
+   367:     slots = log2phy.clamp(min=0).view(L, -1)
+   368:     owner = phy2log.gather(1, slots).view(log2phy.shape)
+   369:     expert_id = torch.arange(num_experts, dtype=torch.int64).view(1, -1, 1)
+   370:     if ((owner != expert_id) & used).any():
+   371:         return "log2phy points at a slot holding a different expert"
+   372:     hits = torch.zeros(L, num_replicas, dtype=torch.int64)
+   373:     hits.scatter_add_(1, slots, used.view(L, -1).long())
+   374:     if (hits != 1).any():
+   375:         return "log2phy does not list every physical slot exactly once"
+   376:     return ""
+   377: 
+   378: 
+   379: def evaluate(config_name: str, seed: int, num_trials: int = 10, num_timing: int = 20):
+   380:     """Run evaluation for a given MoE model configuration.
+   381: 
+   382:     Placement quality is scored on the deterministic workload of each trial.
+   383:     Runtime is timed on fresh workloads drawn from an unpredictable seed, so a
+   384:     placement cannot be memoized across calls (or precomputed offline) to fake
+   385:     a low runtime; the scored call itself is also timed, and the per-trial
+   386:     runtime is the larger of the two.
+   387:     """
+   388:     cfg = CONFIGS[config_name]
+   389:     L = cfg["num_layers"]
+   390:     E = cfg["num_experts"]
+   391:     G = cfg["num_groups"]
+   392:     N = cfg["num_nodes"]
+   393:     D = cfg["num_gpus"]
+   394:     R = cfg["num_replicas"]
+   395:     za = cfg["zipf_alpha"]
+   396:     sr = cfg["skew_ratio"]
+   397: 
+   398:     print(f"Config: {config_name} (L={L}, E={E}, G={G}, N={N}, D={D}, R={R})")
+   399:     print(f"Seed: {seed}, Trials: {num_trials}, Timing iters: {num_timing}")
+   400: 
+   401:     # Timing workloads come from an OS-entropy seed that differs every run
+   402:     # and is disjoint from the scored trial seeds.
+   403:     timing_base = 10**9 + int.from_bytes(os.urandom(4), "little")
+   404: 
+   405:     balances_gpu = []
+   406:     balances_node = []
+   407:     localities = []
+   408:     runtimes = []
+   409: 
+   410:     for trial in range(num_trials):
+   411:         trial_seed = seed * 10000 + trial
+   412:         weight = generate_workload(L, E, trial_seed, za, sr)
+   413: 
+   414:         def fresh(j):
+   415:             return generate_workload(L, E, timing_base + trial * 1000 + j, za, sr)
+   416: 
+   417:         # Warm up
+   418:         for j in range(3):
+   419:             rebalance_experts(fresh(j), R, G, N, D)
    420: 
-   421:     print(
-   422:         f"TEST_METRICS balance={mean_balance:.6f} "
-   423:         f"balance_node={mean_balance_node:.6f} "
-   424:         f"locality={mean_locality:.6f} "
-   425:         f"runtime_ms={mean_runtime:.4f} "
-   426:         f"balance_std={std_balance:.6f} "
-   427:         f"balance_node_std={std_balance_node:.6f} "
-   428:         f"locality_std={std_locality:.6f} "
-   429:         f"runtime_std={std_runtime:.4f}",
-   430:         flush=True,
-   431:     )
-   432: 
-   433: 
-   434: def main():
-   435:     parser = argparse.ArgumentParser()
-   436:     parser.add_argument("--config", type=str, required=True, choices=list(CONFIGS.keys()))
-   437:     parser.add_argument("--seed", type=int, default=42)
-   438:     parser.add_argument("--output-dir", type=str, default=".")
-   439:     parser.add_argument("--num-trials", type=int, default=10)
-   440:     parser.add_argument("--num-timing", type=int, default=20)
-   441:     args = parser.parse_args()
-   442: 
-   443:     os.makedirs(args.output_dir, exist_ok=True)
-   444:     evaluate(args.config, args.seed, args.num_trials, args.num_timing)
-   445: 
-   446: 
-   447: if __name__ == "__main__":
-   448:     main()
+   421:         # Time the algorithm on distinct fresh workloads
+   422:         times = []
+   423:         for j in range(num_timing):
+   424:             w = fresh(3 + j)
+   425:             t0 = time.perf_counter()
+   426:             rebalance_experts(w, R, G, N, D)
+   427:             t1 = time.perf_counter()
+   428:             times.append((t1 - t0) * 1000)
+   429: 
+   430:         # Scored call on this trial's workload (also timed)
+   431:         w = weight.clone()
+   432:         t0 = time.perf_counter()
+   433:         phy2log, log2phy, logcnt = rebalance_experts(w, R, G, N, D)
+   434:         t1 = time.perf_counter()
+   435:         runtime_ms = max(float(np.median(times)), (t1 - t0) * 1000)
+   436: 
+   437:         # Verify correctness: an invalid placement fails the whole run
+   438:         reason = verify_placement(phy2log, log2phy, logcnt, R, E, D)
+   439:         if reason:
+   440:             print(f"  Trial {trial}: INVALID placement: {reason}", flush=True)
+   441:             raise SystemExit(f"INVALID placement for {config_name} (trial {trial}): {reason}")
+   442:         phy2log = phy2log.detach().cpu().long()
+   443:         logcnt = logcnt.detach().cpu().long()
+   444: 
+   445:         # Compute balance at GPU and node level + locality
+   446:         bal_gpu, bal_node = compute_balance(weight, phy2log, logcnt, D, N, R)
+   447:         loc = compute_locality(weight, phy2log, D, N, R)
+   448:         balances_gpu.append(bal_gpu)
+   449:         balances_node.append(bal_node)
+   450:         localities.append(loc)
+   451:         runtimes.append(runtime_ms)
+   452: 
+   453:         if trial % 3 == 0:
+   454:             print(
+   455:                 f"TRAIN_METRICS trial={trial} balance={bal_gpu:.4f} "
+   456:                 f"balance_node={bal_node:.4f} locality={loc:.4f} "
+   457:                 f"runtime_ms={runtime_ms:.3f} valid=1",
+   458:                 flush=True,
+   459:             )
+   460: 
+   461:     mean_balance = float(np.mean(balances_gpu))
+   462:     mean_balance_node = float(np.mean(balances_node))
+   463:     mean_locality = float(np.mean(localities))
+   464:     mean_runtime = float(np.mean(runtimes))
+   465:     std_balance = float(np.std(balances_gpu))
+   466:     std_balance_node = float(np.std(balances_node))
+   467:     std_locality = float(np.std(localities))
+   468:     std_runtime = float(np.std(runtimes))
+   469: 
+   470:     print(
+   471:         f"TEST_METRICS balance={mean_balance:.6f} "
+   472:         f"balance_node={mean_balance_node:.6f} "
+   473:         f"locality={mean_locality:.6f} "
+   474:         f"runtime_ms={mean_runtime:.4f} "
+   475:         f"balance_std={std_balance:.6f} "
+   476:         f"balance_node_std={std_balance_node:.6f} "
+   477:         f"locality_std={std_locality:.6f} "
+   478:         f"runtime_std={std_runtime:.4f}",
+   479:         flush=True,
+   480:     )
+   481: 
+   482: 
+   483: def main():
+   484:     parser = argparse.ArgumentParser()
+   485:     parser.add_argument("--config", type=str, required=True, choices=list(CONFIGS.keys()))
+   486:     parser.add_argument("--seed", type=int, default=42)
+   487:     parser.add_argument("--output-dir", type=str, default=".")
+   488:     parser.add_argument("--num-trials", type=int, default=10)
+   489:     parser.add_argument("--num-timing", type=int, default=20)
+   490:     args = parser.parse_args()
+   491: 
+   492:     os.makedirs(args.output_dir, exist_ok=True)
+   493:     evaluate(args.config, args.seed, args.num_trials, args.num_timing)
+   494: 
+   495: 
+   496: if __name__ == "__main__":
+   497:     main()
 ```
 
 ## Reference Baselines
@@ -902,6 +963,67 @@ Lines 62–144:
    145: 
    146: # ================================================================
    147: # FIXED SECTION — Workload generation and evaluation harness
+```
+
+### `static` baseline — editable region  [READ-ONLY — reference implementation]
+
+In `eplb/custom_eplb.py`:
+
+```python
+Lines 62–108:
+    59: }
+    60: 
+    61: # ================================================================
+    62: 
+    63: def balanced_packing(weight: torch.Tensor, num_packs: int) -> Tuple[torch.Tensor, torch.Tensor]:
+    64:     # Load-oblivious: item i goes to pack i // (n // num_packs).
+    65:     B, n = weight.shape
+    66:     assert n % num_packs == 0
+    67:     per = n // num_packs
+    68:     idx = torch.arange(n, dtype=torch.int64)
+    69:     return (idx // per).expand(B, -1).clone(), (idx % per).expand(B, -1).clone()
+    70: 
+    71: 
+    72: def replicate_experts(
+    73:     weight: torch.Tensor, num_phy: int
+    74: ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    75:     # Load-oblivious: spare slots are round-robin copies of experts 0, 1, ...
+    76:     B, num_log = weight.shape
+    77:     slot = torch.arange(num_phy, dtype=torch.int64)
+    78:     phy2log = (slot % num_log).expand(B, -1).clone()
+    79:     rank = (slot // num_log).expand(B, -1).clone()
+    80:     logcnt = torch.bincount(slot % num_log, minlength=num_log).expand(B, -1).clone()
+    81:     return phy2log, rank, logcnt
+    82: 
+    83: 
+    84: def rebalance_experts(
+    85:     weight: torch.Tensor,
+    86:     num_replicas: int,
+    87:     num_groups: int,
+    88:     num_nodes: int,
+    89:     num_gpus: int,
+    90: ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    91:     L, E = weight.shape
+    92:     experts_per_node = E // num_nodes
+    93:     replicas_per_node = num_replicas // num_nodes
+    94: 
+    95:     # Within each node: replicate the node's own experts round-robin.
+    96:     p2m, prk, mcnt = replicate_experts(weight[:1, :experts_per_node], replicas_per_node)
+    97:     offset = torch.arange(0, E, experts_per_node, dtype=torch.int64).view(-1, 1)
+    98:     phy2log = (p2m + offset).flatten().expand(L, -1).clone()
+    99:     phyrank = prk.expand(num_nodes, -1).flatten().expand(L, -1).clone()
+   100:     logcnt = mcnt.expand(num_nodes, -1).flatten().expand(L, -1).clone()
+   101: 
+   102:     mx = logcnt.max().item()
+   103:     log2phy = torch.full((L, E, mx), -1, dtype=torch.int64)
+   104:     log2phy.view(L, -1).scatter_(
+   105:         -1, phy2log * mx + phyrank,
+   106:         torch.arange(num_replicas).expand(L, -1),
+   107:     )
+   108:     return phy2log, log2phy, logcnt
+   109: 
+   110: # ================================================================
+   111: # FIXED SECTION — Workload generation and evaluation harness
 ```
 
 

@@ -11,6 +11,12 @@
 #   runs StableToolBench's judge via OpenRouter, and writes the resulting
 #   sopr_<suffix> / sopr_n_scored_<suffix> back into that SAME row.
 #
+#   train.sh now judges every eval right after inference, so new rows already
+#   carry sopr_*; this script backfills or re-judges old rows. Both call
+#   scripts/judge_sopr.py (only <qid>_CustomSearch.json for the ids in
+#   test_50q.json; missing/unconvertible answers score 0), so the two give
+#   the same value for the same answer files.
+#
 #   Because each test_cmd invocation uses a unique timestamped subdir, old
 #   rounds are preserved; SoPR is computed against the exact files that
 #   produced each row's pass_rate / avg_queries / give_up_rate metrics.
@@ -103,12 +109,9 @@ if [ -z "${OPENROUTER_API_KEY_NEW:-}" ]; then
     exit 1
 fi
 
-mkdir -p "${WORK_DIR}/converted" "${WORK_DIR}/results" "${WORK_DIR}/logs"
-API_POOL_FILE="${WORK_DIR}/api_pool.json"
-cat > "${API_POOL_FILE}" <<EOF
-[{"api_key": "${OPENROUTER_API_KEY_NEW}", "api_base": "https://openrouter.ai/api/v1"}]
-EOF
-chmod 600 "${API_POOL_FILE}"
+export OPENROUTER_API_KEY_NEW
+mkdir -p "${WORK_DIR}/results" "${WORK_DIR}/logs"
+QUERY_FILE="${TASK_DIR}/scripts/test_50q.json"
 
 export PATH="${HOME}/miniconda3/condabin:${PATH}"
 CONDA_RUN="conda run -n mlsbench-stabletoolbench --no-capture-output"
@@ -178,8 +181,7 @@ N_TASKS=$(grep -vc '^#' "${TASK_LIST_FILE}" || true)
 echo "=== ${N_TASKS} (row × setting) pairs to evaluate ==="
 grep '^#' "${TASK_LIST_FILE}" >&2 || true  # print MISSING warnings
 
-# ── run convert + eval for each task ─────────────────────────────────
-cd "${PKG_ROOT}/toolbench/tooleval"
+# ── judge each (row, setting) ────────────────────────────────────────
 
 # Map (row_idx, suffix) -> (sopr_value, n_scored)
 RESULT_FILE="${WORK_DIR}/row_sopr_results.tsv"
@@ -192,52 +194,26 @@ while IFS=$'\t' read -r ROW_IDX SUFFIX SETTING_LABEL TS MODEL SEED ANSWER_DIR; d
     # Build a safe name unique per (row, setting)
     SAFE_MODEL="${MODEL//[\/:]/_}"
     SAFE="row${ROW_IDX}_${SAFE_MODEL}_${SETTING_LABEL}_${TS}"
-    CONV_DIR="${WORK_DIR}/converted/${SAFE}"
-    RESULT_DIR="${WORK_DIR}/results/${SAFE}"
-    mkdir -p "${CONV_DIR}" "${RESULT_DIR}"
-    rm -f "${CONV_DIR}/G1_instruction.json"
+    RESULT_JSON="${WORK_DIR}/results/${SAFE}.json"
+    LOG="${WORK_DIR}/logs/judge_${SAFE}.log"
 
-    # Convert
-    $CONDA_RUN python "${TASK_DIR}/scripts/convert_answers_local.py" \
+    $CONDA_RUN python "${TASK_DIR}/scripts/judge_sopr.py" \
         --answer_dir "${ANSWER_DIR}" \
-        --output "${CONV_DIR}/G1_instruction.json" \
-        > "${WORK_DIR}/logs/convert_${SAFE}.log" 2>&1 || {
-            echo "CONVERT FAILED: row=${ROW_IDX} setting=${SETTING_LABEL} (see ${WORK_DIR}/logs/convert_${SAFE}.log)" >&2
-            continue
-        }
-
-    # Evaluate
-    API_POOL_FILE="${API_POOL_FILE}" EVAL_MODEL="${EVAL_MODEL}" \
-    $CONDA_RUN python eval_pass_rate.py \
-        --converted_answer_path "${WORK_DIR}/converted" \
-        --save_path "${RESULT_DIR}" \
-        --reference_model "${SAFE}" \
-        --test_ids "${PKG_ROOT}/solvable_queries/test_query_ids" \
-        --evaluator tooleval_gpt-3.5-turbo_default \
-        --max_eval_threads "${MAX_EVAL_THREADS}" \
+        --query_file "${QUERY_FILE}" \
+        --pkg_root "${PKG_ROOT}" \
+        --eval_model "${EVAL_MODEL}" \
         --evaluate_times "${EVALUATE_TIMES}" \
-        --test_set G1_instruction \
-        --overwrite \
-        > "${WORK_DIR}/logs/eval_${SAFE}.log" 2>&1 || {
-            echo "EVAL FAILED: row=${ROW_IDX} setting=${SETTING_LABEL} (see ${WORK_DIR}/logs/eval_${SAFE}.log)" >&2
+        --max_eval_threads "${MAX_EVAL_THREADS}" \
+        --save_path "${RESULT_JSON}" \
+        < /dev/null > "${LOG}" 2>&1 || {
+            echo "JUDGE FAILED: row=${ROW_IDX} setting=${SETTING_LABEL} (see ${LOG})" >&2
             continue
         }
-
-    JSON_FILE="${RESULT_DIR}/G1_instruction_${SAFE}.json"
-    read VAL N <<<$(python3 - <<PY
-import json
-d = json.load(open("${JSON_FILE}"))
-total = len(d)
-score = 0.0
-for v in d.values():
-    s = str(v.get('is_solved', {}))
-    if 'AnswerStatus.Solved' in s:
-        score += 1.0
-    elif 'AnswerStatus.Unsure' in s:
-        score += 0.5
-print(f"{score/total:.4f}" if total else "NaN", total)
-PY
-)
+    read VAL N <<<$(sed -n 's/^TEST_METRICS: sopr=\([0-9.]*\) sopr_n_scored=\([0-9]*\).*/\1 \2/p' "${LOG}" | tail -1)
+    if [ -z "${VAL}" ]; then
+        echo "JUDGE FAILED: row=${ROW_IDX} setting=${SETTING_LABEL}: no sopr line (see ${LOG})" >&2
+        continue
+    fi
     echo "[SoPR] row=${ROW_IDX} model=${MODEL} setting=${SETTING_LABEL} ts=${TS}: ${VAL} (n=${N})"
     printf '%s\t%s\t%s\t%s\n' "${ROW_IDX}" "${SUFFIX}" "${VAL}" "${N}" >> "${RESULT_FILE}"
 done < "${TASK_LIST_FILE}"

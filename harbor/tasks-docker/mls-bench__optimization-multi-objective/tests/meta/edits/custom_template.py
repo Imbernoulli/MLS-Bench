@@ -310,9 +310,10 @@ def run_moea(env_key: str, seed: int, output_dir: str):
     """Run the custom MOEA on the held-out benchmark problem.
 
     Loads the pre-generated problem spec for ``env_key``, runs the strategy, and
-    emits the final non-dominated population's objective values for the host-side
-    scorer. The true Pareto front and the metrics are computed host-side; this
-    process never sees them.
+    emits the final non-dominated population (objective values and decision
+    vectors) for the host-side scorer, which re-evaluates the decision vectors.
+    The true Pareto front and the metrics are computed host-side; this process
+    never sees them.
     """
     spec = _load_spec(env_key, seed)
     n_var = int(spec["n_var"])
@@ -378,15 +379,23 @@ def run_moea(env_key: str, seed: int, output_dir: str):
     # Final non-dominated front
     nd_front = get_nondominated(population)
     front_values = np.array([ind.fitness.values for ind in nd_front], dtype=np.float64)
+    # Decision vectors of the same individuals. The host-side scorer re-evaluates
+    # them with the true objective functions and checks the bounds, so the scored
+    # objective values never come from fitness values assigned by the strategy.
+    front_x = np.array([list(ind) for ind in nd_front], dtype=np.float64)
 
-    # Emit the final population's objective values for the host-side scorer. We do
-    # NOT have the true Pareto front, so we cannot (and do not) compute metrics.
+    # Emit the final population's objective values and decision vectors for the
+    # host-side scorer. We do NOT have the true Pareto front, so we cannot (and
+    # do not) compute metrics.
     payload = base64.b64encode(
         np.ascontiguousarray(front_values, dtype=np.float64).tobytes()
     ).decode("ascii")
+    x_payload = base64.b64encode(
+        np.ascontiguousarray(front_x, dtype=np.float64).tobytes()
+    ).decode("ascii")
     print(
         f"MOEA_PRED env={env_key} seed={seed} shape={front_values.shape[0]},{front_values.shape[1]} "
-        f"objs={payload}",
+        f"objs={payload} nvar={n_var} xs={x_payload}",
         flush=True,
     )
 

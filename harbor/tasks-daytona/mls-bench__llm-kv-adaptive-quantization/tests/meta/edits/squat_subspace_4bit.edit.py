@@ -45,6 +45,16 @@ class AdaptiveKVQuantizer:
         residual_length = max(0, min(seq_len, int(self.residual_length)))
         return seq_len % residual_length if residual_length else 0
 
+    def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+        group_size = trailing if int(group_size) <= 0 else int(group_size)
+        per_row = math.ceil(trailing / group_size)
+        rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+        ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+        return ids, math.prod(lead_shape) * per_row
+
+    def _layout(self, ids: torch.Tensor, count: int, bits: int) -> dict:
+        return {"group_ids": ids, "group_bits": torch.full((count,), int(bits), dtype=torch.long, device=ids.device)}
+
     def _minmax_last_dim(self, data: torch.Tensor, group_size: int, bits: int) -> torch.Tensor:
         if data.numel() == 0 or bits >= FP_BITS - 0.5:
             return data
@@ -109,30 +119,31 @@ class AdaptiveKVQuantizer:
             work[:, :, :, start:end] = dequant
         return work
 
-    def _quantize_with_residual(self, tensor: torch.Tensor, quant_fn) -> tuple[torch.Tensor, float]:
+    def _quantize_with_residual(self, tensor: torch.Tensor, quant_fn, axis: str) -> tuple[torch.Tensor, dict | None]:
         work = tensor.float().clone()
-        _, _, seq_len, _ = work.shape
+        batch, heads, seq_len, head_dim = work.shape
         residual = self._residual_keep_length(seq_len)
         quant_end = seq_len - residual
         if quant_end <= 0:
-            return work.to(tensor.dtype), FP_BITS
+            return work.to(tensor.dtype), None
         work[:, :, :quant_end, :] = quant_fn(work[:, :, :quant_end, :])
-        avg_bits = (quant_end * self.bits + residual * FP_BITS) / max(seq_len, 1)
-        return work.to(tensor.dtype), float(avg_bits)
+        ids = torch.full(work.shape, -1, dtype=torch.long, device=work.device)
+        if axis == "channel":
+            region, count = self._group_layout((batch, heads, head_dim), quant_end, self.group_size, work.device)
+            ids[:, :, :quant_end, :] = region.transpose(2, 3)
+        else:
+            region, count = self._group_layout((batch, heads, quant_end), head_dim, self.group_size, work.device)
+            ids[:, :, :quant_end, :] = region
+        return work.to(tensor.dtype), self._layout(ids, count, self.bits)
 
-    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
+    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
         query_subspace = self.query_subspaces.get(layer_id)
         if query_subspace is None:
             raise RuntimeError("SQuat key quantization requires the prefill query observer")
-        return self._quantize_with_residual(key_states, lambda data: self._squat_quantize_keys(data, query_subspace))
+        return self._quantize_with_residual(key_states, lambda data: self._squat_quantize_keys(data, query_subspace), "channel")
 
-    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
-        return self._quantize_with_residual(value_states, lambda data: self._minmax_last_dim(data, self.group_size, self.bits))
-
-    def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-        residual = self._residual_keep_length(seq_len)
-        quant_tokens = max(0, seq_len - residual)
-        return float((quant_tokens * self.bits + residual * FP_BITS) / max(seq_len, 1))
+    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, dict | None]:
+        return self._quantize_with_residual(value_states, lambda data: self._minmax_last_dim(data, self.group_size, self.bits), "token")
 """
 
 OPS = [

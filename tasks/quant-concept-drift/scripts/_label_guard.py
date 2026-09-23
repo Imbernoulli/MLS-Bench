@@ -45,6 +45,10 @@ import copy
 import numpy as np
 import pandas as pd
 
+# When False, the fit-guard prepare() patch passes labels through untouched
+# (used only while the host-side scorer reads the held-out test label).
+_GUARD_ACTIVE = True
+
 
 def _null_label_columns(df):
     """Return a copy of ``df`` with any ``label`` columns set to NaN.
@@ -91,6 +95,19 @@ class _BlockedLoader:
         raise PermissionError("data_loader is disabled inside predict().")
 
 
+def _shallow_copy(obj):
+    """Shallow copy that keeps EVERY attribute.
+
+    ``copy.copy`` goes through qlib ``Serializable.__getstate__``, which drops
+    all ``_``-prefixed attributes (e.g. ``MTSDatasetH._index`` / ``_data`` /
+    ``_batch_slices``), so the copied dataset could not ``prepare()`` anymore
+    and every MTSDatasetH model (the TRA baseline) crashed in ``predict()``.
+    """
+    new = object.__new__(type(obj))
+    new.__dict__.update(obj.__dict__)
+    return new
+
+
 def _build_label_free_dataset(real_ds):
     """Shallow-copy ``real_ds`` + its handler, swapping the cached frames for
     label-nulled copies and neutering the loader.
@@ -103,7 +120,7 @@ def _build_label_free_dataset(real_ds):
     if handler is None:
         return real_ds  # not a DatasetH-with-handler; nothing to guard
 
-    new_handler = copy.copy(handler)  # shallow: keeps refs we then overwrite
+    new_handler = _shallow_copy(handler)  # shallow: keeps refs we then overwrite
     for attr in ("_data", "_infer", "_learn"):
         if hasattr(handler, attr):
             setattr(new_handler, attr, _null_label_columns(getattr(handler, attr)))
@@ -113,7 +130,7 @@ def _build_label_free_dataset(real_ds):
         except Exception:
             pass
 
-    new_ds = copy.copy(real_ds)
+    new_ds = _shallow_copy(real_ds)
     new_ds.handler = new_handler
     return new_ds
 
@@ -143,10 +160,90 @@ def install():
         logger.info(
             "Signal record 'pred.pkl' has been saved (label-free predict view)."
         )
-        # scoring label from the ORIGINAL, untouched dataset
+        # scoring label from the ORIGINAL, untouched dataset. Turn the
+        # fit-guard label masking OFF while the host-side scorer reads the
+        # held-out test label (the editable model never runs here).
         if isinstance(real_ds, DatasetH):
-            raw_label = self.generate_label(real_ds)
+            global _GUARD_ACTIVE
+            _prev = _GUARD_ACTIVE
+            _GUARD_ACTIVE = False
+            try:
+                raw_label = self.generate_label(real_ds)
+            finally:
+                _GUARD_ACTIVE = _prev
             self.save(**{"label.pkl": raw_label})
 
     SignalRecord.generate = generate
     SignalRecord._mlsbench_label_guarded = True
+
+    _install_fit_label_guard()
+
+
+def _install_fit_label_guard():
+    """Mask the held-out TEST-segment label in ``DatasetH.prepare`` so the
+    editable ``CustomModel.fit()`` (which runs on the un-guarded dataset, before
+    the predict view exists) cannot read the test label out of the dataset object
+    -- e.g. ``dataset.prepare('test', col_set=['feature','label'])`` -- and stash
+    it for replay in ``predict()`` (IC == 1.0).
+
+    Only labels for rows inside the *test* segment date range are NaN-ed; train /
+    valid labels pass through untouched. Honest fits are unaffected (verified:
+    lgbm prepares only train/valid; lstm / transformer unpack df_test but never
+    use it). The host-side scorer reads the real test label by toggling
+    ``_GUARD_ACTIVE`` off (see ``generate`` above). Idempotent.
+    """
+    from qlib.data.dataset import DatasetH
+
+    if getattr(DatasetH, "_mlsbench_fit_guarded", False):
+        return
+    _orig_prepare = DatasetH.prepare
+
+    def _nan_test_labels(obj, test_seg):
+        if isinstance(obj, (list, tuple)):
+            return type(obj)(_nan_test_labels(x, test_seg) for x in obj)
+        df = obj
+        if df is None or not hasattr(df, "columns") or not hasattr(df, "index"):
+            return df
+        cols = df.columns
+        if isinstance(cols, pd.MultiIndex):
+            lab_mask = cols.get_level_values(0) == "label"
+            if not lab_mask.any():
+                return df
+            lab_cols = cols[lab_mask]
+        else:
+            if "label" not in [str(c) for c in cols]:
+                return df
+            lab_cols = None
+        idx = df.index
+        if isinstance(idx, pd.MultiIndex):
+            names = list(idx.names or [])
+            dt = idx.get_level_values("datetime") if "datetime" in names \
+                else idx.get_level_values(0)
+        else:
+            dt = idx
+        try:
+            start, end = pd.Timestamp(test_seg[0]), pd.Timestamp(test_seg[1])
+        except Exception:
+            return df
+        in_test = np.asarray((dt >= start) & (dt <= end))
+        if not bool(in_test.any()):
+            return df
+        df = df.copy()
+        if lab_cols is not None:
+            df.loc[in_test, lab_cols] = np.nan
+        else:
+            df.loc[in_test, :] = np.nan
+        return df
+
+    def prepare(self, *args, **kwargs):
+        df = _orig_prepare(self, *args, **kwargs)
+        if not _GUARD_ACTIVE:
+            return df
+        segs = getattr(self, "segments", None)
+        test_seg = segs.get("test") if isinstance(segs, dict) else None
+        if test_seg is None:
+            return df
+        return _nan_test_labels(df, test_seg)
+
+    DatasetH.prepare = prepare
+    DatasetH._mlsbench_fit_guarded = True

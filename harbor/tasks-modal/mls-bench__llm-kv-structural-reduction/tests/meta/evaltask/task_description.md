@@ -40,6 +40,13 @@ One editable region in `custom_pretrain.py`:
      the attention block, including the internal query/KV projection and
      attention mixing path
 
+   Every tensor the attention keeps for past tokens (its KV cache) must be
+   passed through the fixed helper `kv_cache(...)`, laid out as
+   `(batch, seq_len, ...)`, and the attention must use the tensors it
+   returns (the dense baselines call `k, v = kv_cache(k, v)`; MLA passes its
+   compressed latent and rotary key). A layer that reuses an earlier layer's
+   returned cache makes no call of its own.
+
 ## Intended Task Boundary
 
 - This task studies KV-state reduction inside the attention block.
@@ -52,6 +59,20 @@ One editable region in `custom_pretrain.py`:
   may appear in the editable span. That keeps edits inside the attention
   block, even though the internal contents of `CausalSelfAttention` remain
   flexible.
+- The evaluator measures the KV footprint from the tensors passed to
+  `kv_cache(...)`, not from module attributes. It then re-runs every
+  attention layer with unrelated inputs at all other positions while
+  replaying the recorded cache, and rejects the run (before training and
+  again at the end) if a layer's output changes, i.e. if attention reads
+  past tokens through anything other than its declared cache.
+- KV budget: the submitted structure must realize at least a 4x KV
+  reduction relative to the dense MHA control, i.e.
+  `kv_bytes_per_token <= 1024` at 345M (dense MHA, which is what the
+  unmodified template implements, measures 4096). A run above the budget
+  has its score multiplied by `exp(-0.003 * (kv_bytes_per_token - 1024))`
+  in every regime, so a dense-MHA submission scores near zero. Within the
+  budget, further KV reduction is rewarded on a log scale (each halving
+  counts the same) and traded off against model quality.
 
 ## Evaluation
 
@@ -62,8 +83,10 @@ from the 345M checkpoint.
 
 - Primary metric: validation loss at 345M (cross-entropy, lower is better)
 - Secondary metrics:
-  - `kv_bytes_per_token` (lower is better; evaluator-derived KV footprint
-    from the realized attention structure — the primary efficiency axis)
+  - `kv_bytes_per_token` (lower is better; evaluator-measured KV footprint:
+    the per-token size of the tensors each layer passes to `kv_cache(...)`,
+    at max(2, element size) bytes per element, averaged over layers — the
+    primary efficiency axis; must be <= 1024, see the KV budget above)
   - `heldout_loss` (lower is better; average cross-entropy on
     WikiText-2/103 + LAMBADA held-out corpora at the 345M final checkpoint)
   - `arc_easy`, `hellaswag` (0-shot downstream accuracy via lm-eval, from

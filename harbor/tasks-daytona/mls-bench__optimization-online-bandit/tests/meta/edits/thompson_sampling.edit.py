@@ -130,8 +130,8 @@ OPS = [
     {
         "op": "replace",
         "file": _FILE,
-        "start_line": 261,
-        "end_line": 321,
+        "start_line": 63,
+        "end_line": 123,
         "content": _TS_CODE,
     },
 ]

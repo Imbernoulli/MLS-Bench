@@ -54,6 +54,18 @@ combined, how the latent is renoised, or how guidance strength varies with
 time, but it should not change the prompt set, model weights, the number of
 allowed denoiser evaluations, or evaluation code.
 
+The budget is **NFE = 50** denoiser evaluations per image, and it is measured,
+not trusted. The evaluation script replaces the solver's `self.unet` with a
+counting wrapper, so every UNet forward the sampler makes, through
+`self.predict_noise()` or `self.unet(...)` directly, is counted for each image.
+One NFE is one UNet forward on the image's latent: the batched unconditional +
+conditional pair of classifier-free guidance counts as 1, and so does a
+single-branch call. A forward over more than two latent rows counts
+ceil(rows / 2). A run that spends more than 50 NFE on any image is rejected and
+records no FID; spending fewer is allowed. All denoiser evaluations must go
+through `self.unet` / `self.predict_noise()`, and a solver that keeps another
+handle on the UNet is rejected.
+
 ## Baselines
 
 | Baseline   | Description |
@@ -84,7 +96,7 @@ stay unchanged.
 - `CFGpp-main/latent_diffusion.py`
 - editable lines **621–679**
 - `CFGpp-main/latent_sdxl.py`
-- editable lines **713–755**
+- editable lines **722–764**
 
 
 
@@ -599,7 +611,7 @@ stay unchanged.
 [truncated: showing at most 500 lines / 60000 bytes from CFGpp-main/latent_diffusion.py]
 ```
 
-### `CFGpp-main/latent_sdxl.py`  [EDITABLE — lines 713–755 only]
+### `CFGpp-main/latent_sdxl.py`  [EDITABLE — lines 722–764 only]
 
 ```python
      1: from typing import Any, Optional, Tuple
@@ -1339,59 +1351,59 @@ Lines 621–679:
 In `CFGpp-main/latent_sdxl.py`:
 
 ```python
-Lines 713–758:
-   710: # CFG++ version
-   711: ###########################################
-   712: 
-   713: @register_solver("ddim_cfg++")
-   714: class BaseDDIMCFGpp(SDXL):
-   715:     def reverse_process(self,
-   716:                         null_prompt_embeds,
-   717:                         prompt_embeds,
-   718:                         cfg_guidance,
-   719:                         add_cond_kwargs,
-   720:                         shape=(1024, 1024),
-   721:                         callback_fn=None,
-   722:                         **kwargs):
-   723:         # Standard CFG needs higher guidance scale
-   724:         cfg_guidance = 7.5
-   725: 
-   726:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
-   727: 
-   728:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
-   729:         for step, t in enumerate(pbar):
-   730:             next_t = t - self.skip
-   731:             at = self.scheduler.alphas_cumprod[t]
-   732:             at_next = self.scheduler.alphas_cumprod[next_t]
-   733: 
-   734:             with torch.no_grad():
-   735:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
-   736:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   737: 
-   738:                 # Imagen Rescaled CFG (Lin et al 2024)
-   739:                 rescale_phi = 0.7
-   740:                 std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
-   741:                 std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
-   742:                 noise_pred_rescaled = noise_pred * (std_c / std_pred)
-   743:                 noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
-   744: 
-   745:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+Lines 722–767:
+   719: # CFG++ version
+   720: ###########################################
+   721: 
+   722: @register_solver("ddim_cfg++")
+   723: class BaseDDIMCFGpp(SDXL):
+   724:     def reverse_process(self,
+   725:                         null_prompt_embeds,
+   726:                         prompt_embeds,
+   727:                         cfg_guidance,
+   728:                         add_cond_kwargs,
+   729:                         shape=(1024, 1024),
+   730:                         callback_fn=None,
+   731:                         **kwargs):
+   732:         # Standard CFG needs higher guidance scale
+   733:         cfg_guidance = 7.5
+   734: 
+   735:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
+   736: 
+   737:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
+   738:         for step, t in enumerate(pbar):
+   739:             next_t = t - self.skip
+   740:             at = self.scheduler.alphas_cumprod[t]
+   741:             at_next = self.scheduler.alphas_cumprod[next_t]
+   742: 
+   743:             with torch.no_grad():
+   744:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   745:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
    746: 
-   747:             # STANDARD CFG: use noise_pred
-   748:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
-   749: 
-   750:             if callback_fn is not None:
-   751:                 callback_kwargs = {'z0t': z0t.detach(),
-   752:                                     'zt': zt.detach(),
-   753:                                     'decode': self.decode}
-   754:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   755:                 z0t = callback_kwargs["z0t"]
-   756:                 zt = callback_kwargs["zt"]
-   757: 
-   758:         return z0t
-   759: 
-   760: @register_solver('euler_cfg++')
-   761: class EulerCFGpp(SDXL):
+   747:                 # Imagen Rescaled CFG (Lin et al 2024)
+   748:                 rescale_phi = 0.7
+   749:                 std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+   750:                 std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+   751:                 noise_pred_rescaled = noise_pred * (std_c / std_pred)
+   752:                 noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
+   753: 
+   754:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+   755: 
+   756:             # STANDARD CFG: use noise_pred
+   757:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
+   758: 
+   759:             if callback_fn is not None:
+   760:                 callback_kwargs = {'z0t': z0t.detach(),
+   761:                                     'zt': zt.detach(),
+   762:                                     'decode': self.decode}
+   763:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
+   764:                 z0t = callback_kwargs["z0t"]
+   765:                 zt = callback_kwargs["zt"]
+   766: 
+   767:         return z0t
+   768: 
+   769: @register_solver('euler_cfg++')
+   770: class EulerCFGpp(SDXL):
 ```
 
 ### `cfgpp` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1399,58 +1411,58 @@ Lines 713–758:
 In `CFGpp-main/latent_sdxl.py`:
 
 ```python
-Lines 713–757:
-   710: # CFG++ version
-   711: ###########################################
-   712: 
-   713: @register_solver("ddim_cfg++")
-   714: class BaseDDIMCFGpp(SDXL):
-   715:     def reverse_process(self,
-   716:                         null_prompt_embeds,
-   717:                         prompt_embeds,
-   718:                         cfg_guidance,
-   719:                         add_cond_kwargs,
-   720:                         shape=(1024, 1024),
-   721:                         callback_fn=None,
-   722:                         **kwargs):
-   723:         # CFG++ natural scale — hardcoded as method design (see SD variant above)
-   724:         cfg_guidance = 0.6
-   725:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
-   726: 
-   727:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
-   728:         for step, t in enumerate(pbar):
-   729:             next_t = t - self.skip
-   730:             at = self.scheduler.alphas_cumprod[t]
-   731:             at_next = self.scheduler.alphas_cumprod[next_t]
-   732: 
-   733:             with torch.no_grad():
-   734:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
-   735:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   736: 
-   737:                 # Imagen Rescaled CFG (Lin et al 2024)
-   738:                 rescale_phi = 0.7
-   739:                 std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
-   740:                 std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
-   741:                 noise_pred_rescaled = noise_pred * (std_c / std_pred)
-   742:                 noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
-   743: 
-   744:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+Lines 722–766:
+   719: # CFG++ version
+   720: ###########################################
+   721: 
+   722: @register_solver("ddim_cfg++")
+   723: class BaseDDIMCFGpp(SDXL):
+   724:     def reverse_process(self,
+   725:                         null_prompt_embeds,
+   726:                         prompt_embeds,
+   727:                         cfg_guidance,
+   728:                         add_cond_kwargs,
+   729:                         shape=(1024, 1024),
+   730:                         callback_fn=None,
+   731:                         **kwargs):
+   732:         # CFG++ natural scale — hardcoded as method design (see SD variant above)
+   733:         cfg_guidance = 0.6
+   734:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
+   735: 
+   736:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
+   737:         for step, t in enumerate(pbar):
+   738:             next_t = t - self.skip
+   739:             at = self.scheduler.alphas_cumprod[t]
+   740:             at_next = self.scheduler.alphas_cumprod[next_t]
+   741: 
+   742:             with torch.no_grad():
+   743:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   744:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
    745: 
-   746:             # CFG++: use noise_uc to stay on manifold
-   747:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_uc
-   748: 
-   749:             if callback_fn is not None:
-   750:                 callback_kwargs = {'z0t': z0t.detach(),
-   751:                                     'zt': zt.detach(),
-   752:                                     'decode': self.decode}
-   753:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   754:                 z0t = callback_kwargs["z0t"]
-   755:                 zt = callback_kwargs["zt"]
-   756: 
-   757:         return z0t
-   758: 
-   759: @register_solver('euler_cfg++')
-   760: class EulerCFGpp(SDXL):
+   746:                 # Imagen Rescaled CFG (Lin et al 2024)
+   747:                 rescale_phi = 0.7
+   748:                 std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+   749:                 std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+   750:                 noise_pred_rescaled = noise_pred * (std_c / std_pred)
+   751:                 noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
+   752: 
+   753:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+   754: 
+   755:             # CFG++: use noise_uc to stay on manifold
+   756:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_uc
+   757: 
+   758:             if callback_fn is not None:
+   759:                 callback_kwargs = {'z0t': z0t.detach(),
+   760:                                     'zt': zt.detach(),
+   761:                                     'decode': self.decode}
+   762:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
+   763:                 z0t = callback_kwargs["z0t"]
+   764:                 zt = callback_kwargs["zt"]
+   765: 
+   766:         return z0t
+   767: 
+   768: @register_solver('euler_cfg++')
+   769: class EulerCFGpp(SDXL):
 ```
 
 ### `zeroinit` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1458,64 +1470,64 @@ Lines 713–757:
 In `CFGpp-main/latent_sdxl.py`:
 
 ```python
-Lines 713–763:
-   710: # CFG++ version
-   711: ###########################################
-   712: 
-   713: @register_solver("ddim_cfg++")
-   714: class BaseDDIMCFGpp(SDXL):
-   715:     def reverse_process(self,
-   716:                         null_prompt_embeds,
-   717:                         prompt_embeds,
-   718:                         cfg_guidance,
-   719:                         add_cond_kwargs,
-   720:                         shape=(1024, 1024),
-   721:                         callback_fn=None,
-   722:                         **kwargs):
-   723:         # Zero-init natural scale — hardcoded as method design
-   724:         cfg_guidance = 7.5
-   725:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
-   726: 
-   727:         K = 2  # First K steps use guidance=0
-   728: 
-   729:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
-   730:         for step, t in enumerate(pbar):
-   731:             next_t = t - self.skip
-   732:             at = self.scheduler.alphas_cumprod[t]
-   733:             at_next = self.scheduler.alphas_cumprod[next_t]
-   734: 
-   735:             with torch.no_grad():
-   736:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+Lines 722–772:
+   719: # CFG++ version
+   720: ###########################################
+   721: 
+   722: @register_solver("ddim_cfg++")
+   723: class BaseDDIMCFGpp(SDXL):
+   724:     def reverse_process(self,
+   725:                         null_prompt_embeds,
+   726:                         prompt_embeds,
+   727:                         cfg_guidance,
+   728:                         add_cond_kwargs,
+   729:                         shape=(1024, 1024),
+   730:                         callback_fn=None,
+   731:                         **kwargs):
+   732:         # Zero-init natural scale — hardcoded as method design
+   733:         cfg_guidance = 7.5
+   734:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
+   735: 
+   736:         K = 2  # First K steps use guidance=0
    737: 
-   738:                 # Zero-init: w=0 for first K steps, then normal CFG
-   739:                 w = 0.0 if step < K else cfg_guidance
-   740:                 noise_pred = noise_uc + w * (noise_c - noise_uc)
-   741: 
-   742:                 # Imagen Rescaled CFG (Lin et al 2024)
-   743:                 if w > 0:
-   744:                     rescale_phi = 0.7
-   745:                     std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
-   746:                     std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
-   747:                     noise_pred_rescaled = noise_pred * (std_c / std_pred)
-   748:                     noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
-   749: 
-   750:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-   751: 
-   752:             # Standard CFG renoising
-   753:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
-   754: 
-   755:             if callback_fn is not None:
-   756:                 callback_kwargs = {'z0t': z0t.detach(),
-   757:                                     'zt': zt.detach(),
-   758:                                     'decode': self.decode}
-   759:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   760:                 z0t = callback_kwargs["z0t"]
-   761:                 zt = callback_kwargs["zt"]
-   762: 
-   763:         return z0t
-   764: 
-   765: @register_solver('euler_cfg++')
-   766: class EulerCFGpp(SDXL):
+   738:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
+   739:         for step, t in enumerate(pbar):
+   740:             next_t = t - self.skip
+   741:             at = self.scheduler.alphas_cumprod[t]
+   742:             at_next = self.scheduler.alphas_cumprod[next_t]
+   743: 
+   744:             with torch.no_grad():
+   745:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   746: 
+   747:                 # Zero-init: w=0 for first K steps, then normal CFG
+   748:                 w = 0.0 if step < K else cfg_guidance
+   749:                 noise_pred = noise_uc + w * (noise_c - noise_uc)
+   750: 
+   751:                 # Imagen Rescaled CFG (Lin et al 2024)
+   752:                 if w > 0:
+   753:                     rescale_phi = 0.7
+   754:                     std_c = noise_c.std(dim=list(range(1, noise_c.ndim)), keepdim=True)
+   755:                     std_pred = noise_pred.std(dim=list(range(1, noise_pred.ndim)), keepdim=True)
+   756:                     noise_pred_rescaled = noise_pred * (std_c / std_pred)
+   757:                     noise_pred = rescale_phi * noise_pred_rescaled + (1 - rescale_phi) * noise_pred
+   758: 
+   759:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+   760: 
+   761:             # Standard CFG renoising
+   762:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
+   763: 
+   764:             if callback_fn is not None:
+   765:                 callback_kwargs = {'z0t': z0t.detach(),
+   766:                                     'zt': zt.detach(),
+   767:                                     'decode': self.decode}
+   768:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
+   769:                 z0t = callback_kwargs["z0t"]
+   770:                 zt = callback_kwargs["zt"]
+   771: 
+   772:         return z0t
+   773: 
+   774: @register_solver('euler_cfg++')
+   775: class EulerCFGpp(SDXL):
 ```
 
 

@@ -121,6 +121,11 @@ def custom_attention_forward(q, k, v, causal=True, sm_scale=None):
 # FIXED — Benchmark Harness (do not modify below this line)
 # ================================================================
 
+import secrets
+import sys
+
+from torch.utils._python_dispatch import TorchDispatchMode
+
 
 def reference_attention(q, k, v, causal=True, sm_scale=None):
     """PyTorch SDPA reference (dispatches to cuDNN/FlashAttention internally)."""
@@ -134,6 +139,56 @@ def reference_attention(q, k, v, causal=True, sm_scale=None):
         )
 
 
+# The task is to write the attention kernel, so the custom forward may not
+# hand the work to the reference (SDPA and every backend it dispatches to) or
+# to a packaged attention kernel. Every call of custom_attention_forward runs
+# under _NoLibraryAttention, which raises on these ops.
+_FORBIDDEN_OP_PREFIXES = (
+    "aten::scaled_dot_product",
+    "aten::_scaled_dot_product",
+    "aten::_fused_sdp_choice",
+    "aten::_flash_attention",
+    "aten::_efficient_attention",
+    "aten::_cudnn_attention",
+    "aten::_native_multi_head_attention",
+    "aten::_transformer_encoder_layer_fwd",
+    "aten::_triton_scaled_dot_attention",
+    "aten::_triton_multi_head_attention",
+    "flash_attn",
+    "xformers",
+    "transformer_engine",
+)
+_FORBIDDEN_MODULES = (
+    "flash_attn", "flash_attn_2_cuda", "flash_attn_interface", "flash_attn_3",
+    "flashattn_hopper_cuda", "flash_attn_3_cuda", "hopper", "xformers",
+    "cudnn", "transformer_engine", "flashinfer", "sageattention",
+)
+
+
+class _NoLibraryAttention(TorchDispatchMode):
+    def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+        name = func._schema.name
+        if name.startswith(_FORBIDDEN_OP_PREFIXES):
+            raise RuntimeError(
+                f"custom_attention_forward called the library attention op "
+                f"{name}; the kernel must be your own")
+        return func(*args, **(kwargs or {}))
+
+
+def _forbidden_modules_loaded():
+    return sorted(m for m in sys.modules if m.split(".")[0] in _FORBIDDEN_MODULES)
+
+
+def _custom_call(q, k, v, causal=True, sm_scale=None):
+    with _NoLibraryAttention():
+        out = custom_attention_forward(q, k, v, causal=causal, sm_scale=sm_scale)
+    if type(out) is not torch.Tensor or out.shape != q.shape or out.dtype != q.dtype:
+        raise RuntimeError(
+            f"custom_attention_forward must return a plain tensor of shape "
+            f"{tuple(q.shape)} and dtype {q.dtype}")
+    return out
+
+
 def compute_flops(batch, nheads, seqlen, headdim, causal):
     """FLOPs for attention forward (FA2/FA3 convention)."""
     flops = 4 * batch * seqlen * seqlen * nheads * headdim
@@ -142,25 +197,49 @@ def compute_flops(batch, nheads, seqlen, headdim, causal):
     return flops
 
 
-def benchmark_fn(fn, q, k, v, causal, sm_scale, warmup=25, rep=100):
-    """Benchmark and return median latency in ms."""
+def benchmark_fn(fn, shape, dtype, causal, sm_scale, warmup=25, rep=100,
+                 verify=0):
+    """Benchmark and return (median latency in ms, max abs diff).
+
+    Every call gets freshly drawn q/k/v from an unpredictable seed, so no
+    output can be reused across calls or precomputed. `verify` timed calls,
+    picked at random and unknowable to `fn`, are checked against the
+    reference outside the timed span; a kernel that is wrong on enough calls
+    to move the median is caught with near certainty.
+    """
+    gen = torch.Generator(device="cuda")
+    gen.manual_seed(secrets.randbits(62))
+    checked = set(secrets.SystemRandom().sample(range(rep), min(verify, rep)))
+
+    def draw():
+        return tuple(torch.randn(shape, dtype=dtype, device="cuda", generator=gen)
+                     for _ in range(3))
+
     # Warmup
     for _ in range(warmup):
+        q, k, v = draw()
         fn(q, k, v, causal=causal, sm_scale=sm_scale)
     torch.cuda.synchronize()
 
     # Timed runs
     start_events = [torch.cuda.Event(enable_timing=True) for _ in range(rep)]
     end_events = [torch.cuda.Event(enable_timing=True) for _ in range(rep)]
+    max_diff = torch.zeros((), dtype=torch.float32, device="cuda")
     for i in range(rep):
+        q, k, v = draw()
         start_events[i].record()
-        fn(q, k, v, causal=causal, sm_scale=sm_scale)
+        out = fn(q, k, v, causal=causal, sm_scale=sm_scale)
         end_events[i].record()
+        if i in checked:
+            ref = reference_attention(q, k, v, causal=causal, sm_scale=sm_scale)
+            max_diff = torch.maximum(
+                max_diff, (out.float() - ref.float()).abs().max())
+        del out
     torch.cuda.synchronize()
 
     times = [s.elapsed_time(e) for s, e in zip(start_events, end_events)]
     times.sort()
-    return times[len(times) // 2]  # median ms
+    return times[len(times) // 2], max_diff.item()  # median ms
 
 
 def main():
@@ -196,23 +275,27 @@ def main():
           f"headdim={args.headdim} causal={args.causal} dtype={args.dtype}")
     print(f"FLOPs: {flops / 1e12:.3f} TFLOPs per forward pass")
 
+    CORRECTNESS_THRESHOLD = 1e-2
+
+    def fail(reason, max_diff=1.0):
+        print(f"ERROR: {reason}")
+        print(f"TEST_METRICS: speedup_vs_sdpa=0.0 tflops=0.0 latency_ms=999999.0 "
+              f"sdpa_latency_ms=0.0 max_diff={max_diff:.6e} correct=0")
+
     # --- Correctness check ---
     ref_out = reference_attention(q, k, v, causal=args.causal, sm_scale=sm_scale)
     try:
-        custom_out = custom_attention_forward(q, k, v, causal=args.causal,
-                                              sm_scale=sm_scale)
+        custom_out = _custom_call(q, k, v, causal=args.causal, sm_scale=sm_scale)
     except Exception as e:
-        print(f"ERROR: custom kernel failed: {e}")
-        print(f"TEST_METRICS: speedup_vs_sdpa=0.0 tflops=0.0 latency_ms=999999.0 "
-              f"sdpa_latency_ms=0.0 max_diff=1.0 correct=0")
+        fail(f"custom kernel failed: {e}")
         return
 
     max_diff = (custom_out.float() - ref_out.float()).abs().max().item()
     mean_diff = (custom_out.float() - ref_out.float()).abs().mean().item()
+    del custom_out, ref_out
     print(f"TRAIN_METRICS: max_diff={max_diff:.6e} mean_diff={mean_diff:.6e}")
 
-    CORRECTNESS_THRESHOLD = 1e-2
-    if max_diff > CORRECTNESS_THRESHOLD:
+    if not max_diff <= CORRECTNESS_THRESHOLD:
         print(f"FAIL: max_diff {max_diff:.6e} > threshold {CORRECTNESS_THRESHOLD}")
         print(f"TEST_METRICS: speedup_vs_sdpa=0.0 tflops=0.0 latency_ms=999999.0 "
               f"sdpa_latency_ms=0.0 max_diff={max_diff:.6e} correct=0")
@@ -223,13 +306,30 @@ def main():
     # cross-GPU-comparable metric is `speedup_vs_sdpa`: SDPA dispatches to
     # the best fused kernel available on the current GPU (cuDNN/FA2 on A100,
     # cuDNN/FA3 on H100/H200), so the ratio measures algorithmic merit
-    # independent of the card's absolute throughput.
-    latency_ms = benchmark_fn(custom_attention_forward, q, k, v,
-                              args.causal, sm_scale,
-                              warmup=args.warmup, rep=args.rep)
-    sdpa_latency_ms = benchmark_fn(reference_attention, q, k, v,
-                                   args.causal, sm_scale,
-                                   warmup=args.warmup, rep=args.rep)
+    # independent of the card's absolute throughput. Every timed call of the
+    # custom kernel sees fresh inputs, and 16 of them are checked too.
+    shape = q.shape
+    del q, k, v
+    try:
+        latency_ms, timed_max_diff = benchmark_fn(
+            _custom_call, shape, dtype, args.causal, sm_scale,
+            warmup=args.warmup, rep=args.rep, verify=16)
+    except Exception as e:
+        fail(f"custom kernel failed during the timed runs: {e}")
+        return
+    print(f"TRAIN_METRICS: timed_max_diff={timed_max_diff:.6e}")
+    if not timed_max_diff <= CORRECTNESS_THRESHOLD:
+        fail(f"timed-run max_diff {timed_max_diff:.6e} > threshold "
+             f"{CORRECTNESS_THRESHOLD}", max(max_diff, timed_max_diff))
+        return
+    loaded = _forbidden_modules_loaded()
+    if loaded:
+        fail(f"library attention modules were imported: {', '.join(loaded)}; "
+             f"the kernel must be your own")
+        return
+    sdpa_latency_ms, _ = benchmark_fn(reference_attention, shape, dtype,
+                                      args.causal, sm_scale,
+                                      warmup=args.warmup, rep=args.rep)
     tflops = flops / (latency_ms * 1e-3) / 1e12
     sdpa_tflops = flops / (sdpa_latency_ms * 1e-3) / 1e12
     speedup_vs_sdpa = sdpa_latency_ms / latency_ms

@@ -13,7 +13,7 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch.nn import functional as F
-
+_EVAL_CROSS_ENTROPY = F.cross_entropy  # bound before the editable region; used only by fixed evaluation
 # ============================================================================
 # Model Components
 # ============================================================================
@@ -321,6 +321,28 @@ if __name__ == '__main__':
         model = DDP(model, device_ids=[ddp_local_rank], find_unused_parameters=False)
 
     # ── Evaluation ──
+    # Every reported loss (train/val loss, WikiText-2/LAMBADA perplexity) is
+    # plain token-level cross-entropy on the model's raw lm_head logits,
+    # computed here in fixed code. Evaluation never calls compute_loss, which
+    # only defines the training objective.
+    def eval_cross_entropy(m, idx, targets, chunk=8192):
+        """Mean next-token CE of the raw lm_head logits (GPT.forward without the loss)."""
+        m = getattr(m, '_orig_mod', m)
+        t = idx.size(1)
+        x = m.transformer.drop(m.transformer.wte(idx))
+        if getattr(m.transformer.h[0].attn, 'use_pos_emb', True):
+            x = x + m.transformer.wpe(torch.arange(0, t, dtype=torch.long, device=idx.device))
+        for block in m.transformer.h:
+            x = block(x)
+        x = m.transformer.ln_f(x)
+        x = x.view(-1, x.size(-1))
+        y = targets.view(-1)
+        total = torch.zeros((), dtype=torch.float32, device=idx.device)
+        for i in range(0, y.numel(), chunk):  # chunked so full (B*T, V) fp32 logits never materialize
+            total += _EVAL_CROSS_ENTROPY(m.lm_head(x[i:i + chunk]), y[i:i + chunk],
+                                         ignore_index=-1, reduction='sum').float()
+        return total / (y != -1).sum()
+
     @torch.no_grad()
     def estimate_loss():
         out = {}
@@ -331,7 +353,7 @@ if __name__ == '__main__':
             for k in range(eval_iters):
                 X, Y = get_batch(data, batch_size, block_size, device)
                 with ctx:
-                    logits, loss = raw(X, Y)
+                    loss = eval_cross_entropy(raw, X, Y)
                 losses[k] = loss.item()
             out[split] = losses.mean()
         raw.train()
@@ -411,7 +433,7 @@ if __name__ == '__main__':
                     x = torch.from_numpy(data[start:start+block_size].astype(np.int64)).unsqueeze(0).to(device)
                     y = torch.from_numpy(data[start+1:start+1+block_size].astype(np.int64)).unsqueeze(0).to(device)
                     with ctx:
-                        _, loss = raw(x, y)
+                        loss = eval_cross_entropy(raw, x, y)
                     total_loss += loss.item()
                     n_chunks += 1
             avg_loss = total_loss / n_chunks

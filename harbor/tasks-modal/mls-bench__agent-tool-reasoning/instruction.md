@@ -18,6 +18,7 @@ The `search(self, root_node)` method in `custom_search.py`. You have access to:
 - `self._add_diversity_prompt(node)` — encourages different actions when re-expanding.
 - `self._rank_nodes(candidates)` — LLM pairwise ranking (costs extra queries).
 - Tree state: `self.query_count`, `self.max_query_count`, `self.terminal_node`, etc.
+- How a query passes: it counts as passed only if a node you register in `self.terminal_node` was created by `_step` from a `Finish` call with `return_type: give_answer` that the environment accepted, and that node is not pruned. The fixed code recomputes `self.status` and `self.query_count` after `search()`. Every LLM call made through `self.llm` counts against the query budget, and `_step` enforces that budget itself (it returns `[]` once the budget is spent). Queries with no answer file count as failures. Redefining the fixed methods (or special methods) of `CustomSearch` in the editable region is rejected at import time.
 - Node properties: `node.is_terminal`, `node.pruned`, `node.observation_code`, `node.get_depth()`.
 
 ## Reference baselines (algorithmic templates)
@@ -101,7 +102,7 @@ Other files you may **read** for context (do not modify):
     45:     def __init__(self, llm, io_func, process_id=0, callbacks=None):
     46:         super().__init__(llm, io_func, process_id, callbacks)
     47:         self.io_func = io_func
-    48:         self.llm = llm
+    48:         self.llm = _ledger(self, llm).llm  # counts every LLM call (trusted)
     49:         self.process_id = process_id
     50:         self.callbacks = callbacks if callbacks is not None else []
     51:         self.restart()
@@ -120,12 +121,12 @@ Other files you may **read** for context (do not modify):
     64:     def to_json(self, answer=False, process=True):
     65:         if process:
     66:             json_obj = {
-    67:                 "win": self.status == 1,
+    67:                 "win": _trusted_win(self),
     68:                 "tree": self.tree.to_json_recursive(),
     69:                 "forward_args": self.forward_args,
     70:                 "compare_candidates": [],
     71:             }
-    72:             for node in self.terminal_node:
+    72:             for node in _answer_nodes(self):
     73:                 if not node.pruned:
     74:                     json_obj["compare_candidates"].append(
     75:                         node.get_chain_result_from_this_node(use_messages=False)
@@ -136,14 +137,14 @@ Other files you may **read** for context (do not modify):
     80:         if answer:
     81:             json_obj["answer_generation"] = {
     82:                 "valid_data": False,
-    83:                 "query_count": self.query_count,
+    83:                 "query_count": _ledger(self).llm_calls,
     84:                 "total_tokens": self.total_tokens,
     85:                 "final_answer": "",
     86:                 "finish_type": "give_answer",
     87:                 "function": self.io_func.functions,
     88:                 "chain": [],
     89:             }
-    90:             for node in self.terminal_node:
+    90:             for node in _answer_nodes(self):
     91:                 if not node.pruned:
     92:                     json_obj["answer_generation"]["valid_data"] = True
     93:                     json_obj["answer_generation"]["finish_type"] = "give_answer"
@@ -192,7 +193,7 @@ Other files you may **read** for context (do not modify):
    136:         }
    137:         self.single_chain_max_step = single_chain_max_step
    138:         self.tree_beam_size = tree_beam_size
-   139:         self.max_query_count = max_query_count
+   139:         self.max_query_count = _ledger(self).open_budget(max_query_count)
    140:         self.answer_count = answer
    141: 
    142:         # Build the root node
@@ -213,7 +214,7 @@ Other files you may **read** for context (do not modify):
    157:         # Run the search
    158:         self.search(self.tree.root)
    159: 
-   160:         return 1 if self.status == 1 else 0
+   160:         return _finalize(self)
    161: 
    162:     # ------------------------------------------------------------------
    163:     # Helper: single LLM step (do NOT modify)
@@ -236,15 +237,15 @@ Other files you may **read** for context (do not modify):
    180:         list[tree_node]
    181:             The deepest new leaf nodes produced by this step.
    182:         """
-   183:         self.llm.change_messages(now_node.messages)
-   184:         new_message, error_code, total_tokens = self.llm.parse(
+   183:         if _ledger(self).exhausted(): return []  # budget spent: no LLM call
+   184:         new_message, error_code, total_tokens = _ledger(self).chat(now_node.messages,
    185:             self.io_func.functions, process_id=self.process_id
    186:         )
    187:         new_message = {k: v for k, v in new_message.items() if v is not None}
-   188:         self.query_count += 1
+   188:         self.query_count = _ledger(self).llm_calls
    189:         self.total_tokens += total_tokens
    190: 
-   191:         if self.query_count >= self.max_query_count:
+   191:         if _ledger(self).exhausted():
    192:             return []
    193: 
    194:         assert new_message["role"] == "assistant"
@@ -346,7 +347,7 @@ Other files you may **read** for context (do not modify):
    290:         else:
    291:             temp_now_node.messages.append(new_message)
    292: 
-   293:         return [temp_now_node]
+   293:         return [_ledger(self).record_step(now_node, temp_now_node)]
    294: 
    295:     # ------------------------------------------------------------------
    296:     # Helper: add diversity prompt (do NOT modify)
@@ -412,9 +413,9 @@ Other files you may **read** for context (do not modify):
    356:             "rank_func": rank2_subfix,
    357:         }
    358:         scores, rank_query_count, total_tokens = sum_based_rankn(
-   359:             self.llm, LLM_rank_args=LLM_rank_args, candidates=candidates
+   359:             _ledger(self).llm, LLM_rank_args=LLM_rank_args, candidates=candidates
    360:         )
-   361:         self.query_count += rank_query_count
+   361:         self.query_count = _ledger(self).llm_calls
    362:         self.total_tokens += total_tokens
    363:         return scores
    364: 
@@ -440,11 +441,11 @@ Other files you may **read** for context (do not modify):
    384: 
    385:         Available state:
    386:         ----------------
-   387:         self.query_count       Current number of LLM queries used.
-   388:         self.max_query_count   Budget limit.
-   389:         self.terminal_node     List of nodes that produced a final answer.
+   387:         self.query_count       LLM queries used so far (read-only mirror).
+   388:         self.max_query_count   Budget limit (_step enforces its own copy).
+   389:         self.terminal_node     Register answer nodes here (verified, see end of file).
    390:         self.give_up_node      List of nodes that gave up.
-   391:         self.status            Set to 1 when a valid answer is found.
+   391:         self.status            Informational; recomputed after search().
    392:         self.answer_count      Stop after this many answers.
    393:         self.single_chain_max_step   Max tree depth before pruning.
    394:         self.tree_beam_size    Number of children per expansion.
@@ -496,6 +497,155 @@ Other files you may **read** for context (do not modify):
    440:     # ==================================================================
    441:     # EDITABLE REGION END
    442:     # ==================================================================
+   443: 
+   444: 
+   445: # ======================================================================
+   446: # Trusted accounting (do NOT modify -- fixed code, outside the class and
+   447: # outside the editable region)
+   448: # ----------------------------------------------------------------------
+   449: # The query budget and the pass/fail outcome live here, not in attributes
+   450: # that search() can rewrite:
+   451: #   * Every LLM call made through ``self.llm`` (by _step, _rank_nodes or by
+   452: #     search() itself) is counted by _CountingLLM. _step and _rank_nodes use
+   453: #     the ledger's LLM, and _step enforces the budget from the ledger (it
+   454: #     makes no LLM call and returns [] once the budget is spent), so rewriting
+   455: #     ``self.llm``, ``self.query_count`` or ``self.max_query_count`` has no
+   456: #     effect; ``self.query_count`` is only a mirror of the ledger count.
+   457: #   * "win" is derived from the trajectory: a node that search() registered
+   458: #     in ``self.terminal_node`` counts only if _step created it from a
+   459: #     ``Finish`` call with ``return_type="give_answer"`` that the environment
+   460: #     accepted (status 3), and it is not pruned. ``self.status`` is recomputed
+   461: #     from this after search() returns; setting it inside search() does
+   462: #     nothing.
+   463: # ======================================================================
+   464: import sys as _sys
+   465: import weakref as _weakref
+   466: 
+   467: 
+   468: class _CountingLLM:
+   469:     """Forwards to the backbone LLM and counts every ``parse`` call."""
+   470: 
+   471:     def __init__(self, llm, ledger):
+   472:         object.__setattr__(self, "_llm", llm)
+   473:         object.__setattr__(self, "_ledger", ledger)
+   474: 
+   475:     def parse(self, *args, **kwargs):
+   476:         out = self._llm.parse(*args, **kwargs)
+   477:         self._ledger.llm_calls += 1
+   478:         return out
+   479: 
+   480:     def __getattr__(self, name):
+   481:         return getattr(self._llm, name)
+   482: 
+   483:     def __setattr__(self, name, value):
+   484:         setattr(self._llm, name, value)
+   485: 
+   486: 
+   487: class _Ledger:
+   488:     def __init__(self):
+   489:         self.llm = None
+   490:         self.llm_calls = 0
+   491:         self.max_query_count = None
+   492:         self.answer_nodes = []  # nodes _step built from an accepted give_answer
+   493: 
+   494:     def open_budget(self, max_query_count):
+   495:         self.max_query_count = max_query_count
+   496:         return max_query_count
+   497: 
+   498:     def exhausted(self):
+   499:         return self.llm_calls >= self.max_query_count
+   500: 
+   501:     def chat(self, messages, *args, **kwargs):
+   502:         self.llm.change_messages(messages)
+   503:         return self.llm.parse(*args, **kwargs)
+   504: 
+   505:     def record_step(self, start_node, leaf):
+   506:         """Record the nodes one _step call created from an accepted
+   507:         Finish(give_answer): the Finish 'Action Input' node and every node
+   508:         the same step created after it. Returns *leaf* unchanged."""
+   509:         chain = []
+   510:         node = leaf
+   511:         while node is not None and node is not start_node:
+   512:             chain.append(node)
+   513:             node = node.father
+   514:         finished = False
+   515:         for node in reversed(chain):
+   516:             if (not finished
+   517:                     and node.node_type == "Action Input"
+   518:                     and node.observation_code == 3
+   519:                     and node.father is not None
+   520:                     and node.father.node_type == "Action"
+   521:                     and node.father.description == "Finish"):
+   522:                 finished = True
+   523:             if finished:
+   524:                 self.answer_nodes.append(node)
+   525:         return leaf
+   526: 
+   527: 
+   528: _LEDGERS = _weakref.WeakKeyDictionary()
+   529: 
+   530: 
+   531: def _ledger(search, llm=None):
+   532:     led = _LEDGERS.get(search)
+   533:     if led is None:
+   534:         led = _LEDGERS[search] = _Ledger()
+   535:     if llm is not None:
+   536:         led.llm = _CountingLLM(llm, led)
+   537:     return led
+   538: 
+   539: 
+   540: def _answer_nodes(search):
+   541:     """Nodes registered in search.terminal_node that _step really produced
+   542:     from an accepted give_answer, in registration order."""
+   543:     genuine = {id(n) for n in _ledger(search).answer_nodes}
+   544:     return [n for n in list(search.terminal_node) if id(n) in genuine]
+   545: 
+   546: 
+   547: def _trusted_win(search):
+   548:     return any(not n.pruned for n in _answer_nodes(search))
+   549: 
+   550: 
+   551: def _finalize(search):
+   552:     led = _ledger(search)
+   553:     win = _trusted_win(search)
+   554:     if getattr(search, "status", 0) == 1 and not win:
+   555:         print("CustomSearch: search() set status=1, but no registered terminal "
+   556:               "node came from an accepted Finish(give_answer); this query is "
+   557:               "scored as a failure.", file=_sys.stderr, flush=True)
+   558:     search.status = 1 if win else 0
+   559:     search.query_count = led.llm_calls
+   560:     return search.status
+   561: 
+   562: 
+   563: # The fixed methods above must not be redefined from the editable region
+   564: # (a later ``def _step`` / ``to_json = ...`` in the class body would silently
+   565: # replace them), and the region must not add special methods.
+   566: _EDIT_REGION_FIRST_LINE = 366
+   567: _FIXED_METHODS = ("__init__", "restart", "to_json", "start", "_step",
+   568:                   "_add_diversity_prompt", "_rank_nodes")
+   569: _ALLOWED_DUNDERS = {"__module__", "__qualname__", "__doc__", "__dict__",
+   570:                     "__weakref__", "__init__", "__firstlineno__",
+   571:                     "__static_attributes__", "__annotations__"}
+   572: _THIS_FILE = (lambda: 0).__code__.co_filename
+   573: 
+   574: 
+   575: def _check_fixed_methods():
+   576:     for name in _FIXED_METHODS:
+   577:         code = getattr(CustomSearch.__dict__.get(name), "__code__", None)
+   578:         if (code is None or code.co_name != name
+   579:                 or code.co_filename != _THIS_FILE
+   580:                 or code.co_firstlineno >= _EDIT_REGION_FIRST_LINE):
+   581:             raise RuntimeError(
+   582:                 f"CustomSearch.{name} is fixed code and must not be redefined "
+   583:                 f"in the editable region")
+   584:     for name in CustomSearch.__dict__:
+   585:         if (name.startswith("__") and name.endswith("__")
+   586:                 and name not in _ALLOWED_DUNDERS):
+   587:             raise RuntimeError(
+   588:                 f"CustomSearch must not define {name} in the editable region")
+   589: 
+   590: 
+   591: _check_fixed_methods()
 ```
 
 ## Reference Baselines

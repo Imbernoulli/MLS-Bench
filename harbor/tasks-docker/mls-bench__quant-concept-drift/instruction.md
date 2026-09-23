@@ -51,7 +51,7 @@ stay unchanged.
 - editable lines **16–103**
 - `qlib/workflow_config.yaml`
 - editable lines **13–26**
-- editable lines **32–45**
+- editable lines **32–44**
 
 
 Other files you may **read** for context (do not modify):
@@ -169,7 +169,7 @@ Other files you may **read** for context (do not modify):
    103:         return pd.Series(preds, index=index, name="score")
 ```
 
-### `qlib/workflow_config.yaml`  [EDITABLE — lines 13–26, lines 32–45 only]
+### `qlib/workflow_config.yaml`  [EDITABLE — lines 13–26, lines 32–44 only]
 
 ```yaml
      1: # Qlib workflow configuration for CSI300 concept drift adaptation benchmark.
@@ -1918,7 +1918,7 @@ Lines 16–102:
 In `qlib/workflow_config.yaml`:
 
 ```python
-Lines 13–26:
+Lines 13–31:
     10:   rel_path:
     11:     - "."           # So custom_model.py is importable via module_path
     12: 
@@ -1932,63 +1932,62 @@ Lines 13–26:
     20:     class: MTSDatasetH
     21:     module_path: qlib.contrib.data.dataset
     22:     kwargs:
-    23:       handler:
-    24:         class: Alpha158
-    25:         module_path: qlib.contrib.data.handler
-    26:         kwargs:
-    27:           start_time: "2008-01-01"
-    28:           end_time: "2020-08-01"
-    29:           fit_start_time: "2008-01-01"
+    23:       seq_len: 60
+    24:       num_states: 3
+    25:       batch_size: 1024
+    26:       memory_mode: "sample"
+    27:       drop_last: true
+    28:       handler:
+    29:         class: Alpha158
+    30:         module_path: qlib.contrib.data.handler
+    31:         kwargs:
+    32:           start_time: "2008-01-01"
+    33:           end_time: "2020-08-01"
+    34:           fit_start_time: "2008-01-01"
 
-Lines 32–73:
-    29:           fit_start_time: "2008-01-01"
-    30:           fit_end_time: "2014-12-31"
-    31:           instruments: csi300
-    32:           infer_processors:
-    33:             - class: FilterCol
-    34:               kwargs:
-    35:                 fields_group: feature
-    36:                 col_list:
-    37:                   - RESI5
-    38:                   - WVMA5
-    39:                   - RSQR5
-    40:                   - KLEN
-    41:                   - RSQR10
-    42:                   - CORR5
-    43:                   - CORD5
-    44:                   - CORR10
-    45:                   - ROC60
-    46:                   - RESI10
-    47:                   - VSTD5
-    48:                   - RSQR60
-    49:                   - CORR60
-    50:                   - WVMA60
-    51:                   - STD5
-    52:                   - RSQR20
-    53:                   - CORD60
-    54:                   - CORD10
-    55:                   - CORR20
-    56:                   - KLOW
-    57:             - class: RobustZScoreNorm
-    58:               kwargs:
-    59:                 fields_group: feature
-    60:                 clip_outlier: true
-    61:             - class: Fillna
-    62:               kwargs:
-    63:                 fields_group: feature
-    64:           learn_processors:
-    65:             - class: CSRankNorm
-    66:               kwargs:
-    67:                 fields_group: label
-    68:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
-    69:       seq_len: 60
-    70:       num_states: 3
-    71:       batch_size: 1024
-    72:       memory_mode: "sample"
-    73:       drop_last: true
+Lines 37–72:
+    34:           fit_start_time: "2008-01-01"
+    35:           fit_end_time: "2014-12-31"
+    36:           instruments: csi300
+    37:           infer_processors:
+    38:             - class: FilterCol
+    39:               kwargs:
+    40:                 fields_group: feature
+    41:                 col_list:
+    42:                   - RESI5
+    43:                   - WVMA5
+    44:                   - RSQR5
+    45:                   - KLEN
+    46:                   - RSQR10
+    47:                   - CORR5
+    48:                   - CORD5
+    49:                   - CORR10
+    50:                   - ROC60
+    51:                   - RESI10
+    52:                   - VSTD5
+    53:                   - RSQR60
+    54:                   - CORR60
+    55:                   - WVMA60
+    56:                   - STD5
+    57:                   - RSQR20
+    58:                   - CORD60
+    59:                   - CORD10
+    60:                   - CORR20
+    61:                   - KLOW
+    62:             - class: RobustZScoreNorm
+    63:               kwargs:
+    64:                 fields_group: feature
+    65:                 clip_outlier: true
+    66:             - class: Fillna
+    67:               kwargs:
+    68:                 fields_group: feature
+    69:           learn_processors:
+    70:             - class: CSRankNorm
+    71:               kwargs:
+    72:                 fields_group: label
+    73:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
     74:       segments:
     75:         train: ["2008-01-01", "2014-12-31"]
-    76:         valid: ["2015-01-01", "2016-12-31"]
 ```
 
 ### `lgbm` baseline — editable region  [READ-ONLY — reference implementation]
@@ -2018,7 +2017,7 @@ Lines 13–26:
     28:           end_time: "2020-08-01"
     29:           fit_start_time: "2008-01-01"
 
-Lines 32–38:
+Lines 32–37:
     29:           fit_start_time: "2008-01-01"
     30:           fit_end_time: "2014-12-31"
     31:           instruments: csi300
@@ -2031,7 +2030,6 @@ Lines 32–38:
     38:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
     39:       segments:
     40:         train: ["2008-01-01", "2014-12-31"]
-    41:         valid: ["2015-01-01", "2016-12-31"]
 ```
 
 

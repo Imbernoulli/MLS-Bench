@@ -33,6 +33,14 @@ Two editable regions in `nanoGPT/custom_pretrain.py`:
 - If your attention does not use learned absolute position embeddings, set `self.use_pos_emb = False` in `__init__`; the model then skips adding `wpe` in the forward pass.
 - `torch.compile` is disabled for this task because FLA's Triton kernels are not compatible with it.
 
+### Subquadratic requirement (checked)
+Before training, a fixed check runs your model forward on a GPU at three sequence lengths with the same token count. The run is invalid if any `Block`:
+- materializes a tensor with two sequence-length dimensions (a T×T score, mask, or decay matrix; chunk×chunk blocks are fine),
+- spends matmul / attention FLOPs per token that grow linearly with the sequence length (softmax attention via `scaled_dot_product_attention`, including query-chunked variants), or
+- launches one of FLA's quadratic kernels (`fla.ops.attn`, any `parallel` mode, forgetting / path attention, DeltaFormer, NSA, MoBA).
+
+Chunkwise, recurrent, convolutional, and sliding-window mechanisms pass. The model must run at any sequence length up to `block_size`.
+
 ## Reference baselines
 - `gla` — Gated Linear Attention.
 - `retnet` — Retentive Network / MultiScaleRetention.
@@ -105,42 +113,42 @@ stay unchanged.
     32: 
     33: # ── Self-Attention ─────────────────────────────────────────────────────────
     34: class CausalSelfAttention(nn.Module):
-    35:     def __init__(self, config):
-    36:         super().__init__()
-    37:         assert config.n_embd % config.n_head == 0
-    38:         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
-    39:         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-    40:         self.attn_dropout = nn.Dropout(config.dropout)
-    41:         self.resid_dropout = nn.Dropout(config.dropout)
-    42:         self.n_head = config.n_head
-    43:         self.n_embd = config.n_embd
-    44:         self.dropout = config.dropout
-    45:         self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-    46:         if not self.flash:
-    47:             self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-    48:                                         .view(1, 1, config.block_size, config.block_size))
-    49:         # Set to False if using custom position encoding (e.g. RoPE)
-    50:         self.use_pos_emb = True
-    51: 
-    52:     def forward(self, x):
-    53:         B, T, C = x.size()
-    54:         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-    55:         k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-    56:         q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-    57:         v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-    58:         if self.flash:
-    59:             y = torch.nn.functional.scaled_dot_product_attention(
-    60:                 q, k, v, attn_mask=None,
-    61:                 dropout_p=self.dropout if self.training else 0, is_causal=True)
-    62:         else:
-    63:             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-    64:             att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
-    65:             att = F.softmax(att, dim=-1)
-    66:             att = self.attn_dropout(att)
-    67:             y = att @ v
+    35:     """Naive causal linear attention (Katharopoulos et al., 2020), phi(x) = elu(x) + 1.
+    36:     Chunkwise form, O(T): exact within each chunk, running K^T V state across chunks."""
+    37:     def __init__(self, config):
+    38:         super().__init__()
+    39:         assert config.n_embd % config.n_head == 0
+    40:         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+    41:         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+    42:         self.resid_dropout = nn.Dropout(config.dropout)
+    43:         self.n_head = config.n_head
+    44:         self.n_embd = config.n_embd
+    45:         self.chunk_size = 64
+    46:         # Set to False if using custom position encoding (e.g. RoPE)
+    47:         self.use_pos_emb = True
+    48: 
+    49:     def forward(self, x):
+    50:         B, T, C = x.size()
+    51:         H, D, L = self.n_head, C // self.n_head, self.chunk_size
+    52:         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
+    53:         q, k, v = (t.view(B, T, H, D).transpose(1, 2).float() for t in (q, k, v))
+    54:         q, k = F.elu(q) + 1, F.elu(k) + 1  # positive feature map
+    55:         pad = (L - T % L) % L  # zero-pad to whole chunks; padded keys add nothing
+    56:         q, k, v = (F.pad(t, (0, 0, 0, pad)).view(B, H, -1, L, D) for t in (q, k, v))
+    57:         with torch.autocast(device_type=x.device.type, enabled=False):
+    58:             kv = k.transpose(-2, -1) @ v                      # per-chunk K^T V
+    59:             kv = torch.cumsum(kv, dim=2) - kv                 # state before each chunk
+    60:             ks = k.sum(dim=3, keepdim=True)
+    61:             ks = torch.cumsum(ks, dim=2) - ks                 # key sum before each chunk
+    62:             mask = torch.ones(L, L, dtype=torch.bool, device=x.device).tril()
+    63:             att = (q @ k.transpose(-2, -1)).masked_fill(~mask, 0.0)  # intra-chunk
+    64:             num = att @ v + q @ kv
+    65:             den = att.sum(dim=-1, keepdim=True) + q @ ks.transpose(-2, -1)
+    66:             y = num / (den + 1e-6)
+    67:         y = y.reshape(B, H, -1, D)[:, :, :T].to(x.dtype)
     68:         y = y.transpose(1, 2).contiguous().view(B, T, C)
-    69:         y = self.resid_dropout(self.c_proj(y))
-    70:         return y
+    69:         return self.resid_dropout(self.c_proj(y))
+    70: 
     71: 
     72: # ── Feed-Forward Network ──────────────────────────────────────────────────
     73: class MLP(nn.Module):

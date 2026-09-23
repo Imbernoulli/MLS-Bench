@@ -321,31 +321,70 @@ def verify_placement(
     num_replicas: int,
     num_experts: int,
     num_gpus: int,
-) -> bool:
-    """Verify that the placement is valid."""
-    L = phy2log.shape[0]
+) -> str:
+    """Check that the placement is valid. Returns "" if valid, else the reason.
+
+    Enforces the interface contract: integer tensors of the documented
+    shapes; every physical slot holds a real expert (slot ``s`` sits on GPU
+    ``s // (num_replicas // num_gpus)``, so each GPU gets exactly
+    ``num_replicas // num_gpus`` replicas); every logical expert has at least
+    one replica; ``logcnt`` matches ``phy2log``; and ``log2phy`` lists
+    exactly the physical slots of each expert.
+    """
+    if not all(isinstance(t, torch.Tensor) for t in (phy2log, log2phy, logcnt)):
+        return "outputs must be torch tensors"
+    for name, t in (("phy2log", phy2log), ("log2phy", log2phy), ("logcnt", logcnt)):
+        if t.dtype not in (torch.int64, torch.int32, torch.int16, torch.int8, torch.uint8):
+            return f"{name} must be an integer tensor, got {t.dtype}"
+    phy2log = phy2log.detach().cpu().long()
+    log2phy = log2phy.detach().cpu().long()
+    logcnt = logcnt.detach().cpu().long()
+    L = phy2log.shape[0] if phy2log.dim() == 2 else -1
 
     if phy2log.shape != (L, num_replicas):
-        return False
+        return f"phy2log shape {tuple(phy2log.shape)} != (L, {num_replicas})"
     if logcnt.shape != (L, num_experts):
-        return False
+        return f"logcnt shape {tuple(logcnt.shape)} != ({L}, {num_experts})"
     if (phy2log < 0).any() or (phy2log >= num_experts).any():
-        return False
+        return "phy2log holds an out-of-range expert id"
 
-    for layer in range(L):
-        for e in range(num_experts):
-            actual = (phy2log[layer] == e).sum().item()
-            if actual != logcnt[layer, e].item():
-                return False
-
+    actual = torch.zeros(L, num_experts, dtype=torch.int64)
+    actual.scatter_add_(1, phy2log, torch.ones_like(phy2log))
+    if (actual < 1).any():
+        return "some logical expert has no replica"
+    if not torch.equal(actual, logcnt):
+        return "logcnt does not match the replica counts in phy2log"
     if logcnt.sum(-1).ne(num_replicas).any():
-        return False
+        return "logcnt does not sum to num_replicas"
 
-    return True
+    if log2phy.dim() != 3 or log2phy.shape[:2] != (L, num_experts):
+        return f"log2phy shape {tuple(log2phy.shape)} != ({L}, {num_experts}, max_rep)"
+    used = log2phy >= 0
+    if (log2phy < -1).any() or (log2phy >= num_replicas).any():
+        return "log2phy holds an out-of-range physical id"
+    if not torch.equal(used.sum(-1), logcnt):
+        return "log2phy replica lists do not match logcnt"
+    slots = log2phy.clamp(min=0).view(L, -1)
+    owner = phy2log.gather(1, slots).view(log2phy.shape)
+    expert_id = torch.arange(num_experts, dtype=torch.int64).view(1, -1, 1)
+    if ((owner != expert_id) & used).any():
+        return "log2phy points at a slot holding a different expert"
+    hits = torch.zeros(L, num_replicas, dtype=torch.int64)
+    hits.scatter_add_(1, slots, used.view(L, -1).long())
+    if (hits != 1).any():
+        return "log2phy does not list every physical slot exactly once"
+    return ""
 
 
 def evaluate(config_name: str, seed: int, num_trials: int = 10, num_timing: int = 20):
-    """Run evaluation for a given MoE model configuration."""
+    """Run evaluation for a given MoE model configuration.
+
+    Placement quality is scored on the deterministic workload of each trial.
+    Runtime is timed on fresh workloads drawn from an unpredictable seed, so a
+    placement cannot be memoized across calls (or precomputed offline) to fake
+    a low runtime; the scored call itself is also timed, and the per-trial
+    runtime is the larger of the two.
+    """
     cfg = CONFIGS[config_name]
     L = cfg["num_layers"]
     E = cfg["num_experts"]
@@ -359,6 +398,10 @@ def evaluate(config_name: str, seed: int, num_trials: int = 10, num_timing: int 
     print(f"Config: {config_name} (L={L}, E={E}, G={G}, N={N}, D={D}, R={R})")
     print(f"Seed: {seed}, Trials: {num_trials}, Timing iters: {num_timing}")
 
+    # Timing workloads come from an OS-entropy seed that differs every run
+    # and is disjoint from the scored trial seeds.
+    timing_base = 10**9 + int.from_bytes(os.urandom(4), "little")
+
     balances_gpu = []
     balances_node = []
     localities = []
@@ -368,30 +411,36 @@ def evaluate(config_name: str, seed: int, num_trials: int = 10, num_timing: int 
         trial_seed = seed * 10000 + trial
         weight = generate_workload(L, E, trial_seed, za, sr)
 
-        # Warm up
-        for _ in range(3):
-            rebalance_experts(weight.clone(), R, G, N, D)
+        def fresh(j):
+            return generate_workload(L, E, timing_base + trial * 1000 + j, za, sr)
 
-        # Time the algorithm
+        # Warm up
+        for j in range(3):
+            rebalance_experts(fresh(j), R, G, N, D)
+
+        # Time the algorithm on distinct fresh workloads
         times = []
-        for _ in range(num_timing):
-            w = weight.clone()
+        for j in range(num_timing):
+            w = fresh(3 + j)
             t0 = time.perf_counter()
-            phy2log, log2phy, logcnt = rebalance_experts(w, R, G, N, D)
+            rebalance_experts(w, R, G, N, D)
             t1 = time.perf_counter()
             times.append((t1 - t0) * 1000)
 
-        runtime_ms = np.median(times)
+        # Scored call on this trial's workload (also timed)
+        w = weight.clone()
+        t0 = time.perf_counter()
+        phy2log, log2phy, logcnt = rebalance_experts(w, R, G, N, D)
+        t1 = time.perf_counter()
+        runtime_ms = max(float(np.median(times)), (t1 - t0) * 1000)
 
-        # Verify correctness
-        valid = verify_placement(phy2log, log2phy, logcnt, R, E, D)
-        if not valid:
-            print(f"  Trial {trial}: INVALID placement!", flush=True)
-            balances_gpu.append(0.0)
-            balances_node.append(0.0)
-            localities.append(1.0 / N)
-            runtimes.append(runtime_ms)
-            continue
+        # Verify correctness: an invalid placement fails the whole run
+        reason = verify_placement(phy2log, log2phy, logcnt, R, E, D)
+        if reason:
+            print(f"  Trial {trial}: INVALID placement: {reason}", flush=True)
+            raise SystemExit(f"INVALID placement for {config_name} (trial {trial}): {reason}")
+        phy2log = phy2log.detach().cpu().long()
+        logcnt = logcnt.detach().cpu().long()
 
         # Compute balance at GPU and node level + locality
         bal_gpu, bal_node = compute_balance(weight, phy2log, logcnt, D, N, R)
@@ -405,7 +454,7 @@ def evaluate(config_name: str, seed: int, num_trials: int = 10, num_timing: int 
             print(
                 f"TRAIN_METRICS trial={trial} balance={bal_gpu:.4f} "
                 f"balance_node={bal_node:.4f} locality={loc:.4f} "
-                f"runtime_ms={runtime_ms:.3f} valid={int(valid)}",
+                f"runtime_ms={runtime_ms:.3f} valid=1",
                 flush=True,
             )
 

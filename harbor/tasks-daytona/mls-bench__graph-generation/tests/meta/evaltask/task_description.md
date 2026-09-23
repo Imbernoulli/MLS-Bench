@@ -71,7 +71,15 @@ Metrics (all lower is better):
 - `mmd_orbit`: MMD of 4-orbit count distributions.
 - `mmd_avg`: average of the three MMD metrics.
 
+The harness draws exactly as many graphs as the held-out reference split
+(20 / 40 / 118 graphs) and discards any extra graphs `sample()` returns.
+It also reports `copy_excess`: the fraction of generated graphs isomorphic to
+a training graph, minus the same fraction for the held-out graphs (clipped at
+0). A dataset's score is penalized when `copy_excess` exceeds 0.5.
+
 Suitable contributions may be autoregressive, latent-variable, diffusion-like,
 energy-based, score-based, or otherwise structured, provided they can train
 within the fixed budget and sample valid undirected graphs without relying on
-the evaluation labels.
+the evaluation labels. Samples must come from the learned model: replaying
+stored training graphs, or calling or re-implementing the harness's dataset
+generators, is not a valid submission.

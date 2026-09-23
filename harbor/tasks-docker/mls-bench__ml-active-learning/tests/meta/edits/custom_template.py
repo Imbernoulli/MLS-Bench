@@ -6,7 +6,7 @@ to select the most informative samples from the unlabeled pool.
 
 Interface contract:
   - self.X: numpy array of all pool features, shape (n_pool, n_features)
-  - self.Y: torch LongTensor of all pool labels, shape (n_pool,)
+  - self.Y: torch LongTensor of pool labels, shape (n_pool,); true labels only for labeled rows (unlabeled rows: placeholder)
   - self.idxs_lb: boolean array, True for labeled samples
   - self.n_pool: total number of pool samples
   - self.clf: the trained neural network model
@@ -15,7 +15,7 @@ Interface contract:
   - self.get_embedding(X, Y): returns penultimate-layer embeddings, shape (len(X), emb_dim)
   - self.get_grad_embedding(X, Y): returns gradient embeddings (for BADGE), shape (len(X), emb_dim * n_classes)
   - self.get_exp_grad_embedding(X, Y): returns expected Fisher embeddings (for BAIT), shape (len(X), n_classes, emb_dim)
-  - query(n) must return an array of n indices into self.X (indices of the UNLABELED pool)
+  - query(n) must return exactly n distinct indices into self.X of currently UNLABELED samples (anything else fails the run)
 """
 
 import numpy as np

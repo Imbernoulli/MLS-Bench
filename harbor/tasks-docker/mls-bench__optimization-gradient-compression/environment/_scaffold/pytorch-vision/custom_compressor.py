@@ -5,12 +5,12 @@ using data-parallel SGD with a pluggable gradient compressor.
 
 The script simulates distributed training on a single node by:
 1. Computing gradients normally
-2. Applying compress() -> decompress() to each gradient (simulating communication)
-3. Using the decompressed gradient for the optimizer step
+2. Encoding each gradient with the editable Compressor into a packet whose
+   size fixed code charges in bits against a per-step budget
+3. Decoding the packet in fixed code and using it for the optimizer step
 
-This faithfully measures the effect of gradient compression on convergence
-quality, which is the core ML-science question, without requiring multi-node
-infrastructure.
+This measures the effect of gradient compression on convergence quality at
+a fixed communication budget, without requiring multi-node infrastructure.
 """
 
 import argparse
@@ -177,59 +177,294 @@ def get_dataloaders(dataset_name, batch_size, num_workers=2):
 
 
 # ============================================================================
-# EDITABLE SECTION — Gradient Compressor (lines 182-232)
+# EDITABLE SECTION — Gradient Compressor (lines 182-224)
 # ============================================================================
 
 class Compressor:
-    """Gradient compressor base implementation.
+    """Gradient compressor. Default: plain Top-K sparsification (no error
+    feedback), each tensor's k sized to its share of the step budget.
 
-    Interface contract:
-    - compress(tensor) -> (compressed_tensors: list[Tensor], ctx: any)
-        Compress a gradient tensor. Only `compressed_tensors` would be
-        "communicated" in a real distributed setting. `ctx` stays local.
-    - decompress(compressed_tensors, ctx) -> Tensor
-        Reconstruct the gradient from compressed representation.
-        Must return a tensor of the same shape as the original.
-    - The compressor may maintain internal state (e.g., error feedback
-        residuals) across calls for the same parameter.
-
-    Default: identity (no compression). Replace with your method.
+    Interface contract (enforced by the fixed code below this class):
+    - __init__(compress_ratio, param_numels, budget_bits): `param_numels`
+      maps every parameter name to its number of entries; `budget_bits` is
+      the most one training step may transmit for all parameters together
+      (compress_ratio x 32 bits x total entries, i.e. 100x at 0.01).
+    - compress(tensor, name) -> packet, or a list of packets whose decodings
+      are summed. Fixed code decodes the packet; only its contents reach
+      the optimizer. A packet is one of
+        {"values": V, "bits": b}                dense: V has one entry per
+                                                gradient entry
+        {"values": V, "bits": b, "indices": I}  sparse: I = distinct flat
+                                                positions of the entries V
+        {"factors": (P, Q)}                     low rank: P @ Q.T viewed as
+                                                (shape[0], numel/shape[0])
+      Values are sent as float32. Cost in bits (fixed `packet_cost`):
+      len(V) * b, plus 32 per distinct value when b < 32 (the codebook;
+      at most 2**b distinct values), plus Elias-gamma coded gaps of I,
+      plus 32 per factor entry. A step over budget_bits stops the run.
+    - The compressor may keep state across calls (e.g. error feedback).
+      `name` identifies the parameter.
     """
 
-    def __init__(self, compress_ratio=0.01):
-        """Initialize the compressor.
-
-        Args:
-            compress_ratio: Target compression ratio (fraction of elements
-                to keep for sparsification, or quantization level).
-                0.01 = 100x compression, 0.1 = 10x compression.
-        """
+    def __init__(self, compress_ratio, param_numels, budget_bits):
         self.compress_ratio = compress_ratio
+        total = sum(param_numels.values())
+        self.k = {}
+        for name, numel in param_numels.items():
+            share = budget_bits * numel // total
+            k = 0
+            while (k < numel and
+                   32 * (k + 1) + elias_gamma_bound(k + 1, numel) <= share):
+                k += 1
+            self.k[name] = k
 
     def compress(self, tensor, name):
-        """Compress a gradient tensor.
+        flat = tensor.flatten()
+        _, indices = torch.topk(flat.abs(), self.k[name], sorted=False)
+        return {"values": flat[indices], "bits": 32, "indices": indices}
 
-        Args:
-            tensor: Gradient tensor to compress (flattened or original shape).
-            name: Parameter name (useful for maintaining per-parameter state).
 
-        Returns:
-            compressed_tensors: list of tensors that would be communicated.
-            ctx: local context needed for decompression (not communicated).
-        """
-        return [tensor.clone()], tensor.shape
+# ============================================================================
+# FIXED SECTION — Transmission Format, Bit Accounting and Decoding
+# ============================================================================
 
-    def decompress(self, compressed_tensors, ctx):
-        """Decompress gradients back to original shape.
+class CompressionContractError(RuntimeError):
+    """A packet is malformed, or a step transmits more than its budget."""
 
-        Args:
-            compressed_tensors: list of tensors from compress().
-            ctx: local context from compress().
 
-        Returns:
-            Decompressed gradient tensor matching original shape.
-        """
-        return compressed_tensors[0].view(ctx)
+def step_budget_bits(compress_ratio, param_numels):
+    """Bits one step may transmit: compress_ratio x the dense float32 payload."""
+    return int(compress_ratio * 32 * sum(param_numels.values()))
+
+
+def elias_gamma_bound(k, numel):
+    """Most Elias-gamma bits any k distinct positions in [0, numel) can cost
+    (equal gaps are the worst case)."""
+    if k <= 0:
+        return 0
+    return k + int(math.floor(2 * k * math.log2(numel / k) + 1e-9))
+
+
+def _to_device(values, dtype, device):
+    """A host list as a device tensor without waiting on the device queue."""
+    t = torch.tensor(values, dtype=dtype)
+    if device.type == "cuda":
+        return t.pin_memory().to(device, non_blocking=True)
+    return t.to(device)
+
+
+def _parts(packet, shape, device):
+    """Check a packet's structure and copy its tensors off the compressor.
+    Returns a list of ("dense", v, b) / ("sparse", v, b, idx) /
+    ("lowrank", P, Q) with float32 values and int64 indices."""
+    numel = shape.numel()
+    if isinstance(packet, dict):
+        packet = [packet]
+    if not (isinstance(packet, (list, tuple)) and packet
+            and all(isinstance(p, dict) for p in packet)):
+        raise CompressionContractError(
+            "compress must return a packet dict or a non-empty list of them")
+    out = []
+    for p in packet:
+        if "factors" in p:
+            if set(p) != {"factors"} or len(p["factors"]) != 2:
+                raise CompressionContractError(
+                    "a low-rank packet is {'factors': (P, Q)}")
+            P, Q = p["factors"]
+            rows = shape[0] if len(shape) >= 1 else 1
+            cols = numel // rows
+            if not (torch.is_tensor(P) and torch.is_tensor(Q)
+                    and P.dim() == 2 and Q.dim() == 2
+                    and P.shape[0] == rows and Q.shape[0] == cols
+                    and P.shape[1] == Q.shape[1] and P.shape[1] >= 1):
+                raise CompressionContractError(
+                    f"factors must be P ({rows} x r) and Q ({cols} x r)")
+            out.append(("lowrank",
+                        P.detach().to(device=device, dtype=torch.float32) + 0.0,
+                        Q.detach().to(device=device, dtype=torch.float32) + 0.0))
+            continue
+        if not (set(p) <= {"values", "bits", "indices"}
+                and "values" in p and "bits" in p):
+            raise CompressionContractError(
+                "a packet is {'values', 'bits'[, 'indices']} or {'factors'}")
+        b = p["bits"]
+        if isinstance(b, bool) or not isinstance(b, int) or not 1 <= b <= 32:
+            raise CompressionContractError("'bits' must be an int in [1, 32]")
+        v = p["values"]
+        if not torch.is_tensor(v) or v.is_complex() or v.dtype == torch.bool:
+            raise CompressionContractError("'values' must be a real tensor")
+        v = v.detach().reshape(-1).to(device=device, dtype=torch.float32) + 0.0
+        idx = p.get("indices")
+        if idx is None:
+            if v.numel() != numel:
+                raise CompressionContractError(
+                    f"a dense packet needs {numel} values, got {v.numel()}")
+            out.append(("dense", v, b))
+            continue
+        if (not torch.is_tensor(idx) or idx.is_floating_point()
+                or idx.is_complex() or idx.dtype == torch.bool):
+            raise CompressionContractError("'indices' must be an integer tensor")
+        idx = idx.detach().reshape(-1).to(device=device,
+                                          dtype=torch.int64).clone()
+        if idx.numel() != v.numel():
+            raise CompressionContractError(
+                "'indices' and 'values' differ in length")
+        out.append(("sparse", v, b, idx))
+    return out
+
+
+def _account(tensors, device):
+    """Charge and decode the packets of one step, all on the device.
+
+    `tensors` is a list of (numel, parts), one per gradient tensor. Cost:
+    len(values) * bits, plus 32 bits per distinct value when bits < 32
+    (the codebook, at most 2**bits entries), plus the Elias-gamma code of
+    each sparse packet's sorted position gaps, plus 32 bits per low-rank
+    factor entry. Returns (bits, ok, flat): ok = [finite, indices valid,
+    codebook valid], flat = the decoded gradients, concatenated."""
+    t_true = torch.ones((), dtype=torch.bool, device=device)
+    total = sum(numel for numel, _ in tensors)
+    flat = torch.zeros(total, dtype=torch.float32, device=device)
+    static = 0
+    finite, cb_vals, cb_caps = [], [], []
+    sp_idx, sp_val, sp_meta = [], [], []  # meta: len, numel, off, part off
+    off = part_off = 0
+    for numel, parts in tensors:
+        for part in parts:
+            if part[0] == "lowrank":
+                P, Q = part[1], part[2]
+                static += 32 * (P.numel() + Q.numel())
+                finite += [P.reshape(-1), Q.reshape(-1)]
+                flat[off:off + numel].add_((P @ Q.t()).reshape(-1))
+                continue
+            v, b = part[1], part[2]
+            static += v.numel() * b
+            finite.append(v)
+            if b < 32:
+                cb_vals.append(v)
+                cb_caps.append(2 ** b)
+            if part[0] == "dense":
+                flat[off:off + numel].add_(v)
+            else:
+                sp_idx.append(part[3])
+                sp_val.append(v)
+                sp_meta.append((v.numel(), numel, off, part_off))
+                part_off += numel
+        off += numel
+    bits = torch.full((), float(static), dtype=torch.float64, device=device)
+    fin_ok = torch.isfinite(torch.cat(finite)).all() if finite else t_true
+    cb_ok, idx_ok = t_true, t_true
+    if cb_vals:
+        lens = [v.numel() for v in cb_vals]
+        v = torch.cat(cb_vals)
+        meta = _to_device([lens, cb_caps], torch.int64, device)
+        seg = torch.repeat_interleave(
+            torch.arange(len(lens), device=device), meta[0],
+            output_size=sum(lens))
+        order = torch.sort(v, stable=True).indices
+        order = order[torch.sort(seg[order], stable=True).indices]
+        vs, ss = v[order], seg[order]
+        start = torch.ones_like(vs, dtype=torch.bool)
+        start[1:] = (vs[1:] != vs[:-1]) | (ss[1:] != ss[:-1])
+        levels = torch.zeros(len(lens), dtype=torch.int64, device=device)
+        levels.index_add_(0, ss, start.long())
+        cb_ok = (levels <= meta[1]).all()
+        bits = bits + 32 * levels.sum()
+    if sp_idx:
+        lens = [m[0] for m in sp_meta]
+        meta = _to_device([list(col) for col in zip(*sp_meta)],
+                          torch.int64, device)
+        seg = torch.repeat_interleave(
+            torch.arange(len(lens), device=device), meta[0],
+            output_size=sum(lens))
+        idx = torch.cat(sp_idx)
+        numels = meta[1][seg]
+        in_range = ((idx >= 0) & (idx < numels)).all()
+        # Invalid indices fail the check; clamp so that, until the run
+        # stops, the scatter stays inside the packet's own tensor.
+        safe = torch.minimum(idx.clamp(min=0), numels - 1)
+        flat.index_add_(0, safe + meta[2][seg], torch.cat(sp_val))
+        order = torch.sort(safe + meta[3][seg]).indices
+        local, ss = idx[order], seg[order]
+        first = torch.ones_like(local, dtype=torch.bool)
+        first[1:] = ss[1:] != ss[:-1]
+        gap = torch.where(first, local + 1, local - torch.roll(local, 1))
+        idx_ok = in_range & (gap > 0).all()
+        bits = bits + (2 * torch.floor(torch.log2(
+            gap.clamp(min=1).double())) + 1).sum()
+    return bits, torch.stack([fin_ok, idx_ok, cb_ok]), flat
+
+
+def _check(ok):
+    if not ok[0]:
+        raise CompressionContractError("a packet carries non-finite values")
+    if not ok[1]:
+        raise CompressionContractError(
+            "packet indices must be distinct and inside the tensor")
+    if not ok[2]:
+        raise CompressionContractError(
+            "a packet has more distinct values than 2**bits")
+
+
+def packet_cost(packet, shape):
+    """Bits `packet` (a packet or a list of them) costs for a tensor of
+    `shape`, exactly as the per-step budget check charges it."""
+    shape = torch.Size(shape)
+    first = packet if isinstance(packet, dict) else (packet or [{}])[0]
+    t = first.get("values") if isinstance(first, dict) else None
+    if t is None and isinstance(first, dict) and first.get("factors"):
+        t = first["factors"][0]
+    device = t.device if torch.is_tensor(t) else torch.device("cpu")
+    bits, ok, _ = _account([(shape.numel(), _parts(packet, shape, device))],
+                           device)
+    _check(ok.tolist())
+    return int(bits.item())
+
+
+def apply_gradient_compression(model, compressor):
+    """Encode every gradient with the compressor and replace it with the
+    decoding of its packet: decoding is fixed, so the optimizer sees only
+    what was transmitted. Returns the step's receipt (bits, then the three
+    validity checks), filled asynchronously; `settle_step` reads it after
+    the training loop's next host sync and stops the run on a violation."""
+    staged = []
+    for name, param in model.named_parameters():
+        if param.grad is None:
+            continue
+        packet = compressor.compress(param.grad.detach(), name)
+        staged.append((param, _parts(packet, param.shape, param.device)))
+    if not staged:
+        return torch.tensor([0.0, 1.0, 1.0, 1.0], dtype=torch.float64), None
+    device = staged[0][0].device
+    bits, ok, flat = _account([(p.numel(), parts) for p, parts in staged],
+                              device)
+    receipt, done = torch.cat([bits.reshape(1), ok.double()]), None
+    if device.type == "cuda":
+        host = torch.empty(4, dtype=torch.float64, pin_memory=True)
+        receipt = host.copy_(receipt, non_blocking=True)
+        done = torch.cuda.Event()
+        done.record()
+    off = 0
+    for param, _ in staged:
+        n = param.numel()
+        param.grad = flat[off:off + n].view(param.shape).to(param.dtype)
+        off += n
+    return receipt, done
+
+
+def settle_step(receipt, budget_bits):
+    """Check a step's receipt against the contract and the budget; returns
+    the bits the step transmitted. Cheap after a host sync (loss.item())."""
+    receipt, done = receipt
+    if done is not None:
+        done.synchronize()
+    result = receipt.tolist()
+    _check([bool(x) for x in result[1:]])
+    if result[0] > budget_bits:
+        raise CompressionContractError(
+            f"a step transmitted {result[0]:.0f} bits, over the budget of "
+            f"{budget_bits} bits (compress_ratio x 32 bits x parameter entries)")
+    return result[0]
 
 
 # ============================================================================
@@ -246,22 +481,6 @@ def cosine_lr(optimizer, epoch, total_epochs, warmup_epochs, base_lr, min_lr=0.0
     for param_group in optimizer.param_groups:
         param_group['lr'] = lr
     return lr
-
-
-def apply_gradient_compression(model, compressor):
-    """Apply gradient compression to all model parameters.
-
-    Simulates the compress -> communicate -> decompress pipeline of
-    distributed training. In a real system, only compressed_tensors
-    would be sent over the network.
-    """
-    for name, param in model.named_parameters():
-        if param.grad is None:
-            continue
-        grad = param.grad.data
-        compressed, ctx = compressor.compress(grad, name)
-        decompressed = compressor.decompress(compressed, ctx)
-        param.grad.data = decompressed
 
 
 def evaluate(model, test_loader, device):
@@ -298,7 +517,16 @@ def train(args):
     optimizer = optim.SGD(model.parameters(), lr=args.lr,
                           momentum=0.9, weight_decay=args.weight_decay)
 
-    compressor = Compressor(compress_ratio=args.compress_ratio)
+    param_numels = {name: p.numel() for name, p in model.named_parameters()}
+    budget_bits = step_budget_bits(args.compress_ratio, param_numels)
+    dense_bits = 32 * n_params
+    print(f"Communication budget: {budget_bits} bits per step "
+          f"({dense_bits / budget_bits:.1f}x below the dense float32 "
+          f"gradient of {dense_bits} bits)", flush=True)
+    compressor = Compressor(args.compress_ratio, dict(param_numels),
+                            budget_bits)
+    total_bits = 0.0
+    total_steps = 0
 
     best_acc = 0.0
     for epoch in range(args.epochs):
@@ -308,6 +536,7 @@ def train(args):
         running_loss = 0.0
         correct = 0
         total = 0
+        epoch_bits = 0.0
 
         for batch_idx, (images, labels) in enumerate(train_loader):
             images, labels = images.to(device), labels.to(device)
@@ -318,17 +547,22 @@ def train(args):
             loss.backward()
 
             # Apply gradient compression before optimizer step
-            apply_gradient_compression(model, compressor)
+            receipt = apply_gradient_compression(model, compressor)
 
             optimizer.step()
 
             running_loss += loss.item()
+            step_bits = settle_step(receipt, budget_bits)
+            total_bits += step_bits
+            total_steps += 1
+            epoch_bits += step_bits
             _, predicted = outputs.max(1)
             total += labels.size(0)
             correct += predicted.eq(labels).sum().item()
 
         train_acc = 100.0 * correct / total
         train_loss = running_loss / len(train_loader)
+        comm_x = dense_bits * len(train_loader) / max(epoch_bits, 1.0)
 
         if (epoch + 1) % 10 == 0 or epoch == 0 or epoch == args.epochs - 1:
             test_acc, test_loss = evaluate(model, test_loader, device)
@@ -336,19 +570,22 @@ def train(args):
                 best_acc = test_acc
             print(f"TRAIN_METRICS epoch={epoch+1} lr={lr:.6f} "
                   f"train_loss={train_loss:.4f} train_acc={train_acc:.2f} "
+                  f"comm_x={comm_x:.1f} "
                   f"test_acc={test_acc:.2f} test_loss={test_loss:.4f}",
                   flush=True)
         else:
             print(f"TRAIN_METRICS epoch={epoch+1} lr={lr:.6f} "
-                  f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}",
-                  flush=True)
+                  f"train_loss={train_loss:.4f} train_acc={train_acc:.2f} "
+                  f"comm_x={comm_x:.1f}", flush=True)
 
     # Final evaluation
     test_acc, test_loss = evaluate(model, test_loader, device)
     if test_acc > best_acc:
         best_acc = test_acc
+    compression = dense_bits * total_steps / max(total_bits, 1.0)
     print(f"TEST_METRICS test_acc={test_acc:.2f} best_acc={best_acc:.2f} "
-          f"test_loss={test_loss:.4f}", flush=True)
+          f"test_loss={test_loss:.4f} compression={compression:.2f}",
+          flush=True)
 
 
 def main():

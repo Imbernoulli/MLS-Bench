@@ -229,6 +229,76 @@ def run_evolution(
 # ================================================================
 
 
+def _fresh_math():
+    """A private instance of the math module, immune to monkeypatching of `math`."""
+    import importlib.util
+    spec = importlib.util.find_spec("math")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_M = _fresh_math()
+
+
+# Reference objectives for scoring: the same formulas as the benchmark
+# functions at the top of this file, bound here (after the editable section)
+# so that nothing the editable code does to `rastrigin`, `BENCHMARKS`,
+# `math`, or the returned individual's `.fitness` can change the score.
+def _ref_rastrigin(x):
+    A = 10.0
+    n = len(x)
+    return A * n + sum(v**2 - A * _M.cos(2 * _M.pi * v) for v in x)
+
+
+def _ref_rosenbrock(x):
+    return sum(
+        100.0 * (x[i + 1] - x[i]**2)**2 + (1 - x[i])**2
+        for i in range(len(x) - 1)
+    )
+
+
+def _ref_ackley(x):
+    n = len(x)
+    sum_sq = sum(v**2 for v in x) / n
+    sum_cos = sum(_M.cos(2 * _M.pi * v) for v in x) / n
+    return -20.0 * _M.exp(-0.2 * _M.sqrt(sum_sq)) - _M.exp(sum_cos) + 20.0 + _M.e
+
+
+_REFERENCE = {
+    "rastrigin": (_ref_rastrigin, (-5.12, 5.12)),
+    "rosenbrock": (_ref_rosenbrock, (-5.0, 10.0)),
+    "ackley": (_ref_ackley, (-32.768, 32.768)),
+}
+
+
+def _score_returned(best_ind, name: str, dim: int) -> float:
+    """Re-evaluate the returned individual with the reference objective.
+
+    The reported best_fitness is the true objective value at the returned
+    point, never the individual's self-reported `.fitness`. A point with the
+    wrong dimension, a non-finite coordinate, or a coordinate outside the
+    domain is rejected (no TEST_METRICS line is printed).
+    """
+    func, (lo, hi) = _REFERENCE[name]
+    try:
+        x = [float(v) for v in (list.__iter__(best_ind) if isinstance(best_ind, list) else best_ind)]
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"ERROR: returned best_individual is not a vector of floats: {exc}")
+    if len(x) != dim:
+        raise SystemExit(f"ERROR: returned best_individual has {len(x)} genes, expected {dim}")
+    bad = [i for i, v in enumerate(x) if not (_M.isfinite(v) and lo <= v <= hi)]
+    if bad:
+        raise SystemExit(
+            f"ERROR: returned best_individual violates the domain [{lo}, {hi}] "
+            f"at {len(bad)} coordinate(s), e.g. index {bad[0]} = {x[bad[0]]!r}"
+        )
+    val = float(func(x))
+    if not _M.isfinite(val):
+        raise SystemExit(f"ERROR: objective at returned best_individual is not finite: {val!r}")
+    return val
+
+
 def compute_convergence_gen(fitness_history: list, threshold_ratio: float = 0.01) -> int:
     """Compute the generation at which fitness first reaches within threshold of final best.
 
@@ -248,7 +318,7 @@ def compute_convergence_gen(fitness_history: list, threshold_ratio: float = 0.01
 def main():
     parser = argparse.ArgumentParser(description="Evolutionary Optimization Benchmark")
     parser.add_argument("--function", type=str, required=True,
-                        choices=list(BENCHMARKS.keys()),
+                        choices=list(_REFERENCE.keys()),
                         help="Benchmark function to optimize")
     parser.add_argument("--dim", type=int, default=30,
                         help="Dimensionality of the search space (default: 30)")
@@ -264,9 +334,14 @@ def main():
                         help="Random seed")
     args = parser.parse_args()
 
-    bench = BENCHMARKS[args.function]
-    evaluate_func = bench["func"]
-    lo, hi = bench["bounds"]
+    true_func, (lo, hi) = _REFERENCE[args.function]
+    n_evals = [0]
+
+    def evaluate_func(individual):
+        n_evals[0] += 1
+        return (true_func(individual),)
+
+    evaluate_func.__name__ = args.function
 
     print(f"=== {args.function.upper()} (dim={args.dim}) ===", flush=True)
     print(f"Bounds: [{lo}, {hi}], Pop: {args.pop_size}, Gens: {args.n_generations}", flush=True)
@@ -285,12 +360,21 @@ def main():
     )
     elapsed = time.time() - t0
 
-    best_fitness = best_ind.fitness.values[0]
+    best_fitness = _score_returned(best_ind, args.function, args.dim)
+    try:
+        claimed = float(best_ind.fitness.values[0])
+    except Exception:  # noqa: BLE001
+        claimed = float("nan")
+    if not (abs(claimed - best_fitness) <= 1e-9 * max(1.0, abs(best_fitness))):
+        print(f"WARNING: self-reported best fitness {claimed!r} differs from the "
+              f"re-evaluated value {best_fitness!r}; the re-evaluated value is reported.",
+              flush=True)
     convergence_gen = compute_convergence_gen(fitness_history)
 
     print(f"\n=== Results ===", flush=True)
     print(f"Best fitness: {best_fitness:.6e}", flush=True)
     print(f"Convergence generation: {convergence_gen}/{args.n_generations}", flush=True)
+    print(f"Function evaluations: {n_evals[0]}", flush=True)
     print(f"Wall time: {elapsed:.1f}s", flush=True)
     print(
         f"TEST_METRICS best_fitness={best_fitness:.6e} "

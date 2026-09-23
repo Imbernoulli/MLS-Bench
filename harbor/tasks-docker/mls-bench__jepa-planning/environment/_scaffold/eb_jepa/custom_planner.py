@@ -520,10 +520,10 @@ def run_planning_eval(jepa, xy_prober, loader, device, num_episodes=20):
 
         successes.append(success)
         distances.append(state_dist)
-        if first_success_step is not None:
-            steps_to_success.append(first_success_step)
+        # An unsolved episode counts as the full step budget (not averaged over successes only).
+        steps_to_success.append(first_success_step if success else total_steps)
         print(
-            f"PLAN_METRICS: episode={ep}, success={success}, dist={state_dist:.4f}",
+            f"PLAN_METRICS: episode={ep}, success={success}, dist={state_dist:.4f}, steps={steps_to_success[-1]}",
             flush=True,
         )
 

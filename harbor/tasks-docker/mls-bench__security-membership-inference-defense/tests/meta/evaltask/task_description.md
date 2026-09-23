@@ -9,7 +9,7 @@ Membership inference attacks exploit the gap between train and non-train example
 ## Task
 Implement a better privacy-preserving training objective in `bench/membership/custom_membership_defense.py`. The fixed harness will train a model on a 50/50 train/non-train split of the full dataset, then run a confidence-based membership inference attack on train versus held-out examples.
 
-Your method should improve the privacy-utility tradeoff: lower membership-attack AUC while retaining high test accuracy.
+Your method should improve the privacy-utility tradeoff: bring the membership-attack AUC close to 0.5 (chance) while retaining high test accuracy.
 
 ## Editable Interface
 You must implement:
@@ -34,13 +34,16 @@ Benchmarks:
 - `vgg16bn-cifar100`: VGG-16-BN on CIFAR-100.
 - `mobilenetv2-fmnist`: MobileNetV2 on FashionMNIST.
 
+The attack ranks examples by max softmax confidence (computed exactly, as the log-odds of the top-class probability from the logits); `mia_auc` is its member-vs-held-out ROC AUC, with ties counted as 1/2.
+
 Reported metrics:
 - `test_acc`
 - `mia_auc`
-- `privacy_gap`
+- `mia_adv = |mia_auc - 0.5|` (an AUC below 0.5 leaks as much as one above it)
+- `privacy_gap` (member minus held-out mean confidence; diagnostic only, not scored)
 - `privacy_score`
 
-Primary metric: `privacy_score = test_acc - max(mia_auc - 0.5, 0)` (higher is better).
+Primary metric: `privacy_score = test_acc - |mia_auc - 0.5|` (higher is better). Each benchmark is scored on `test_acc`, `mia_adv` and `privacy_score`, and a run whose `test_acc` falls below about 0.8x that of standard cross-entropy training is penalized.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:

@@ -14,7 +14,7 @@ A diffusion policy's wall-clock inference cost is dominated by the number of rev
 The setup builds on **CleanDiffuser** (Dong et al., NeurIPS 2024, arXiv:2406.09509) and the underlying actor is a DQL-style diffusion policy (Wang et al., ICLR 2023, arXiv:2208.06193) trained on **D4RL** (Fu et al., 2020, arXiv:2004.07219).
 
 ## What You Can Modify
-- The **sampling algorithm itself** — the `EDITABLE REGION: Sampling Algorithm` block in `CleanDiffuser/pipelines/custom_sampling_method.py`, which turns a prior and an observation into actions. The default delegates to CleanDiffuser's built-in solvers; you may instead write the reverse process yourself, calling the denoiser (`actor.model_ema["diffusion"]`) directly with whatever discretization, step schedule, order or correction you want.
+- The **sampling algorithm itself** — the body of `sample_actions(policy, prior, obs, args)` (the `EDITABLE REGION: Sampling Algorithm` block) in `CleanDiffuser/pipelines/custom_sampling_method.py`, which turns a prior and an observation into actions. The default delegates to CleanDiffuser's built-in solvers (`policy.sample`); you may instead write the reverse process yourself, calling the denoiser (`policy.denoiser(x_t, t, cond)`, with `cond = policy.condition(obs)` and the schedule in `policy.alpha` / `policy.sigma`) directly with whatever discretization, step schedule, order or correction you want.
 - `solver` and `sampling_steps` in `CleanDiffuser/configs/custom/mujoco/mujoco.yaml`, which drive the default implementation.
 
 ## What Is Fixed
@@ -23,7 +23,7 @@ The setup builds on **CleanDiffuser** (Dong et al., NeurIPS 2024, arXiv:2406.095
 - Candidate selection, D4RL environment names, seeds, and vectorized evaluation
 
 ## How NFE Is Counted
-NFE is **measured, not declared**: a forward hook on the denoiser counts real network evaluations during evaluation and reports the average per action sample. Writing your own reverse process is therefore in scope — a sampler that spends 40 evaluations is scored as 40 no matter what any config field says, and one that reaches the same return in 10 is scored as 10.
+NFE is **measured, not declared**: fixed code outside `sample_actions` wraps the denoiser in a counter and hands the sampler only that counted `policy` facade (never the actor, the critic or the raw network), and reports the average number of network evaluations per action sample. `policy.denoiser`, directly or through `policy.sample`, is the only diffusion network the sampler may evaluate, and a sampler that makes no evaluation is rejected. Writing your own reverse process is therefore in scope — a sampler that spends 40 evaluations is scored as 40 no matter what any config field says, and one that reaches the same return in 10 is scored as 10.
 
 ## Evaluation
 Evaluated on three D4RL MuJoCo environments:

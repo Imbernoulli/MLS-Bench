@@ -10,6 +10,7 @@ _CONTENT = '''\
 TOY_HPARAMS = {
     "gams": (10.0,),
     "alpha0": 0.1,
+    "penalty": "g_pbgd",
 }
 
 

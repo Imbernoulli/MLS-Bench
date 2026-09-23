@@ -30,10 +30,9 @@ class DPMechanism:
     Decays noise multiplier and clipping threshold over training epochs
     to allocate more privacy budget to later (more useful) training steps.
 
-    Privacy accounting: tracks cumulative RDP per-step using the actual
-    sigma at each step, then returns an equivalent uniform sigma so
-    that the external ``compute_epsilon(steps, sigma, q, delta)`` call
-    produces the correct (tight) epsilon.
+    Privacy accounting: sigma_0 is chosen so that the full schedule spends
+    the same budget as the calibrated uniform sigma; the fixed harness
+    composes the per-step sigma it actually applied.
     \"\"\"
 
     def __init__(self, max_grad_norm, noise_multiplier, n_params,
@@ -82,7 +81,7 @@ class DPMechanism:
         self._current_sigma = self.sigma_0
         self._current_clip = self.clip_0
 
-    def clip_and_noise(self, per_sample_grads, step, epoch):
+    def clip(self, per_sample_grads, step, epoch):
         batch_size = per_sample_grads[0].shape[0]
 
         # Update schedule based on epoch
@@ -97,50 +96,13 @@ class DPMechanism:
         # Clip per-sample gradients using current (decayed) threshold
         clip_factor = (self._current_clip / norms.clamp(min=1e-8)).clamp(max=1.0)
 
-        noised_grads = []
-        for g in per_sample_grads:
-            shape = [batch_size] + [1] * (g.dim() - 1)
-            clipped = g * clip_factor.reshape(shape)
+        # The harness adds noise calibrated to the current clip norm and sigma
+        return clip_factor, self._current_clip
 
-            # Average over batch
-            avg = clipped.mean(dim=0)
-
-            # Add noise calibrated to current clip norm and sigma
-            noise = torch.randn_like(avg) * (
-                self._current_sigma * self._current_clip / batch_size
-            )
-            noised_grads.append(avg + noise)
-
-        return noised_grads
-
-    def get_effective_sigma(self, step, epoch):
-        \"\"\"Return equivalent uniform sigma for accurate RDP accounting.
-
-        Computes the harmonic-mean-equivalent sigma over all steps up to
-        the current point, so that the external call
-        ``compute_epsilon(step, sigma_eff, q, delta)`` which assumes a
-        uniform sigma gives the same epsilon as step-by-step RDP
-        accounting with the actual per-step sigma values.
-
-        sigma_eff = sqrt(steps / sum_{t=1}^{steps} 1/sigma_t^2)
-        \"\"\"
-        if step <= 0:
-            return self.sigma_0
-        # Accumulate 1/sigma_t^2 across completed steps
-        inv_sq_sum = 0.0
-        steps_counted = 0
-        for e in range(1, self.epochs + 1):
-            stage = (e - 1) // self.decay_interval
-            sigma_e = self.sigma_0 * (self.noise_decay_factor ** stage)
-            inv_sq_e = 1.0 / (sigma_e * sigma_e)
-            epoch_steps = min(self.steps_per_epoch, step - steps_counted)
-            if epoch_steps <= 0:
-                break
-            inv_sq_sum += epoch_steps * inv_sq_e
-            steps_counted += epoch_steps
-        if inv_sq_sum == 0:
-            return self.sigma_0
-        return (steps_counted / inv_sq_sum) ** 0.5
+    def get_noise_multiplier(self, step, epoch):
+        \"\"\"Current (decayed) noise multiplier; the harness accounts each
+        step with the sigma it actually applied.\"\"\"
+        return self._current_sigma
 """
 
 OPS = [

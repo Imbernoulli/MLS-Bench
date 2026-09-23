@@ -32,42 +32,42 @@ class LayerNorm(nn.Module):
 
 # ── Self-Attention ─────────────────────────────────────────────────────────
 class CausalSelfAttention(nn.Module):
+    """Naive causal linear attention (Katharopoulos et al., 2020), phi(x) = elu(x) + 1.
+    Chunkwise form, O(T): exact within each chunk, running K^T V state across chunks."""
     def __init__(self, config):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
-        self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
         self.n_head = config.n_head
         self.n_embd = config.n_embd
-        self.dropout = config.dropout
-        self.flash = hasattr(torch.nn.functional, 'scaled_dot_product_attention')
-        if not self.flash:
-            self.register_buffer("bias", torch.tril(torch.ones(config.block_size, config.block_size))
-                                        .view(1, 1, config.block_size, config.block_size))
+        self.chunk_size = 64
         # Set to False if using custom position encoding (e.g. RoPE)
         self.use_pos_emb = True
 
     def forward(self, x):
         B, T, C = x.size()
+        H, D, L = self.n_head, C // self.n_head, self.chunk_size
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
-        k = k.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        q = q.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        v = v.view(B, T, self.n_head, C // self.n_head).transpose(1, 2)
-        if self.flash:
-            y = torch.nn.functional.scaled_dot_product_attention(
-                q, k, v, attn_mask=None,
-                dropout_p=self.dropout if self.training else 0, is_causal=True)
-        else:
-            att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(k.size(-1)))
-            att = att.masked_fill(self.bias[:, :, :T, :T] == 0, float('-inf'))
-            att = F.softmax(att, dim=-1)
-            att = self.attn_dropout(att)
-            y = att @ v
+        q, k, v = (t.view(B, T, H, D).transpose(1, 2).float() for t in (q, k, v))
+        q, k = F.elu(q) + 1, F.elu(k) + 1  # positive feature map
+        pad = (L - T % L) % L  # zero-pad to whole chunks; padded keys add nothing
+        q, k, v = (F.pad(t, (0, 0, 0, pad)).view(B, H, -1, L, D) for t in (q, k, v))
+        with torch.autocast(device_type=x.device.type, enabled=False):
+            kv = k.transpose(-2, -1) @ v                      # per-chunk K^T V
+            kv = torch.cumsum(kv, dim=2) - kv                 # state before each chunk
+            ks = k.sum(dim=3, keepdim=True)
+            ks = torch.cumsum(ks, dim=2) - ks                 # key sum before each chunk
+            mask = torch.ones(L, L, dtype=torch.bool, device=x.device).tril()
+            att = (q @ k.transpose(-2, -1)).masked_fill(~mask, 0.0)  # intra-chunk
+            num = att @ v + q @ kv
+            den = att.sum(dim=-1, keepdim=True) + q @ ks.transpose(-2, -1)
+            y = num / (den + 1e-6)
+        y = y.reshape(B, H, -1, D)[:, :, :T].to(x.dtype)
         y = y.transpose(1, 2).contiguous().view(B, T, C)
-        y = self.resid_dropout(self.c_proj(y))
-        return y
+        return self.resid_dropout(self.c_proj(y))
+
 
 # ── Feed-Forward Network ──────────────────────────────────────────────────
 class MLP(nn.Module):

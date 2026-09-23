@@ -43,7 +43,7 @@ class DemaskDecoder:
         # Returns (x_output [1, prompt_len + gen_length], used_steps)
 ```
 
-`get_num_transfer_tokens(mask, steps)` is available outside the editable region — it returns the uniform schedule (`mask.sum() // steps` per step). Always return shape `[1, prompt_len + gen_length]`. `used_steps` counts model forward passes (lower = more efficient).
+`get_num_transfer_tokens(mask, steps)` is available outside the editable region — it returns the uniform schedule (`mask.sum() // steps` per step). Always return shape `[1, prompt_len + gen_length]`. `used_steps` counts model forward passes (lower = more efficient). The harness measures `avg_steps` itself: `model` is a handle that counts every forward call (each sequence in a batched call counts as one pass), and the counted passes, not the returned `used_steps`, are what gets scored.
 
 ## Reference baseline strategies
 - `confidence_greedy` — LLaDA's `low_confidence` remasking: top-k by max prob.
@@ -236,338 +236,406 @@ stay unchanged.
    157: 
    158: 
    159: # ---------------------------------------------------------------------------
-   160: # Data loading
+   160: # Forward-pass accounting (fixed)
    161: # ---------------------------------------------------------------------------
    162: 
-   163: def load_math(path: str) -> list[dict]:
-   164:     with open(path) as f:
-   165:         return [json.loads(line) for line in f if line.strip()]
-   166: 
-   167: 
-   168: def load_humaneval(path: str) -> list[dict]:
-   169:     opener = gzip.open if path.endswith(".gz") else open
-   170:     with opener(path, "rt") as f:
-   171:         return [json.loads(line) for line in f if line.strip()]
-   172: 
-   173: 
-   174: # ---------------------------------------------------------------------------
-   175: # MATH evaluation (uses klass_utils extract_math_answer + compare_answers)
-   176: # ---------------------------------------------------------------------------
-   177: 
-   178: def _import_klass_utils():
-   179:     """Import klass_utils from task data dir (mounted at /workspace/_task)."""
-   180:     task_dir = os.environ.get("TASK_DIR", "/workspace/_task")
-   181:     sys.path.insert(0, os.path.join(task_dir, "data"))
-   182:     import klass_utils as ku
-   183:     return ku
-   184: 
-   185: 
-   186: def eval_math(model, tokenizer, decoder: DemaskDecoder, problems: list[dict],
-   187:               gen_length: int, steps: int, block_length: int):
-   188:     ku = _import_klass_utils()
-   189:     sys_msg = ("Your task is to answer the question below. Give step by step "
-   190:                "reasoning before you answer, and when you're ready to answer, "
-   191:                "please use the format 'The final answer is'.")
-   192:     correct = 0
-   193:     total_steps = 0
-   194:     for i, ex in enumerate(problems):
-   195:         msgs = [{"role": "system", "content": sys_msg},
-   196:                 {"role": "user", "content": ex["problem"]}]
-   197:         prompt = tokenizer.apply_chat_template(msgs, add_generation_prompt=True,
-   198:                                                tokenize=False)
-   199:         input_ids = torch.tensor(tokenizer(prompt)["input_ids"],
-   200:                                  device=model.device).unsqueeze(0)
-   201:         gt = ku.extract_math_answer(ex["problem"], ex["solution"])
-   202:         x_out, used = decoder.decode(model, input_ids, gen_length, steps,
-   203:                                      block_length)
-   204:         gen_text = tokenizer.batch_decode(
-   205:             x_out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
-   206:         pred = ku.extract_math_answer(ex["problem"], gen_text)
-   207:         is_correct = ku.compare_answers(ex["problem"], gt, pred)
-   208:         if i < 2:
-   209:             print(f"[DEBUG] math example {i}:\n"
-   210:                   f"  problem: {ex['problem'][:150]}\n"
-   211:                   f"  gt={gt}\n"
-   212:                   f"  gen (first 400 chars): {gen_text[:400]}\n"
-   213:                   f"  pred={pred} correct={is_correct}", flush=True)
-   214:         if is_correct:
-   215:             correct += 1
-   216:         total_steps += used
-   217:         if (i + 1) % 10 == 0:
-   218:             print(f"TRAIN_METRICS: math {i+1}/{len(problems)} "
-   219:                   f"acc={correct/(i+1):.3f} "
-   220:                   f"avg_steps={total_steps/(i+1):.1f}", flush=True)
-   221:     return correct / max(len(problems), 1), total_steps / max(len(problems), 1)
+   163: def _count_denoiser_forwards(raw_model):
+   164:     """Wrap the denoiser so the harness, not the decoder, counts its forwards.
+   165: 
+   166:     Returns (handle, forward_count). The decoder only ever receives `handle`,
+   167:     which exposes what a decoding strategy needs (calling it / `.forward`,
+   168:     `.device`, `.dtype`, `.config`, and `.lm_head` when the model has one)
+   169:     and keeps the raw model in a closure. Every call adds the number of
+   170:     sequences in its batch to a counter that only `forward_count()` reads.
+   171:     avg_steps is computed from this counter, not from the value the decoder
+   172:     reports.
+   173:     """
+   174:     n = [0]
+   175: 
+   176:     def _rows(args, kwargs):
+   177:         x = args[0] if args else kwargs.get("input_ids",
+   178:                                             kwargs.get("inputs_embeds"))
+   179:         if torch.is_tensor(x) and x.dim() >= 2:
+   180:             return int(x.shape[0])
+   181:         return 1
+   182: 
+   183:     def _forward(*args, **kwargs):
+   184:         n[0] += _rows(args, kwargs)
+   185:         return raw_model(*args, **kwargs)
+   186: 
+   187:     class DenoiserHandle:
+   188:         __slots__ = ()
+   189:         device = property(lambda self: raw_model.device)
+   190:         dtype = property(lambda self: raw_model.dtype)
+   191:         config = property(lambda self: raw_model.config)
+   192: 
+   193:         def __call__(self, *args, **kwargs):
+   194:             return _forward(*args, **kwargs)
+   195: 
+   196:         def forward(self, *args, **kwargs):
+   197:             return _forward(*args, **kwargs)
+   198: 
+   199:     if hasattr(raw_model, "lm_head"):
+   200:         DenoiserHandle.lm_head = property(lambda self: raw_model.lm_head)
+   201:     return DenoiserHandle(), (lambda: n[0])
+   202: 
+   203: 
+   204: def _measured_steps(forward_count, before: int, reported, n_warned: list) -> int:
+   205:     """Forward passes the decoder actually made in one decode() call."""
+   206:     used = forward_count() - before
+   207:     if reported != used and n_warned[0] < 3:
+   208:         n_warned[0] += 1
+   209:         print(f"[WARN] decode() reported used_steps={reported!r} but made "
+   210:               f"{used} denoiser forward passes; avg_steps counts the "
+   211:               f"measured passes.", flush=True)
+   212:     return used
+   213: 
+   214: 
+   215: # ---------------------------------------------------------------------------
+   216: # Data loading
+   217: # ---------------------------------------------------------------------------
+   218: 
+   219: def load_math(path: str) -> list[dict]:
+   220:     with open(path) as f:
+   221:         return [json.loads(line) for line in f if line.strip()]
    222: 
    223: 
-   224: # ---------------------------------------------------------------------------
-   225: # HumanEval evaluation (uses klass_utils evaluate_task)
-   226: # ---------------------------------------------------------------------------
-   227: 
-   228: def _run_humaneval(code: str, test: str, entry_point: str) -> bool:
-   229:     """Exec code + test + check(entry_point) in fresh namespace."""
-   230:     try:
-   231:         ns: dict = {}
-   232:         exec(code + "\n" + test + f"\ncheck({entry_point})\n", ns)
-   233:         return True
-   234:     except Exception:
-   235:         return False
-   236: 
-   237: 
-   238: def check_humaneval_code(code: str, problem: dict, timeout: float = 3.0) -> bool:
-   239:     import multiprocessing
-   240:     entry = problem["entry_point"]
-   241:     # If generated code lacks the function def, prepend problem prompt
-   242:     # (which provides function signature + docstring).
-   243:     if f"def {entry}" not in code:
-   244:         code = problem["prompt"] + code
-   245:     with multiprocessing.Pool(processes=1) as pool:
-   246:         res = pool.apply_async(_run_humaneval, (code, problem["test"], entry))
-   247:         try:
-   248:             return bool(res.get(timeout=timeout))
-   249:         except Exception:
-   250:             return False
-   251: 
-   252: 
-   253: def eval_humaneval(model, tokenizer, decoder: DemaskDecoder,
-   254:                    problems: list[dict], gen_length: int, steps: int,
-   255:                    block_length: int):
-   256:     passed = 0
-   257:     total_steps = 0
-   258:     for i, p in enumerate(problems):
-   259:         msgs = [{"role": "system", "content": "You complete only Python code."},
-   260:                 {"role": "user", "content": p["prompt"]}]
-   261:         prompt = tokenizer.apply_chat_template(msgs, add_generation_prompt=True,
-   262:                                                tokenize=False)
-   263:         input_ids = torch.tensor(tokenizer(prompt)["input_ids"],
-   264:                                  device=model.device).unsqueeze(0)
-   265:         x_out, used = decoder.decode(model, input_ids, gen_length, steps,
-   266:                                      block_length)
-   267:         gen_text = tokenizer.batch_decode(
-   268:             x_out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
-   269:         eos = tokenizer.eos_token or ""
-   270:         if eos:
-   271:             gen_text = gen_text.split(eos)[0]
-   272:         m = re.search(r"```(?:python)?\n(.*?)(?:```|$)", gen_text, re.DOTALL)
-   273:         code = m.group(1).strip() if m else gen_text.strip()
-   274:         if i < 2:
-   275:             print(f"[DEBUG] humaneval {p['entry_point']}:\n"
-   276:                   f"gen (first 300 chars): {gen_text[:300]}\n"
-   277:                   f"code (first 200 chars): {code[:200]}", flush=True)
-   278:         ok = check_humaneval_code(code, p, timeout=3)
-   279:         if ok:
-   280:             passed += 1
-   281:         total_steps += used
-   282:         if (i + 1) % 10 == 0:
-   283:             print(f"TRAIN_METRICS: humaneval {i+1}/{len(problems)} "
-   284:                   f"pass@1={passed/(i+1):.3f} "
-   285:                   f"avg_steps={total_steps/(i+1):.1f}", flush=True)
-   286:     return passed / max(len(problems), 1), total_steps / max(len(problems), 1)
-   287: 
-   288: 
-   289: # ---------------------------------------------------------------------------
-   290: # Open-ended text generation evaluation (gen_ppl, MAUVE, entropy, rep2)
-   291: # ---------------------------------------------------------------------------
-   292: 
-   293: def _truncate_at_eos(text: str, eos_tokens=("</s>", "<|endoftext|>", "<|im_end|>")):
-   294:     for eos in eos_tokens:
-   295:         idx = text.find(eos)
-   296:         if idx >= 0:
-   297:             text = text[:idx]
-   298:     return text.strip()
-   299: 
-   300: 
-   301: def compute_conditional_gen_ppl(prefix_texts, gen_texts, device):
-   302:     from transformers import AutoModelForCausalLM, AutoTokenizer
-   303:     import math as _m
-   304:     tok = AutoTokenizer.from_pretrained("openai-community/gpt2-large")
-   305:     mdl = AutoModelForCausalLM.from_pretrained(
-   306:         "openai-community/gpt2-large").to(device).eval()
-   307:     total_loss, total_tokens = 0.0, 0
-   308:     for prefix, gen in zip(prefix_texts, gen_texts):
-   309:         if not gen.strip():
-   310:             continue
-   311:         p_ids = tok.encode(prefix, add_special_tokens=False)
-   312:         g_ids = tok.encode(gen, add_special_tokens=False)
-   313:         all_ids = (p_ids + g_ids)[:1024]
-   314:         if len(p_ids) >= len(all_ids):
-   315:             continue
-   316:         ids = torch.tensor([all_ids], device=device)
-   317:         with torch.no_grad():
-   318:             logits = mdl(ids).logits[:, :-1, :]
-   319:         labels = ids[:, 1:]
-   320:         start = max(len(p_ids) - 1, 0)
-   321:         loss = F.cross_entropy(
-   322:             logits[:, start:, :].reshape(-1, logits.shape[-1]),
-   323:             labels[:, start:].reshape(-1), reduction="sum")
-   324:         total_loss += loss.item()
-   325:         total_tokens += labels[:, start:].numel()
-   326:     del mdl
-   327:     torch.cuda.empty_cache()
-   328:     return _m.exp(total_loss / total_tokens) if total_tokens else float("inf")
-   329: 
-   330: 
-   331: def compute_mauve(gen_texts, ref_texts):
-   332:     try:
-   333:         import mauve
-   334:         r = mauve.compute_mauve(p_text=ref_texts, q_text=gen_texts,
-   335:                                 device_id=0 if torch.cuda.is_available() else -1,
-   336:                                 max_text_length=512, verbose=False,
-   337:                                 featurize_model_name="openai-community/gpt2-large")
-   338:         return float(r.mauve)
-   339:     except Exception as e:
-   340:         print(f"[WARN] MAUVE failed: {e}", flush=True)
-   341:         return 0.0
-   342: 
-   343: 
-   344: def compute_entropy_rep2(texts):
-   345:     from collections import Counter
-   346:     import math as _m
-   347:     all_bigrams = []
-   348:     rep_ratios = []
-   349:     for t in texts:
-   350:         words = t.split()
-   351:         bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
-   352:         all_bigrams.extend(bigrams)
-   353:         if bigrams:
-   354:             rep_ratios.append(1.0 - len(set(bigrams)) / len(bigrams))
-   355:         else:
-   356:             rep_ratios.append(0.0)
-   357:     ent = 0.0
-   358:     if all_bigrams:
-   359:         c = Counter(all_bigrams)
-   360:         tot = sum(c.values())
-   361:         for v in c.values():
-   362:             p = v / tot
-   363:             if p > 0:
-   364:                 ent -= p * _m.log2(p)
-   365:     rep2 = sum(rep_ratios) / max(len(rep_ratios), 1)
-   366:     return ent, rep2
-   367: 
-   368: 
-   369: def eval_text(model, tokenizer, decoder: DemaskDecoder, raw_texts: list[str],
-   370:               prefix_len: int, gen_length: int, steps: int, block_length: int,
-   371:               n_samples: int, seed: int):
-   372:     """Prefix-conditioned C4 continuation. Reports gen_ppl/MAUVE/entropy/rep2."""
-   373:     import random as _r
-   374:     rng = _r.Random(seed)
-   375:     if len(raw_texts) > n_samples:
-   376:         raw_texts = rng.sample(raw_texts, n_samples)
-   377: 
-   378:     # Build prefix prompts (raw, no chat template — Dream-Instruct as a base LM)
-   379:     prefix_ids_list, prefix_texts, valid_refs = [], [], []
-   380:     for txt in raw_texts:
-   381:         ids = tokenizer.encode(txt, add_special_tokens=False)
-   382:         if len(ids) >= prefix_len + gen_length:
-   383:             pids = ids[:prefix_len]
-   384:             prefix_ids_list.append(pids)
-   385:             prefix_texts.append(tokenizer.decode(pids, skip_special_tokens=True))
-   386:             ref_ids = ids[prefix_len:prefix_len + gen_length]
-   387:             valid_refs.append(tokenizer.decode(ref_ids, skip_special_tokens=True))
-   388:     print(f"[INFO] kept {len(prefix_ids_list)}/{len(raw_texts)} texts "
-   389:           f"long enough for prefix={prefix_len}+gen={gen_length}", flush=True)
-   390: 
-   391:     gen_texts, total_used = [], 0
-   392:     for i, pids in enumerate(prefix_ids_list):
-   393:         ids = torch.tensor([pids], dtype=torch.long, device=model.device)
-   394:         x_out, used = decoder.decode(model, ids, gen_length, steps, block_length)
-   395:         gen = tokenizer.decode(x_out[0, ids.shape[1]:].tolist(),
-   396:                                skip_special_tokens=True)
-   397:         gen = _truncate_at_eos(gen)
-   398:         gen_texts.append(gen)
-   399:         total_used += used
-   400:         if (i + 1) % 10 == 0:
-   401:             print(f"TRAIN_METRICS: text {i+1}/{len(prefix_ids_list)} "
-   402:                   f"avg_steps={total_used/(i+1):.1f}", flush=True)
-   403: 
-   404:     avg_steps = total_used / max(len(prefix_ids_list), 1)
-   405:     print("[INFO] unloading gen model, computing GPT-2 ppl...", flush=True)
-   406:     del model
-   407:     torch.cuda.empty_cache()
-   408: 
-   409:     ppl = compute_conditional_gen_ppl(prefix_texts, gen_texts, "cuda")
-   410:     mauve = compute_mauve(gen_texts, valid_refs)
-   411:     entropy, rep2 = compute_entropy_rep2(gen_texts)
-   412:     return ppl, mauve, entropy, rep2, avg_steps
-   413: 
-   414: 
-   415: # ---------------------------------------------------------------------------
-   416: # Main
-   417: # ---------------------------------------------------------------------------
-   418: 
-   419: def main():
-   420:     parser = argparse.ArgumentParser()
-   421:     parser.add_argument("--task", choices=["math", "humaneval", "text"],
-   422:                         required=True)
-   423:     parser.add_argument("--model", choices=sorted(MODEL_CONFIGS), required=True)
-   424:     parser.add_argument("--steps", type=int, default=256)
-   425:     parser.add_argument("--gen-length", type=int, default=256)
-   426:     parser.add_argument("--block-length", type=int, default=64)
-   427:     parser.add_argument("--conf-threshold", type=float, default=0.9)
-   428:     parser.add_argument("--kl-threshold", type=float, default=0.01)
-   429:     parser.add_argument("--history-length", type=int, default=2)
-   430:     parser.add_argument("--temperature", type=float, default=0.0)
-   431:     parser.add_argument("--seed", type=int, default=42)
-   432:     parser.add_argument("--data-path", required=True)
-   433:     parser.add_argument("--n-samples", type=int, default=0,
-   434:                         help="0 = use all problems")
-   435:     parser.add_argument("--prefix-len", type=int, default=32,
-   436:                         help="Prefix length (text task)")
-   437:     parser.add_argument("--output-dir", default=".")
-   438:     args = parser.parse_args()
+   224: def load_humaneval(path: str) -> list[dict]:
+   225:     opener = gzip.open if path.endswith(".gz") else open
+   226:     with opener(path, "rt") as f:
+   227:         return [json.loads(line) for line in f if line.strip()]
+   228: 
+   229: 
+   230: # ---------------------------------------------------------------------------
+   231: # MATH evaluation (uses klass_utils extract_math_answer + compare_answers)
+   232: # ---------------------------------------------------------------------------
+   233: 
+   234: def _import_klass_utils():
+   235:     """Import klass_utils from task data dir (mounted at /workspace/_task)."""
+   236:     task_dir = os.environ.get("TASK_DIR", "/workspace/_task")
+   237:     sys.path.insert(0, os.path.join(task_dir, "data"))
+   238:     import klass_utils as ku
+   239:     return ku
+   240: 
+   241: 
+   242: def eval_math(model, tokenizer, decoder: DemaskDecoder, problems: list[dict],
+   243:               gen_length: int, steps: int, block_length: int, forward_count):
+   244:     ku = _import_klass_utils()
+   245:     n_warned = [0]
+   246:     sys_msg = ("Your task is to answer the question below. Give step by step "
+   247:                "reasoning before you answer, and when you're ready to answer, "
+   248:                "please use the format 'The final answer is'.")
+   249:     correct = 0
+   250:     total_steps = 0
+   251:     for i, ex in enumerate(problems):
+   252:         msgs = [{"role": "system", "content": sys_msg},
+   253:                 {"role": "user", "content": ex["problem"]}]
+   254:         prompt = tokenizer.apply_chat_template(msgs, add_generation_prompt=True,
+   255:                                                tokenize=False)
+   256:         input_ids = torch.tensor(tokenizer(prompt)["input_ids"],
+   257:                                  device=model.device).unsqueeze(0)
+   258:         gt = ku.extract_math_answer(ex["problem"], ex["solution"])
+   259:         before = forward_count()
+   260:         x_out, used = decoder.decode(model, input_ids, gen_length, steps,
+   261:                                      block_length)
+   262:         used = _measured_steps(forward_count, before, used, n_warned)
+   263:         gen_text = tokenizer.batch_decode(
+   264:             x_out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
+   265:         pred = ku.extract_math_answer(ex["problem"], gen_text)
+   266:         is_correct = ku.compare_answers(ex["problem"], gt, pred)
+   267:         if i < 2:
+   268:             print(f"[DEBUG] math example {i}:\n"
+   269:                   f"  problem: {ex['problem'][:150]}\n"
+   270:                   f"  gt={gt}\n"
+   271:                   f"  gen (first 400 chars): {gen_text[:400]}\n"
+   272:                   f"  pred={pred} correct={is_correct}", flush=True)
+   273:         if is_correct:
+   274:             correct += 1
+   275:         total_steps += used
+   276:         if (i + 1) % 10 == 0:
+   277:             print(f"TRAIN_METRICS: math {i+1}/{len(problems)} "
+   278:                   f"acc={correct/(i+1):.3f} "
+   279:                   f"avg_steps={total_steps/(i+1):.1f}", flush=True)
+   280:     return correct / max(len(problems), 1), total_steps / max(len(problems), 1)
+   281: 
+   282: 
+   283: # ---------------------------------------------------------------------------
+   284: # HumanEval evaluation (uses klass_utils evaluate_task)
+   285: # ---------------------------------------------------------------------------
+   286: 
+   287: def _run_humaneval(code: str, test: str, entry_point: str) -> bool:
+   288:     """Exec code + test + check(entry_point) in fresh namespace."""
+   289:     try:
+   290:         ns: dict = {}
+   291:         exec(code + "\n" + test + f"\ncheck({entry_point})\n", ns)
+   292:         return True
+   293:     except Exception:
+   294:         return False
+   295: 
+   296: 
+   297: def check_humaneval_code(code: str, problem: dict, timeout: float = 3.0) -> bool:
+   298:     import multiprocessing
+   299:     entry = problem["entry_point"]
+   300:     # If generated code lacks the function def, prepend problem prompt
+   301:     # (which provides function signature + docstring).
+   302:     if f"def {entry}" not in code:
+   303:         code = problem["prompt"] + code
+   304:     with multiprocessing.Pool(processes=1) as pool:
+   305:         res = pool.apply_async(_run_humaneval, (code, problem["test"], entry))
+   306:         try:
+   307:             return bool(res.get(timeout=timeout))
+   308:         except Exception:
+   309:             return False
+   310: 
+   311: 
+   312: def eval_humaneval(model, tokenizer, decoder: DemaskDecoder,
+   313:                    problems: list[dict], gen_length: int, steps: int,
+   314:                    block_length: int, forward_count):
+   315:     n_warned = [0]
+   316:     passed = 0
+   317:     total_steps = 0
+   318:     for i, p in enumerate(problems):
+   319:         msgs = [{"role": "system", "content": "You complete only Python code."},
+   320:                 {"role": "user", "content": p["prompt"]}]
+   321:         prompt = tokenizer.apply_chat_template(msgs, add_generation_prompt=True,
+   322:                                                tokenize=False)
+   323:         input_ids = torch.tensor(tokenizer(prompt)["input_ids"],
+   324:                                  device=model.device).unsqueeze(0)
+   325:         before = forward_count()
+   326:         x_out, used = decoder.decode(model, input_ids, gen_length, steps,
+   327:                                      block_length)
+   328:         used = _measured_steps(forward_count, before, used, n_warned)
+   329:         gen_text = tokenizer.batch_decode(
+   330:             x_out[:, input_ids.shape[1]:], skip_special_tokens=True)[0]
+   331:         eos = tokenizer.eos_token or ""
+   332:         if eos:
+   333:             gen_text = gen_text.split(eos)[0]
+   334:         m = re.search(r"```(?:python)?\n(.*?)(?:```|$)", gen_text, re.DOTALL)
+   335:         code = m.group(1).strip() if m else gen_text.strip()
+   336:         if i < 2:
+   337:             print(f"[DEBUG] humaneval {p['entry_point']}:\n"
+   338:                   f"gen (first 300 chars): {gen_text[:300]}\n"
+   339:                   f"code (first 200 chars): {code[:200]}", flush=True)
+   340:         ok = check_humaneval_code(code, p, timeout=3)
+   341:         if ok:
+   342:             passed += 1
+   343:         total_steps += used
+   344:         if (i + 1) % 10 == 0:
+   345:             print(f"TRAIN_METRICS: humaneval {i+1}/{len(problems)} "
+   346:                   f"pass@1={passed/(i+1):.3f} "
+   347:                   f"avg_steps={total_steps/(i+1):.1f}", flush=True)
+   348:     return passed / max(len(problems), 1), total_steps / max(len(problems), 1)
+   349: 
+   350: 
+   351: # ---------------------------------------------------------------------------
+   352: # Open-ended text generation evaluation (gen_ppl, MAUVE, entropy, rep2)
+   353: # ---------------------------------------------------------------------------
+   354: 
+   355: def _truncate_at_eos(text: str, eos_tokens=("</s>", "<|endoftext|>", "<|im_end|>")):
+   356:     for eos in eos_tokens:
+   357:         idx = text.find(eos)
+   358:         if idx >= 0:
+   359:             text = text[:idx]
+   360:     return text.strip()
+   361: 
+   362: 
+   363: def compute_conditional_gen_ppl(prefix_texts, gen_texts, device):
+   364:     from transformers import AutoModelForCausalLM, AutoTokenizer
+   365:     import math as _m
+   366:     tok = AutoTokenizer.from_pretrained("openai-community/gpt2-large")
+   367:     mdl = AutoModelForCausalLM.from_pretrained(
+   368:         "openai-community/gpt2-large").to(device).eval()
+   369:     total_loss, total_tokens = 0.0, 0
+   370:     for prefix, gen in zip(prefix_texts, gen_texts):
+   371:         if not gen.strip():
+   372:             continue
+   373:         p_ids = tok.encode(prefix, add_special_tokens=False)
+   374:         g_ids = tok.encode(gen, add_special_tokens=False)
+   375:         all_ids = (p_ids + g_ids)[:1024]
+   376:         if len(p_ids) >= len(all_ids):
+   377:             continue
+   378:         ids = torch.tensor([all_ids], device=device)
+   379:         with torch.no_grad():
+   380:             logits = mdl(ids).logits[:, :-1, :]
+   381:         labels = ids[:, 1:]
+   382:         start = max(len(p_ids) - 1, 0)
+   383:         loss = F.cross_entropy(
+   384:             logits[:, start:, :].reshape(-1, logits.shape[-1]),
+   385:             labels[:, start:].reshape(-1), reduction="sum")
+   386:         total_loss += loss.item()
+   387:         total_tokens += labels[:, start:].numel()
+   388:     del mdl
+   389:     torch.cuda.empty_cache()
+   390:     return _m.exp(total_loss / total_tokens) if total_tokens else float("inf")
+   391: 
+   392: 
+   393: def compute_mauve(gen_texts, ref_texts):
+   394:     try:
+   395:         import mauve
+   396:         r = mauve.compute_mauve(p_text=ref_texts, q_text=gen_texts,
+   397:                                 device_id=0 if torch.cuda.is_available() else -1,
+   398:                                 max_text_length=512, verbose=False,
+   399:                                 featurize_model_name="openai-community/gpt2-large")
+   400:         return float(r.mauve)
+   401:     except Exception as e:
+   402:         print(f"[WARN] MAUVE failed: {e}", flush=True)
+   403:         return 0.0
+   404: 
+   405: 
+   406: def compute_entropy_rep2(texts):
+   407:     from collections import Counter
+   408:     import math as _m
+   409:     all_bigrams = []
+   410:     rep_ratios = []
+   411:     for t in texts:
+   412:         words = t.split()
+   413:         bigrams = [f"{words[i]} {words[i+1]}" for i in range(len(words)-1)]
+   414:         all_bigrams.extend(bigrams)
+   415:         if bigrams:
+   416:             rep_ratios.append(1.0 - len(set(bigrams)) / len(bigrams))
+   417:         else:
+   418:             rep_ratios.append(0.0)
+   419:     ent = 0.0
+   420:     if all_bigrams:
+   421:         c = Counter(all_bigrams)
+   422:         tot = sum(c.values())
+   423:         for v in c.values():
+   424:             p = v / tot
+   425:             if p > 0:
+   426:                 ent -= p * _m.log2(p)
+   427:     rep2 = sum(rep_ratios) / max(len(rep_ratios), 1)
+   428:     return ent, rep2
+   429: 
+   430: 
+   431: def eval_text(model, tokenizer, decoder: DemaskDecoder, raw_texts: list[str],
+   432:               prefix_len: int, gen_length: int, steps: int, block_length: int,
+   433:               n_samples: int, seed: int, forward_count):
+   434:     """Prefix-conditioned C4 continuation. Reports gen_ppl/MAUVE/entropy/rep2."""
+   435:     import random as _r
+   436:     rng = _r.Random(seed)
+   437:     if len(raw_texts) > n_samples:
+   438:         raw_texts = rng.sample(raw_texts, n_samples)
    439: 
-   440:     torch.manual_seed(args.seed)
-   441:     np.random.seed(args.seed)
-   442:     device = "cuda" if torch.cuda.is_available() else "cpu"
-   443: 
-   444:     print(f"[INFO] Loading {args.model}...", flush=True)
-   445:     model, tokenizer, mask_id = load_instruct_model(args.model, device)
-   446: 
-   447:     decoder = DemaskDecoder(
-   448:         mask_id=mask_id,
-   449:         temperature=args.temperature,
-   450:         conf_threshold=args.conf_threshold,
-   451:         kl_threshold=args.kl_threshold,
-   452:         history_length=args.history_length,
-   453:     )
-   454: 
-   455:     print(f"[INFO] task={args.task} steps={args.steps} "
-   456:           f"gen_length={args.gen_length} block_length={args.block_length}",
-   457:           flush=True)
-   458: 
-   459:     if args.task == "math":
-   460:         problems = load_math(args.data_path)
-   461:         if args.n_samples > 0:
-   462:             problems = problems[:args.n_samples]
-   463:         acc, avg_steps = eval_math(
-   464:             model, tokenizer, decoder, problems,
-   465:             args.gen_length, args.steps, args.block_length)
-   466:         print(f"TEST_METRICS: accuracy={acc:.4f} avg_steps={avg_steps:.2f} "
-   467:               f"n_samples={len(problems)}", flush=True)
-   468:     elif args.task == "humaneval":
-   469:         problems = load_humaneval(args.data_path)
-   470:         if args.n_samples > 0:
-   471:             problems = problems[:args.n_samples]
-   472:         acc, avg_steps = eval_humaneval(
-   473:             model, tokenizer, decoder, problems,
-   474:             args.gen_length, args.steps, args.block_length)
-   475:         print(f"TEST_METRICS: accuracy={acc:.4f} avg_steps={avg_steps:.2f} "
-   476:               f"n_samples={len(problems)}", flush=True)
-   477:     else:  # text
-   478:         with open(args.data_path) as f:
-   479:             texts = json.load(f)
-   480:         n = args.n_samples if args.n_samples > 0 else 256
-   481:         ppl, mauve, ent, rep2, avg_steps = eval_text(
-   482:             model, tokenizer, decoder, texts,
-   483:             args.prefix_len, args.gen_length, args.steps, args.block_length,
-   484:             n_samples=n, seed=args.seed)
-   485:         print(f"TEST_METRICS: gen_ppl={ppl:.4f} mauve={mauve:.4f} "
-   486:               f"entropy={ent:.4f} rep2={rep2:.4f} avg_steps={avg_steps:.2f} "
-   487:               f"n_samples={n}", flush=True)
-   488: 
-   489: 
-   490: if __name__ == "__main__":
-   491:     main()
+   440:     # Build prefix prompts (raw, no chat template — Dream-Instruct as a base LM)
+   441:     prefix_ids_list, prefix_texts, valid_refs = [], [], []
+   442:     for txt in raw_texts:
+   443:         ids = tokenizer.encode(txt, add_special_tokens=False)
+   444:         if len(ids) >= prefix_len + gen_length:
+   445:             pids = ids[:prefix_len]
+   446:             prefix_ids_list.append(pids)
+   447:             prefix_texts.append(tokenizer.decode(pids, skip_special_tokens=True))
+   448:             ref_ids = ids[prefix_len:prefix_len + gen_length]
+   449:             valid_refs.append(tokenizer.decode(ref_ids, skip_special_tokens=True))
+   450:     print(f"[INFO] kept {len(prefix_ids_list)}/{len(raw_texts)} texts "
+   451:           f"long enough for prefix={prefix_len}+gen={gen_length}", flush=True)
+   452: 
+   453:     gen_texts, total_used = [], 0
+   454:     n_warned = [0]
+   455:     for i, pids in enumerate(prefix_ids_list):
+   456:         ids = torch.tensor([pids], dtype=torch.long, device=model.device)
+   457:         before = forward_count()
+   458:         x_out, used = decoder.decode(model, ids, gen_length, steps, block_length)
+   459:         used = _measured_steps(forward_count, before, used, n_warned)
+   460:         gen = tokenizer.decode(x_out[0, ids.shape[1]:].tolist(),
+   461:                                skip_special_tokens=True)
+   462:         gen = _truncate_at_eos(gen)
+   463:         gen_texts.append(gen)
+   464:         total_used += used
+   465:         if (i + 1) % 10 == 0:
+   466:             print(f"TRAIN_METRICS: text {i+1}/{len(prefix_ids_list)} "
+   467:                   f"avg_steps={total_used/(i+1):.1f}", flush=True)
+   468: 
+   469:     avg_steps = total_used / max(len(prefix_ids_list), 1)
+   470:     print("[INFO] unloading gen model, computing GPT-2 ppl...", flush=True)
+   471:     del model
+   472:     torch.cuda.empty_cache()
+   473: 
+   474:     ppl = compute_conditional_gen_ppl(prefix_texts, gen_texts, "cuda")
+   475:     mauve = compute_mauve(gen_texts, valid_refs)
+   476:     entropy, rep2 = compute_entropy_rep2(gen_texts)
+   477:     return ppl, mauve, entropy, rep2, avg_steps
+   478: 
+   479: 
+   480: # ---------------------------------------------------------------------------
+   481: # Main
+   482: # ---------------------------------------------------------------------------
+   483: 
+   484: def main():
+   485:     parser = argparse.ArgumentParser()
+   486:     parser.add_argument("--task", choices=["math", "humaneval", "text"],
+   487:                         required=True)
+   488:     parser.add_argument("--model", choices=sorted(MODEL_CONFIGS), required=True)
+   489:     parser.add_argument("--steps", type=int, default=256)
+   490:     parser.add_argument("--gen-length", type=int, default=256)
+   491:     parser.add_argument("--block-length", type=int, default=64)
+   492:     parser.add_argument("--conf-threshold", type=float, default=0.9)
+   493:     parser.add_argument("--kl-threshold", type=float, default=0.01)
+   494:     parser.add_argument("--history-length", type=int, default=2)
+   495:     parser.add_argument("--temperature", type=float, default=0.0)
+   496:     parser.add_argument("--seed", type=int, default=42)
+   497:     parser.add_argument("--data-path", required=True)
+   498:     parser.add_argument("--n-samples", type=int, default=0,
+   499:                         help="0 = use all problems")
+   500:     parser.add_argument("--prefix-len", type=int, default=32,
+   501:                         help="Prefix length (text task)")
+   502:     parser.add_argument("--output-dir", default=".")
+   503:     args = parser.parse_args()
+   504: 
+   505:     torch.manual_seed(args.seed)
+   506:     np.random.seed(args.seed)
+   507:     device = "cuda" if torch.cuda.is_available() else "cpu"
+   508: 
+   509:     print(f"[INFO] Loading {args.model}...", flush=True)
+   510:     raw_model, tokenizer, mask_id = load_instruct_model(args.model, device)
+   511:     # The decoder and eval loops only see the counting handle.
+   512:     model, forward_count = _count_denoiser_forwards(raw_model)
+   513:     del raw_model
+   514: 
+   515:     decoder = DemaskDecoder(
+   516:         mask_id=mask_id,
+   517:         temperature=args.temperature,
+   518:         conf_threshold=args.conf_threshold,
+   519:         kl_threshold=args.kl_threshold,
+   520:         history_length=args.history_length,
+   521:     )
+   522: 
+   523:     print(f"[INFO] task={args.task} steps={args.steps} "
+   524:           f"gen_length={args.gen_length} block_length={args.block_length}",
+   525:           flush=True)
+   526: 
+   527:     if args.task == "math":
+   528:         problems = load_math(args.data_path)
+   529:         if args.n_samples > 0:
+   530:             problems = problems[:args.n_samples]
+   531:         acc, avg_steps = eval_math(
+   532:             model, tokenizer, decoder, problems,
+   533:             args.gen_length, args.steps, args.block_length, forward_count)
+   534:         print(f"TEST_METRICS: accuracy={acc:.4f} avg_steps={avg_steps:.2f} "
+   535:               f"n_samples={len(problems)}", flush=True)
+   536:     elif args.task == "humaneval":
+   537:         problems = load_humaneval(args.data_path)
+   538:         if args.n_samples > 0:
+   539:             problems = problems[:args.n_samples]
+   540:         acc, avg_steps = eval_humaneval(
+   541:             model, tokenizer, decoder, problems,
+   542:             args.gen_length, args.steps, args.block_length, forward_count)
+   543:         print(f"TEST_METRICS: accuracy={acc:.4f} avg_steps={avg_steps:.2f} "
+   544:               f"n_samples={len(problems)}", flush=True)
+   545:     else:  # text
+   546:         with open(args.data_path) as f:
+   547:             texts = json.load(f)
+   548:         n = args.n_samples if args.n_samples > 0 else 256
+   549:         ppl, mauve, ent, rep2, avg_steps = eval_text(
+   550:             model, tokenizer, decoder, texts,
+   551:             args.prefix_len, args.gen_length, args.steps, args.block_length,
+   552:             n_samples=n, seed=args.seed, forward_count=forward_count)
+   553:         print(f"TEST_METRICS: gen_ppl={ppl:.4f} mauve={mauve:.4f} "
+   554:               f"entropy={ent:.4f} rep2={rep2:.4f} avg_steps={avg_steps:.2f} "
+   555:               f"n_samples={n}", flush=True)
+   556: 
+   557: 
+   558: if __name__ == "__main__":
+   559:     main()
 ```
 
 ## Reference Baselines

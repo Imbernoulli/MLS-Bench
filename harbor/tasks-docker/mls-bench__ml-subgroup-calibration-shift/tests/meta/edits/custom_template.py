@@ -275,29 +275,50 @@ def _fit_base_classifier(X_train, y_train, seed):
     return model
 
 
-def _evaluate(probs, labels, groups):
+def _discrimination_slope(probs, labels):
+    # Tjur's coefficient of discrimination: E[p | y=1] - E[p | y=0].
+    if np.unique(labels).size < 2:
+        return float("nan")
+    return float(probs[labels == 1].mean() - probs[labels == 0].mean())
+
+
+def _evaluate(probs, labels, groups, base_probs):
     probs = np.asarray(probs).reshape(-1)
     labels = np.asarray(labels).reshape(-1).astype(int)
     groups = np.asarray(groups).reshape(-1).astype(int)
+    base_probs = np.asarray(base_probs).reshape(-1)
 
     group_ece = []
     group_auc = []
+    base_group_auc = []
     for g in np.unique(groups):
         mask = groups == g
         if mask.sum() < 5:
             continue
         group_ece.append(expected_calibration_error(probs[mask], labels[mask]))
         group_auc.append(_safe_auc(labels[mask], probs[mask]))
+        base_group_auc.append(_safe_auc(labels[mask], base_probs[mask]))
 
     worst_group_ece = float(np.max(group_ece)) if group_ece else float("nan")
     subgroup_auroc = float(np.nanmean(group_auc)) if group_auc else float("nan")
+    base_subgroup_auroc = float(np.nanmean(base_group_auc)) if base_group_auc else float("nan")
+    # Disparity of calibration across subgroups: max - min per-subgroup ECE.
     max_subgroup_gap = float(np.max(group_ece) - np.min(group_ece)) if len(group_ece) > 1 else float("nan")
     brier = float(brier_score_loss(labels, probs))
+    # Discrimination kept relative to the fixed base classifier. A monotonic
+    # recalibration keeps auroc_retention near 1, while a constant or
+    # rank-destroying map lowers it to 0.5 / base AUROC. slope_retention
+    # (clipped at 0) also catches a near-constant map that keeps the ranking
+    # but spreads its probabilities over almost nothing.
+    auroc_retention = subgroup_auroc / base_subgroup_auroc
+    slope_retention = max(0.0, _discrimination_slope(probs, labels) / _discrimination_slope(base_probs, labels))
     return {
         "worst_group_ece": worst_group_ece,
         "brier": brier,
         "subgroup_auroc": subgroup_auroc,
         "max_subgroup_gap": max_subgroup_gap,
+        "auroc_retention": auroc_retention,
+        "slope_retention": slope_retention,
     }
 
 
@@ -316,6 +337,7 @@ def main():
     model = _fit_base_classifier(X[train_idx], y[train_idx], seed=args.seed)
     cal_probs = model.predict_proba(X[calib_idx])[:, 1]
     test_probs = model.predict_proba(X[test_idx])[:, 1]
+    base_test_probs = test_probs.copy()  # private reference; the method never sees it
 
     method = CalibrationMethod().fit(cal_probs, y[calib_idx], groups=groups[calib_idx])
     cal_probs_hat = method.predict_proba(cal_probs, groups=groups[calib_idx])
@@ -331,7 +353,7 @@ def main():
         flush=True,
     )
 
-    test_metrics = _evaluate(test_probs_hat, y[test_idx], groups[test_idx])
+    test_metrics = _evaluate(test_probs_hat, y[test_idx], groups[test_idx], base_test_probs)
     print(
         "TEST_METRICS: "
         + " ".join(f"{k}={v:.6f}" for k, v in test_metrics.items()),

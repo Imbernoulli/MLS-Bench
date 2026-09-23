@@ -60,19 +60,29 @@ class SparseAttention(nn.Module):
 for the causal LLM. Return the attention output in the same shape and
 dtype.
 
-After every forward, set `self.last_density` to the fraction of (q, k)
-pairs that received non-zero attention (causal-adjusted: divide by
-`N(N+1)/2` when `is_causal=True`). The harness aggregates `last_density`
-across all attention layers and aborts the run if the mean exceeds the
-density budget (`0.25 + 0.02 slack`) for any non-`dense` baseline.
-Missing, NaN, infinite, negative, or `>1` density reports are treated as
-harness errors, not as zero density.
+After every forward, set `self.last_mask` to the boolean mask of the
+(q, k) pairs the forward actually attended (`True` = attended), shaped
+`(N, N)` or broadcastable to `(B, H, N, N)`; leaving it `None` means
+dense. The harness computes the density itself from this mask: the
+fraction of causal (q, k) pairs attended (entries above the diagonal are
+ignored; each head is divided by `N(N+1)/2`). On randomly sampled query
+rows (always including the last one) it also recomputes, from its own
+copies of q/k/v, the attention restricted to the mask and the full
+causal attention, and aborts the run if the module's output has moved
+from the former toward the latter (by more than 0.1 of the head's RMS
+output norm and more than 25% of the way), so the mask must include
+every pair the module attends. Low-precision arithmetic inside the mask
+is not penalized. Any `last_density` the module sets is ignored. The
+harness aggregates the density across all attention layers and aborts
+the run if the mean exceeds the density budget (`0.25 + 0.02 slack`)
+for any non-`dense` baseline. A mask of the wrong dtype or shape is a
+harness error.
 
 ## Sparsity Budget
 
 - `density_budget = 0.25`.
-- Only the reference `dense` baseline is allowed to exceed it: it reports
-  the true `last_density = 1.0`, and the dense run is invoked with
+- Only the reference `dense` baseline is allowed to exceed it: it leaves
+  `last_mask = None` (dense, density 1.0), and the dense run is invoked with
   `ALLOW_DENSE_FLAG=1` (set as a baseline-level env var in `config.json`)
   which forwards `--allow-dense` to `run_llm.py` so
   `harness.enforce_budget(allow_dense=True)` skips the budget check.

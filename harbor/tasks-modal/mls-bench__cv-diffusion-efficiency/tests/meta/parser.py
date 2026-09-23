@@ -4,7 +4,7 @@ Extracts per-model FID from generation output. CLIP score is intentionally
 discarded because task scoring uses FID only.
 
 Expected format:
-    GENERATION_METRICS model=sd15 method=ddim_cfg++ cfg_guidance=0.6 NFE=50 seed=42 fid=25.1234 clip_score=0.3245
+    GENERATION_METRICS model=sd15 method=ddim_cfg++ cfg_guidance=0.6 NFE=50 nfe_used=50 seed=42 fid=25.1234 clip_score=0.3245
 """
 
 import re
@@ -30,6 +30,13 @@ class Parser(OutputParser):
         if gen_feedback:
             feedback_parts.append(gen_feedback)
         metrics.update(gen_metrics)
+
+        # batch_eval.py counts UNet evaluations and aborts before printing
+        # GENERATION_METRICS when a sampler exceeds the NFE budget, so such a
+        # run records no metric; say why instead of dumping the traceback.
+        budget = re.search(r"(NFE_BUDGET_EXCEEDED|NFE accounting):[^\n]*", raw_output)
+        if budget and not metrics:
+            feedback_parts.append(f"[{cmd_label}] REJECTED — {budget.group(0).strip()}")
 
         if feedback_parts:
             feedback = "\n".join(feedback_parts)

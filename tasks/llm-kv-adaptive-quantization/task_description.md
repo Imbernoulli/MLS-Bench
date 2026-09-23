@@ -41,16 +41,23 @@ calls the editable class:
 - `needs_prefill_qkv_observer() -> bool`
 - `query_observation_position() -> str`
 - `observe_prefill_qkv(layer_id, query_states, key_states, value_states, attention_meta)`
-- `quantize_key(layer_id, key_states, cache_meta) -> tensor | (tensor, avg_bits)`
-- `quantize_value(layer_id, value_states, cache_meta) -> tensor | (tensor, avg_bits)`
-- `estimate_bits(layer_id, kv_kind, seq_len, head_dim, cache_meta) -> float`
+- `quantize_key(layer_id, key_states, cache_meta) -> tensor | (tensor, layout)`
+- `quantize_value(layer_id, value_states, cache_meta) -> tensor | (tensor, layout)`
 
 `key_states` and `value_states` have shape
 `[batch, heads, seq_len, head_dim]`. The class implements the actual tensor
 algorithm: grouping, asymmetric ranges, zero-points, per-layer bit presets,
-residual retention, query-subspace transforms, and memory accounting all
-belong inside this class. The task does not expose a fixed algorithm enum
-or a backend selector.
+residual retention, and query-subspace transforms all belong inside this
+class. The task does not expose a fixed algorithm enum or a backend selector.
+
+KV memory is measured by the fixed harness, not self-reported. `layout` is
+`{"group_ids": ..., "group_bits": ...}`: `group_ids` is an integer tensor
+with the returned tensor's shape that maps every element to a quantization
+group (`-1` = kept at FP16), and `group_bits` is a 1-D integer tensor of
+per-group bit-widths in `[1, 16]`. Every used group must hold at least 32
+elements and at most `2**bits` distinct stored values, otherwise the run
+aborts. Returning a bare tensor (or a `None` layout) charges every element
+at FP16. Scale/zero-point metadata is not charged.
 
 ## What You Cannot Modify
 
@@ -81,13 +88,16 @@ For NIAH the canonical needle is:
 The parser expects one `TEST_METRICS:` line per workload with:
 
 - `final_score`: benchmark-native quality on a 0-100 scale
-- `effective_kv_bits`: quantizer-level effective KV bits per cached element
+- `effective_kv_bits`: effective KV bits per cached element, measured by the
+  harness from the stored tensors and their layouts
 - `kv_compression_ratio`: `16 / effective_kv_bits`, using FP16 KV as the
   reference footprint
 - `runtime_seconds`: task-level wall-clock runtime for the workload command
 
-`effective_kv_bits` is computed from the submitted quantizer at a 4096-token
-reference KV span so the efficiency term is hardware-independent.
+`effective_kv_bits` is measured at a 4096-token reference KV span so the
+efficiency term is hardware-independent: after each request the harness
+quantizes that request's real KV cache, cropped or tiled to 4096 tokens,
+with the submitted quantizer and averages the measured bits over requests.
 
 ## Baselines
 

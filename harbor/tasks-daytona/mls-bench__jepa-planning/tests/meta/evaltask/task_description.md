@@ -56,3 +56,4 @@ def plan(self, obs_init, steps_left=None, eval_mode=True,
 - Success threshold: Euclidean distance < 4.5 from goal
 - Benchmarks: three planning horizons (30, 60, 90 steps) test the algorithm across short, medium, and long-range planning
 - Metric: `success_rate` (fraction of successful episodes) per horizon, higher is better
+- Also reported and scored: `mean_dist` (final distance to goal) and `mean_steps_to_success` (steps until the goal is first reached, averaged over all episodes; an episode that does not end within the success threshold counts as the full 200 steps), both lower is better
