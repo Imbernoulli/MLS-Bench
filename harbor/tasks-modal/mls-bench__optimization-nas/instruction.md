@@ -13,12 +13,14 @@ This is the regime in which real-world NAS is actually hard: the full benchmark 
 ## Search Space
 - NAS-Bench-201 cell: 4 nodes, 6 edges, 5 operations per edge (Dong and Yang, "NAS-Bench-201: Extending the Scope of Reproducible Neural Architecture Search", ICLR 2020; arXiv:2001.00326).
 - Operations: `skip_connect, none, nor_conv_3x3, nor_conv_1x1, avg_pool_3x3`.
+- **Hidden per-run relabeling:** in every evaluation run the harness maps the four non-`none` operation indices (0, 2, 3, 4) to the NAS-Bench-201 operations `skip_connect, nor_conv_3x3, nor_conv_1x1, avg_pool_3x3` through a secret random permutation drawn for that run; index 1 is always `none`. The names in `OP_NAMES` and in architecture strings are labels only: which index is which operation has to be learned from queries, and a fixed index list names a different cell in every run.
 - 5^6 = 15,625 architectures total.
 - An architecture is represented as a list of 6 integers in `[0, 4]`.
 
 ## Evaluation Protocol
 - **Query budget: `NAS_EPOCHS`** validation queries per run (the harness enforces this; exceeding it aborts the run).
 - After search, the harness performs one final unbudgeted test query on your returned architecture; this does not count against your budget.
+- The search runs in a separate, unprivileged process that reaches the benchmark only through `api.query_val_accuracy`; the harness maps the returned architecture through the run's relabeling and looks up its test accuracy.
 
 ## What Counts as a Contribution
 Acceptable research directions (this list is not exhaustive):

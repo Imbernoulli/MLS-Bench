@@ -22,6 +22,7 @@ it is still classified correctly under both.
 """
 
 import argparse
+import importlib.util
 import os
 import random
 import shutil
@@ -36,10 +37,29 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision import datasets, transforms
 
-from models import get_model
-
 _METRIC_TAG = b"TEST_METRICS"
 _ATTACK_LOSSES = ("ce", "margin")
+_UNPRIVILEGED_UID = 65534  # nobody
+
+
+def _load_get_model():
+    """Load the FIXED architecture module (models.py) by its file path.
+
+    The evaluator is started with ``python -I`` so that a stdlib-shadowing
+    file the agent creates in the harness directory (e.g. ``bench/argparse.py``)
+    is never imported in this trusted process.  Under ``-I`` the harness
+    directory is not on ``sys.path``, so ``models.py`` is loaded explicitly by
+    path instead.  ``models.py`` is a non-editable file whose hash the edit
+    guard verifies before any eval runs, so the copy loaded here is the
+    pristine one."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models.py")
+    spec = importlib.util.spec_from_file_location("_mlsb_fixed_models", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.get_model
+
+
+get_model = _load_get_model()
 
 
 def parse_args():
@@ -295,18 +315,68 @@ def train_worker(args):
     torch.save(model.state_dict(), args.train_worker_ckpt)
 
 
+def _worker_preexec():
+    """Isolate + de-privilege the training worker before it execs.
+
+    New session (so the evaluator can reap the whole tree) and, when running
+    as root, drop to ``nobody`` so the agent's trainer cannot write any path a
+    trusted process reads or imports (the harness directory, ``site-packages``,
+    a ``sitecustomize``/``.pth`` a later ``-I`` process still runs) — only the
+    dedicated checkpoint directory below, which the evaluator owns."""
+    def _fn():
+        os.setsid()
+        if os.geteuid() == 0:
+            os.setgroups([])
+            os.setgid(_UNPRIVILEGED_UID)
+            os.setuid(_UNPRIVILEGED_UID)
+    return _fn
+
+
 def run_train_worker(ckpt_path):
-    """Start the training worker and relay its output with the metric tag defused."""
+    """Start the training worker and relay its output with the metric tag defused.
+
+    The worker is the only process that imports the submitted trainer.  It is
+    NOT started with ``-I`` (it needs the harness directory on ``sys.path`` to
+    import ``custom_adv_train``), but it is dropped to an unprivileged uid so
+    it can write nothing the evaluator later reads except its checkpoint."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    # Give the unprivileged worker its own scratch HOME/TMPDIR (torch extension
+    # / kernel caches want a writable home) and make sure it can read the
+    # (root-owned, at verify time) submitted trainer and fixed modules.
+    home = tempfile.mkdtemp(prefix="mlsb_advtrain_")
+    os.chmod(home, 0o700)
+    if os.geteuid() == 0:
+        os.chown(home, _UNPRIVILEGED_UID, _UNPRIVILEGED_UID)
+        # The checkpoint the worker must write; the evaluator (root) reads it.
+        os.chown(os.path.dirname(ckpt_path), _UNPRIVILEGED_UID, _UNPRIVILEGED_UID)
+        for name in ("custom_adv_train.py", "models.py"):
+            p = os.path.join(here, name)
+            try:
+                os.chmod(p, os.stat(p).st_mode | 0o444)
+            except OSError:
+                pass
+    # Inherit the (trusted, harness-set) environment so SEED, CUDA and thread
+    # budgets reach training unchanged; only redirect HOME/TMPDIR to a scratch
+    # dir the unprivileged worker owns.
+    env = os.environ.copy()
+    env["HOME"] = env["TMPDIR"] = home
+
     cmd = [sys.executable, "-B", "-u", os.path.abspath(__file__)]
     cmd += sys.argv[1:] + ["--train-worker-ckpt", ckpt_path]
     sys.stdout.flush()
-    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    out = sys.stdout.buffer
-    for line in iter(proc.stdout.readline, b""):
-        out.write(line.replace(_METRIC_TAG, b"test_metrics(train-worker)"))
-        out.flush()
-    proc.stdout.close()
-    return proc.wait()
+    try:
+        proc = subprocess.Popen(
+            cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            env=env, preexec_fn=_worker_preexec(), close_fds=True,
+        )
+        out = sys.stdout.buffer
+        for line in iter(proc.stdout.readline, b""):
+            out.write(line.replace(_METRIC_TAG, b"test_metrics(train-worker)"))
+            out.flush()
+        proc.stdout.close()
+        return proc.wait()
+    finally:
+        subprocess.run(["rm", "-rf", home], check=False)
 
 
 def load_trained_model(ckpt_path, arch, num_classes, device):

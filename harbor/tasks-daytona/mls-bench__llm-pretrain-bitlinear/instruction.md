@@ -28,7 +28,7 @@ The default template is a naive binary quantizer: `sign(W)` with a per-tensor ab
 - `BitLinear.__init__(self, in_features, out_features, bias=True)` must keep `self.weight` as a `Parameter`.
 - `BitLinear.forward(self, x) -> output` where `x` has shape `(..., in_features)` and the output has shape `(..., out_features)`.
 - Quantization is applied in every forward pass (no separate train/eval path).
-- **Level budget (enforced): at most 5 weight levels.** In every output row of the effective weight a `BitLinear` applies in its forward pass, at most 5 distinct values may occur. This admits binary, ternary and the 5-level grid {-1, -2/3, 0, 2/3, 1} that the `int2_uniform` reference rounds to; a per-tensor or per-output-channel scale is allowed. Fixed code recovers each `BitLinear`'s effective weight by probing it with one-hot inputs at initialization, at every evaluation interval and before the final evaluation, in both train and eval mode, and aborts the run if any row exceeds 5 levels; such a run gets no score. Transforms that mix input features (e.g. rotations) and per-group scales make the effective weight continuous, so they are not allowed.
+- **Level budget (enforced): at most 5 weight levels.** In every output row of the effective weight a `BitLinear` applies in its forward pass, at most 5 distinct values may occur. This admits binary, ternary and the 5-level grid {-1, -2/3, 0, 2/3, 1} that the `int2_uniform` reference rounds to; a per-tensor or per-output-channel scale is allowed. Fixed code recovers each `BitLinear`'s effective weight by probing it with one-hot inputs under the run's bf16 autocast at initialization, at every evaluation interval and before the final evaluation, in both train and eval mode, and aborts the run if any row exceeds 5 levels; such a run gets no score. Randomly chosen forward calls of every evaluation (validation loss and perplexity) are also checked in place: the real output must match that effective weight applied to the activation the layer feeds its matmul (read back from the same layer on the same input, with the signs of its latent weight randomly flipped) within 2 %, so the forward pass must apply the discrete weight to real inputs as well; a mismatch also aborts the run. Transforms that mix input features (e.g. rotations) and per-group scales make the effective weight continuous, so they are not allowed.
 - `weight_quant` should return `(quantized_weight, scale)` such that `quantized_weight * scale` approximates the original weight; same convention for `activation_quant`.
 - All linear projections in the model (attention, MLP, lm_head) use `BitLinear`.
 - Helper classes (`autograd.Function`s, learned parameters) may be added.
@@ -37,7 +37,7 @@ The default template is a naive binary quantizer: `sign(W)` with a per-tensor ab
 ## Reference baselines (algorithmic templates)
 - `binary_sign` — BitNet sign-based binary weights {-1, +1} with absmean scale.
 - `ternary_158bit` — BitNet b1.58 ternary {-1, 0, +1} with absmean scale.
-- `int2_uniform` — uniform 2-bit quantization grid.
+- `int2_uniform` — named for a uniform 2-bit grid, but as implemented it rounds to the 5 levels {-1, -2/3, 0, 2/3, 1} with absmean scale.
 
 ## Your Workspace
 
@@ -465,110 +465,110 @@ Other files you may **read** for context (do not modify):
    394:     # weight its forward pass applies (whatever activation quantizer is used),
    395:     # and each output row of that weight may take at most LOWBIT_MAX_LEVELS
    396:     # distinct values; a per-tensor or per-output-channel scale is allowed.
-   397:     # The check runs at init, at every eval_interval and before the final
-   398:     # evaluation, in train and eval mode; a violation aborts the run.
-   399:     LOWBIT_MAX_LEVELS = 5
-   400:     LOWBIT_REL_TOL = 1e-3
-   401: 
-   402:     def _lowbit_slots(m):
-   403:         slots = []
-   404:         for i, blk in enumerate(m.transformer.h):
-   405:             slots += [(f'h.{i}.attn.c_attn', blk.attn.c_attn, m.config.n_embd),
-   406:                       (f'h.{i}.attn.c_proj', blk.attn.c_proj, m.config.n_embd),
-   407:                       (f'h.{i}.mlp.c_fc', blk.mlp.c_fc, m.config.n_embd),
-   408:                       (f'h.{i}.mlp.c_proj', blk.mlp.c_proj, 4 * m.config.n_embd)]
-   409:         return slots + [('lm_head', m.lm_head, m.config.n_embd)]
-   410: 
-   411:     @torch.no_grad()
-   412:     def _lowbit_row_levels(w_eff):
-   413:         # Levels per row: sorted values split wherever the gap exceeds
-   414:         # LOWBIT_REL_TOL * max|row|; the within-level spread must stay below
-   415:         # the same tolerance per level, so a continuum cannot chain into one.
-   416:         v, _ = torch.sort(w_eff.float(), dim=1)
-   417:         tol = LOWBIT_REL_TOL * v.abs().amax(dim=1, keepdim=True)
-   418:         gaps = v[:, 1:] - v[:, :-1]
-   419:         big = gaps > tol
-   420:         levels = 1 + big.sum(dim=1)
-   421:         spread = torch.where(big, torch.zeros_like(gaps), gaps).sum(dim=1)
-   422:         return levels, spread > tol.squeeze(1) * levels
-   423: 
-   424:     @torch.no_grad()
-   425:     def verify_lowbit(m, when):
-   426:         t_check = time.time()
-   427:         worst = (0, '')
-   428:         for name, mod, d_in in _lowbit_slots(m):
-   429:             saved = {k: t.detach().clone() for k, t in mod.state_dict().items()}
-   430:             was_training = mod.training
-   431:             try:
-   432:                 for train_mode in (True, False):
-   433:                     mod.train(train_mode)
-   434:                     with torch.autocast(device_type='cuda', enabled=False):
-   435:                         eye = torch.eye(d_in, device=device, dtype=torch.float32)
-   436:                         base = mod(torch.zeros(1, 1, d_in, device=device)).float()
-   437:                         base = torch.where(torch.isfinite(base), base, torch.zeros_like(base))
-   438:                         w_eff = (mod(eye.unsqueeze(0)).float() - base)[0].t()
-   439:                     if not torch.isfinite(w_eff).all():
-   440:                         raise RuntimeError(f"LOWBIT_CHECK FAILED ({when}): {name} forward is non-finite on one-hot probes")
-   441:                     levels, smeared = _lowbit_row_levels(w_eff)
-   442:                     n_max = int(levels.max())
-   443:                     if n_max > LOWBIT_MAX_LEVELS or bool(smeared.any()):
-   444:                         raise RuntimeError(
-   445:                             f"LOWBIT_CHECK FAILED ({when}): {name} "
-   446:                             f"({'train' if train_mode else 'eval'} mode) effective forward weight has "
-   447:                             f"{n_max} distinct values in a row (max {LOWBIT_MAX_LEVELS}), "
-   448:                             f"{int(smeared.sum())} rows with smeared levels; "
-   449:                             f"forward weights must be discrete")
-   450:                     worst = max(worst, (n_max, name))
-   451:             finally:
-   452:                 mod.train(was_training)
-   453:                 mod.load_state_dict(saved)
-   454:         print(f"LOWBIT_CHECK: {when}: ok, max levels per row = {worst[0]} ({worst[1]}), "
-   455:               f"{time.time() - t_check:.1f}s", flush=True)
-   456: 
-   457:     lowbit_model = model  # bare GPT; DDP / torch.compile wrap these same modules
-   458:     if master_process:
-   459:         verify_lowbit(lowbit_model, 'init')
-   460:     scaler = torch.amp.GradScaler(enabled=(dtype == 'float16'))
-   461:     optimizer = model.configure_optimizers(weight_decay, learning_rate, (beta1, beta2), device_type)
-   462: 
-   463:     if ddp:
-   464:         model = DDP(model, device_ids=[ddp_local_rank], find_unused_parameters=True)
-   465: 
-   466:     if compile_model:
-   467:         if master_process:
-   468:             print("compiling the model...")
-   469:         model = torch.compile(model)
-   470: 
-   471:     # -- Evaluation --
-   472:     @torch.no_grad()
-   473:     def estimate_loss():
-   474:         out = {}
-   475:         raw = model.module if ddp else model
-   476:         raw_inner = raw._orig_mod if hasattr(raw, '_orig_mod') else raw
-   477:         raw_inner.eval()
-   478:         for split, data in [('train', train_data), ('val', val_data)]:
-   479:             losses = torch.zeros(eval_iters)
-   480:             for k in range(eval_iters):
-   481:                 X, Y = get_batch(data, batch_size, block_size, device)
-   482:                 with ctx:
-   483:                     logits, loss = raw_inner(X, Y)
-   484:                 losses[k] = loss.item()
-   485:             out[split] = losses.mean()
-   486:         raw_inner.train()
-   487:         return out
-   488: 
-   489:     # -- Training Loop --
-   490:     t0 = time.time()
-   491:     best_val_loss = 1e9
-   492: 
-   493:     for iter_num in range(max_iters + 1):
-   494:         lr = get_lr(iter_num, warmup_iters, lr_decay_iters, learning_rate, min_lr)
-   495:         for param_group in optimizer.param_groups:
-   496:             param_group['lr'] = lr
-   497: 
-   498:         if iter_num % eval_interval == 0 and master_process:
-   499:             losses = estimate_loss()
-   500:             train_loss = losses['train'].item()
+   397:     # The check runs under the same bf16 autocast as training and evaluation,
+   398:     # at init, at every eval_interval and before the final evaluation, in
+   399:     # train and eval mode. One-hot inputs never occur in real batches, so
+   400:     # randomly chosen evaluation forward calls are also checked in place
+   401:     # (lowbit_watch): the real output must equal the effective weight applied
+   402:     # to the activation the layer feeds its matmul, which is read back from
+   403:     # the same layer on the same input with its latent weight replaced by
+   404:     # random sign flips of it. A violation aborts the run.
+   405:     LOWBIT_MAX_LEVELS = 5
+   406:     LOWBIT_REL_TOL = 1e-3
+   407:     LOWBIT_DENSE_P = 0.02     # share of evaluation forward calls checked per BitLinear
+   408:     LOWBIT_DENSE_ROWS = 256   # token rows compared per in-place check
+   409:     LOWBIT_DENSE_TOL = 0.02   # max relative deviation of the real output
+   410:     _lowbit_gen = torch.Generator()  # private: the training RNG streams stay untouched
+   411:     _lowbit_gen.manual_seed(int.from_bytes(os.urandom(8), 'little') % (2 ** 63))
+   412:     _lowbit_busy = [False]
+   413: 
+   414:     def _lowbit_slots(m):
+   415:         slots = []
+   416:         for i, blk in enumerate(m.transformer.h):
+   417:             slots += [(f'h.{i}.attn.c_attn', blk.attn.c_attn, m.config.n_embd),
+   418:                       (f'h.{i}.attn.c_proj', blk.attn.c_proj, m.config.n_embd),
+   419:                       (f'h.{i}.mlp.c_fc', blk.mlp.c_fc, m.config.n_embd),
+   420:                       (f'h.{i}.mlp.c_proj', blk.mlp.c_proj, 4 * m.config.n_embd)]
+   421:         return slots + [('lm_head', m.lm_head, m.config.n_embd)]
+   422: 
+   423:     @torch.no_grad()
+   424:     def _lowbit_row_levels(w_eff):
+   425:         # Levels per row: sorted values split wherever the gap exceeds
+   426:         # LOWBIT_REL_TOL * max|row|; the within-level spread must stay below
+   427:         # the same tolerance per level, so a continuum cannot chain into one.
+   428:         v, _ = torch.sort(w_eff.float(), dim=1)
+   429:         tol = LOWBIT_REL_TOL * v.abs().amax(dim=1, keepdim=True)
+   430:         gaps = v[:, 1:] - v[:, :-1]
+   431:         big = gaps > tol
+   432:         levels = 1 + big.sum(dim=1)
+   433:         spread = torch.where(big, torch.zeros_like(gaps), gaps).sum(dim=1)
+   434:         return levels, spread > tol.squeeze(1) * levels
+   435: 
+   436:     @torch.no_grad()
+   437:     def _lowbit_probe(mod, d_in, dtype):
+   438:         # (effective weight [out, in], output offset [out]) from one-hot inputs,
+   439:         # in the caller's autocast state
+   440:         base = mod(torch.zeros(1, 1, d_in, device=device, dtype=dtype)).float()
+   441:         base = torch.where(torch.isfinite(base), base, torch.zeros_like(base))
+   442:         eye = torch.eye(d_in, device=device, dtype=dtype).unsqueeze(0)
+   443:         return (mod(eye).float() - base)[0].t(), base.reshape(-1)
+   444: 
+   445:     @torch.no_grad()
+   446:     def verify_lowbit(m, when):
+   447:         t_check = time.time()
+   448:         worst = (0, '')
+   449:         for name, mod, d_in in _lowbit_slots(m):
+   450:             saved = {k: t.detach().clone() for k, t in mod.state_dict().items()}
+   451:             was_training = mod.training
+   452:             try:
+   453:                 for train_mode in (True, False):
+   454:                     mod.train(train_mode)
+   455:                     with ctx:
+   456:                         w_eff, _ = _lowbit_probe(mod, d_in, torch.float32)
+   457:                     if not torch.isfinite(w_eff).all():
+   458:                         raise RuntimeError(f"LOWBIT_CHECK FAILED ({when}): {name} forward is non-finite on one-hot probes")
+   459:                     levels, smeared = _lowbit_row_levels(w_eff)
+   460:                     n_max = int(levels.max())
+   461:                     if n_max > LOWBIT_MAX_LEVELS or bool(smeared.any()):
+   462:                         raise RuntimeError(
+   463:                             f"LOWBIT_CHECK FAILED ({when}): {name} "
+   464:                             f"({'train' if train_mode else 'eval'} mode) effective forward weight has "
+   465:                             f"{n_max} distinct values in a row (max {LOWBIT_MAX_LEVELS}), "
+   466:                             f"{int(smeared.sum())} rows with smeared levels; "
+   467:                             f"forward weights must be discrete")
+   468:                     worst = max(worst, (n_max, name))
+   469:             finally:
+   470:                 mod.train(was_training)
+   471:                 mod.load_state_dict(saved)
+   472:         print(f"LOWBIT_CHECK: {when}: ok, max levels per row = {worst[0]} ({worst[1]}), "
+   473:               f"{time.time() - t_check:.1f}s", flush=True)
+   474: 
+   475:     @torch.no_grad()
+   476:     def _lowbit_dense_check(name, mod, x, y):
+   477:         # Called from a forward hook with the real input x and output y.
+   478:         d_in, d_out = x.shape[-1], y.shape[-1]
+   479:         rows = torch.randperm(x.numel() // d_in, generator=_lowbit_gen)[:LOWBIT_DENSE_ROWS].to(x.device)
+   480:         got = y.detach().reshape(-1, d_out)[rows].double()
+   481:         saved = {k: t.detach().clone() for k, t in mod.state_dict().items()}
+   482:         w = mod.weight
+   483:         w0 = w.data
+   484:         flip_gen = torch.Generator(device=w0.device)
+   485:         flip_gen.manual_seed(int(torch.randint(2 ** 62, (), generator=_lowbit_gen)))
+   486:         mats, outs = [], []
+   487:         try:
+   488:             A, base = _lowbit_probe(mod, d_in, x.dtype)
+   489:             levels, smeared = _lowbit_row_levels(A)
+   490:             if int(levels.max()) > LOWBIT_MAX_LEVELS or bool(smeared.any()):
+   491:                 raise RuntimeError(
+   492:                     f"LOWBIT_CHECK FAILED (evaluation): {name} effective forward weight has "
+   493:                     f"{int(levels.max())} distinct values in a row (max {LOWBIT_MAX_LEVELS}) "
+   494:                     f"inside an evaluation forward pass; forward weights must be discrete")
+   495:             for _ in range(-(-3 * d_in // d_out)):   # >= 3 d_in equations per row
+   496:                 flips = torch.randint(0, 2, w0.shape, generator=flip_gen, device=w0.device,
+   497:                                       dtype=torch.int8).to(w0.dtype) * 2 - 1
+   498:                 w.data = w0 * flips
+   499:                 torch.clear_autocast_cache()  # no stale bf16 copy of the swapped weight
+   500:                 A_s, base_s = _lowbit_probe(mod, d_in, x.dtype)
 
 [truncated: showing at most 500 lines / 60000 bytes from nanoGPT/custom_pretrain.py]
 ```
@@ -750,20 +750,20 @@ Lines 38–101:
     36: 
     37: # -- Native Low-Bit Linear (BitLinear) Module ---------------------------------
     38: def weight_quant(weight):
-    39:     """2-bit uniform quantization: {-1, -1/3, +1/3, +1} with STE.
+    39:     """Absmean-scaled rounding to 5 levels {-1, -2/3, 0, +2/3, +1} with STE.
     40: 
-    41:     Normalizes weights by absmean, maps to 4 uniform levels in [-1, 1],
+    41:     Normalizes weights by absmean, rounds them to those 5 levels (not 4),
     42:     then rescales. Uses STE for gradient flow through rounding.
     43:     """
     44:     scale = weight.detach().abs().mean().clamp(min=1e-12)
     45:     w_normed = weight / scale
-    46:     # Map to [-1.5, 1.5] grid with spacing 1.0, round, then map back
-    47:     # Levels: -1.5 -> -1, -0.5 -> -1/3, 0.5 -> 1/3, 1.5 -> 1
-    48:     # Multiply by 1.5 so that [-1,1] -> [-1.5,1.5], round, clip to {-1,0,1} range
-    49:     # Actually: use 4 uniform levels directly
-    50:     # Grid points at: -1, -1/3, 1/3, 1 (spacing = 2/3)
-    51:     # Scale so spacing becomes 1: multiply by 3/2
-    52:     w_scaled = w_normed * 1.5  # now grid at -1.5, -0.5, 0.5, 1.5
+    46:     # Scale by 1.5, round to the nearest integer and clamp to [-1.5, 1.5]:
+    47:     # the values are {-1.5, -1, 0, 1, 1.5} (+-2 is clamped to +-1.5), i.e.
+    48:     # 5 levels {-1, -2/3, 0, 2/3, 1} after the division by 1.5 below. The
+    49:     # spacing is not uniform (2/3 around 0, 1/3 at the ends); the 4-level
+    50:     # grid {-1, -1/3, 1/3, 1} the name suggests would need rounding to
+    51:     # half-integers, which this code does not do.
+    52:     w_scaled = w_normed * 1.5
     53:     w_rounded = w_scaled.clamp(-2, 2).round().clamp(-1.5, 1.5)
     54:     # STE: (rounded - scaled).detach() + scaled
     55:     w_q = (w_rounded - w_scaled).detach() + w_scaled
@@ -788,9 +788,9 @@ Lines 38–101:
     74: 
     75: 
     76: class BitLinear(nn.Module):
-    77:     """Linear layer with 2-bit uniform weight quantization.
+    77:     """Linear layer with 5-level weight quantization (see weight_quant).
     78: 
-    79:     Weights are quantized to {-1, -1/3, +1/3, +1} during both training
+    79:     Weights are quantized to {-1, -2/3, 0, +2/3, +1} during both training
     80:     and eval. Activations quantized to int8 range. Output rescaled by
     81:     weight_scale * activation_scale.
     82:     """

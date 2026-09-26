@@ -1,4 +1,4 @@
 timestamp,model,is_final,seed,best_fitness_rastrigin-30d,best_fitness_rosenbrock-30d,best_fitness_ackley-30d,best_fitness_rastrigin-100d,elapsed_rastrigin-30d,elapsed_rosenbrock-30d,elapsed_ackley-30d,elapsed_rastrigin-100d
-2026-04-23T06:37:26.080711+00:00,baseline:ga_sbx,true,42,8.985411,87.01174,1.048397,115.1942,5,5,5,31
-2026-04-23T06:37:15.899076+00:00,baseline:de,true,42,172.2954,32.24717,0.4881168,925.7715,5,5,5,25
-2026-04-24T07:55:35.018873+00:00,baseline:lshade,true,42,7.892829,15.011,4.659428e-11,120.5674,6,6,6,44
+2026-09-24T20:36:08.089674+00:00,baseline:ga_sbx,true,42,10.47658,124.8774,3.085501,143.5013,3,4,4,38
+2026-09-24T20:36:08.089674+00:00,baseline:de,true,42,191.9336,30.35317,0.4483894,929.2752,3,3,3,32
+2026-09-24T20:36:08.089674+00:00,baseline:lshade,true,42,6.602837,14.21786,3.750911e-11,136.4728,6,6,5,52

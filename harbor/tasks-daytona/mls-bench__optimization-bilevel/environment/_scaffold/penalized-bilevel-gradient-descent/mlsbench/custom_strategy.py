@@ -1117,7 +1117,6 @@ def _init_hyperclean_run(
     x = torch.zeros(train.data.shape[0], device=device, requires_grad=True)
     state = {
         "task": "hyperclean",
-        "seed": seed,
         "net_name": net_name,
         "output_dir": output_dir,
         "label": label,

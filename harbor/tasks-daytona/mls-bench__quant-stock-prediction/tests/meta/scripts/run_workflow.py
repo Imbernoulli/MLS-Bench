@@ -212,7 +212,7 @@ def main():
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     import _label_guard
 
-    _label_guard.install()
+    _label_guard.install(config["task"]["dataset"])
 
     print(f"SEED={seed}")
 

@@ -152,76 +152,76 @@ stay unchanged.
     77: # =====================================================================
     78: # FIXED: Privacy accounting utilities (DO NOT MODIFY)
     79: # =====================================================================
-    80: 
-    81: def _compute_rdp_single_epoch(q, sigma, alpha):
-    82:     """Compute RDP for a single epoch of subsampled Gaussian mechanism."""
-    83:     if sigma == 0:
-    84:         return float("inf")
-    85:     if q == 0:
-    86:         return 0.0
-    87:     if alpha == 1:
-    88:         return q * q / (2 * sigma * sigma)
-    89:     log_term = (
-    90:         math.lgamma(alpha + 1)
-    91:         - math.lgamma(alpha - 1 + 1)
-    92:         - math.lgamma(2)
-    93:         + (alpha - 1) * math.log(1 - q)
-    94:         + math.log(q * q * alpha / (2 * sigma * sigma))
-    95:     )
-    96:     # Simplified RDP bound for subsampled Gaussian
-    97:     return min(
-    98:         alpha * q * q / (2 * sigma * sigma),
-    99:         q * q * alpha / (2 * sigma * sigma) + q * q * q * alpha * (alpha - 1) / (6 * sigma * sigma),
-   100:     )
-   101: 
-   102: 
-   103: def compute_epsilon(steps, sigma, q, delta, alphas=None):
-   104:     """Compute (epsilon, best_alpha) via RDP accounting.
+    80: # These helpers use the harness's accountant (_rdp_epsilon, in the FIXED
+    81: # section after DPMechanism; call them at run time): subsampled-Gaussian RDP
+    82: # (Mironov et al. 2019, as in Opacus) composed over steps, then (eps, delta).
+    83: 
+    84: def compute_epsilon(steps, sigma, q, delta, alphas=None):
+    85:     """Compute (epsilon, best_alpha) via RDP accounting.
+    86: 
+    87:     Args:
+    88:         steps: number of training steps
+    89:         sigma: noise multiplier
+    90:         q: sampling probability (batch_size / dataset_size)
+    91:         delta: target delta
+    92:         alphas: list of RDP orders to try
+    93: 
+    94:     Returns:
+    95:         (epsilon, best_alpha)
+    96:     """
+    97:     return compute_epsilon_schedule([(sigma, steps)], q, delta, alphas)
+    98: 
+    99: 
+   100: def compute_epsilon_schedule(schedule, q, delta, alphas=None):
+   101:     """(epsilon, best_alpha) of a noise schedule given as (sigma, n_steps)
+   102:     pairs, composed exactly as the harness's privacy ledger does."""
+   103:     return _rdp_epsilon(schedule, q, delta, alphas)
+   104: 
    105: 
-   106:     Args:
-   107:         steps: number of training steps
-   108:         sigma: noise multiplier
-   109:         q: sampling probability (batch_size / dataset_size)
-   110:         delta: target delta
-   111:         alphas: list of RDP orders to try
-   112: 
-   113:     Returns:
-   114:         (epsilon, best_alpha)
-   115:     """
-   116:     if alphas is None:
-   117:         alphas = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-   118:     best_eps = float("inf")
-   119:     best_alpha = None
-   120:     for alpha in alphas:
-   121:         # RDP for subsampled Gaussian mechanism (tight bound)
-   122:         if alpha <= 1:
-   123:             continue
-   124:         rdp = steps * min(
-   125:             q * q * alpha / (2 * sigma * sigma),
-   126:             alpha * q * q / (2 * sigma * sigma),
-   127:         )
-   128:         # Convert RDP to (epsilon, delta)-DP
-   129:         eps = rdp - math.log(delta) / (alpha - 1) + math.log(1 - 1 / alpha)
-   130:         if eps < best_eps:
-   131:             best_eps = eps
-   132:             best_alpha = alpha
-   133:     return max(0, best_eps), best_alpha
-   134: 
-   135: 
-   136: def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
-   137:     """Find the noise multiplier sigma that achieves target_epsilon.
-   138: 
-   139:     Uses binary search to find the right noise level.
-   140:     """
-   141:     sigma_low, sigma_high = 0.01, 100.0
-   142:     while sigma_high - sigma_low > tol:
-   143:         sigma_mid = (sigma_low + sigma_high) / 2
-   144:         eps, _ = compute_epsilon(steps, sigma_mid, q, delta)
-   145:         if eps > target_epsilon:
-   146:             sigma_low = sigma_mid
-   147:         else:
-   148:             sigma_high = sigma_mid
-   149:     return (sigma_low + sigma_high) / 2
+   106: def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
+   107:     """Find the noise multiplier sigma that achieves target_epsilon.
+   108: 
+   109:     Uses binary search to find the right noise level.
+   110:     """
+   111:     sigma_low, sigma_high = 0.01, 100.0
+   112:     while sigma_high - sigma_low > tol:
+   113:         sigma_mid = (sigma_low + sigma_high) / 2
+   114:         eps, _ = compute_epsilon(steps, sigma_mid, q, delta)
+   115:         if eps > target_epsilon:
+   116:             sigma_low = sigma_mid
+   117:         else:
+   118:             sigma_high = sigma_mid
+   119:     return (sigma_low + sigma_high) / 2
+   120: 
+   121: 
+   122: # Originals of what the FIXED harness relies on (noise, clipping check,
+   123: # accountant, accuracy count), captured before the editable section runs.
+   124: # ("module.<builtin>" must stay absent: fixed code looks these names up.)
+   125: import builtins as _builtins
+   126: from scipy import special as _sp_special
+   127: _HARNESS_BUILTINS = ("bool", "float", "int", "type", "len", "isinstance", "list",
+   128:                      "tuple", "zip", "range", "enumerate", "min", "max", "abs",
+   129:                      "print", "RuntimeError")
+   130: _HARNESS_REFS = tuple(
+   131:     (f"{label}.{name}", ns, name, ns.get(name))
+   132:     for label, ns, names in (
+   133:         ("torch", vars(torch), ("Tensor", "randn_like", "cat")),
+   134:         ("torch.linalg", vars(torch.linalg), ("vector_norm",)),
+   135:         ("torch._C", vars(torch._C), ("_len_torch_function_stack",
+   136:                                       "_len_torch_dispatch_stack")),
+   137:         ("torch.Tensor", vars(torch.Tensor), (
+   138:             "__torch_function__", "__getattribute__", "__getattr__", "shape",
+   139:             "to", "clone", "detach", "reshape", "dim", "__mul__", "__add__",
+   140:             "__le__", "__bool__", "all", "mean", "max", "item", "argmax", "eq",
+   141:             "sum")),
+   142:         ("math", vars(math), ("log", "log1p", "exp", "expm1", "sqrt", "isfinite")),
+   143:         ("scipy.special", vars(_sp_special), ("binom", "log_ndtr")),
+   144:         ("builtins", vars(_builtins), _HARNESS_BUILTINS),
+   145:         ("module", globals(), ("torch", "print", "range", "enumerate", "zip",
+   146:                                "len", "RuntimeError")),
+   147:     )
+   148:     for name in names
+   149: )
    150: 
    151: 
    152: # =====================================================================
@@ -313,266 +313,266 @@ stay unchanged.
    238: # =====================================================================
    239: # The Gaussian mechanism and the accountant live here, outside the editable
    240: # section, so the reported epsilon is always computed from the clipping bound
-   241: # and noise multiplier that were actually applied. Modules are re-bound under
-   242: # private names so that names reassigned in the editable section cannot
-   243: # change the mechanism.
-   244: import math as _math
-   245: import torch as _torch
-   246: 
-   247: _CLIP_NORM_RTOL = 1e-4  # float slack on the per-sample L2 bound check
-   248: _EPSILON_RTOL = 1e-2    # slack for the sigma calibration's binary-search tolerance
-   249: 
-   250: 
-   251: def _rdp_epsilon(steps, sigma, q, delta):
-   252:     """Same RDP bound and conversion as compute_epsilon (kept private here)."""
-   253:     alphas = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-   254:     best_eps = float("inf")
-   255:     for alpha in alphas:
-   256:         if alpha <= 1:
-   257:             continue
-   258:         rdp = steps * min(
-   259:             q * q * alpha / (2 * sigma * sigma),
-   260:             alpha * q * q / (2 * sigma * sigma),
-   261:         )
-   262:         eps = rdp - _math.log(delta) / (alpha - 1) + _math.log(1 - 1 / alpha)
-   263:         if eps < best_eps:
-   264:             best_eps = eps
-   265:     return max(0, best_eps)
+   241: # and noise multiplier that were actually applied.
+   242: #
+   243: # What is protected against code in the editable section:
+   244: # - The fixed functions below take the helpers and library functions they use
+   245: #   (the originals in _HARNESS_REFS) as default arguments or closure variables
+   246: #   bound at definition time, so reassigning a module-level name (e.g. with
+   247: #   `global`) or a torch/math attribute does not change them.
+   248: # - _check_harness() runs after every call into DPMechanism, before the
+   249: #   harness uses its result, and before the final metrics are printed. It
+   250: #   aborts the run if an entry of _HARNESS_REFS or a fixed name of this file
+   251: #   defined below was replaced (or a listed builtin shadowed), or if a torch
+   252: #   function/dispatch mode is active.
+   253: # Not covered (in-process residual): code that deliberately rewrites the
+   254: # harness's own objects (_HARNESS_REFS before it is bound, function defaults
+   255: # or closures, frames, gc) or forges the printed output.
+   256: _ORIG = {key: obj for key, ns, name, obj in _HARNESS_REFS}
+   257: 
+   258: _CLIP_NORM_RTOL = 1e-4  # float slack on the per-sample L2 bound check
+   259: _EPSILON_RTOL = 1e-2    # slack for the sigma calibration's binary-search tolerance
+   260: _RDP_ORDERS = tuple([1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64)))
+   261: 
+   262: 
+   263: def _make_harness_check(refs=_HARNESS_REFS, _RuntimeError=_ORIG["builtins.RuntimeError"]):
+   264:     fixed = []  # (key, namespace, name, object) of the fixed code, see seal()
+   265:     mode_stacks = [obj for key, ns, name, obj in refs if key.startswith("torch._C.")]
    266: 
-   267: 
-   268: class _PrivacyLedger:
-   269:     """Composes the per-step noise multipliers the harness actually applied.
-   270: 
-   271:     Under this RDP bound a step with multiplier sigma_t costs
-   272:     alpha * q^2 / (2 sigma_t^2), so T steps compose to the cost of T steps at
-   273:     sigma_eff = sqrt(T / sum_t 1/sigma_t^2).
-   274:     """
-   275: 
-   276:     def __init__(self, q, delta):
-   277:         self.q = float(q)
-   278:         self.delta = float(delta)
-   279:         self.steps = 0
-   280:         self.inv_sq_sum = 0.0
-   281: 
-   282:     def record(self, sigma):
-   283:         self.steps += 1
-   284:         self.inv_sq_sum += 1.0 / (sigma * sigma)
-   285: 
-   286:     def effective_sigma(self):
-   287:         return (self.steps / self.inv_sq_sum) ** 0.5
+   267:     def check():
+   268:         for entries in (refs, fixed):
+   269:             for key, ns, name, obj in entries:
+   270:                 if ns.get(name) is not obj:
+   271:                     raise _RuntimeError(
+   272:                         f"DP harness tampering: `{key}` was replaced or shadowed; "
+   273:                         f"the fixed harness relies on the original")
+   274:         for stack_len in mode_stacks:
+   275:             if stack_len():
+   276:                 raise _RuntimeError("DP harness tampering: a torch function or "
+   277:                                     "dispatch mode is active")
+   278: 
+   279:     def seal(*groups):
+   280:         if fixed:
+   281:             raise _RuntimeError("the DP harness is already sealed")
+   282:         for label, ns, names in groups:
+   283:             for name in names:
+   284:                 fixed.append((f"{label}.{name}", ns, name, ns[name]))
+   285:         check()
+   286: 
+   287:     return check, seal
    288: 
-   289:     def epsilon(self):
-   290:         return _rdp_epsilon(self.steps, self.effective_sigma(), self.q, self.delta)
-   291: 
+   289: 
+   290: _check_harness, _seal_harness = _make_harness_check()
+   291: _check_harness()  # module-level code of the editable section replaced nothing
    292: 
-   293: def _positive_finite(value, name):
-   294:     value = float(value)
-   295:     if not _math.isfinite(value) or value <= 0:
-   296:         raise RuntimeError(f"DPMechanism returned invalid {name}={value!r}; "
-   297:                            f"it must be a finite positive number")
-   298:     return value
-   299: 
-   300: 
-   301: def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger):
-   302:     """One step of the Gaussian mechanism with the mechanism's C_t and sigma_t.
-   303: 
-   304:     The mechanism sees a copy of the per-sample gradients and returns
-   305:     per-sample multipliers plus the bound C_t; the harness scales the
-   306:     original gradients, verifies ||scaled_i|| <= C_t for every sample, averages
-   307:     over the batch, adds N(0, (sigma_t * C_t / B)^2) noise and records sigma_t.
+   293: 
+   294: def _make_rdp_accountant(
+   295:         orders=_RDP_ORDERS, log=_ORIG["math.log"], log1p=_ORIG["math.log1p"],
+   296:         exp=_ORIG["math.exp"], expm1=_ORIG["math.expm1"], sqrt=_ORIG["math.sqrt"],
+   297:         binom=_ORIG["scipy.special.binom"], log_ndtr=_ORIG["scipy.special.log_ndtr"],
+   298:         _float=_ORIG["builtins.float"], _int=_ORIG["builtins.int"],
+   299:         _abs=_ORIG["builtins.abs"], _min=_ORIG["builtins.min"],
+   300:         _max=_ORIG["builtins.max"], _range=_ORIG["builtins.range"],
+   301:         _zip=_ORIG["builtins.zip"], _len=_ORIG["builtins.len"],
+   302:         _tuple=_ORIG["builtins.tuple"]):
+   303:     """RDP of the subsampled Gaussian mechanism with sampling rate q (Mironov,
+   304:     Talwar and Zhang 2019, "Renyi Differential Privacy of the Sampled Gaussian
+   305:     Mechanism"; the computation used by Opacus and TF-Privacy), composed per
+   306:     order over a noise schedule and converted to (epsilon, delta) with
+   307:     eps = rdp + log(1/delta)/(alpha-1) + log(1-1/alpha), minimised over alpha.
    308:     """
-   309:     batch_size = per_sample_grads[0].shape[0]
-   310:     scale, clip_norm = dp_mechanism.clip(
-   311:         [g.clone() for g in per_sample_grads], step, epoch
-   312:     )
-   313:     clip_norm = _positive_finite(clip_norm, "clip_norm")
-   314:     sigma = _positive_finite(dp_mechanism.get_noise_multiplier(step, epoch),
-   315:                              "noise multiplier")
-   316: 
-   317:     scales = list(scale) if isinstance(scale, (list, tuple)) else [scale] * len(per_sample_grads)
-   318:     if len(scales) != len(per_sample_grads):
-   319:         raise RuntimeError(f"DPMechanism.clip returned {len(scales)} scale tensors "
-   320:                            f"for {len(per_sample_grads)} parameters")
-   321:     clipped = []
-   322:     for g, s in zip(per_sample_grads, scales):
-   323:         if type(s) is not _torch.Tensor or tuple(s.shape) != (batch_size,):
-   324:             raise RuntimeError("DPMechanism.clip must return per-sample scales as "
-   325:                                f"plain torch.Tensor of shape [{batch_size}]")
-   326:         shape = [batch_size] + [1] * (g.dim() - 1)
-   327:         clipped.append(g * s.detach().reshape(shape))
-   328: 
-   329:     norms = _torch.cat([c.reshape(batch_size, -1) for c in clipped], dim=1).norm(2, dim=1)
-   330:     if not bool((norms <= clip_norm * (1 + _CLIP_NORM_RTOL)).all()):
-   331:         raise RuntimeError(
-   332:             f"DP violation at step {step}: a scaled per-sample gradient has norm "
-   333:             f"{norms.max().item():.6g} > clip_norm={clip_norm:.6g}"
-   334:         )
-   335: 
-   336:     noised_grads = []
-   337:     for c in clipped:
-   338:         avg = c.mean(dim=0)
-   339:         noise = _torch.randn_like(avg) * (sigma * clip_norm / batch_size)
-   340:         noised_grads.append(avg + noise)
-   341:     ledger.record(sigma)
-   342:     return noised_grads
-   343: 
-   344: 
-   345: # =====================================================================
-   346: # FIXED: Data loading (DO NOT MODIFY)
-   347: # =====================================================================
-   348: 
-   349: def get_data_loaders(dataset_name, batch_size, data_root=os.environ.get("DATA_ROOT", "/data")):
-   350:     """Create train and test data loaders."""
-   351:     if dataset_name == "mnist":
-   352:         transform = transforms.Compose([
-   353:             transforms.ToTensor(),
-   354:             transforms.Normalize((0.1307,), (0.3081,)),
-   355:         ])
-   356:         train_ds = datasets.MNIST(
-   357:             os.path.join(data_root, "mnist"), train=True, download=False, transform=transform
-   358:         )
-   359:         test_ds = datasets.MNIST(
-   360:             os.path.join(data_root, "mnist"), train=False, download=False, transform=transform
-   361:         )
-   362:         model_cls = MNISTNet
-   363:     elif dataset_name == "cifar10":
-   364:         transform_train = transforms.Compose([
-   365:             transforms.ToTensor(),
-   366:             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-   367:         ])
-   368:         transform_test = transforms.Compose([
-   369:             transforms.ToTensor(),
-   370:             transforms.Normalize((0.4914, 0.4822, 0.4465), (0.2023, 0.1994, 0.2010)),
-   371:         ])
-   372:         train_ds = datasets.CIFAR10(
-   373:             os.path.join(data_root, "cifar10"), train=True, download=False, transform=transform_train
-   374:         )
-   375:         test_ds = datasets.CIFAR10(
-   376:             os.path.join(data_root, "cifar10"), train=False, download=False, transform=transform_test
-   377:         )
-   378:         model_cls = CIFAR10Net
-   379:     elif dataset_name == "fmnist":
-   380:         transform = transforms.Compose([
-   381:             transforms.ToTensor(),
-   382:             transforms.Normalize((0.2860,), (0.3530,)),
-   383:         ])
-   384:         train_ds = datasets.FashionMNIST(
-   385:             os.path.join(data_root, "fmnist"), train=True, download=False, transform=transform
-   386:         )
-   387:         test_ds = datasets.FashionMNIST(
-   388:             os.path.join(data_root, "fmnist"), train=False, download=False, transform=transform
-   389:         )
-   390:         model_cls = MNISTNet
-   391:     else:
-   392:         raise ValueError(f"Unknown dataset: {dataset_name}")
-   393: 
-   394:     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True,
-   395:                               num_workers=2, pin_memory=True, drop_last=True)
-   396:     test_loader = DataLoader(test_ds, batch_size=1024, shuffle=False,
-   397:                              num_workers=2, pin_memory=True)
-   398:     return train_ds, train_loader, test_loader, model_cls
-   399: 
-   400: 
-   401: # =====================================================================
-   402: # FIXED: Per-sample gradient computation (DO NOT MODIFY)
-   403: # =====================================================================
-   404: 
-   405: def compute_per_sample_gradients(model, data, target, criterion):
-   406:     """Compute per-sample gradients using functorch-style vmap.
-   407: 
-   408:     Returns a list of tensors, each of shape [B, *param_shape].
-   409:     """
-   410:     params = [p for p in model.parameters() if p.requires_grad]
+   309:     inf = _float("inf")
+   310: 
+   311:     def log_add(x, y):
+   312:         a, b = _min(x, y), _max(x, y)
+   313:         return b if a == -inf else log1p(exp(a - b)) + b
+   314: 
+   315:     def log_sub(x, y):
+   316:         if x < y:
+   317:             raise ValueError("The result of subtraction must be non-negative.")
+   318:         if y == -inf:
+   319:             return x
+   320:         if x == y:
+   321:             return -inf
+   322:         try:
+   323:             return log(expm1(x - y)) + y
+   324:         except OverflowError:
+   325:             return x
+   326: 
+   327:     def log_erfc(x):
+   328:         return log(2) + log_ndtr(-x * 2 ** 0.5)
+   329: 
+   330:     def log_a_int(q, sigma, alpha):
+   331:         log_a = -inf
+   332:         for i in _range(alpha + 1):
+   333:             log_coef_i = log(binom(alpha, i)) + i * log(q) + (alpha - i) * log(1 - q)
+   334:             log_a = log_add(log_a, log_coef_i + (i * i - i) / (2 * (sigma ** 2)))
+   335:         return _float(log_a)
+   336: 
+   337:     def log_a_frac(q, sigma, alpha):
+   338:         log_a0, log_a1 = -inf, -inf
+   339:         i = 0
+   340:         z0 = sigma ** 2 * log(1 / q - 1) + 0.5
+   341:         while True:
+   342:             coef = binom(alpha, i)
+   343:             log_coef = log(_abs(coef))
+   344:             j = alpha - i
+   345:             log_t0 = log_coef + i * log(q) + j * log(1 - q)
+   346:             log_t1 = log_coef + j * log(q) + i * log(1 - q)
+   347:             log_e0 = log(0.5) + log_erfc((i - z0) / (sqrt(2) * sigma))
+   348:             log_e1 = log(0.5) + log_erfc((z0 - j) / (sqrt(2) * sigma))
+   349:             log_s0 = log_t0 + (i * i - i) / (2 * (sigma ** 2)) + log_e0
+   350:             log_s1 = log_t1 + (j * j - j) / (2 * (sigma ** 2)) + log_e1
+   351:             if coef > 0:
+   352:                 log_a0, log_a1 = log_add(log_a0, log_s0), log_add(log_a1, log_s1)
+   353:             else:
+   354:                 log_a0, log_a1 = log_sub(log_a0, log_s0), log_sub(log_a1, log_s1)
+   355:             i += 1
+   356:             if _max(log_s0, log_s1) < -30:
+   357:                 break
+   358:         return log_add(log_a0, log_a1)
+   359: 
+   360:     def step_rdp(q, sigma, alpha):
+   361:         if q == 0:
+   362:             return 0.0
+   363:         if sigma == 0:
+   364:             return inf
+   365:         if q == 1.0:
+   366:             return alpha / (2 * sigma ** 2)
+   367:         if _float(alpha).is_integer():
+   368:             return log_a_int(q, sigma, _int(alpha)) / (alpha - 1)
+   369:         return log_a_frac(q, sigma, alpha) / (alpha - 1)
+   370: 
+   371:     def epsilon(schedule, q, delta, alphas=None, cache=None):
+   372:         """(epsilon, best_alpha) of `schedule`, a list of (sigma, n_steps);
+   373:         `cache` (a dict) keeps each sigma's one-step RDP across calls."""
+   374:         q, delta = _float(q), _float(delta)
+   375:         alphas = orders if alphas is None else _tuple(alphas)
+   376:         cache = {} if cache is None else cache
+   377:         rdp = [0.0] * _len(alphas)
+   378:         for sigma, n_steps in schedule:
+   379:             key = (q, _float(sigma), alphas)
+   380:             per_step = cache.get(key)
+   381:             if per_step is None:
+   382:                 per_step = cache[key] = [step_rdp(q, key[1], a) for a in alphas]
+   383:             rdp = [r + n_steps * s for r, s in _zip(rdp, per_step)]
+   384:         best_eps, best_alpha = inf, None
+   385:         for alpha, r in _zip(alphas, rdp):
+   386:             if alpha <= 1:
+   387:                 continue
+   388:             eps = r - log(delta) / (alpha - 1) + log(1 - 1 / alpha)
+   389:             if eps < best_eps:
+   390:                 best_eps, best_alpha = eps, alpha
+   391:         return _max(0, best_eps), best_alpha
+   392: 
+   393:     return epsilon
+   394: 
+   395: 
+   396: _rdp_epsilon = _make_rdp_accountant()
+   397: 
+   398: 
+   399: class _PrivacyLedger:
+   400:     """Counts the steps run at each noise multiplier sigma_t the harness
+   401:     applied; epsilon() composes their subsampled-Gaussian RDP per order (no
+   402:     shortcut through an "effective" sigma)."""
+   403: 
+   404:     def __init__(self, q, delta, _float=_ORIG["builtins.float"]):
+   405:         self.q = _float(q)
+   406:         self.delta = _float(delta)
+   407:         self.steps = 0
+   408:         self.last_sigma = None
+   409:         self.counts = {}  # sigma_t -> number of steps
+   410:         self.rdp_cache = {}
    411: 
-   412:     # Manual per-sample gradient computation via backward on each sample
-   413:     batch_size = data.shape[0]
-   414:     per_sample_grads = [torch.zeros(batch_size, *p.shape, device=p.device) for p in params]
-   415: 
-   416:     for i in range(batch_size):
-   417:         model.zero_grad()
-   418:         output = model(data[i:i+1])
-   419:         loss = criterion(output, target[i:i+1])
-   420:         loss.backward()
-   421:         for j, p in enumerate(params):
-   422:             if p.grad is not None:
-   423:                 per_sample_grads[j][i] = p.grad.clone()
-   424: 
-   425:     return per_sample_grads
-   426: 
-   427: 
-   428: def compute_per_sample_gradients_fast(model, data, target, criterion):
-   429:     """Efficient per-sample gradient computation using ghost clipping trick.
+   412:     def record(self, sigma):
+   413:         self.steps += 1
+   414:         self.last_sigma = sigma
+   415:         self.counts[sigma] = self.counts.get(sigma, 0) + 1
+   416: 
+   417:     def epsilon(self, _epsilon=_rdp_epsilon, _list=_ORIG["builtins.list"]):
+   418:         return _epsilon(_list(self.counts.items()), self.q, self.delta,
+   419:                         cache=self.rdp_cache)[0]
+   420: 
+   421: 
+   422: def _positive_finite(value, name, _float=_ORIG["builtins.float"],
+   423:                      _isfinite=_ORIG["math.isfinite"]):
+   424:     value = _float(value)
+   425:     if not _isfinite(value) or value <= 0:
+   426:         raise RuntimeError(f"DPMechanism returned invalid {name}={value!r}; "
+   427:                            f"it must be a finite positive number")
+   428:     return value
+   429: 
    430: 
-   431:     Computes per-sample gradient norms first, then uses weighted loss for aggregation.
-   432:     Falls back to loop-based computation for small batches.
-   433:     """
-   434:     batch_size = data.shape[0]
-   435: 
-   436:     # For moderate batch sizes, use vectorized approach via autograd
-   437:     if batch_size <= 128:
-   438:         return compute_per_sample_gradients(model, data, target, criterion)
-   439: 
-   440:     # For larger batches, use microbatching for memory efficiency
-   441:     micro_bs = 64
-   442:     params = [p for p in model.parameters() if p.requires_grad]
-   443:     per_sample_grads = [torch.zeros(batch_size, *p.shape, device=p.device) for p in params]
-   444: 
-   445:     for start in range(0, batch_size, micro_bs):
-   446:         end = min(start + micro_bs, batch_size)
-   447:         micro_data = data[start:end]
-   448:         micro_target = target[start:end]
-   449:         for i in range(end - start):
-   450:             model.zero_grad()
-   451:             output = model(micro_data[i:i+1])
-   452:             loss = criterion(output, micro_target[i:i+1])
-   453:             loss.backward()
-   454:             for j, p in enumerate(params):
-   455:                 if p.grad is not None:
-   456:                     per_sample_grads[j][start + i] = p.grad.clone()
-   457: 
-   458:     return per_sample_grads
-   459: 
-   460: 
-   461: # =====================================================================
-   462: # FIXED: Training and evaluation loops (DO NOT MODIFY)
-   463: # =====================================================================
-   464: 
-   465: def train_epoch(model, train_loader, optimizer, criterion, dp_mechanism, device,
-   466:                 epoch, total_steps, ledger, log_interval=50):
-   467:     """Train one epoch with DP mechanism."""
-   468:     model.train()
-   469:     running_loss = 0.0
-   470:     correct = 0
-   471:     total = 0
-   472:     step = total_steps
+   431: def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger,
+   432:                    _check=_check_harness, _positive=_positive_finite,
+   433:                    _Tensor=_ORIG["torch.Tensor"], _randn_like=_ORIG["torch.randn_like"],
+   434:                    _cat=_ORIG["torch.cat"], _vector_norm=_ORIG["torch.linalg.vector_norm"],
+   435:                    _rtol=_CLIP_NORM_RTOL, _bool=_ORIG["builtins.bool"],
+   436:                    _type=_ORIG["builtins.type"], _len=_ORIG["builtins.len"],
+   437:                    _isinstance=_ORIG["builtins.isinstance"], _list=_ORIG["builtins.list"],
+   438:                    _tuple=_ORIG["builtins.tuple"], _zip=_ORIG["builtins.zip"]):
+   439:     """One step of the Gaussian mechanism with the mechanism's C_t and sigma_t.
+   440: 
+   441:     The mechanism sees a copy of the per-sample gradients and returns
+   442:     per-sample multipliers plus the bound C_t; the harness scales the
+   443:     original gradients, verifies ||scaled_i|| <= C_t for every sample, averages
+   444:     over the batch, adds N(0, (sigma_t * C_t / B)^2) noise and records sigma_t.
+   445:     """
+   446:     batch_size = per_sample_grads[0].shape[0]
+   447:     scale, clip_norm = dp_mechanism.clip(
+   448:         [g.clone() for g in per_sample_grads], step, epoch
+   449:     )
+   450:     clip_norm = _positive(clip_norm, "clip_norm")
+   451:     sigma = _positive(dp_mechanism.get_noise_multiplier(step, epoch),
+   452:                       "noise multiplier")
+   453:     scales = _list(scale) if _isinstance(scale, (_list, _tuple)) else [scale] * _len(per_sample_grads)
+   454:     _check()  # no DPMechanism code runs past this point in this step
+   455: 
+   456:     if _len(scales) != _len(per_sample_grads):
+   457:         raise RuntimeError(f"DPMechanism.clip returned {_len(scales)} scale tensors "
+   458:                            f"for {_len(per_sample_grads)} parameters")
+   459:     clipped = []
+   460:     for g, s in _zip(per_sample_grads, scales):
+   461:         if _type(s) is not _Tensor or _tuple(s.shape) != (batch_size,):
+   462:             raise RuntimeError("DPMechanism.clip must return per-sample scales as "
+   463:                                f"plain torch.Tensor of shape [{batch_size}]")
+   464:         shape = [batch_size] + [1] * (g.dim() - 1)
+   465:         clipped.append(g * s.detach().to(device=g.device, dtype=g.dtype).reshape(shape))
+   466: 
+   467:     norms = _vector_norm(_cat([c.reshape(batch_size, -1) for c in clipped], dim=1), 2, dim=1)
+   468:     if not _bool((norms <= clip_norm * (1 + _rtol)).all()):
+   469:         raise RuntimeError(
+   470:             f"DP violation at step {step}: a scaled per-sample gradient has norm "
+   471:             f"{norms.max().item():.6g} > clip_norm={clip_norm:.6g}"
+   472:         )
    473: 
-   474:     for batch_idx, (data, target) in enumerate(train_loader):
-   475:         data, target = data.to(device), target.to(device)
-   476:         batch_size = data.shape[0]
-   477: 
-   478:         # Compute per-sample gradients
-   479:         per_sample_grads = compute_per_sample_gradients(model, data, target, criterion)
-   480: 
-   481:         # Apply the DP mechanism: clipping/schedule from DPMechanism (EDITABLE),
-   482:         # noise and accounting from privatize_step (FIXED)
-   483:         noised_grads = privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger)
-   484: 
-   485:         # Set model gradients
-   486:         optimizer.zero_grad()
-   487:         for param, grad in zip(
-   488:             [p for p in model.parameters() if p.requires_grad], noised_grads
-   489:         ):
-   490:             param.grad = grad
-   491: 
-   492:         optimizer.step()
-   493: 
-   494:         # Compute batch metrics (without grad)
-   495:         with torch.no_grad():
-   496:             output = model(data)
-   497:             loss = criterion(output, target)
-   498:             running_loss += loss.item() * batch_size
-   499:             pred = output.argmax(dim=1)
-   500:             correct += pred.eq(target).sum().item()
+   474:     noised_grads = []
+   475:     for c in clipped:
+   476:         avg = c.mean(dim=0)
+   477:         noise = _randn_like(avg) * (sigma * clip_norm / batch_size)
+   478:         noised_grads.append(avg + noise)
+   479:     ledger.record(sigma)
+   480:     return noised_grads
+   481: 
+   482: 
+   483: # =====================================================================
+   484: # FIXED: Data loading (DO NOT MODIFY)
+   485: # =====================================================================
+   486: 
+   487: def get_data_loaders(dataset_name, batch_size, data_root=os.environ.get("DATA_ROOT", "/data")):
+   488:     """Create train and test data loaders."""
+   489:     if dataset_name == "mnist":
+   490:         transform = transforms.Compose([
+   491:             transforms.ToTensor(),
+   492:             transforms.Normalize((0.1307,), (0.3081,)),
+   493:         ])
+   494:         train_ds = datasets.MNIST(
+   495:             os.path.join(data_root, "mnist"), train=True, download=False, transform=transform
+   496:         )
+   497:         test_ds = datasets.MNIST(
+   498:             os.path.join(data_root, "mnist"), train=False, download=False, transform=transform
+   499:         )
+   500:         model_cls = MNISTNet
 
 [truncated: showing at most 500 lines / 60000 bytes from opacus/custom_dpsgd.py]
 ```
@@ -592,7 +592,7 @@ In `opacus/custom_dpsgd.py`:
 
 ```python
 Lines 152–183:
-   149:     return (sigma_low + sigma_high) / 2
+   149: )
    150: 
    151: 
    152: class DPMechanism:
@@ -638,7 +638,7 @@ In `opacus/custom_dpsgd.py`:
 
 ```python
 Lines 152–188:
-   149:     return (sigma_low + sigma_high) / 2
+   149: )
    150: 
    151: 
    152: class DPMechanism:
@@ -689,7 +689,7 @@ In `opacus/custom_dpsgd.py`:
 
 ```python
 Lines 152–200:
-   149:     return (sigma_low + sigma_high) / 2
+   149: )
    150: 
    151: 
    152: class DPMechanism:
@@ -751,8 +751,8 @@ Lines 152–200:
 In `opacus/custom_dpsgd.py`:
 
 ```python
-Lines 152–230:
-   149:     return (sigma_low + sigma_high) / 2
+Lines 152–231:
+   149: )
    150: 
    151: 
    152: class DPMechanism:
@@ -761,82 +761,83 @@ Lines 152–230:
    155:     Decays noise multiplier and clipping threshold over training epochs
    156:     to allocate more privacy budget to later (more useful) training steps.
    157: 
-   158:     Privacy accounting: sigma_0 is chosen so that the full schedule spends
-   159:     the same budget as the calibrated uniform sigma; the fixed harness
-   160:     composes the per-step sigma it actually applied.
-   161:     """
-   162: 
-   163:     def __init__(self, max_grad_norm, noise_multiplier, n_params,
-   164:                  dataset_size, batch_size, epochs, target_epsilon, target_delta):
-   165:         self.max_grad_norm = max_grad_norm
-   166:         self.noise_multiplier = noise_multiplier
-   167:         self.n_params = n_params
-   168:         self.dataset_size = dataset_size
-   169:         self.batch_size = batch_size
-   170:         self.epochs = epochs
-   171:         self.target_epsilon = target_epsilon
-   172:         self.target_delta = target_delta
-   173: 
-   174:         # Step-decay schedule parameters
-   175:         # Decay noise and clipping every decay_interval epochs
-   176:         self.decay_interval = max(1, epochs // 4)  # 4 decay stages
-   177:         self.noise_decay_factor = 0.8  # Reduce noise by 20% at each stage
-   178:         self.clip_decay_factor = 0.85  # Reduce clip norm by 15% at each stage
-   179: 
-   180:         # Pre-compute the per-epoch sigma schedule so we can do accurate
-   181:         # RDP accounting.  Steps per epoch = dataset_size // batch_size
-   182:         # (drop_last=True in DataLoader).
+   158:     Privacy accounting: sigma_0 is calibrated so that the full decayed
+   159:     schedule spends the target budget under the harness's accountant
+   160:     (compute_epsilon_schedule); the fixed harness composes the per-step
+   161:     sigma it actually applied.
+   162:     """
+   163: 
+   164:     def __init__(self, max_grad_norm, noise_multiplier, n_params,
+   165:                  dataset_size, batch_size, epochs, target_epsilon, target_delta):
+   166:         self.max_grad_norm = max_grad_norm
+   167:         self.noise_multiplier = noise_multiplier
+   168:         self.n_params = n_params
+   169:         self.dataset_size = dataset_size
+   170:         self.batch_size = batch_size
+   171:         self.epochs = epochs
+   172:         self.target_epsilon = target_epsilon
+   173:         self.target_delta = target_delta
+   174: 
+   175:         # Step-decay schedule parameters
+   176:         # Decay noise and clipping every decay_interval epochs
+   177:         self.decay_interval = max(1, epochs // 4)  # 4 decay stages
+   178:         self.noise_decay_factor = 0.8  # Reduce noise by 20% at each stage
+   179:         self.clip_decay_factor = 0.85  # Reduce clip norm by 15% at each stage
+   180: 
+   181:         # Per-epoch sigma schedule for the RDP accounting. Steps per epoch =
+   182:         # dataset_size // batch_size (drop_last=True in DataLoader).
    183:         self.steps_per_epoch = dataset_size // batch_size
-   184: 
-   185:         # Compute sigma_0: scale the calibrated (uniform) sigma up so that
-   186:         # the harmonic-mean-equivalent sigma across all steps equals the
-   187:         # calibrated value.  This keeps the total privacy spend equal to
-   188:         # the budget even though individual steps have different noise.
-   189:         total_steps = self.steps_per_epoch * epochs
-   190:         inv_sq_sum = 0.0
-   191:         for e in range(1, epochs + 1):
-   192:             stage = (e - 1) // self.decay_interval
-   193:             factor = self.noise_decay_factor ** stage
-   194:             # Each epoch contributes steps_per_epoch steps at sigma_0*factor
-   195:             # 1/sigma_t^2 = 1/(sigma_0*factor)^2 = 1/(sigma_0^2 * factor^2)
-   196:             inv_sq_sum += self.steps_per_epoch / (factor * factor)
-   197:         # sigma_eff = sqrt(total_steps / inv_sq_sum) * sigma_0
-   198:         # We want sigma_eff == noise_multiplier (the calibrated value), so:
-   199:         #   noise_multiplier = sigma_0 * sqrt(total_steps / inv_sq_sum)
-   200:         #   sigma_0 = noise_multiplier / sqrt(total_steps / inv_sq_sum)
-   201:         #           = noise_multiplier * sqrt(inv_sq_sum / total_steps)
-   202:         self.sigma_0 = noise_multiplier * (inv_sq_sum / total_steps) ** 0.5
-   203:         self.clip_0 = max_grad_norm
-   204: 
-   205:         # Current values
-   206:         self._current_sigma = self.sigma_0
-   207:         self._current_clip = self.clip_0
-   208: 
-   209:     def clip(self, per_sample_grads, step, epoch):
-   210:         batch_size = per_sample_grads[0].shape[0]
-   211: 
-   212:         # Update schedule based on epoch
-   213:         stage = (epoch - 1) // self.decay_interval
-   214:         self._current_sigma = self.sigma_0 * (self.noise_decay_factor ** stage)
-   215:         self._current_clip = self.clip_0 * (self.clip_decay_factor ** stage)
-   216: 
-   217:         # Compute per-sample gradient norms
-   218:         flat = torch.cat([g.reshape(batch_size, -1) for g in per_sample_grads], dim=1)
-   219:         norms = flat.norm(2, dim=1)  # [B]
-   220: 
-   221:         # Clip per-sample gradients using current (decayed) threshold
-   222:         clip_factor = (self._current_clip / norms.clamp(min=1e-8)).clamp(max=1.0)
-   223: 
-   224:         # The harness adds noise calibrated to the current clip norm and sigma
-   225:         return clip_factor, self._current_clip
-   226: 
-   227:     def get_noise_multiplier(self, step, epoch):
-   228:         """Current (decayed) noise multiplier; the harness accounts each
-   229:         step with the sigma it actually applied."""
-   230:         return self._current_sigma
-   231: 
+   184:         q = batch_size / dataset_size
+   185: 
+   186:         def schedule(sigma_0):
+   187:             return [(sigma_0 * (self.noise_decay_factor ** ((e - 1) // self.decay_interval)),
+   188:                      self.steps_per_epoch) for e in range(1, epochs + 1)]
+   189: 
+   190:         # Calibrate sigma_0 by bisection: the smallest sigma_0 whose decayed
+   191:         # schedule stays within the budget. sigma_0 = noise_multiplier (the
+   192:         # calibrated uniform sigma) over-spends once sigma decays; at the upper
+   193:         # end every step's sigma is >= noise_multiplier.
+   194:         lo = noise_multiplier
+   195:         hi = noise_multiplier / self.noise_decay_factor ** ((epochs - 1) // self.decay_interval)
+   196:         while hi - lo > 1e-4 * hi:
+   197:             mid = (lo + hi) / 2
+   198:             eps, _ = compute_epsilon_schedule(schedule(mid), q, target_delta)
+   199:             if eps > target_epsilon:
+   200:                 lo = mid
+   201:             else:
+   202:                 hi = mid
+   203:         self.sigma_0 = hi
+   204:         self.clip_0 = max_grad_norm
+   205: 
+   206:         # Current values
+   207:         self._current_sigma = self.sigma_0
+   208:         self._current_clip = self.clip_0
+   209: 
+   210:     def clip(self, per_sample_grads, step, epoch):
+   211:         batch_size = per_sample_grads[0].shape[0]
+   212: 
+   213:         # Update schedule based on epoch
+   214:         stage = (epoch - 1) // self.decay_interval
+   215:         self._current_sigma = self.sigma_0 * (self.noise_decay_factor ** stage)
+   216:         self._current_clip = self.clip_0 * (self.clip_decay_factor ** stage)
+   217: 
+   218:         # Compute per-sample gradient norms
+   219:         flat = torch.cat([g.reshape(batch_size, -1) for g in per_sample_grads], dim=1)
+   220:         norms = flat.norm(2, dim=1)  # [B]
+   221: 
+   222:         # Clip per-sample gradients using current (decayed) threshold
+   223:         clip_factor = (self._current_clip / norms.clamp(min=1e-8)).clamp(max=1.0)
+   224: 
+   225:         # The harness adds noise calibrated to the current clip norm and sigma
+   226:         return clip_factor, self._current_clip
+   227: 
+   228:     def get_noise_multiplier(self, step, epoch):
+   229:         """Current (decayed) noise multiplier; the harness accounts each
+   230:         step with the sigma it actually applied."""
+   231:         return self._current_sigma
    232: 
-   233: # =====================================================================
+   233: 
+   234: # =====================================================================
 ```
 
 

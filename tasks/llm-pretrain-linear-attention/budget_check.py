@@ -124,8 +124,10 @@ if agent_params > budget:
 
 # -- Sequence-mixing complexity probe --
 # The task requires a linear / subquadratic mechanism, so the agent's model is
-# also run forward (train mode, bf16 autocast, GPT-2 Medium shapes) at three
-# sequence lengths with the same token count, and rejected if any Block
+# also run forward (train mode, bf16 autocast, torch.compile context flag set,
+# GPT-2 Medium shapes) at four sequence lengths with the same token count, the
+# last one block_size (1024, the length training and the in-script evaluation
+# use), and rejected if any Block
 #   (a) materializes a tensor with two dimensions equal to the sequence length
 #       (a T x T score / mask / decay matrix; chunk x chunk blocks are fine),
 #   (b) spends matmul / SDPA FLOPs per token that grow linearly with the
@@ -134,12 +136,16 @@ if agent_params > budget:
 #       largest tensor grows with the sequence length at a fixed token count, or
 #   (c) launches one of FLA's quadratic Triton kernels (softmax attention and
 #       the O(T^2) "parallel" forms), which the two checks above cannot see.
-PROBE_LENS = (192, 384, 768)   # batch 4 / 2 / 1: 768 tokens each
-PROBE_TOKENS = 768
-PROBE_TXT_MIN_T = 384          # the T x T check runs at the two longer lengths
-GROWTH_RATIO = 1.7             # per-token cost growth 384->768 vs 192->384: 2 for O(T^2), 1 for O(T log T)
+PROBE_LENS = (192, 384, 768, 1024)  # batch 16 / 8 / 4 / 3: 3072 tokens each
+PROBE_TOKENS = 3072
+PROBE_TXT_LENS = (384, 768)    # the T x T check (at 1024 = n_embd every B x T x C activation
+                               # has two such dims; (b) covers quadratic mixing there)
+GROWTH_RATIO = 1.7             # per-token cost growth over a doubling vs the previous doubling:
+                               # 2 for O(T^2), 1 for O(T log T); applied as a slope ratio of
+                               # GROWTH_RATIO / 2 to each consecutive triple of lengths
 FLOP_TOL = 0.001               # ignore growth below 0.1 % of the per-token FLOPs
-MAXNUMEL_RATIO = 1.7           # largest tensor 384->768: 2x when it is B x H x T x T
+MAXNUMEL_RATIO = 1.7           # largest tensor over a doubling (384->768): 2x when it is B x H x T x T;
+                               # 1 + 0.7 * (T2 / T1 - 1) for the other steps (768->1024: 1.23x)
 QUADRATIC_FLA_PREFIXES = (
     "fla.ops.attn", "fla.ops.forgetting_attn", "fla.ops.path_attn",
     "fla.ops.deltaformer", "fla.ops.nsa", "fla.ops.moba",
@@ -233,7 +239,7 @@ def check_subquadratic(module_path):
                 if not isinstance(t, torch.Tensor):
                     continue
                 numel = max(numel, t.numel())
-                if T >= PROBE_TXT_MIN_T and sum(1 for s in t.shape if s == T) >= 2:
+                if T in PROBE_TXT_LENS and sum(1 for s in t.shape if s == T) >= 2:
                     note(f"block {scope}: {func} produced a {tuple(t.shape)} tensor "
                          f"(two dims equal to the sequence length {T})")
             for key in (scope, "all"):
@@ -257,37 +263,48 @@ def check_subquadratic(module_path):
         blk.register_forward_pre_hook(_pre)
         blk.register_forward_hook(_post)
 
+    # Training and the in-script evaluation run the model under torch.compile,
+    # where torch.compiler.is_compiling() / is_dynamo_compiling() (and the
+    # torch._dynamo / torch._utils aliases) are True. The probe runs eagerly,
+    # so it reports that same context to the model while observing it.
+    import torch.compiler as _tc
+    _compile_flags = (_tc._is_compiling_flag, _tc.is_dynamo_compiling)
     for T in PROBE_LENS:
         B = PROBE_TOKENS // T
         idx = torch.randint(0, cfg.vocab_size, (B, T), device=device)
         tgt = torch.randint(0, cfg.vocab_size, (B, T), device=device)
         state["T"] = T
         state["active"] = True
+        _tc._is_compiling_flag, _tc.is_dynamo_compiling = True, (lambda: True)
         try:
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16), _Probe():
                 _, loss = model(idx, tgt)
             torch.cuda.synchronize()
         finally:
+            _tc._is_compiling_flag, _tc.is_dynamo_compiling = _compile_flags
             state["active"] = False
             state["block"] = None
         if loss is None or not torch.isfinite(loss).item():
             note(f"forward at T={T} returned a non-finite loss")
         del loss
 
-    t1, t2, t3 = PROBE_LENS
     scopes = sorted({k for k, _ in stats}, key=lambda s: (s == "all", s))
     for scope in scopes:
         where = "model" if scope == "all" else f"block {scope}"
-        c1, c2, c3 = (stats.get((scope, T), [0, 0])[0] / PROBE_TOKENS for T in PROBE_LENS)
-        d12, d23 = c2 - c1, c3 - c2
-        if c1 > 0 and d23 > FLOP_TOL * c1 and d23 > GROWTH_RATIO * max(d12, 0.0):
-            note(f"{where}: matmul/SDPA FLOPs per token grow with sequence length "
-                 f"({c1:.4g} @T={t1}, {c2:.4g} @T={t2}, {c3:.4g} @T={t3}) "
-                 f"-- quadratic sequence mixing")
-        m2, m3 = (stats.get((scope, T), [0, 0])[1] for T in (t2, t3))
-        if m2 > 0 and m3 >= MAXNUMEL_RATIO * m2:
-            note(f"{where}: largest tensor grows from {m2} (T={t2}) to {m3} (T={t3}) "
-                 f"elements at a fixed token count -- quadratic sequence mixing")
+        cost = [stats.get((scope, T), [0, 0])[0] / PROBE_TOKENS for T in PROBE_LENS]
+        for i in range(len(PROBE_LENS) - 2):
+            (t1, t2, t3), (c1, c2, c3) = PROBE_LENS[i:i + 3], cost[i:i + 3]
+            s12, s23 = (c2 - c1) / (t2 - t1), (c3 - c2) / (t3 - t2)
+            if (cost[0] > 0 and c3 - c2 > FLOP_TOL * cost[0]
+                    and s23 > GROWTH_RATIO / 2 * max(s12, 0.0)):
+                note(f"{where}: matmul/SDPA FLOPs per token grow with sequence length "
+                     f"({c1:.4g} @T={t1}, {c2:.4g} @T={t2}, {c3:.4g} @T={t3}) "
+                     f"-- quadratic sequence mixing")
+        for t2, t3 in zip(PROBE_LENS[1:], PROBE_LENS[2:]):
+            m2, m3 = (stats.get((scope, T), [0, 0])[1] for T in (t2, t3))
+            if m2 > 0 and m3 >= (1 + (MAXNUMEL_RATIO - 1) * (t3 / t2 - 1)) * m2:
+                note(f"{where}: largest tensor grows from {m2} (T={t2}) to {m3} (T={t3}) "
+                     f"elements at a fixed token count -- quadratic sequence mixing")
     per_tok = [stats.get(("all", T), [0, 0]) for T in PROBE_LENS]
     print("  complexity probe (all blocks): "
           + ", ".join(f"T={T}: {f / PROBE_TOKENS:.4g} FLOPs/token, largest tensor {n}"

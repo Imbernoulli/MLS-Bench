@@ -24,6 +24,8 @@ class CustomModel(qlib.model.base.Model):
 ```
 `predict` returns a `pd.Series` indexed by `(datetime, instrument)`.
 
+Predictions must be causal: after `predict`, the harness rebuilds the dataset with the data ending at a randomly drawn test date t, predicts again with a copy of the fitted model, and rejects the run if the predictions for the last five dates up to t change beyond float noise, so the prediction for date t may only use data up to date t.
+
 ## Reference Implementations (read-only)
 Three reference models ship with qlib's `examples/benchmarks/`:
 

@@ -8,7 +8,8 @@
 # runs the label x seed wave in parallel) has no on-disk staging window to
 # read. The wrapper keeps the table in its own process and runs the editable
 # search in a separate process that reaches it only through budgeted queries
-# the wrapper counts.
+# the wrapper counts. Both run isolated (-I): the eval environment puts the
+# workspace on PYTHONPATH, and nothing from it may be imported as root.
 export ENV=imagenet16
 export SEED="${SEED:-42}"
 export MLSBENCH_EPHEMERAL_INPUTS=1
@@ -22,9 +23,9 @@ _staged_list="$(mktemp /tmp/mlsb_staged.XXXXXX)"
 trap 'xargs -r rm -f -- < "$_staged_list" 2>/dev/null; rm -f "$_staged_list"' EXIT
 set -euo pipefail
 cd naslib
-python "/tests/eval/_inputgen/apply.py" "optimization-nas" /workspace \
+python -I -B "/tests/eval/_inputgen/apply.py" "optimization-nas" /workspace \
     --emit-json --list-out "$_staged_list" \
-  | NAS_EPOCHS=30 python "$_EVAL_SCRIPTS_DIR/nas_oracle_entry.py" \
+  | NAS_EPOCHS=30 python -I -B "$_EVAL_SCRIPTS_DIR/nas_oracle_entry.py" \
       --module custom_nas_search.py \
       --inputs-json-stdin \
       --inputs-glob "naslib/data/nb201_tables_imagenet16_s${SEED:-42}.json" \

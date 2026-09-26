@@ -15,16 +15,23 @@ from mlsbench.scoring.dsl import *
 # swings of 0.1-0.2, so the term was a step function of seed noise. Degree
 # on enzymes still counts through mmd_avg_enzymes.
 #
-# copy_excess: fraction of generated graphs isomorphic to a training graph,
-# minus the same fraction for the held-out reference graphs (clipped at 0),
-# computed by the fixed harness. Replaying training graphs is not a
-# generative model; above 0.5 the setting score is multiplied by
-# exp(-10 * (excess - 0.5)), so replaying the training set (excess ~1.0 on
-# community_small and enzymes) gets x0.007. Baselines reach at most 0.27.
-# On ego_small 65-78% of held-out graphs are themselves isomorphic to a
-# training graph, so the check cannot bind there.
+# copy_excess (computed by the fixed harness): a generated graph isomorphic
+# to any dataset graph, training or held-out, is a copy. The generated set may
+# reproduce as many distinct dataset graphs as the held-out graphs themselves
+# do (0 / 14 / 3 on community_small / ego_small / enzymes); copies of any
+# further dataset graph are dropped before the MMD is computed, so replayed
+# graphs beyond that allowance never enter the MMD, and copy_excess is their
+# fraction of the sample. The penalty stops a mostly-replayed sample (whose
+# few kept graphs are real ones) from scoring well: above the target the
+# setting score is multiplied by exp(-20 * (excess - target)). All baselines
+# are at 0. An ideal sampler (fresh CiteSeer ego graphs, 200 draws) reaches
+# at most 0.15 on ego_small, hence the looser target there; community_small
+# graphs never recur and enzymes graphs recur at ~3 per 118, so 0.1 leaves
+# honest models unpenalised. On ego_small, where tiny ego graphs recur, up to
+# 14 distinct replayed graphs still pass unflagged.
 
 _SETTINGS = ("community_small", "ego_small", "enzymes")
+_COPY_TARGET = {"community_small": 0.1, "ego_small": 0.2, "enzymes": 0.1}
 
 for _ds in _SETTINGS:
     for _stat in ("avg", "clustering", "degree", "orbit"):
@@ -35,7 +42,7 @@ for _ds in _SETTINGS:
             .sigmoid())
     term(f"copy_excess_{_ds}",
         penalty_upper(col(f"copy_excess_{_ds}").lower().id(),
-                      target=0.5, sharpness=10.0))
+                      target=_COPY_TARGET[_ds], sharpness=20.0))
 
 setting("community_small", weighted_mean(("mmd_avg_community_small", 1.0), ("mmd_clustering_community_small", 1.0), ("mmd_degree_community_small", 1.0), ("mmd_orbit_community_small", 1.0)),
         constraints=["copy_excess_community_small"])

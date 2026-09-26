@@ -24,7 +24,7 @@ The setup builds on **CleanDiffuser** (Dong et al., NeurIPS 2024, arXiv:2406.095
 - `diffusion_steps`, training budgets, checkpoint selection, and EMA use
 - Candidate selection, the environments, seeds, and vectorized evaluation loop
 
-NFE is **measured, not declared**: fixed code outside `sample_actions` wraps the denoiser in a counter and hands the sampler only that counted `policy` facade (never the actor, the critic or the raw network), and reports the average number of network evaluations per action sample. `policy.denoiser`, directly or through `policy.sample`, is the only diffusion network the sampler may evaluate, and a sampler that makes no evaluation is rejected. Writing your own reverse process is therefore in scope — a sampler that spends 40 evaluations is scored as 40 no matter what any config field says, and one that reaches the same return in 10 is scored as 10.
+NFE is **measured, not declared**: fixed code outside `sample_actions` wraps the denoiser in a counter and hands the sampler only that counted `policy` facade (never the actor, the critic or the raw network), and reports the average number of network evaluations per action sample. A denoiser call counts one evaluation per `num_envs × num_candidates` rows of `x_t` it carries, rounded up: the usual call on the full candidate batch costs 1, and batching several timesteps or candidate sets into one call costs what the separate calls would. `policy.denoiser`, directly or through `policy.sample`, is the only diffusion network the sampler may evaluate, and a sampler that makes no evaluation is rejected. Writing your own reverse process is therefore in scope — a sampler that spends 40 evaluations is scored as 40 no matter what any config field says, and one that reaches the same return in 10 is scored as 10.
 
 ## Baselines
 
@@ -318,14 +318,14 @@ Other files you may **read** for context (do not modify):
    245:         # network only in a closure, and `sample_actions` receives a facade
    246:         # built from them — never the actor, the critic or the raw network — so
    247:         # every evaluation it can make goes through the counter, which lives
-   248:         # here and nowhere the sampler can reach. One call == one network
-   249:         # evaluation, whatever batch it carries.
-   250:         _nfe_calls = [0]
+   248:         # here and nowhere the sampler can reach. A call costs one evaluation
+   249:         # per num_envs * num_candidates rows of x_t it carries (rounded up).
+   250:         _nfe_calls, _rows_per_nfe = [0], args.num_envs * args.num_candidates
    251: 
    252:         def _counted(net):
    253:             class _CountedDenoiser(torch.nn.Module):
    254:                 def forward(self, x, t, condition=None):
-   255:                     _nfe_calls[0] += 1
+   255:                     _nfe_calls[0] += max(1, -(-x.shape[0] // _rows_per_nfe))
    256:                     return net(x, t, condition)
    257:             return _CountedDenoiser()
    258: 

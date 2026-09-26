@@ -50,7 +50,7 @@ Scenarios (model + dataset):
 - VGG-11-BN on CIFAR-10 (`eps = 8/255`)
 - PreActResNet-18 on CIFAR-100 (`eps = 8/255`)
 
-Higher robust accuracy under PGD-50 across all scenarios is better.
+Higher robust accuracy under PGD-50 across all scenarios is better. A scenario whose PGD-50 robust accuracy falls below half that of the weakest reference baseline (MNIST 0.44, PreActResNet18-C10 0.21, VGG11BN-C10 0.19, PreActResNet18-C100 0.10) does not count as adversarially robust: its score is multiplied by `exp(-30 * shortfall)`.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:

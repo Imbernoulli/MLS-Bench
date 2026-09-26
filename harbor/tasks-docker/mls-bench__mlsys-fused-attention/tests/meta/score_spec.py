@@ -1,8 +1,10 @@
 """Score spec for mlsys-fused-attention.
 
 This is a systems kernel task, so task-internal efficiency metrics are scored:
-latency, TFLOPs, and speedup versus SDPA. They are paired with correctness and
-max-difference terms so a fast incorrect kernel cannot win.
+latency, TFLOPs, and speedup versus SDPA. They are gated by the correctness
+constraint so a fast incorrect kernel cannot win. max_diff below the threshold
+is not scored: the reference is itself fp16 SDPA, so a smaller ulp-level
+difference is not better attention.
 """
 from mlsbench.scoring.dsl import *
 
@@ -12,10 +14,6 @@ term("tflops_hdim64_seq4k",
 
 term("latency_ms_hdim64_seq4k",
     col("latency_ms_hdim64_seq4k").lower().id()
-    .bounded_power(bound=0.0))
-
-term("max_diff_hdim64_seq4k",
-    col("max_diff_hdim64_seq4k").lower().id()
     .bounded_power(bound=0.0))
 
 term("correct_hdim64_seq4k",
@@ -30,10 +28,6 @@ term("latency_ms_hdim128_seq8k",
     col("latency_ms_hdim128_seq8k").lower().id()
     .bounded_power(bound=0.0))
 
-term("max_diff_hdim128_seq8k",
-    col("max_diff_hdim128_seq8k").lower().id()
-    .bounded_power(bound=0.0))
-
 term("correct_hdim128_seq8k",
     penalty_lower(col("correct_hdim128_seq8k").higher().id(),
                   target=1.0, sharpness=float("inf")))
@@ -44,10 +38,6 @@ term("tflops_hdim256_seq16k",
 
 term("latency_ms_hdim256_seq16k",
     col("latency_ms_hdim256_seq16k").lower().id()
-    .bounded_power(bound=0.0))
-
-term("max_diff_hdim256_seq16k",
-    col("max_diff_hdim256_seq16k").lower().id()
     .bounded_power(bound=0.0))
 
 term("correct_hdim256_seq16k",
@@ -70,7 +60,6 @@ setting("hdim64_seq4k",
     weighted_mean(
         ("tflops_hdim64_seq4k", 1.0),
         ("latency_ms_hdim64_seq4k", 1.0),
-        ("max_diff_hdim64_seq4k", 1.0),
         ("speedup_vs_sdpa_hdim64_seq4k", 1.0),
     ),
     constraints=["correct_hdim64_seq4k"],
@@ -79,7 +68,6 @@ setting("hdim128_seq8k",
     weighted_mean(
         ("tflops_hdim128_seq8k", 1.0),
         ("latency_ms_hdim128_seq8k", 1.0),
-        ("max_diff_hdim128_seq8k", 1.0),
         ("speedup_vs_sdpa_hdim128_seq8k", 1.0),
     ),
     constraints=["correct_hdim128_seq8k"],
@@ -88,7 +76,6 @@ setting("hdim256_seq16k",
     weighted_mean(
         ("tflops_hdim256_seq16k", 1.0),
         ("latency_ms_hdim256_seq16k", 1.0),
-        ("max_diff_hdim256_seq16k", 1.0),
         ("speedup_vs_sdpa_hdim256_seq16k", 1.0),
     ),
     constraints=["correct_hdim256_seq16k"],

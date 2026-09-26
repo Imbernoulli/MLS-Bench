@@ -378,6 +378,9 @@ def main():
                         default=[150, 225],
                         help='Step-LR decay milestones (paper: 150,225 for 300-epoch run).')
     parser.add_argument('--schedule-gamma', type=float, default=0.1)
+    parser.add_argument('--warmup-epochs', type=int, default=0,
+                        help='Linear LR warmup over the first N epochs, stepped per '
+                             'iteration (0 = off).')
     parser.add_argument('--augment', action='store_true',
                         help='Enable train-time augmentation (OFF by default to match paper).')
     parser.add_argument('--seed', type=int, default=42)
@@ -440,12 +443,23 @@ def main():
         optimizer, milestones=args.schedule_milestones, gamma=args.schedule_gamma,
     )
 
+    # Optional linear warmup: over the first warmup_epochs * len(train_loader)
+    # iterations the lr rises linearly to --lr, then the step schedule above
+    # runs unchanged. VGG-16-BN on CIFAR-100 needs it: at lr 0.1 from the first
+    # step, the early updates can kill every ReLU of its classifier head, and
+    # the model then stays at chance for the rest of the run.
+    warmup_iters = args.warmup_epochs * len(train_loader)
+    step = 0
     for epoch in range(args.epochs):
         model.train()
         total_loss = 0.0
         correct = 0
         total = 0
         for images, targets in train_loader:
+            if step < warmup_iters:
+                for group in optimizer.param_groups:
+                    group['lr'] = args.lr * (step + 1) / warmup_iters
+            step += 1
             images, targets = images.to(device), targets.to(device)
             optimizer.zero_grad()
             logits = model(images)

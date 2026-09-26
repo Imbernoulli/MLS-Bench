@@ -75,6 +75,8 @@ def reset_density():
     _VERIFY_STATS["max_err"] = 0.0
     _VERIFY_STATS["max_leak"] = 0.0
     _VERIFY_STATS["calls"] = 0
+    _VERIFY_STATS["rows"] = 0
+    _VERIFY_STATS["skipped"] = 0
 
 
 def get_density_stats():
@@ -103,27 +105,44 @@ def _record_density(d):
 # drawn before the module runs, from a generator seeded from the OS, and the
 # check uses the harness's own copies of q/k/v.
 #
-# The check looks for attention outside the mask, not for bit-exactness: for
-# each sampled row it computes (in float64) the attention restricted to the
-# mask, ref_m, and the full causal attention, ref_d, and measures how far the
-# module's output o moved from ref_m toward ref_d:
-#     leak = <o - ref_m, ref_d - ref_m> / |ref_d - ref_m|
-# (relative to the head's RMS output norm). Attending keys outside the mask
-# moves o toward ref_d; low-precision arithmetic inside the mask (fp16 logits
-# of Qwen's massive-activation tokens round by +-8) does not, so an honest fp16
-# SDPA passes while "dense compute, sparse mask reported" fails. A row fails
-# when the mask matters for it (|ref_d - ref_m| > _VERIFY_TOL), leak >
-# _VERIFY_TOL, and o covers more than _VERIFY_FRAC of the way. Measured at 4K
-# context: honest fp16 SDPA max leak 0.026, fp32 baselines 0.002; dense
-# compute behind a 0.2-density mask fails on ~40% of sampled rows.
+# On each sampled row the harness computes, in float64 from its own copies of
+# q/k/v, the attention restricted to the mask, ref_m, and the full causal
+# attention, ref_d, and checks the module's output o against them (norms are
+# relative to the head's RMS output norm):
+#   1. |o - ref_m| <= _VERIFY_ERR_TOL: the output is attention over the mask.
+#      Without this bound only the component of o - ref_m along ref_d - ref_m
+#      was checked, head by head, so a module could report a diagonal mask and
+#      return dense attention plus a correction that cancels that component
+#      but lies in o_proj's near-null space (error ~22, dense quality at
+#      density 0.0005). Clamping such a correction to an error of 1 leaves
+#      the model at quality 0.
+#   2. No leak toward full attention, looking for attention outside the mask
+#      rather than for bit-exactness:
+#          leak = <o - ref_m, ref_d - ref_m> / |ref_d - ref_m|
+#      A row fails when the mask matters for it (|ref_d - ref_m| >
+#      _VERIFY_TOL), leak > _VERIFY_TOL, and o covers more than _VERIFY_FRAC
+#      of the way. Dense compute behind a 0.2-density mask fails on ~40% of
+#      sampled rows.
+# Rows with a causal logit above _VERIFY_LOGIT_MAX in magnitude are not
+# checked. There fp16 spaces logits >= 1 apart, and TF32 (used by SDPA's fp32
+# math under the global TF32 setting) rounds q and k as coarsely, so honest
+# low-precision attention can move the output by up to 0.5 in any direction,
+# including toward ref_d. In Qwen2.5-1.5B only layer 0 has such logits (up to
+# ~2e4; about a fifth of its rows, < 1% of all checked rows). Measured at 4K
+# context on the checked rows: fp16 SDPA max error 0.04 (leak 0.03), fp32
+# baselines 0.0025. Logits from a plain fp16 matmul reach a leak of 0.09 in
+# layer 0 (|logit| up to 1024), so hand-written attention should compute the
+# logits in fp32.
 
 _VERIFY_ROWS = 32          # random query rows checked per attention call
 _VERIFY_TOL = 0.1          # leak toward full attention, relative to head RMS norm
 _VERIFY_FRAC = 0.25        # ... and as a fraction of |ref_d - ref_m|
+_VERIFY_ERR_TOL = 1.0      # total error vs attention restricted to the mask
+_VERIFY_LOGIT_MAX = 1024.0 # rows with a larger |logit| are not checked
 _MASK_ROW_CHUNK = 1024     # query rows per chunk when counting mask entries
 _VERIFY_GEN = torch.Generator(device="cpu")
 _VERIFY_GEN.manual_seed(secrets.randbits(63))
-_VERIFY_STATS = {"max_err": 0.0, "max_leak": 0.0, "calls": 0}
+_VERIFY_STATS = {"max_err": 0.0, "max_leak": 0.0, "calls": 0, "rows": 0, "skipped": 0}
 
 
 def _sample_verify_rows(n, device):
@@ -198,9 +217,21 @@ def _verify_output(out, m, q_rows, k, v, rows, scale, shape):
     ref_m = ref_d if m is None else _ref(causal & m[:, :, rows, :])
     head_rms = ref_m.norm(dim=-1).pow(2).mean(dim=-1, keepdim=True).sqrt()
     head_rms = head_rms.clamp_min(1e-6)
-    err = float(((o - ref_m).norm(dim=-1) / head_rms).max().item())
+    # rows whose logits fp16 cannot resolve are not checked (see above)
+    checked = s.abs().masked_fill(~causal, 0.0).amax(dim=-1) <= _VERIFY_LOGIT_MAX
+    err_rows = ((o - ref_m).norm(dim=-1) / head_rms).masked_fill(~checked, 0.0)
+    err = float(err_rows.max().item())
     _VERIFY_STATS["calls"] += 1
+    _VERIFY_STATS["rows"] += checked.numel()
+    _VERIFY_STATS["skipped"] += int((~checked).sum().item())
     _VERIFY_STATS["max_err"] = max(_VERIFY_STATS["max_err"], err)
+    if err > _VERIFY_ERR_TOL:
+        raise RuntimeError(
+            f"SparseAttention output is not attention restricted to the "
+            f"reported last_mask: on a sampled query row it differs from it "
+            f"by {err:.4f} (head-RMS units, limit {_VERIFY_ERR_TOL}). The "
+            f"output must be attention over the (q, k) pairs in last_mask."
+        )
     if m is None:
         return  # reported dense: density 1.0, nothing outside the mask
     diff = ref_d - ref_m
@@ -208,8 +239,9 @@ def _verify_output(out, m, q_rows, k, v, rows, scale, shape):
     leak_abs = (o - ref_m).mul(diff).sum(dim=-1) / gap.clamp_min(1e-12)
     leak = leak_abs / head_rms                                     # (B, H, R)
     frac = leak_abs / gap.clamp_min(1e-12)
-    bad = (gap / head_rms > _VERIFY_TOL) & (leak > _VERIFY_TOL) & (frac > _VERIFY_FRAC)
-    worst = float(leak.masked_fill(gap / head_rms <= _VERIFY_TOL, 0.0).max().item())
+    matters = checked & (gap / head_rms > _VERIFY_TOL)
+    bad = matters & (leak > _VERIFY_TOL) & (frac > _VERIFY_FRAC)
+    worst = float(leak.masked_fill(~matters, 0.0).max().item())
     _VERIFY_STATS["max_leak"] = max(_VERIFY_STATS["max_leak"], worst)
     if bool(bad.any().item()):
         i = int(leak.masked_fill(~bad, float("-inf")).flatten().argmax())
@@ -220,7 +252,9 @@ def _verify_output(out, m, q_rows, k, v, rows, scale, shape):
             f"= {100 * float(frac.flatten()[i]):.0f}% of the way from attention "
             f"restricted to last_mask toward full causal attention (limit "
             f"{100 * _VERIFY_FRAC:.0f}%). The density is computed from "
-            f"last_mask, so the mask must include every pair the module attends."
+            f"last_mask, so the mask must include every pair the module attends. "
+            f"(Logits from a plain fp16/bf16 matmul are too coarse for this "
+            f"check; compute them in fp32, as fused SDPA does.)"
         )
 
 
@@ -417,7 +451,9 @@ def enforce_budget(modality_label, budget, allow_dense=False):
           f"max={stats['max']:.4f} count={stats['count']} "
           f"verify_max_leak={_VERIFY_STATS['max_leak']:.4f} "
           f"verify_max_err={_VERIFY_STATS['max_err']:.4f} "
-          f"verify_calls={_VERIFY_STATS['calls']}", flush=True)
+          f"verify_calls={_VERIFY_STATS['calls']} "
+          f"verify_skipped_rows={_VERIFY_STATS['skipped']}/{_VERIFY_STATS['rows']}",
+          flush=True)
     if stats["count"] == 0:
         raise RuntimeError(
             "density budget could not be enforced: no SparseAttention "

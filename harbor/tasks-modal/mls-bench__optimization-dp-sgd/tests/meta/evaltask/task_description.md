@@ -43,7 +43,7 @@ Trained and evaluated on three datasets at `epsilon = 3.0`, `delta = 1e-5`:
 - **Fashion-MNIST** (28x28 grayscale clothing, 10 classes)
 - **CIFAR-10** (32x32 color images, 10 classes)
 
-Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded.
+Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded but not scored: every run is held to the same budget, and a run that exceeds it is aborted.
 
 ## Baselines (paper-cited reference implementations)
 - **standard_dpsgd** — Abadi et al. (CCS 2016; arXiv:1607.00133): fixed `C` and constant `σ` calibrated up-front.

@@ -245,14 +245,14 @@ def pipeline(args):
         # network only in a closure, and `sample_actions` receives a facade
         # built from them — never the actor, the critic or the raw network — so
         # every evaluation it can make goes through the counter, which lives
-        # here and nowhere the sampler can reach. One call == one network
-        # evaluation, whatever batch it carries.
-        _nfe_calls = [0]
+        # here and nowhere the sampler can reach. A call costs one evaluation
+        # per num_envs * num_candidates rows of x_t it carries (rounded up).
+        _nfe_calls, _rows_per_nfe = [0], args.num_envs * args.num_candidates
 
         def _counted(net):
             class _CountedDenoiser(torch.nn.Module):
                 def forward(self, x, t, condition=None):
-                    _nfe_calls[0] += 1
+                    _nfe_calls[0] += max(1, -(-x.shape[0] // _rows_per_nfe))
                     return net(x, t, condition)
             return _CountedDenoiser()
 

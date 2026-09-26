@@ -18,15 +18,18 @@ The harness calls these methods:
 
 `layout = {"group_ids", "group_bits"}` declares how the returned tensor is
 stored (element -> group id, -1 = FP16; group -> bit-width in [1, 16]). The
-harness checks every used group has >= 32 elements and <= 2**bits distinct
-stored values and measures effective bits from the layout itself; there is
-no self-reported bit count.
+harness checks every used group exactly fills an axis-aligned box of the
+returned tensor, has >= 32 elements and <= 2**bits distinct stored values,
+and measures effective bits from the layout itself; there is no
+self-reported bit count.
 
 `key_states` and `value_states` are real tensors from the model cache with shape
 `[batch, heads, seq_len, head_dim]`. A quantizer may implement grouping,
 residual windows, per-layer bit presets, asymmetric zero-points, query-subspace
-observation, reordering, or other tensor transforms inside the editable class.
-The returned tensor must preserve the input shape.
+observation, or other tensor transforms inside the editable class. The
+returned tensor must preserve the input shape, and its bits are counted in its
+own coordinates (a group is a box of the returned tensor, not of a reordered or
+transformed copy).
 
 ## Source-Fidelity Mapping
 

@@ -23,7 +23,7 @@ from deap import base, creator, tools
 # FIXED — Benchmark functions and infrastructure (do not modify)
 # ================================================================
 
-# --- Benchmark function definitions ---
+# --- Benchmark functions, unshifted (main() optimizes a randomly shifted copy) ---
 
 def rastrigin(individual: List[float]) -> Tuple[float]:
     """Rastrigin function. Global minimum: f(0,...,0) = 0. Domain: [-5.12, 5.12]."""
@@ -265,22 +265,56 @@ def _ref_ackley(x):
     return -20.0 * _M.exp(-0.2 * _M.sqrt(sum_sq)) - _M.exp(sum_cos) + 20.0 + _M.e
 
 
+# name -> (reference objective, domain, location of its unshifted minimum)
 _REFERENCE = {
-    "rastrigin": (_ref_rastrigin, (-5.12, 5.12)),
-    "rosenbrock": (_ref_rosenbrock, (-5.0, 10.0)),
-    "ackley": (_ref_ackley, (-32.768, 32.768)),
+    "rastrigin": (_ref_rastrigin, (-5.12, 5.12), 0.0),
+    "rosenbrock": (_ref_rosenbrock, (-5.0, 10.0), 1.0),
+    "ackley": (_ref_ackley, (-32.768, 32.768), 0.0),
 }
 
 
-def _score_returned(best_ind, name: str, dim: int) -> float:
-    """Re-evaluate the returned individual with the reference objective.
+def _draw_optimum(lo: float, hi: float, dim: int) -> tuple:
+    """This run's optimum location, drawn fresh from OS entropy.
 
-    The reported best_fitness is the true objective value at the returned
-    point, never the individual's self-reported `.fitness`. A point with the
-    wrong dimension, a non-finite coordinate, or a coordinate outside the
-    domain is rejected (no TEST_METRICS line is printed).
+    Every coordinate is uniform on the central 80% of [lo, hi] (as in BBOB and
+    the CEC suites), so the optimum always lies inside the domain. It comes
+    from os.urandom, not from `random`/`numpy.random`, which the editable code
+    seeds and may replace.
     """
-    func, (lo, hi) = _REFERENCE[name]
+    import os
+    import sys
+    urandom = os.urandom
+    if not (type(urandom) is type(len)
+            and getattr(urandom, "__self__", None) is sys.modules.get("posix")):
+        raise SystemExit("ERROR: os.urandom has been replaced; refusing to run")
+    raw = urandom(8 * dim)
+    center, half = (lo + hi) / 2.0, 0.4 * (hi - lo)
+    return tuple(
+        center + half * (2.0 * int.from_bytes(raw[8 * i:8 * i + 8], "little") / 2.0**64 - 1.0)
+        for i in range(dim)
+    )
+
+
+def _shifted(func, x_opt, base_opt: float):
+    """`func` moved so that its minimum (value 0) lies at `x_opt`: g(x) = func(x - x_opt + base_opt)."""
+    delta = tuple(base_opt - o for o in x_opt)
+
+    def objective(x):
+        if len(x) != len(delta):
+            raise ValueError(f"expected {len(delta)} genes, got {len(x)}")
+        return func([v + d for v, d in zip(x, delta)])
+
+    return objective
+
+
+def _score_returned(best_ind, objective, lo: float, hi: float, dim: int) -> float:
+    """Re-evaluate the returned individual with this run's objective.
+
+    The reported best_fitness is the true (shifted) objective value at the
+    returned point, never the individual's self-reported `.fitness`. A point
+    with the wrong dimension, a non-finite coordinate, or a coordinate outside
+    the domain is rejected (no TEST_METRICS line is printed).
+    """
     try:
         x = [float(v) for v in (list.__iter__(best_ind) if isinstance(best_ind, list) else best_ind)]
     except Exception as exc:  # noqa: BLE001
@@ -293,7 +327,7 @@ def _score_returned(best_ind, name: str, dim: int) -> float:
             f"ERROR: returned best_individual violates the domain [{lo}, {hi}] "
             f"at {len(bad)} coordinate(s), e.g. index {bad[0]} = {x[bad[0]]!r}"
         )
-    val = float(func(x))
+    val = float(objective(x))
     if not _M.isfinite(val):
         raise SystemExit(f"ERROR: objective at returned best_individual is not finite: {val!r}")
     return val
@@ -334,12 +368,17 @@ def main():
                         help="Random seed")
     args = parser.parse_args()
 
-    true_func, (lo, hi) = _REFERENCE[args.function]
+    # The objective is evaluated in a shifted coordinate frame whose optimum
+    # location is drawn fresh for every run (the optimum value stays 0), so a
+    # hard-coded "known optimum" such as [0]*d or [1]*d is just a random point.
+    # evaluate_func and the final re-evaluation use the same shifted objective.
+    ref_func, (lo, hi), base_opt = _REFERENCE[args.function]
+    objective = _shifted(ref_func, _draw_optimum(lo, hi, args.dim), base_opt)
     n_evals = [0]
 
     def evaluate_func(individual):
         n_evals[0] += 1
-        return (true_func(individual),)
+        return (objective(individual),)
 
     evaluate_func.__name__ = args.function
 
@@ -360,7 +399,7 @@ def main():
     )
     elapsed = time.time() - t0
 
-    best_fitness = _score_returned(best_ind, args.function, args.dim)
+    best_fitness = _score_returned(best_ind, objective, lo, hi, args.dim)
     try:
         claimed = float(best_ind.fitness.values[0])
     except Exception:  # noqa: BLE001

@@ -296,6 +296,26 @@ def _predict_labels(probs: np.ndarray) -> np.ndarray:
     return probs.argmax(axis=1)
 
 
+def _accept_at_coverage(accept: np.ndarray, scores: np.ndarray, coverage: float) -> np.ndarray:
+    """Accept exactly round(coverage * n) test examples, so every policy is
+    scored at the same operating point.
+
+    Examples are ranked by the policy's own decision (accepted first), then by
+    its acceptance score (highest first), then by test-set order; the top
+    round(coverage * n) are accepted. Accepting more or fewer than the target
+    only changes which examples this ranking trims or fills.
+    """
+    accept = np.asarray(accept).astype(bool).reshape(-1)
+    scores = np.asarray(scores, dtype=float).reshape(-1)
+    if accept.shape != scores.shape or np.isnan(scores).any():
+        raise ValueError("predict_accept and acceptance_score must return one value per example (no NaN scores)")
+    n = len(accept)
+    order = np.lexsort((np.arange(n), -scores, ~accept))
+    selected = np.zeros(n, dtype=bool)
+    selected[order[: int(round(float(coverage) * n))]] = True
+    return selected
+
+
 def _selective_metrics(
     y_true: np.ndarray,
     y_pred: np.ndarray,
@@ -396,7 +416,8 @@ def run_benchmark(dataset: str, seed: int, target_coverage: float, output_dir: s
     }
     _print_metrics("TRAIN_METRICS", train_summary)
 
-    test_metrics = _selective_metrics(y[test_idx], test_pred, test_accept, test_scores, groups[test_idx])
+    test_selected = _accept_at_coverage(test_accept, test_scores, target_coverage)
+    test_metrics = _selective_metrics(y[test_idx], test_pred, test_selected, test_scores, groups[test_idx])
     test_metrics["target_coverage"] = float(target_coverage)
     test_metrics["actual_coverage"] = float(test_accept.mean())
     test_metrics["label_threshold"] = float(label_threshold) if np.isfinite(label_threshold) else -1.0

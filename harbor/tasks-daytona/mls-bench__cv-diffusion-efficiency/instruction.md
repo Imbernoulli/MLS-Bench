@@ -57,16 +57,18 @@ the marked editable regions of two files:
 The contribution must respect a fixed budget of **NFE = 50** denoiser calls
 per sample.
 
-The budget is measured, not trusted. The evaluation script replaces the
-solver's `self.unet` with a counting wrapper, so every UNet forward the sampler
-makes, through `self.predict_noise()` or `self.unet(...)` directly, is counted
-for each image. One NFE is one UNet forward on the image's latent: the batched
-unconditional + conditional pair of classifier-free guidance counts as 1, and
-so does a single-branch call. A forward over more than two latent rows counts
-ceil(rows / 2). A run that spends more than 50 NFE on any image is rejected and
-records no FID; spending fewer is allowed. All denoiser evaluations must go
-through `self.unet` / `self.predict_noise()`, and a solver that keeps another
-handle on the UNet is rejected.
+The budget is measured, not trusted. The `self.unet` that the fixed base-class
+`__init__` gives the solver is a counting wrapper (callable like the UNet, with
+its `config`, `dtype` and `device`); the raw network is never handed to the
+solver, so every UNet forward the sampler makes, through `self.predict_noise()`
+or `self.unet(...)` directly, is counted for each image. One NFE is one UNet
+forward on the image's latent: the batched unconditional + conditional pair of
+classifier-free guidance counts as 1, and so does a single-branch call. A
+forward over more than two latent rows counts ceil(rows / 2). A run that spends
+more than 50 NFE on any image is rejected and records no FID; spending fewer is
+allowed. All denoiser evaluations must go through `self.unet` /
+`self.predict_noise()`, and a solver whose `self.unet` is not the one its
+base-class `__init__` set up is rejected.
 
 ## Baselines
 

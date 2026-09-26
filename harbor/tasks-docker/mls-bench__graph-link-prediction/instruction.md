@@ -326,10 +326,10 @@ stay unchanged.
    226: #   (e.g. through per-call statistics or call order).
    227: # - The scores must be finite and have one entry per candidate edge, or the
    228: #   run fails.
-   229: # - Ties are scored pessimistically (OGB convention): Hits@K counts a
-   230: #   positive only if it scores strictly above the K-th best negative, and
-   231: #   MRR ranks a positive below every negative with an equal score, so a
-   232: #   constant or tied score earns no hits. AUC counts a tie as half a win.
+   229: # - Ties are scored pessimistically, so a constant or tied score earns no
+   230: #   hits: Hits@K counts a positive only if it scores strictly above the K-th
+   231: #   best negative (as in OGB); MRR ranks it below every tied negative (OGB's
+   232: #   MRR averages optimistic and pessimistic ranks). AUC: a tie is half a win.
    233: 
    234: def _eval_score_jointly(score_fn, pos_eli: torch.Tensor,
    235:                         neg_eli: torch.Tensor):

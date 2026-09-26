@@ -77,28 +77,9 @@ class CIFAR10Net(nn.Module):
 # =====================================================================
 # FIXED: Privacy accounting utilities (DO NOT MODIFY)
 # =====================================================================
-
-def _compute_rdp_single_epoch(q, sigma, alpha):
-    """Compute RDP for a single epoch of subsampled Gaussian mechanism."""
-    if sigma == 0:
-        return float("inf")
-    if q == 0:
-        return 0.0
-    if alpha == 1:
-        return q * q / (2 * sigma * sigma)
-    log_term = (
-        math.lgamma(alpha + 1)
-        - math.lgamma(alpha - 1 + 1)
-        - math.lgamma(2)
-        + (alpha - 1) * math.log(1 - q)
-        + math.log(q * q * alpha / (2 * sigma * sigma))
-    )
-    # Simplified RDP bound for subsampled Gaussian
-    return min(
-        alpha * q * q / (2 * sigma * sigma),
-        q * q * alpha / (2 * sigma * sigma) + q * q * q * alpha * (alpha - 1) / (6 * sigma * sigma),
-    )
-
+# These helpers use the harness's accountant (_rdp_epsilon, in the FIXED
+# section after DPMechanism; call them at run time): subsampled-Gaussian RDP
+# (Mironov et al. 2019, as in Opacus) composed over steps, then (eps, delta).
 
 def compute_epsilon(steps, sigma, q, delta, alphas=None):
     """Compute (epsilon, best_alpha) via RDP accounting.
@@ -113,24 +94,13 @@ def compute_epsilon(steps, sigma, q, delta, alphas=None):
     Returns:
         (epsilon, best_alpha)
     """
-    if alphas is None:
-        alphas = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-    best_eps = float("inf")
-    best_alpha = None
-    for alpha in alphas:
-        # RDP for subsampled Gaussian mechanism (tight bound)
-        if alpha <= 1:
-            continue
-        rdp = steps * min(
-            q * q * alpha / (2 * sigma * sigma),
-            alpha * q * q / (2 * sigma * sigma),
-        )
-        # Convert RDP to (epsilon, delta)-DP
-        eps = rdp - math.log(delta) / (alpha - 1) + math.log(1 - 1 / alpha)
-        if eps < best_eps:
-            best_eps = eps
-            best_alpha = alpha
-    return max(0, best_eps), best_alpha
+    return compute_epsilon_schedule([(sigma, steps)], q, delta, alphas)
+
+
+def compute_epsilon_schedule(schedule, q, delta, alphas=None):
+    """(epsilon, best_alpha) of a noise schedule given as (sigma, n_steps)
+    pairs, composed exactly as the harness's privacy ledger does."""
+    return _rdp_epsilon(schedule, q, delta, alphas)
 
 
 def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
@@ -147,6 +117,36 @@ def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
         else:
             sigma_high = sigma_mid
     return (sigma_low + sigma_high) / 2
+
+
+# Originals of what the FIXED harness relies on (noise, clipping check,
+# accountant, accuracy count), captured before the editable section runs.
+# ("module.<builtin>" must stay absent: fixed code looks these names up.)
+import builtins as _builtins
+from scipy import special as _sp_special
+_HARNESS_BUILTINS = ("bool", "float", "int", "type", "len", "isinstance", "list",
+                     "tuple", "zip", "range", "enumerate", "min", "max", "abs",
+                     "print", "RuntimeError")
+_HARNESS_REFS = tuple(
+    (f"{label}.{name}", ns, name, ns.get(name))
+    for label, ns, names in (
+        ("torch", vars(torch), ("Tensor", "randn_like", "cat")),
+        ("torch.linalg", vars(torch.linalg), ("vector_norm",)),
+        ("torch._C", vars(torch._C), ("_len_torch_function_stack",
+                                      "_len_torch_dispatch_stack")),
+        ("torch.Tensor", vars(torch.Tensor), (
+            "__torch_function__", "__getattribute__", "__getattr__", "shape",
+            "to", "clone", "detach", "reshape", "dim", "__mul__", "__add__",
+            "__le__", "__bool__", "all", "mean", "max", "item", "argmax", "eq",
+            "sum")),
+        ("math", vars(math), ("log", "log1p", "exp", "expm1", "sqrt", "isfinite")),
+        ("scipy.special", vars(_sp_special), ("binom", "log_ndtr")),
+        ("builtins", vars(_builtins), _HARNESS_BUILTINS),
+        ("module", globals(), ("torch", "print", "range", "enumerate", "zip",
+                               "len", "RuntimeError")),
+    )
+    for name in names
+)
 
 
 # =====================================================================
@@ -238,67 +238,204 @@ class DPMechanism:
 # =====================================================================
 # The Gaussian mechanism and the accountant live here, outside the editable
 # section, so the reported epsilon is always computed from the clipping bound
-# and noise multiplier that were actually applied. Modules are re-bound under
-# private names so that names reassigned in the editable section cannot
-# change the mechanism.
-import math as _math
-import torch as _torch
+# and noise multiplier that were actually applied.
+#
+# What is protected against code in the editable section:
+# - The fixed functions below take the helpers and library functions they use
+#   (the originals in _HARNESS_REFS) as default arguments or closure variables
+#   bound at definition time, so reassigning a module-level name (e.g. with
+#   `global`) or a torch/math attribute does not change them.
+# - _check_harness() runs after every call into DPMechanism, before the
+#   harness uses its result, and before the final metrics are printed. It
+#   aborts the run if an entry of _HARNESS_REFS or a fixed name of this file
+#   defined below was replaced (or a listed builtin shadowed), or if a torch
+#   function/dispatch mode is active.
+# Not covered (in-process residual): code that deliberately rewrites the
+# harness's own objects (_HARNESS_REFS before it is bound, function defaults
+# or closures, frames, gc) or forges the printed output.
+_ORIG = {key: obj for key, ns, name, obj in _HARNESS_REFS}
 
 _CLIP_NORM_RTOL = 1e-4  # float slack on the per-sample L2 bound check
 _EPSILON_RTOL = 1e-2    # slack for the sigma calibration's binary-search tolerance
+_RDP_ORDERS = tuple([1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64)))
 
 
-def _rdp_epsilon(steps, sigma, q, delta):
-    """Same RDP bound and conversion as compute_epsilon (kept private here)."""
-    alphas = [1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64))
-    best_eps = float("inf")
-    for alpha in alphas:
-        if alpha <= 1:
-            continue
-        rdp = steps * min(
-            q * q * alpha / (2 * sigma * sigma),
-            alpha * q * q / (2 * sigma * sigma),
-        )
-        eps = rdp - _math.log(delta) / (alpha - 1) + _math.log(1 - 1 / alpha)
-        if eps < best_eps:
-            best_eps = eps
-    return max(0, best_eps)
+def _make_harness_check(refs=_HARNESS_REFS, _RuntimeError=_ORIG["builtins.RuntimeError"]):
+    fixed = []  # (key, namespace, name, object) of the fixed code, see seal()
+    mode_stacks = [obj for key, ns, name, obj in refs if key.startswith("torch._C.")]
+
+    def check():
+        for entries in (refs, fixed):
+            for key, ns, name, obj in entries:
+                if ns.get(name) is not obj:
+                    raise _RuntimeError(
+                        f"DP harness tampering: `{key}` was replaced or shadowed; "
+                        f"the fixed harness relies on the original")
+        for stack_len in mode_stacks:
+            if stack_len():
+                raise _RuntimeError("DP harness tampering: a torch function or "
+                                    "dispatch mode is active")
+
+    def seal(*groups):
+        if fixed:
+            raise _RuntimeError("the DP harness is already sealed")
+        for label, ns, names in groups:
+            for name in names:
+                fixed.append((f"{label}.{name}", ns, name, ns[name]))
+        check()
+
+    return check, seal
+
+
+_check_harness, _seal_harness = _make_harness_check()
+_check_harness()  # module-level code of the editable section replaced nothing
+
+
+def _make_rdp_accountant(
+        orders=_RDP_ORDERS, log=_ORIG["math.log"], log1p=_ORIG["math.log1p"],
+        exp=_ORIG["math.exp"], expm1=_ORIG["math.expm1"], sqrt=_ORIG["math.sqrt"],
+        binom=_ORIG["scipy.special.binom"], log_ndtr=_ORIG["scipy.special.log_ndtr"],
+        _float=_ORIG["builtins.float"], _int=_ORIG["builtins.int"],
+        _abs=_ORIG["builtins.abs"], _min=_ORIG["builtins.min"],
+        _max=_ORIG["builtins.max"], _range=_ORIG["builtins.range"],
+        _zip=_ORIG["builtins.zip"], _len=_ORIG["builtins.len"],
+        _tuple=_ORIG["builtins.tuple"]):
+    """RDP of the subsampled Gaussian mechanism with sampling rate q (Mironov,
+    Talwar and Zhang 2019, "Renyi Differential Privacy of the Sampled Gaussian
+    Mechanism"; the computation used by Opacus and TF-Privacy), composed per
+    order over a noise schedule and converted to (epsilon, delta) with
+    eps = rdp + log(1/delta)/(alpha-1) + log(1-1/alpha), minimised over alpha.
+    """
+    inf = _float("inf")
+
+    def log_add(x, y):
+        a, b = _min(x, y), _max(x, y)
+        return b if a == -inf else log1p(exp(a - b)) + b
+
+    def log_sub(x, y):
+        if x < y:
+            raise ValueError("The result of subtraction must be non-negative.")
+        if y == -inf:
+            return x
+        if x == y:
+            return -inf
+        try:
+            return log(expm1(x - y)) + y
+        except OverflowError:
+            return x
+
+    def log_erfc(x):
+        return log(2) + log_ndtr(-x * 2 ** 0.5)
+
+    def log_a_int(q, sigma, alpha):
+        log_a = -inf
+        for i in _range(alpha + 1):
+            log_coef_i = log(binom(alpha, i)) + i * log(q) + (alpha - i) * log(1 - q)
+            log_a = log_add(log_a, log_coef_i + (i * i - i) / (2 * (sigma ** 2)))
+        return _float(log_a)
+
+    def log_a_frac(q, sigma, alpha):
+        log_a0, log_a1 = -inf, -inf
+        i = 0
+        z0 = sigma ** 2 * log(1 / q - 1) + 0.5
+        while True:
+            coef = binom(alpha, i)
+            log_coef = log(_abs(coef))
+            j = alpha - i
+            log_t0 = log_coef + i * log(q) + j * log(1 - q)
+            log_t1 = log_coef + j * log(q) + i * log(1 - q)
+            log_e0 = log(0.5) + log_erfc((i - z0) / (sqrt(2) * sigma))
+            log_e1 = log(0.5) + log_erfc((z0 - j) / (sqrt(2) * sigma))
+            log_s0 = log_t0 + (i * i - i) / (2 * (sigma ** 2)) + log_e0
+            log_s1 = log_t1 + (j * j - j) / (2 * (sigma ** 2)) + log_e1
+            if coef > 0:
+                log_a0, log_a1 = log_add(log_a0, log_s0), log_add(log_a1, log_s1)
+            else:
+                log_a0, log_a1 = log_sub(log_a0, log_s0), log_sub(log_a1, log_s1)
+            i += 1
+            if _max(log_s0, log_s1) < -30:
+                break
+        return log_add(log_a0, log_a1)
+
+    def step_rdp(q, sigma, alpha):
+        if q == 0:
+            return 0.0
+        if sigma == 0:
+            return inf
+        if q == 1.0:
+            return alpha / (2 * sigma ** 2)
+        if _float(alpha).is_integer():
+            return log_a_int(q, sigma, _int(alpha)) / (alpha - 1)
+        return log_a_frac(q, sigma, alpha) / (alpha - 1)
+
+    def epsilon(schedule, q, delta, alphas=None, cache=None):
+        """(epsilon, best_alpha) of `schedule`, a list of (sigma, n_steps);
+        `cache` (a dict) keeps each sigma's one-step RDP across calls."""
+        q, delta = _float(q), _float(delta)
+        alphas = orders if alphas is None else _tuple(alphas)
+        cache = {} if cache is None else cache
+        rdp = [0.0] * _len(alphas)
+        for sigma, n_steps in schedule:
+            key = (q, _float(sigma), alphas)
+            per_step = cache.get(key)
+            if per_step is None:
+                per_step = cache[key] = [step_rdp(q, key[1], a) for a in alphas]
+            rdp = [r + n_steps * s for r, s in _zip(rdp, per_step)]
+        best_eps, best_alpha = inf, None
+        for alpha, r in _zip(alphas, rdp):
+            if alpha <= 1:
+                continue
+            eps = r - log(delta) / (alpha - 1) + log(1 - 1 / alpha)
+            if eps < best_eps:
+                best_eps, best_alpha = eps, alpha
+        return _max(0, best_eps), best_alpha
+
+    return epsilon
+
+
+_rdp_epsilon = _make_rdp_accountant()
 
 
 class _PrivacyLedger:
-    """Composes the per-step noise multipliers the harness actually applied.
+    """Counts the steps run at each noise multiplier sigma_t the harness
+    applied; epsilon() composes their subsampled-Gaussian RDP per order (no
+    shortcut through an "effective" sigma)."""
 
-    Under this RDP bound a step with multiplier sigma_t costs
-    alpha * q^2 / (2 sigma_t^2), so T steps compose to the cost of T steps at
-    sigma_eff = sqrt(T / sum_t 1/sigma_t^2).
-    """
-
-    def __init__(self, q, delta):
-        self.q = float(q)
-        self.delta = float(delta)
+    def __init__(self, q, delta, _float=_ORIG["builtins.float"]):
+        self.q = _float(q)
+        self.delta = _float(delta)
         self.steps = 0
-        self.inv_sq_sum = 0.0
+        self.last_sigma = None
+        self.counts = {}  # sigma_t -> number of steps
+        self.rdp_cache = {}
 
     def record(self, sigma):
         self.steps += 1
-        self.inv_sq_sum += 1.0 / (sigma * sigma)
+        self.last_sigma = sigma
+        self.counts[sigma] = self.counts.get(sigma, 0) + 1
 
-    def effective_sigma(self):
-        return (self.steps / self.inv_sq_sum) ** 0.5
-
-    def epsilon(self):
-        return _rdp_epsilon(self.steps, self.effective_sigma(), self.q, self.delta)
+    def epsilon(self, _epsilon=_rdp_epsilon, _list=_ORIG["builtins.list"]):
+        return _epsilon(_list(self.counts.items()), self.q, self.delta,
+                        cache=self.rdp_cache)[0]
 
 
-def _positive_finite(value, name):
-    value = float(value)
-    if not _math.isfinite(value) or value <= 0:
+def _positive_finite(value, name, _float=_ORIG["builtins.float"],
+                     _isfinite=_ORIG["math.isfinite"]):
+    value = _float(value)
+    if not _isfinite(value) or value <= 0:
         raise RuntimeError(f"DPMechanism returned invalid {name}={value!r}; "
                            f"it must be a finite positive number")
     return value
 
 
-def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger):
+def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger,
+                   _check=_check_harness, _positive=_positive_finite,
+                   _Tensor=_ORIG["torch.Tensor"], _randn_like=_ORIG["torch.randn_like"],
+                   _cat=_ORIG["torch.cat"], _vector_norm=_ORIG["torch.linalg.vector_norm"],
+                   _rtol=_CLIP_NORM_RTOL, _bool=_ORIG["builtins.bool"],
+                   _type=_ORIG["builtins.type"], _len=_ORIG["builtins.len"],
+                   _isinstance=_ORIG["builtins.isinstance"], _list=_ORIG["builtins.list"],
+                   _tuple=_ORIG["builtins.tuple"], _zip=_ORIG["builtins.zip"]):
     """One step of the Gaussian mechanism with the mechanism's C_t and sigma_t.
 
     The mechanism sees a copy of the per-sample gradients and returns
@@ -310,24 +447,25 @@ def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger):
     scale, clip_norm = dp_mechanism.clip(
         [g.clone() for g in per_sample_grads], step, epoch
     )
-    clip_norm = _positive_finite(clip_norm, "clip_norm")
-    sigma = _positive_finite(dp_mechanism.get_noise_multiplier(step, epoch),
-                             "noise multiplier")
+    clip_norm = _positive(clip_norm, "clip_norm")
+    sigma = _positive(dp_mechanism.get_noise_multiplier(step, epoch),
+                      "noise multiplier")
+    scales = _list(scale) if _isinstance(scale, (_list, _tuple)) else [scale] * _len(per_sample_grads)
+    _check()  # no DPMechanism code runs past this point in this step
 
-    scales = list(scale) if isinstance(scale, (list, tuple)) else [scale] * len(per_sample_grads)
-    if len(scales) != len(per_sample_grads):
-        raise RuntimeError(f"DPMechanism.clip returned {len(scales)} scale tensors "
-                           f"for {len(per_sample_grads)} parameters")
+    if _len(scales) != _len(per_sample_grads):
+        raise RuntimeError(f"DPMechanism.clip returned {_len(scales)} scale tensors "
+                           f"for {_len(per_sample_grads)} parameters")
     clipped = []
-    for g, s in zip(per_sample_grads, scales):
-        if type(s) is not _torch.Tensor or tuple(s.shape) != (batch_size,):
+    for g, s in _zip(per_sample_grads, scales):
+        if _type(s) is not _Tensor or _tuple(s.shape) != (batch_size,):
             raise RuntimeError("DPMechanism.clip must return per-sample scales as "
                                f"plain torch.Tensor of shape [{batch_size}]")
         shape = [batch_size] + [1] * (g.dim() - 1)
-        clipped.append(g * s.detach().reshape(shape))
+        clipped.append(g * s.detach().to(device=g.device, dtype=g.dtype).reshape(shape))
 
-    norms = _torch.cat([c.reshape(batch_size, -1) for c in clipped], dim=1).norm(2, dim=1)
-    if not bool((norms <= clip_norm * (1 + _CLIP_NORM_RTOL)).all()):
+    norms = _vector_norm(_cat([c.reshape(batch_size, -1) for c in clipped], dim=1), 2, dim=1)
+    if not _bool((norms <= clip_norm * (1 + _rtol)).all()):
         raise RuntimeError(
             f"DP violation at step {step}: a scaled per-sample gradient has norm "
             f"{norms.max().item():.6g} > clip_norm={clip_norm:.6g}"
@@ -336,7 +474,7 @@ def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger):
     noised_grads = []
     for c in clipped:
         avg = c.mean(dim=0)
-        noise = _torch.randn_like(avg) * (sigma * clip_norm / batch_size)
+        noise = _randn_like(avg) * (sigma * clip_norm / batch_size)
         noised_grads.append(avg + noise)
     ledger.record(sigma)
     return noised_grads
@@ -463,7 +601,9 @@ def compute_per_sample_gradients_fast(model, data, target, criterion):
 # =====================================================================
 
 def train_epoch(model, train_loader, optimizer, criterion, dp_mechanism, device,
-                epoch, total_steps, ledger, log_interval=50):
+                epoch, total_steps, ledger, log_interval=50,
+                _per_sample_grads=compute_per_sample_gradients,
+                _privatize=privatize_step):
     """Train one epoch with DP mechanism."""
     model.train()
     running_loss = 0.0
@@ -476,11 +616,11 @@ def train_epoch(model, train_loader, optimizer, criterion, dp_mechanism, device,
         batch_size = data.shape[0]
 
         # Compute per-sample gradients
-        per_sample_grads = compute_per_sample_gradients(model, data, target, criterion)
+        per_sample_grads = _per_sample_grads(model, data, target, criterion)
 
         # Apply the DP mechanism: clipping/schedule from DPMechanism (EDITABLE),
         # noise and accounting from privatize_step (FIXED)
-        noised_grads = privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger)
+        noised_grads = _privatize(dp_mechanism, per_sample_grads, step, epoch, ledger)
 
         # Set model gradients
         optimizer.zero_grad()
@@ -537,7 +677,8 @@ def evaluate(model, test_loader, criterion, device):
 # FIXED: Main entry point (DO NOT MODIFY)
 # =====================================================================
 
-def main():
+def main(_train_epoch=train_epoch, _evaluate=evaluate, _Ledger=_PrivacyLedger,
+         _check=_check_harness, _epsilon_rtol=_EPSILON_RTOL):
     parser = argparse.ArgumentParser(description="DP-SGD Benchmark")
     parser.add_argument("--dataset", type=str, default="mnist",
                         choices=["mnist", "cifar10", "fmnist"],
@@ -609,31 +750,31 @@ def main():
         target_epsilon=args.target_epsilon,
         target_delta=args.target_delta,
     )
+    _check()
 
     # Privacy ledger (FIXED): records the sigma_t applied at every step
-    ledger = _PrivacyLedger(q, args.target_delta)
-    epsilon_limit = args.target_epsilon * (1 + _EPSILON_RTOL)
+    ledger = _Ledger(q, args.target_delta)
+    epsilon_limit = args.target_epsilon * (1 + _epsilon_rtol)
 
     # Training loop
     global_step = 0
     best_acc = 0.0
 
     for epoch in range(1, args.epochs + 1):
-        global_step, train_loss, train_acc = train_epoch(
+        global_step, train_loss, train_acc = _train_epoch(
             model, train_loader, optimizer, criterion, dp_mechanism, device,
             epoch, global_step, ledger, log_interval=50,
         )
-        test_loss, test_acc = evaluate(model, test_loader, criterion, device)
+        test_loss, test_acc = _evaluate(model, test_loader, criterion, device)
 
         # Compute current epsilon spend from the noise actually applied
-        effective_sigma = ledger.effective_sigma()
         eps_spent = ledger.epsilon()
 
         print(
             f"Epoch {epoch}/{args.epochs}: "
             f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}% "
             f"test_loss={test_loss:.4f} test_acc={test_acc:.2f}% "
-            f"epsilon_spent={eps_spent:.2f} sigma={effective_sigma:.4f}",
+            f"epsilon_spent={eps_spent:.2f} sigma_t={ledger.last_sigma:.4f}",
             flush=True,
         )
 
@@ -649,8 +790,9 @@ def main():
         scheduler.step()
 
     # Print final test metrics
-    final_test_loss, final_test_acc = evaluate(model, test_loader, criterion, device)
+    final_test_loss, final_test_acc = _evaluate(model, test_loader, criterion, device)
     eps_final = ledger.epsilon()
+    _check()
 
     print(f"\nTEST_METRICS accuracy={final_test_acc:.4f} "
           f"epsilon={eps_final:.4f} best_accuracy={best_acc:.4f}",
@@ -659,6 +801,17 @@ def main():
     print(f"\nFinal Results: accuracy={final_test_acc:.2f}%, "
           f"best_accuracy={best_acc:.2f}%, epsilon={eps_final:.2f}",
           flush=True)
+
+
+# Record the fixed definitions above; _check_harness() also verifies them.
+_seal_harness(
+    ("module", globals(), (
+        "_CLIP_NORM_RTOL", "_EPSILON_RTOL", "_RDP_ORDERS",
+        "_check_harness", "_seal_harness", "_rdp_epsilon", "_PrivacyLedger",
+        "_positive_finite", "privatize_step", "get_data_loaders",
+        "compute_per_sample_gradients", "train_epoch", "evaluate", "main")),
+    ("_PrivacyLedger", vars(_PrivacyLedger), ("__init__", "record", "epsilon")),
+)
 
 
 if __name__ == "__main__":

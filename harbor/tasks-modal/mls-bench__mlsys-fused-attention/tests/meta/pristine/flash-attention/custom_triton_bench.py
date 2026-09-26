@@ -121,8 +121,10 @@ def custom_attention_forward(q, k, v, causal=True, sm_scale=None):
 # FIXED — Benchmark Harness (do not modify below this line)
 # ================================================================
 
+import _thread
 import secrets
 import sys
+import threading
 
 from torch.utils._python_dispatch import TorchDispatchMode
 
@@ -179,9 +181,84 @@ def _forbidden_modules_loaded():
     return sorted(m for m in sys.modules if m.split(".")[0] in _FORBIDDEN_MODULES)
 
 
+# A TorchDispatchMode only covers the thread that entered it, so the same aten
+# ops are also banned in the dispatcher itself, for every thread, from the
+# first custom call until the custom kernel has been timed. Only the fixed
+# reference below (main thread, _BAN["ref"] set) may run them in that window.
+_BAN = {"armed": False, "ref": None, "hits": []}
+_BELOW_BACKEND_SELECT = torch._C._dispatch_keyset_full_after(
+    torch._C.DispatchKey.BackendSelect)
+
+
+def _ban_kernel(op):
+    def kernel(keyset, *args, **kwargs):
+        if _BAN["armed"] and _BAN["ref"] != threading.get_ident():
+            _BAN["hits"].append(op.name())
+            raise RuntimeError(f"library attention op {op.name()} called while "
+                               f"the custom kernel is measured")
+        return op.redispatch(keyset & _BELOW_BACKEND_SELECT, *args, **kwargs)
+    return kernel
+
+
+def _arm_attention_ban():
+    lib = torch.library.Library("aten", "IMPL")
+    for name in torch._C._dispatch_get_all_op_names():
+        if (name.startswith("aten::") and name.startswith(_FORBIDDEN_OP_PREFIXES)
+                and not torch._C._dispatch_has_kernel_for_dispatch_key(
+                    name, "CompositeImplicitAutograd")):
+            base, _, overload = name[len("aten::"):].partition(".")
+            op = getattr(getattr(torch.ops.aten, base), overload or "default")
+            lib.impl(name[len("aten::"):], _ban_kernel(op), "BackendSelect",
+                     with_keyset=True)
+    _BAN["armed"] = True
+    return lib
+
+
+def _reference_in_ban(q, k, v, causal=True, sm_scale=None):
+    _BAN["ref"] = threading.get_ident()
+    try:
+        return reference_attention(q, k, v, causal=causal, sm_scale=sm_scale)
+    finally:
+        _BAN["ref"] = None
+
+
+# The only threads libraries leave running: torch.compile's compile-pool
+# reader and tqdm's progress-bar monitor.
+_LIBRARY_THREADS = (
+    "torch._inductor.compile_worker.subproc_pool.SubprocPool._read_thread",
+    "tqdm._monitor.TMonitor.run",
+)
+
+
+def _other_threads_alive():
+    me = threading.get_ident()
+    known = set()
+    for t in threading.enumerate():
+        fn = getattr(t, "_target", None)
+        fn = type(t).run if fn is None else fn
+        if (f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', '')}"
+                in _LIBRARY_THREADS):
+            known.add(t.ident)
+    unknown = [i for i in sys._current_frames() if i != me and i not in known]
+    return bool(unknown) or _thread._count() > len(known)
+
+
 def _custom_call(q, k, v, causal=True, sm_scale=None):
     with _NoLibraryAttention():
         out = custom_attention_forward(q, k, v, causal=causal, sm_scale=sm_scale)
+    # Another thread still running could do the work after the timed window
+    # closes. Waiting here is safe: whatever it does meanwhile is still timed.
+    for _ in range(3):
+        if not _other_threads_alive():
+            break
+        time.sleep(0.01)
+    else:
+        raise RuntimeError(
+            "custom_attention_forward left another thread running; it must "
+            "finish its work on the calling thread before returning")
+    if _BAN["hits"]:
+        raise RuntimeError(f"library attention op {_BAN['hits'][0]} was called; "
+                           f"the kernel must be your own")
     if type(out) is not torch.Tensor or out.shape != q.shape or out.dtype != q.dtype:
         raise RuntimeError(
             f"custom_attention_forward must return a plain tensor of shape "
@@ -231,7 +308,7 @@ def benchmark_fn(fn, shape, dtype, causal, sm_scale, warmup=25, rep=100,
         out = fn(q, k, v, causal=causal, sm_scale=sm_scale)
         end_events[i].record()
         if i in checked:
-            ref = reference_attention(q, k, v, causal=causal, sm_scale=sm_scale)
+            ref = _reference_in_ban(q, k, v, causal=causal, sm_scale=sm_scale)
             max_diff = torch.maximum(
                 max_diff, (out.float() - ref.float()).abs().max())
         del out
@@ -284,6 +361,7 @@ def main():
 
     # --- Correctness check ---
     ref_out = reference_attention(q, k, v, causal=args.causal, sm_scale=sm_scale)
+    ban = _arm_attention_ban()
     try:
         custom_out = _custom_call(q, k, v, causal=args.causal, sm_scale=sm_scale)
     except Exception as e:
@@ -326,6 +404,12 @@ def main():
     if loaded:
         fail(f"library attention modules were imported: {', '.join(loaded)}; "
              f"the kernel must be your own")
+        return
+    _BAN["armed"] = False
+    ban._destroy()
+    if _BAN["hits"]:
+        fail(f"library attention op {_BAN['hits'][0]} was called while the "
+             f"custom kernel was measured; the kernel must be your own")
         return
     sdpa_latency_ms, _ = benchmark_fn(reference_attention, shape, dtype,
                                       args.causal, sm_scale,

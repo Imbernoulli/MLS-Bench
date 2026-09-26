@@ -26,7 +26,7 @@ The default template is a naive binary quantizer: `sign(W)` with a per-tensor ab
 - `BitLinear.__init__(self, in_features, out_features, bias=True)` must keep `self.weight` as a `Parameter`.
 - `BitLinear.forward(self, x) -> output` where `x` has shape `(..., in_features)` and the output has shape `(..., out_features)`.
 - Quantization is applied in every forward pass (no separate train/eval path).
-- **Level budget (enforced): at most 5 weight levels.** In every output row of the effective weight a `BitLinear` applies in its forward pass, at most 5 distinct values may occur. This admits binary, ternary and the 5-level grid {-1, -2/3, 0, 2/3, 1} that the `int2_uniform` reference rounds to; a per-tensor or per-output-channel scale is allowed. Fixed code recovers each `BitLinear`'s effective weight by probing it with one-hot inputs at initialization, at every evaluation interval and before the final evaluation, in both train and eval mode, and aborts the run if any row exceeds 5 levels; such a run gets no score. Transforms that mix input features (e.g. rotations) and per-group scales make the effective weight continuous, so they are not allowed.
+- **Level budget (enforced): at most 5 weight levels.** In every output row of the effective weight a `BitLinear` applies in its forward pass, at most 5 distinct values may occur. This admits binary, ternary and the 5-level grid {-1, -2/3, 0, 2/3, 1} that the `int2_uniform` reference rounds to; a per-tensor or per-output-channel scale is allowed. Fixed code recovers each `BitLinear`'s effective weight by probing it with one-hot inputs under the run's bf16 autocast at initialization, at every evaluation interval and before the final evaluation, in both train and eval mode, and aborts the run if any row exceeds 5 levels; such a run gets no score. Randomly chosen forward calls of every evaluation (validation loss and perplexity) are also checked in place: the real output must match that effective weight applied to the activation the layer feeds its matmul (read back from the same layer on the same input, with the signs of its latent weight randomly flipped) within 2 %, so the forward pass must apply the discrete weight to real inputs as well; a mismatch also aborts the run. Transforms that mix input features (e.g. rotations) and per-group scales make the effective weight continuous, so they are not allowed.
 - `weight_quant` should return `(quantized_weight, scale)` such that `quantized_weight * scale` approximates the original weight; same convention for `activation_quant`.
 - All linear projections in the model (attention, MLP, lm_head) use `BitLinear`.
 - Helper classes (`autograd.Function`s, learned parameters) may be added.
@@ -35,7 +35,7 @@ The default template is a naive binary quantizer: `sign(W)` with a per-tensor ab
 ## Reference baselines (algorithmic templates)
 - `binary_sign` — BitNet sign-based binary weights {-1, +1} with absmean scale.
 - `ternary_158bit` — BitNet b1.58 ternary {-1, 0, +1} with absmean scale.
-- `int2_uniform` — uniform 2-bit quantization grid.
+- `int2_uniform` — named for a uniform 2-bit grid, but as implemented it rounds to the 5 levels {-1, -2/3, 0, 2/3, 1} with absmean scale.
 
 ## Fixed Pipeline
 - **Model**: GPT-2 Medium (24 layers, 16 heads, d=1024, ~355M params).

@@ -133,8 +133,13 @@ Constraints:
   the fake-quant functions only affect training. Your method must produce
   weights that, after this real QDQ roundtrip, still give a low
   perplexity. The run fails if any transformer-block `nn.Linear` was not
-  wrapped, or if non-stock modules or forward hooks remain in the model
-  at evaluation.
+  wrapped, or if, apart from parameter values, the evaluation model
+  differs from the pretrained one: every module must keep its name, stock
+  class and instance attributes (no per-instance method, callable or
+  config-object overrides), parameters their names and shapes, buffers
+  their values, and no forward hooks may remain. `quant_scale()` is
+  called for every wrapper before the first layer is swapped, and the
+  swapped-in weights must still hold the fixed QDQ output at evaluation.
 - Keep the LM head at full precision (the template already excludes
   `embed_out` / `lm_head`).
 - Available imports in the editable region: `torch`, `torch.nn` (as

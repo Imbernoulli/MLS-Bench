@@ -57,8 +57,12 @@ Datasets (cached high-stakes tabular data from AIF360):
 
 Each dataset is split into train / calibration / test; the policy fits on calibration probabilities/labels/subgroups and is evaluated on test.
 
+Every metric is computed at exactly 80% test coverage. The harness ranks the test examples by your policy's own decisions (examples that `predict_accept` accepts come first), then by `acceptance_score` (highest first), then by test-set order, and accepts exactly the top `round(0.8 * n)`. Accepting more or fewer than 80% therefore only changes which examples this ranking trims or fills; coverage itself is not scored.
+
+Each dataset's score is also multiplied by two sanity gates. The AUROC of `acceptance_score` must keep at least half of the weakest reference baseline's margin over 0.5, and the accepted 80% must remove at least half as many errors as the weakest baseline does relative to the base model's no-deferral error (the expected error of a random 80%). Below either threshold the multiplier decays exponentially, reaching e^-3 at chance level.
+
 Metrics:
-- **`selective_risk_at80`** — classification error on accepted examples at 80% target coverage (lower is better).
+- **`selective_risk_at80`** — classification error on the accepted examples at exactly 80% coverage (lower is better).
 - **`worst_group_selective_risk`** — worst-subgroup error among accepted examples (lower is better).
 - **`deferral_rate_gap`** — max-subgroup deferral rate minus min-subgroup deferral rate (lower is better).
 - **`auroc`** — AUROC of the acceptance score as a predictor of correctness (higher is better).

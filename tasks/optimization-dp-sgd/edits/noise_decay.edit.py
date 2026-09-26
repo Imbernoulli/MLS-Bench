@@ -30,9 +30,10 @@ class DPMechanism:
     Decays noise multiplier and clipping threshold over training epochs
     to allocate more privacy budget to later (more useful) training steps.
 
-    Privacy accounting: sigma_0 is chosen so that the full schedule spends
-    the same budget as the calibrated uniform sigma; the fixed harness
-    composes the per-step sigma it actually applied.
+    Privacy accounting: sigma_0 is calibrated so that the full decayed
+    schedule spends the target budget under the harness's accountant
+    (compute_epsilon_schedule); the fixed harness composes the per-step
+    sigma it actually applied.
     \"\"\"
 
     def __init__(self, max_grad_norm, noise_multiplier, n_params,
@@ -52,29 +53,29 @@ class DPMechanism:
         self.noise_decay_factor = 0.8  # Reduce noise by 20% at each stage
         self.clip_decay_factor = 0.85  # Reduce clip norm by 15% at each stage
 
-        # Pre-compute the per-epoch sigma schedule so we can do accurate
-        # RDP accounting.  Steps per epoch = dataset_size // batch_size
-        # (drop_last=True in DataLoader).
+        # Per-epoch sigma schedule for the RDP accounting. Steps per epoch =
+        # dataset_size // batch_size (drop_last=True in DataLoader).
         self.steps_per_epoch = dataset_size // batch_size
+        q = batch_size / dataset_size
 
-        # Compute sigma_0: scale the calibrated (uniform) sigma up so that
-        # the harmonic-mean-equivalent sigma across all steps equals the
-        # calibrated value.  This keeps the total privacy spend equal to
-        # the budget even though individual steps have different noise.
-        total_steps = self.steps_per_epoch * epochs
-        inv_sq_sum = 0.0
-        for e in range(1, epochs + 1):
-            stage = (e - 1) // self.decay_interval
-            factor = self.noise_decay_factor ** stage
-            # Each epoch contributes steps_per_epoch steps at sigma_0*factor
-            # 1/sigma_t^2 = 1/(sigma_0*factor)^2 = 1/(sigma_0^2 * factor^2)
-            inv_sq_sum += self.steps_per_epoch / (factor * factor)
-        # sigma_eff = sqrt(total_steps / inv_sq_sum) * sigma_0
-        # We want sigma_eff == noise_multiplier (the calibrated value), so:
-        #   noise_multiplier = sigma_0 * sqrt(total_steps / inv_sq_sum)
-        #   sigma_0 = noise_multiplier / sqrt(total_steps / inv_sq_sum)
-        #           = noise_multiplier * sqrt(inv_sq_sum / total_steps)
-        self.sigma_0 = noise_multiplier * (inv_sq_sum / total_steps) ** 0.5
+        def schedule(sigma_0):
+            return [(sigma_0 * (self.noise_decay_factor ** ((e - 1) // self.decay_interval)),
+                     self.steps_per_epoch) for e in range(1, epochs + 1)]
+
+        # Calibrate sigma_0 by bisection: the smallest sigma_0 whose decayed
+        # schedule stays within the budget. sigma_0 = noise_multiplier (the
+        # calibrated uniform sigma) over-spends once sigma decays; at the upper
+        # end every step's sigma is >= noise_multiplier.
+        lo = noise_multiplier
+        hi = noise_multiplier / self.noise_decay_factor ** ((epochs - 1) // self.decay_interval)
+        while hi - lo > 1e-4 * hi:
+            mid = (lo + hi) / 2
+            eps, _ = compute_epsilon_schedule(schedule(mid), q, target_delta)
+            if eps > target_epsilon:
+                lo = mid
+            else:
+                hi = mid
+        self.sigma_0 = hi
         self.clip_0 = max_grad_norm
 
         # Current values

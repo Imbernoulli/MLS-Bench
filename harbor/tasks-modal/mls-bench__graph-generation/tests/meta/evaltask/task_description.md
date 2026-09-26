@@ -73,9 +73,12 @@ Metrics (all lower is better):
 
 The harness draws exactly as many graphs as the held-out reference split
 (20 / 40 / 118 graphs) and discards any extra graphs `sample()` returns.
-It also reports `copy_excess`: the fraction of generated graphs isomorphic to
-a training graph, minus the same fraction for the held-out graphs (clipped at
-0). A dataset's score is penalized when `copy_excess` exceeds 0.5.
+A generated graph isomorphic to any dataset graph (training or held-out) is a
+copy. The generated set may reproduce as many distinct dataset graphs as the
+held-out graphs themselves do; copies of any further dataset graph are
+dropped before the MMD is computed, and their fraction of the generated
+graphs is reported as `copy_excess`. A dataset's score is penalized when
+`copy_excess` exceeds 0.1 (0.2 on `ego_small`).
 
 Suitable contributions may be autoregressive, latent-variable, diffusion-like,
 energy-based, score-based, or otherwise structured, provided they can train

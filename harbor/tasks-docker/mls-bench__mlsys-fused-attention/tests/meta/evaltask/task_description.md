@@ -62,9 +62,12 @@ SDPA) must be `< 1e-2`.
 The kernel must be your own: `custom_attention_forward` may not call the
 reference (`F.scaled_dot_product_attention` or any of its backend ops) or
 a packaged attention kernel (flash-attn, xformers, cuDNN, ...); such a
-call fails the run. Every timed call receives freshly drawn inputs and its
-output may be checked against the reference too, so each call must
-compute the attention it is given.
+call, from any thread, fails the run. It must also finish its work on the
+calling thread: the run fails if another thread (other than the ones
+torch.compile and tqdm keep alive) is still running when it returns.
+Every timed call receives freshly drawn inputs and its output may be
+checked against the reference too, so each call must compute the
+attention it is given.
 
 ## Evaluation
 
@@ -83,7 +86,8 @@ Metrics (per configuration):
 
 - `tflops`: achieved TFLOPs/s (higher is better) — primary metric
 - `latency_ms`: kernel latency in milliseconds (lower is better)
-- `correct`: binary (1 if `max_diff < 1e-2`, else 0) — hard constraint
+- `correct`: binary (1 if `max_diff < 1e-2`, else 0) — hard constraint;
+  `max_diff` itself is not scored
 
 FLOP formula (FA2/FA3 convention):
 `4 * batch * seqlen^2 * nheads * headdim / 2` (causal).

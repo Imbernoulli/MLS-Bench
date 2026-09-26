@@ -313,7 +313,7 @@ def _parts(packet, shape, device):
     return out
 
 
-def _account(tensors, device):
+def _account(tensors, device, *, _to_device=_to_device):
     """Charge and decode the packets of one step, all on the device.
 
     `tensors` is a list of (numel, parts), one per gradient tensor. Cost:
@@ -406,7 +406,8 @@ def _check(ok):
             "a packet has more distinct values than 2**bits")
 
 
-def packet_cost(packet, shape):
+def packet_cost(packet, shape, *, _parts=_parts, _account=_account,
+                _check=_check):
     """Bits `packet` (a packet or a list of them) costs for a tensor of
     `shape`, exactly as the per-step budget check charges it."""
     shape = torch.Size(shape)
@@ -421,17 +422,20 @@ def packet_cost(packet, shape):
     return int(bits.item())
 
 
-def apply_gradient_compression(model, compressor):
+def apply_gradient_compression(model, compressor, check_bindings, *,
+                               _parts=_parts, _account=_account):
     """Encode every gradient with the compressor and replace it with the
     decoding of its packet: decoding is fixed, so the optimizer sees only
     what was transmitted. Returns the step's receipt (bits, then the three
     validity checks), filled asynchronously; `settle_step` reads it after
-    the training loop's next host sync and stops the run on a violation."""
+    the training loop's next host sync and stops the run on a violation.
+    `check_bindings` runs after every compress call (see `bindings_check`)."""
     staged = []
     for name, param in model.named_parameters():
         if param.grad is None:
             continue
         packet = compressor.compress(param.grad.detach(), name)
+        check_bindings()
         staged.append((param, _parts(packet, param.shape, param.device)))
     if not staged:
         return torch.tensor([0.0, 1.0, 1.0, 1.0], dtype=torch.float64), None
@@ -452,7 +456,7 @@ def apply_gradient_compression(model, compressor):
     return receipt, done
 
 
-def settle_step(receipt, budget_bits):
+def settle_step(receipt, budget_bits, *, _check=_check):
     """Check a step's receipt against the contract and the budget; returns
     the bits the step transmitted. Cheap after a host sync (loss.item())."""
     receipt, done = receipt
@@ -502,7 +506,44 @@ def evaluate(model, test_loader, device):
     return acc, avg_loss
 
 
-def train(args):
+# The fixed functions reach one another through default arguments bound
+# when they are defined, so compressor code that rebinds a module-level name
+# (`global settle_step`, say) does not change what they run; the check below
+# also stops the run if it tries.
+_FIXED_NAMES = (
+    "__builtins__", "argparse", "math", "os", "time", "torch", "nn", "F",
+    "optim", "DataLoader", "datasets", "transforms", "conv3x3", "BasicBlock",
+    "ResNet", "VGG", "build_model", "get_dataloaders",
+    "CompressionContractError", "step_budget_bits", "elias_gamma_bound",
+    "_to_device", "_parts", "_account", "_check", "packet_cost",
+    "apply_gradient_compression", "settle_step", "cosine_lr", "evaluate")
+# The builtins the fixed code calls; no module-level name may shadow them.
+_FIXED_BUILTINS = (
+    "all", "bool", "dict", "enumerate", "float", "int", "isinstance", "len",
+    "list", "max", "print", "range", "set", "str", "sum", "tuple", "zip")
+
+
+def bindings_check(names=_FIXED_NAMES, builtin_names=_FIXED_BUILTINS, *,
+                   _g=globals(), _error=CompressionContractError):
+    """Snapshot the module-level `names`; the returned check stops the run if
+    any of them has since been rebound, or if a module-level name shadows
+    one of `builtin_names`."""
+    bound = tuple((name, _g[name]) for name in names)
+
+    def check():
+        for name, obj in bound:
+            if _g.get(name) is not obj:
+                raise _error(f"compressor code rebound the fixed name {name!r}")
+        for name in builtin_names:
+            if name in _g:
+                raise _error(f"a module-level {name!r} shadows the builtin "
+                             f"the fixed code calls")
+    return check
+
+
+def train(args, *, apply_gradient_compression=apply_gradient_compression,
+          settle_step=settle_step, evaluate=evaluate, cosine_lr=cosine_lr,
+          check_bindings=bindings_check()):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     torch.manual_seed(args.seed)
 
@@ -547,7 +588,8 @@ def train(args):
             loss.backward()
 
             # Apply gradient compression before optimizer step
-            receipt = apply_gradient_compression(model, compressor)
+            receipt = apply_gradient_compression(model, compressor,
+                                                 check_bindings)
 
             optimizer.step()
 

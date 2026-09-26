@@ -68,11 +68,18 @@ fraction of causal (q, k) pairs attended (entries above the diagonal are
 ignored; each head is divided by `N(N+1)/2`). On randomly sampled query
 rows (always including the last one) it also recomputes, from its own
 copies of q/k/v, the attention restricted to the mask and the full
-causal attention, and aborts the run if the module's output has moved
-from the former toward the latter (by more than 0.1 of the head's RMS
-output norm and more than 25% of the way), so the mask must include
-every pair the module attends. Low-precision arithmetic inside the mask
-is not penalized. Any `last_density` the module sets is ignored. The
+causal attention, and aborts the run if the module's output differs
+from the former by more than the head's RMS output norm, or has moved
+from the former toward the latter (by more than 0.1 of that norm and
+more than 25% of the way). So the output must be attention over the
+mask, and the mask must include every pair the module attends.
+Low-precision arithmetic inside the mask is not penalized: rows with a
+logit above 1024 in magnitude, which fp16 cannot resolve (only layer 0
+of this model has them), are not checked, and on the rest fused SDPA
+on the fp16 inputs or fp32 attention stays well inside the limits.
+Logits from a plain fp16/bf16 matmul are too coarse and can fail, so
+compute hand-written logits in fp32. Any `last_density` the module
+sets is ignored. The
 harness aggregates the density across all attention layers and aborts
 the run if the mean exceeds the density budget (`0.25 + 0.02 slack`)
 for any non-`dense` baseline. A mask of the wrong dtype or shape is a

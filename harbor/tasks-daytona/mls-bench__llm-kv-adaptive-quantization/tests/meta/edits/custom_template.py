@@ -723,20 +723,29 @@ def normalize_quantizer_result(result, original_tensor: torch.Tensor) -> tuple[t
             "dict {'group_ids', 'group_bits'} or None; self-reported bit counts are not accepted, "
             f"got {type(layout).__name__}"
         )
-    return quantized.to(original_tensor.dtype), layout
+    # A private copy: the tensor that is measured is the tensor the next decode
+    # step reads, even if the quantizer keeps a reference and writes to it later.
+    return quantized.to(original_tensor.dtype).clone(memory_format=torch.contiguous_format), layout
 
 
 # Effective KV bits are measured here, in fixed code, from what the quantizer
 # actually stored: every element is either kept at FP16 (group id -1) or belongs
-# to a quantization group that holds at least MIN_QUANT_GROUP_ELEMENTS elements
-# and at most 2**bits distinct stored values. Scale/zero-point metadata is not
-# charged (the reference accounting of KIVI/KVTuner/SQuat).
+# to a quantization group that exactly fills an axis-aligned box of the tensor
+# (a run of tokens in one channel, a run of channels in one token, a tile, ...)
+# and holds at least MIN_QUANT_GROUP_ELEMENTS elements and at most 2**bits
+# distinct stored values. Scale/zero-point metadata is not charged (the
+# reference accounting of KIVI/KVTuner/SQuat); an arbitrary element->group map
+# would be uncharged side information, so a group that is not a box is rejected.
 MIN_QUANT_GROUP_ELEMENTS = 32
 MAX_GROUP_BITS = 16
 REFERENCE_KV_SPAN = 4096
-# Decode steps are not scored; the diagnostic decode-time bits are measured on
-# the first decode step of each request and every DECODE_AUDIT_STRIDE-th after.
-DECODE_AUDIT_STRIDE = 16
+# Scored bits = the reference span's bits, except that its older tokens (all but
+# the most recent RECENT_WINDOW_TOKENS) are charged at the larger of their
+# reference bits and the older-token bits of the cache actually used for
+# generation at one uniformly random decode step per request. The window is
+# KIVI's 128-token residual plus one 32-token group that a per-channel grouping
+# may not have filled yet.
+RECENT_WINDOW_TOKENS = 160
 
 
 def stored_value_codes(tensor: torch.Tensor) -> torch.Tensor:
@@ -766,6 +775,24 @@ def layout_tensors(stored: torch.Tensor, layout: dict, where: str) -> tuple[torc
     return ids, bits
 
 
+def group_box_volumes(slots: torch.Tensor, num_slots: int, local: torch.Tensor, shape) -> torch.Tensor:
+    """Per slot, the element count of the axis-aligned bounding box of its elements.
+
+    `slots[i]` is the group slot of element i and `local[i]` its row-major index
+    inside a tensor of `shape`. A group fills its box exactly when the box volume
+    equals the group size.
+    """
+    volume = torch.ones(num_slots, dtype=torch.int64, device=slots.device)
+    stride = 1
+    for dim in reversed([int(d) for d in shape]):
+        coord = torch.div(local, stride, rounding_mode="floor").remainder_(dim)
+        lo = torch.full((num_slots,), dim, dtype=torch.int64, device=slots.device).scatter_reduce_(0, slots, coord, "amin")
+        hi = torch.full((num_slots,), -1, dtype=torch.int64, device=slots.device).scatter_reduce_(0, slots, coord, "amax")
+        volume *= (hi - lo + 1).clamp(min=0)
+        stride *= dim
+    return volume
+
+
 def measure_stored_bits(stored: torch.Tensor, layout: dict | None, where: str) -> float:
     """Exact per-tensor measurement; raises a descriptive error on an invalid layout."""
     numel = stored.numel()
@@ -785,11 +812,15 @@ def measure_stored_bits(stored: torch.Tensor, layout: dict | None, where: str) -
     distinct = torch.bincount(distinct_pairs >> 32, minlength=num_groups)
     used = sizes > 0
     levels = torch.pow(2, bits.clamp(0, MAX_GROUP_BITS))
+    slots = torch.where(quantized, ids, num_groups)
+    local = torch.arange(numel, device=ids.device)
+    volumes = group_box_volumes(slots, num_groups + 1, local, stored.shape)[:num_groups]
     checks = torch.stack(
         [
             (used & ((bits < 1) | (bits > MAX_GROUP_BITS))).any(),
             (used & (sizes < MIN_QUANT_GROUP_ELEMENTS)).any(),
             (used & (bits < MAX_GROUP_BITS) & (distinct > levels)).any(),
+            (used & (volumes != sizes)).any(),
         ]
     ).tolist()
     if checks[0]:
@@ -807,6 +838,13 @@ def measure_stored_bits(stored: torch.Tensor, layout: dict | None, where: str) -
             f"{int(distinct[bad].item())} distinct values (> {int(levels[bad].item())}); "
             "the stored tensor does not fit the declared layout"
         )
+    if checks[3]:
+        bad = int(torch.nonzero(used & (volumes != sizes))[0].item())
+        raise ValueError(
+            f"{where}: group {bad} is not an axis-aligned box of the tensor: its {int(sizes[bad].item())} "
+            f"elements span a bounding box of {int(volumes[bad].item())}; a group must be a contiguous run "
+            "or tile (e.g. consecutive tokens of one channel, or consecutive channels of one token)"
+        )
     stored_bits = bits.clamp(max=MAX_GROUP_BITS).to(torch.float64)[qids].sum().item()
     stored_bits += float(numel - qids.numel()) * FP_BITS
     return float(stored_bits / numel)
@@ -815,21 +853,35 @@ def measure_stored_bits(stored: torch.Tensor, layout: dict | None, where: str) -
 class StoredBitsMeter:
     """Batched form of `measure_stored_bits`: the same checks and the same
     numbers, but many tensors share one sort and one device sync. Any flagged
-    batch is re-measured tensor by tensor so the error names the culprit."""
+    batch is re-measured tensor by tensor so the error names the culprit.
+    With `prefix_tokens`, it also measures the bits of the older tokens (token
+    index, dim -2, below `prefix_tokens`) of each tensor."""
 
     MAX_BATCH_ELEMENTS = 1 << 24
 
-    def __init__(self):
+    def __init__(self, prefix_tokens: int | None = None):
         self.bits: dict = {}
+        self.prefix_bits: dict = {}
+        self.prefix_tokens = prefix_tokens
         self.pending: list = []
         self.pending_elements = 0
 
     def add(self, key, stored: torch.Tensor, layout: dict | None, where: str) -> None:
         if layout is None or stored.numel() == 0:
             self.bits[key] = FP_BITS
+            self.prefix_bits[key] = FP_BITS
             return
         ids, bits = layout_tensors(stored, layout, where)
-        self.pending.append((key, stored, layout, where, ids, bits))
+        num_groups = int(bits.numel())
+        prefix = None
+        if self.prefix_tokens is not None:
+            tokens = int(stored.shape[-2])
+            kept = max(0, min(int(self.prefix_tokens), tokens))
+            ext_bits = torch.nn.functional.pad(bits.clamp(max=MAX_GROUP_BITS), (0, 1), value=int(FP_BITS))
+            elem_bits = ext_bits[torch.where((ids >= 0) & (ids < num_groups), ids, num_groups)]
+            prefix_sum = elem_bits.reshape(-1, tokens, int(stored.shape[-1]))[:, :kept, :].sum()
+            prefix = (prefix_sum, stored.numel() // tokens * kept)
+        self.pending.append((key, stored, layout, where, ids, bits, prefix))
         self.pending_elements += stored.numel()
         if self.pending_elements >= self.MAX_BATCH_ELEMENTS:
             self.flush()
@@ -860,6 +912,22 @@ class StoredBitsMeter:
         sums = (running[ends] - running[ends - torch.tensor(numels, device=device)]).to(torch.float64)
         sizes = torch.bincount(gid, minlength=sentinel + 1)[:sentinel]
         distinct = torch.bincount(torch.unique(gid * (1 << 32) + codes) >> 32, minlength=sentinel + 1)[:sentinel]
+        shapes = [tuple(item[1].shape) for item in batch]
+        if len(set(shapes)) == 1:
+            local = torch.arange(total, device=device) % numels[0]
+            volumes = group_box_volumes(gid, sentinel + 1, local, shapes[0])[:sentinel]
+        else:
+            volumes = torch.cat(
+                [
+                    group_box_volumes(
+                        torch.where((item[4] >= 0) & (item[4] < count), item[4], count),
+                        count + 1,
+                        torch.arange(item[1].numel(), device=device),
+                        item[1].shape,
+                    )[:count]
+                    for item, count in zip(batch, counts)
+                ]
+            )
         used = sizes > 0
         levels = torch.pow(2, bits_all.clamp(0, MAX_GROUP_BITS))
         bad = (
@@ -867,21 +935,31 @@ class StoredBitsMeter:
             | (used & ((bits_all < 1) | (bits_all > MAX_GROUP_BITS))).any()
             | (used & (sizes < MIN_QUANT_GROUP_ELEMENTS)).any()
             | (used & (bits_all < MAX_GROUP_BITS) & (distinct > levels)).any()
+            | (used & (volumes != sizes)).any()
         )
-        values = torch.cat([bad.to(torch.float64).reshape(1), sums]).tolist()
+        prefix_sums = [item[6][0].to(torch.float64).reshape(1) for item in batch if item[6] is not None]
+        values = torch.cat([bad.to(torch.float64).reshape(1), sums, *prefix_sums]).tolist()
         if values[0]:
-            for key, stored, layout, where, _, _ in batch:
+            for key, stored, layout, where, *_ in batch:
                 measure_stored_bits(stored, layout, where)
             raise RuntimeError("stored-bits batch flagged an invalid layout that the per-tensor check accepted")
-        for (key, stored, _, _, _, _), stored_bits in zip(batch, values[1:]):
+        prefix_values = iter(values[1 + len(batch):])
+        for (key, stored, *_, prefix), stored_bits in zip(batch, values[1:1 + len(batch)]):
             self.bits[key] = float(stored_bits / stored.numel())
+            if prefix is not None:
+                self.prefix_bits[key] = float(next(prefix_values) / max(prefix[1], 1))
 
 
 def quantize_snapshot(
-    cache_snapshot, quantizer: AdaptiveKVQuantizer, request_meta: dict, budget_state: dict, measure: bool = True
+    cache_snapshot,
+    quantizer: AdaptiveKVQuantizer,
+    request_meta: dict,
+    budget_state: dict,
+    measure: bool = True,
+    prefix_tokens: int | None = None,
 ):
     quantized_snapshot = list(cache_snapshot)
-    meter = StoredBitsMeter() if measure else None
+    meter = StoredBitsMeter(prefix_tokens) if measure else None
 
     for kv_kind in ("key", "value"):
         tensor_index = 0 if kv_kind == "key" else 1
@@ -914,10 +992,13 @@ def quantize_snapshot(
         return quantized_snapshot, None
     meter.flush()
     effective_bits = safe_mean(list(meter.bits.values()))
-    return quantized_snapshot, {
+    efficiency = {
         "effective_kv_bits": effective_bits,
         "kv_compression_ratio": FP_BITS / max(effective_bits, 1e-6),
     }
+    if prefix_tokens is not None:
+        efficiency["prefix_kv_bits"] = safe_mean([meter.prefix_bits[key] for key in meter.bits])
+    return quantized_snapshot, efficiency
 
 
 def reference_span_snapshot(cache_snapshot, span: int = REFERENCE_KV_SPAN):
@@ -937,7 +1018,13 @@ def measure_policy_efficiency(
     quantizer: AdaptiveKVQuantizer, cache_snapshot, request_meta: dict, budget_state: dict
 ) -> dict:
     """Measured effective bits of the quantizer on this request's real KV at the reference span."""
-    _, efficiency = quantize_snapshot(reference_span_snapshot(cache_snapshot), quantizer, request_meta, budget_state)
+    _, efficiency = quantize_snapshot(
+        reference_span_snapshot(cache_snapshot),
+        quantizer,
+        request_meta,
+        budget_state,
+        prefix_tokens=REFERENCE_KV_SPAN - RECENT_WINDOW_TOKENS,
+    )
     return efficiency
 
 
@@ -1038,14 +1125,24 @@ def generate_with_quantized_cache(
     quantizer.reset_request(request_meta, budget_state)
     step_input, current_cache = prefill_prompt(model, tokenizer, prompt, device, quantizer)
     generated = [step_input.detach().clone()]
-    decode_kv_bits = []
+    decode_audit = None
+    audit_candidates = 0
 
     for step in range(max_new_tokens - 1):
         cache_snapshot = snapshot_cache(current_cache)
-        audit = step % DECODE_AUDIT_STRIDE == 0
-        quantized_snapshot, efficiency = quantize_snapshot(cache_snapshot, quantizer, request_meta, budget_state, audit)
+        # Reservoir sampling (os.urandom) over the decode steps that hold older
+        # tokens: the step whose cache is scored is uniformly random, and the
+        # quantizer cannot tell which it is.
+        prefix_tokens = int(cache_snapshot[0][0].shape[-2]) - RECENT_WINDOW_TOKENS
+        audit = False
+        if prefix_tokens > 0:
+            audit_candidates += 1
+            audit = int.from_bytes(os.urandom(8), "little") % audit_candidates == 0
+        quantized_snapshot, efficiency = quantize_snapshot(
+            cache_snapshot, quantizer, request_meta, budget_state, audit, prefix_tokens if audit else None
+        )
         if efficiency is not None:
-            decode_kv_bits.append(efficiency["effective_kv_bits"])
+            decode_audit = efficiency
         quantized_cache = restore_cache(model, quantized_snapshot)
         del cache_snapshot, quantized_snapshot
         maybe_sync()
@@ -1068,10 +1165,17 @@ def generate_with_quantized_cache(
     del current_cache
     reference = measure_policy_efficiency(quantizer, cache_snapshot, request_meta, budget_state)
     del cache_snapshot
+    # The reference span's older tokens are charged at the larger of their own
+    # bits and the older-token bits of the cache that generation actually used.
+    older_share = 1.0 - RECENT_WINDOW_TOKENS / REFERENCE_KV_SPAN
+    excess = 0.0
+    if decode_audit is not None:
+        excess = older_share * max(0.0, decode_audit["prefix_kv_bits"] - reference["prefix_kv_bits"])
     generated_tokens = torch.cat(generated, dim=-1)
     return decode_prediction(tokenizer, generated_tokens, workload_name), {
-        "reference_kv_bits": reference["effective_kv_bits"],
-        "decode_kv_bits": safe_mean(decode_kv_bits),
+        "scored_kv_bits": reference["effective_kv_bits"] + excess,
+        "decode_excess_bits": excess,
+        "decode_kv_bits": decode_audit["effective_kv_bits"] if decode_audit is not None else None,
     }
 
 
@@ -1102,7 +1206,8 @@ def run_real_eval(args):
     model.eval()
 
     final_scores = []
-    reference_kv_bits = []
+    scored_kv_bits = []
+    decode_excess_bits = []
     decode_kv_bits = []
 
     for example in workload.examples:
@@ -1117,23 +1222,33 @@ def run_real_eval(args):
             device,
         )
         final_scores.append(score_prediction(args.workload, example, prediction))
-        reference_kv_bits.append(efficiency["reference_kv_bits"])
-        if efficiency["decode_kv_bits"] > 0:
+        scored_kv_bits.append(efficiency["scored_kv_bits"])
+        decode_excess_bits.append(efficiency["decode_excess_bits"])
+        if efficiency["decode_kv_bits"] is not None:
             decode_kv_bits.append(efficiency["decode_kv_bits"])
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     # Scored efficiency: bits measured by the fixed harness from the stored
-    # tensors at the 4096-token reference span, averaged over requests.
-    effective_bits = safe_mean(reference_kv_bits)
+    # tensors at the 4096-token reference span, with the older tokens charged at
+    # no less than the decode-time cache used, averaged over requests.
+    effective_bits = safe_mean(scored_kv_bits)
     metrics = {
         "final_score": safe_mean(final_scores),
         "effective_kv_bits": effective_bits,
         "kv_compression_ratio": FP_BITS / max(effective_bits, 1e-6),
         "runtime_seconds": time.perf_counter() - runtime_start,
     }
-    maybe_write_output_artifacts(args.workload, {}, {**metrics, "decode_effective_kv_bits": safe_mean(decode_kv_bits)})
-    print(f"KV_BITS_AUDIT: decode_effective_kv_bits={safe_mean(decode_kv_bits):.6f} (sampled decode steps; diagnostic, not scored)")
+    audit = {
+        "decode_effective_kv_bits": safe_mean(decode_kv_bits),
+        "decode_older_token_excess_bits": safe_mean(decode_excess_bits),
+    }
+    maybe_write_output_artifacts(args.workload, {}, {**metrics, **audit})
+    print(
+        f"KV_BITS_AUDIT: decode_effective_kv_bits={audit['decode_effective_kv_bits']:.6f} "
+        f"decode_older_token_excess_bits={audit['decode_older_token_excess_bits']:.6f} "
+        "(one random decode step per request; the excess is included in effective_kv_bits)"
+    )
     print(
         "TEST_METRICS: "
         f"final_score={metrics['final_score']:.6f} "

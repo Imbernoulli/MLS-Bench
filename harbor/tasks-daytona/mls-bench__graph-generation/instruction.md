@@ -58,9 +58,11 @@ energy-based, score-based, or otherwise structured, provided they can sample
 valid undirected graphs without relying on the evaluation labels. Samples must
 come from the learned model: replaying stored training graphs, or calling or
 re-implementing the harness's dataset generators, is not a valid submission.
-The harness draws exactly as many graphs as the held-out split, and a dataset's
-score is penalized when the generated graphs copy training graphs (up to
-isomorphism) far more often than held-out graphs do.
+The harness draws exactly as many graphs as the held-out split. Generated
+graphs that copy dataset graphs (training or held-out, up to isomorphism)
+beyond what the held-out graphs themselves do are dropped before the MMD is
+computed, and a dataset's score is penalized when they exceed 10% of the
+samples (20% on ego_small).
 
 
 ## Your Workspace

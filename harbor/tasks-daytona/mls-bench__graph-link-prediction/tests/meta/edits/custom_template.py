@@ -226,10 +226,10 @@ class LinkPredictor(nn.Module):
 #   (e.g. through per-call statistics or call order).
 # - The scores must be finite and have one entry per candidate edge, or the
 #   run fails.
-# - Ties are scored pessimistically (OGB convention): Hits@K counts a
-#   positive only if it scores strictly above the K-th best negative, and
-#   MRR ranks a positive below every negative with an equal score, so a
-#   constant or tied score earns no hits. AUC counts a tie as half a win.
+# - Ties are scored pessimistically, so a constant or tied score earns no
+#   hits: Hits@K counts a positive only if it scores strictly above the K-th
+#   best negative (as in OGB); MRR ranks it below every tied negative (OGB's
+#   MRR averages optimistic and pessimistic ranks). AUC: a tie is half a win.
 
 def _eval_score_jointly(score_fn, pos_eli: torch.Tensor,
                         neg_eli: torch.Tensor):

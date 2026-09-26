@@ -74,8 +74,5 @@
         }
       ]
     }
-  ],
-  "guard_exclude": [
-    "badge/oml"
   ]
 }

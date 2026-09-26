@@ -394,10 +394,22 @@ if __name__ == '__main__':
     # weight its forward pass applies (whatever activation quantizer is used),
     # and each output row of that weight may take at most LOWBIT_MAX_LEVELS
     # distinct values; a per-tensor or per-output-channel scale is allowed.
-    # The check runs at init, at every eval_interval and before the final
-    # evaluation, in train and eval mode; a violation aborts the run.
+    # The check runs under the same bf16 autocast as training and evaluation,
+    # at init, at every eval_interval and before the final evaluation, in
+    # train and eval mode. One-hot inputs never occur in real batches, so
+    # randomly chosen evaluation forward calls are also checked in place
+    # (lowbit_watch): the real output must equal the effective weight applied
+    # to the activation the layer feeds its matmul, which is read back from
+    # the same layer on the same input with its latent weight replaced by
+    # random sign flips of it. A violation aborts the run.
     LOWBIT_MAX_LEVELS = 5
     LOWBIT_REL_TOL = 1e-3
+    LOWBIT_DENSE_P = 0.02     # share of evaluation forward calls checked per BitLinear
+    LOWBIT_DENSE_ROWS = 256   # token rows compared per in-place check
+    LOWBIT_DENSE_TOL = 0.02   # max relative deviation of the real output
+    _lowbit_gen = torch.Generator()  # private: the training RNG streams stay untouched
+    _lowbit_gen.manual_seed(int.from_bytes(os.urandom(8), 'little') % (2 ** 63))
+    _lowbit_busy = [False]
 
     def _lowbit_slots(m):
         slots = []
@@ -422,6 +434,15 @@ if __name__ == '__main__':
         return levels, spread > tol.squeeze(1) * levels
 
     @torch.no_grad()
+    def _lowbit_probe(mod, d_in, dtype):
+        # (effective weight [out, in], output offset [out]) from one-hot inputs,
+        # in the caller's autocast state
+        base = mod(torch.zeros(1, 1, d_in, device=device, dtype=dtype)).float()
+        base = torch.where(torch.isfinite(base), base, torch.zeros_like(base))
+        eye = torch.eye(d_in, device=device, dtype=dtype).unsqueeze(0)
+        return (mod(eye).float() - base)[0].t(), base.reshape(-1)
+
+    @torch.no_grad()
     def verify_lowbit(m, when):
         t_check = time.time()
         worst = (0, '')
@@ -431,11 +452,8 @@ if __name__ == '__main__':
             try:
                 for train_mode in (True, False):
                     mod.train(train_mode)
-                    with torch.autocast(device_type='cuda', enabled=False):
-                        eye = torch.eye(d_in, device=device, dtype=torch.float32)
-                        base = mod(torch.zeros(1, 1, d_in, device=device)).float()
-                        base = torch.where(torch.isfinite(base), base, torch.zeros_like(base))
-                        w_eff = (mod(eye.unsqueeze(0)).float() - base)[0].t()
+                    with ctx:
+                        w_eff, _ = _lowbit_probe(mod, d_in, torch.float32)
                     if not torch.isfinite(w_eff).all():
                         raise RuntimeError(f"LOWBIT_CHECK FAILED ({when}): {name} forward is non-finite on one-hot probes")
                     levels, smeared = _lowbit_row_levels(w_eff)
@@ -453,6 +471,86 @@ if __name__ == '__main__':
                 mod.load_state_dict(saved)
         print(f"LOWBIT_CHECK: {when}: ok, max levels per row = {worst[0]} ({worst[1]}), "
               f"{time.time() - t_check:.1f}s", flush=True)
+
+    @torch.no_grad()
+    def _lowbit_dense_check(name, mod, x, y):
+        # Called from a forward hook with the real input x and output y.
+        d_in, d_out = x.shape[-1], y.shape[-1]
+        rows = torch.randperm(x.numel() // d_in, generator=_lowbit_gen)[:LOWBIT_DENSE_ROWS].to(x.device)
+        got = y.detach().reshape(-1, d_out)[rows].double()
+        saved = {k: t.detach().clone() for k, t in mod.state_dict().items()}
+        w = mod.weight
+        w0 = w.data
+        flip_gen = torch.Generator(device=w0.device)
+        flip_gen.manual_seed(int(torch.randint(2 ** 62, (), generator=_lowbit_gen)))
+        mats, outs = [], []
+        try:
+            A, base = _lowbit_probe(mod, d_in, x.dtype)
+            levels, smeared = _lowbit_row_levels(A)
+            if int(levels.max()) > LOWBIT_MAX_LEVELS or bool(smeared.any()):
+                raise RuntimeError(
+                    f"LOWBIT_CHECK FAILED (evaluation): {name} effective forward weight has "
+                    f"{int(levels.max())} distinct values in a row (max {LOWBIT_MAX_LEVELS}) "
+                    f"inside an evaluation forward pass; forward weights must be discrete")
+            for _ in range(-(-3 * d_in // d_out)):   # >= 3 d_in equations per row
+                flips = torch.randint(0, 2, w0.shape, generator=flip_gen, device=w0.device,
+                                      dtype=torch.int8).to(w0.dtype) * 2 - 1
+                w.data = w0 * flips
+                torch.clear_autocast_cache()  # no stale bf16 copy of the swapped weight
+                A_s, base_s = _lowbit_probe(mod, d_in, x.dtype)
+                mats.append(A_s.double())
+                outs.append(mod(x).reshape(-1, d_out)[rows].double() - base_s.double())
+        finally:
+            w.data = w0
+            mod.load_state_dict(saved)
+            torch.clear_autocast_cache()
+        with torch.autocast(device_type='cuda', enabled=False):
+            M = torch.cat(mats)
+            G = M.t() @ M
+            G.diagonal().add_(1e-10 * G.diagonal().mean() + 1e-300)
+            q = torch.linalg.solve(G, M.t() @ torch.cat(outs, dim=1).t()).t()
+            ref = q @ A.double().t() + base.double()
+            err = ((got - ref).norm() / ref.norm().clamp(min=1e-300)).item()
+        if not err <= LOWBIT_DENSE_TOL:
+            raise RuntimeError(
+                f"LOWBIT_CHECK FAILED (evaluation): {name} real forward output deviates by "
+                f"{err:.3g} (relative, max {LOWBIT_DENSE_TOL}) from its one-hot effective weight "
+                f"applied to the activation it quantizes; the forward pass must apply the "
+                f"discrete effective weight on every input")
+        return err
+
+    class lowbit_watch:
+        """In-place check of random evaluation forward calls of every BitLinear."""
+        def __init__(self, m, when):
+            self.m, self.when = m, when
+
+        def _hook(self, name):
+            def hook(mod, args, out):
+                if _lowbit_busy[0] or torch.rand((), generator=_lowbit_gen).item() >= LOWBIT_DENSE_P:
+                    return None
+                _lowbit_busy[0] = True
+                try:
+                    err = _lowbit_dense_check(name, mod, args[0], out)
+                finally:
+                    _lowbit_busy[0] = False
+                self.n += 1
+                self.worst = max(self.worst, err)
+                return None
+            return hook
+
+        def __enter__(self):
+            self.n, self.worst = 0, 0.0
+            self.handles = [mod.register_forward_hook(self._hook(name))
+                            for name, mod, _ in _lowbit_slots(self.m)]
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            for h in self.handles:
+                h.remove()
+            if exc_type is None:
+                print(f"LOWBIT_CHECK: {self.when}: {self.n} in-place checks ok, "
+                      f"max relative deviation {self.worst:.2e}", flush=True)
+            return False
 
     lowbit_model = model  # bare GPT; DDP / torch.compile wrap these same modules
     if master_process:
@@ -477,11 +575,12 @@ if __name__ == '__main__':
         raw_inner.eval()
         for split, data in [('train', train_data), ('val', val_data)]:
             losses = torch.zeros(eval_iters)
-            for k in range(eval_iters):
-                X, Y = get_batch(data, batch_size, block_size, device)
-                with ctx:
-                    logits, loss = raw_inner(X, Y)
-                losses[k] = loss.item()
+            with lowbit_watch(raw_inner, f'{split} loss evaluation'):
+                for k in range(eval_iters):
+                    X, Y = get_batch(data, batch_size, block_size, device)
+                    with ctx:
+                        logits, loss = raw_inner(X, Y)
+                    losses[k] = loss.item()
             out[split] = losses.mean()
         raw_inner.train()
         return out
@@ -557,7 +656,7 @@ if __name__ == '__main__':
             n_tokens = len(data)
             total_loss = 0.0
             n_chunks = 0
-            with torch.no_grad():
+            with torch.no_grad(), lowbit_watch(raw_inner, f'PPL {ds_name}'):
                 for start in range(0, n_tokens - block_size, block_size):
                     x = torch.from_numpy(data[start:start+block_size].astype(np.int64)).unsqueeze(0).to(device)
                     y = torch.from_numpy(data[start+1:start+1+block_size].astype(np.int64)).unsqueeze(0).to(device)

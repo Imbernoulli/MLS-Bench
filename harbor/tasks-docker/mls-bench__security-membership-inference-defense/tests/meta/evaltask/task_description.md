@@ -25,7 +25,7 @@ class MembershipDefense:
 - `epoch`: current training epoch (0-indexed).
 - Return value: scalar loss tensor used by the fixed training loop.
 
-The optimizer (SGD + CosineAnnealing), architecture, data pipeline, and attack implementation are fixed.
+The optimizer (SGD with momentum and a step learning-rate decay; on `vgg16bn-cifar100` the learning rate is also warmed up linearly over the first 5 epochs), architecture, data pipeline, and attack implementation are fixed.
 
 ## Evaluation
 Benchmarks:

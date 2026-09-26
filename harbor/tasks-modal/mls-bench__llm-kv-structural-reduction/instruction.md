@@ -44,7 +44,8 @@ One editable region in `custom_pretrain.py`:
 
    Every tensor the attention keeps for past tokens (its KV cache) must be
    passed through the fixed helper `kv_cache(...)`, laid out as
-   `(batch, seq_len, ...)`, and the attention must use the tensors it
+   `(batch, seq_len, ...)` with each position's entry computed from that
+   token's own input, and the attention must use the tensors it
    returns (the dense baselines call `k, v = kv_cache(k, v)`; MLA passes its
    compressed latent and rotary key). A layer that reuses an earlier layer's
    returned cache makes no call of its own.
@@ -63,10 +64,13 @@ One editable region in `custom_pretrain.py`:
   flexible.
 - The evaluator measures the KV footprint from the tensors passed to
   `kv_cache(...)`, not from module attributes. It then re-runs every
-  attention layer with unrelated inputs at all other positions while
-  replaying the recorded cache, and rejects the run (before training and
-  again at the end) if a layer's output changes, i.e. if attention reads
-  past tokens through anything other than its declared cache.
+  attention layer once per position with fresh unrelated inputs at all
+  other positions, replaying the recorded cache before that position, and
+  rejects the run (before training and again at the end) if the layer's
+  output or its own cache entry at that position changes at all (the
+  re-run must reproduce them bit for bit, so use deterministic kernels),
+  i.e. if attention reads other tokens through anything other than its
+  declared cache. A run in which no layer declares a cache is rejected too.
 - KV budget: the submitted structure must realize at least a 4x KV
   reduction relative to the dense MHA control, i.e.
   `kv_bytes_per_token <= 1024` at 345M (dense MHA, which is what the
@@ -331,293 +335,293 @@ stay unchanged.
    211: # actually cache, never from attributes the editable code sets.  Every tensor
    212: # an attention layer keeps for past tokens must pass through kv_cache(...),
    213: # and the attention must use what kv_cache returns.  The probe below records
-   214: # those tensors, then re-runs each layer with every other position's input
-   215: # replaced by an unrelated sequence while replaying the recorded cache: if
-   216: # the output at the probed position changes, the layer reads past tokens
-   217: # through something other than its declared cache and the run is rejected.
-   218: class _KVCacheProbe:
-   219:     mode = None  # None (identity), "record" or "replay"
-   220:     layer = None
-   221:     shape = None
-   222:     recorded = {}
-   223:     replay = []
-   224:     cursor = 0
-   225: 
-   226: 
-   227: _KV_PROBE = _KVCacheProbe()
-   228: _KV_PROBE_POSITIONS = (7, 511, 1023)
-   229: _KV_PROBE_TOL = 1e-2
+   214: # those tensors, then re-runs each layer once per position s with every
+   215: # other position's input replaced by a fresh unrelated sequence; the cache
+   216: # before s is replayed from the record, from s on the layer's own is used.
+   217: # If the output at s or the layer's own cache entry at s changes, the layer
+   218: # reads past tokens through something other than its declared cache (or
+   219: # caches state that is not per-token) and the run is rejected.
+   220: class _KVCacheProbe:
+   221:     mode = None  # None (identity), "record" or "replay"
+   222:     layer = None
+   223:     shape = None
+   224:     recorded = {}
+   225:     replay = []
+   226:     cursor = 0
+   227:     split = 0
+   228:     live = []
+   229: 
    230: 
-   231: 
-   232: def kv_cache(*tensors):
-   233:     """Declare the per-token KV state an attention layer caches.
-   234: 
-   235:     Pass every tensor the layer keeps for past tokens, laid out as
-   236:     (batch, seq_len, ...), and use the returned tensors (same order; a single
-   237:     tensor is returned unpacked).  Outside the evaluator's probe this is the
-   238:     identity.  kv_bytes_per_token is the per-token size of these tensors,
-   239:     counted at max(2, element_size) bytes per element, summed within a layer
-   240:     and averaged over layers.  A layer that reuses an earlier layer's
-   241:     returned cache without calling kv_cache adds no bytes.
-   242:     """
-   243:     if not tensors:
-   244:         raise RuntimeError("kv_cache() needs at least one tensor")
-   245:     for t in tensors:
-   246:         if type(t) is not torch.Tensor or not t.is_floating_point() or t.dim() < 2:
-   247:             raise RuntimeError(
-   248:                 "kv_cache() takes plain floating-point tensors laid out as (batch, seq_len, ...)"
-   249:             )
-   250:     probe = _KV_PROBE
-   251:     if probe.mode is None:
-   252:         out = tensors
-   253:     elif probe.layer is None:
-   254:         raise RuntimeError("kv_cache() called outside an attention layer during the KV probe")
-   255:     elif probe.mode == "record":
-   256:         for t in tensors:
-   257:             if tuple(t.shape[:2]) != probe.shape:
-   258:                 raise RuntimeError(
-   259:                     f"kv_cache() tensors must be laid out as (batch, seq_len, ...) = "
-   260:                     f"{probe.shape}; got {tuple(t.shape)}"
-   261:                 )
-   262:             probe.recorded[probe.layer].append(t.detach().clone())
-   263:         out = tensors
-   264:     elif probe.mode == "replay":
-   265:         out = []
-   266:         for t in tensors:
-   267:             if probe.cursor >= len(probe.replay):
-   268:                 raise RuntimeError("attention layer called kv_cache() more often than when recorded")
-   269:             ref = probe.replay[probe.cursor]
-   270:             probe.cursor += 1
-   271:             if t.shape != ref.shape or t.dtype != ref.dtype:
-   272:                 raise RuntimeError("attention layer changed its kv_cache() tensors between calls")
-   273:             out.append(ref.clone())
-   274:     else:
-   275:         raise RuntimeError(f"invalid KV probe mode {probe.mode!r}")
-   276:     return out[0] if len(out) == 1 else tuple(out)
-   277: 
-   278: 
-   279: @torch.no_grad()
-   280: def measure_kv_cache(model, idx, ctx, _kv_cache_fn=kv_cache, _probe=_KV_PROBE):
-   281:     """Measure kv_bytes_per_token from the realized cache and verify that the
-   282:     cache is the only path by which attention reads past tokens.  Raises on
-   283:     any violation."""
-   284:     if globals().get("kv_cache") is not _kv_cache_fn or globals().get("_KV_PROBE") is not _probe:
-   285:         raise RuntimeError("kv_cache / _KV_PROBE must not be rebound")
-   286:     bsz, seq_len = idx.shape
-   287:     if bsz < 2:
-   288:         raise RuntimeError("the KV probe needs a batch of at least 2 sequences")
-   289:     positions = sorted({min(p, seq_len - 1) for p in _KV_PROBE_POSITIONS})
-   290:     blocks = model.transformer.h
-   291:     was_training = model.training
-   292:     model.eval()
-   293: 
-   294:     def embed(tokens):
-   295:         x = model.transformer.drop(model.transformer.wte(tokens))
-   296:         if getattr(blocks[0].attn, "use_pos_emb", True):
-   297:             pos = torch.arange(0, tokens.size(1), dtype=torch.long, device=tokens.device)
-   298:             x = x + model.transformer.wpe(pos)
-   299:         return x
-   300: 
-   301:     try:
-   302:         with ctx:
-   303:             # Pass 1: record every layer's declared cache (same math as Block.forward).
-   304:             _probe.mode, _probe.shape, _probe.recorded = "record", (bsz, seq_len), {}
-   305:             inputs, outputs = [], []
-   306:             x = embed(idx)
-   307:             for li, block in enumerate(blocks):
-   308:                 h = block.ln_1(x)
-   309:                 _probe.layer = li
-   310:                 _probe.recorded[li] = []
-   311:                 a = block.attn(h)
-   312:                 _probe.layer = None
-   313:                 inputs.append(h)
-   314:                 outputs.append(a)
-   315:                 x = x + a
-   316:                 x = x + block.mlp(block.ln_2(x))
-   317:             _probe.mode = None
-   318:             # Overwrite whatever state a layer kept from the recorded pass.
-   319:             model(torch.flip(idx, dims=[1]))
-   320:             # Pass 2: for each probed position s, feed every layer an unrelated
-   321:             # sequence everywhere except s, and replay the recorded cache up to
-   322:             # s (an unrelated cache after s).  The output at s must not move.
-   323:             for s in positions:
-   324:                 for li, block in enumerate(blocks):
-   325:                     h = inputs[li].roll(1, dims=0).clone()
-   326:                     h[:, s] = inputs[li][:, s]
-   327:                     replay = []
-   328:                     for t in _probe.recorded[li]:
-   329:                         r = t.roll(1, dims=0).clone()
-   330:                         r[:, : s + 1] = t[:, : s + 1]
-   331:                         replay.append(r)
-   332:                     _probe.mode, _probe.replay, _probe.cursor, _probe.layer = "replay", replay, 0, li
-   333:                     a = block.attn(h)
-   334:                     if _probe.cursor != len(replay):
-   335:                         raise RuntimeError(
-   336:                             f"layer {li}: kv_cache() received {_probe.cursor} tensors, "
-   337:                             f"{len(replay)} when recorded"
-   338:                         )
-   339:                     _probe.mode, _probe.layer = None, None
-   340:                     ref = outputs[li][:, s].float()
-   341:                     err = (a[:, s].float() - ref).abs().max().item()
-   342:                     scale = ref.abs().max().item() + 1e-6
-   343:                     if not err <= _KV_PROBE_TOL * scale:
-   344:                         raise RuntimeError(
-   345:                             f"layer {li}: attention output at position {s} depends on past tokens "
-   346:                             f"through state not declared via kv_cache() (max |diff| {err:.3g}, "
-   347:                             f"output scale {scale:.3g}); kv_bytes_per_token cannot be measured"
-   348:                         )
-   349:     finally:
-   350:         _probe.mode, _probe.layer, _probe.shape = None, None, None
-   351:         _probe.replay, _probe.cursor = [], 0
-   352:         model.train(was_training)
-   353: 
-   354:     per_layer = [
-   355:         float(
-   356:             sum(t.numel() // (bsz * seq_len) * max(2, t.element_size()) for t in _probe.recorded[li])
-   357:         )
-   358:         for li in range(len(blocks))
-   359:     ]
-   360:     _probe.recorded = {}
-   361:     return {
-   362:         "kv_bytes_per_token": sum(per_layer) / len(per_layer),
-   363:         "kv_bytes_per_layer": per_layer,
-   364:     }
-   365: 
-   366: 
-   367: class MLP(nn.Module):
-   368:     def __init__(self, config):
-   369:         super().__init__()
-   370:         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
-   371:         self.gelu = nn.GELU()
-   372:         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
-   373:         self.dropout = nn.Dropout(config.dropout)
+   231: _KV_PROBE = _KVCacheProbe()
+   232: # Exact: an honest re-run reproduces every bit, and any slack (even relative
+   233: # to the output's scale) leaves room to hide an undeclared read in it.
+   234: _KV_PROBE_TOL = 0.0
+   235: 
+   236: 
+   237: def kv_cache(*tensors):
+   238:     """Declare the per-token KV state an attention layer caches.
+   239: 
+   240:     Pass every tensor the layer keeps for past tokens, laid out as
+   241:     (batch, seq_len, ...) with each position's entry computed from that
+   242:     token's own input, and use the returned tensors (same order; a single
+   243:     tensor is returned unpacked).  Outside the evaluator's probe this is the
+   244:     identity.  kv_bytes_per_token is the per-token size of these tensors,
+   245:     counted at max(2, element_size) bytes per element, summed within a layer
+   246:     and averaged over layers.  A layer that reuses an earlier layer's
+   247:     returned cache without calling kv_cache adds no bytes.
+   248:     """
+   249:     if not tensors:
+   250:         raise RuntimeError("kv_cache() needs at least one tensor")
+   251:     for t in tensors:
+   252:         if type(t) is not torch.Tensor or not t.is_floating_point() or t.dim() < 2 or t.numel() == 0:
+   253:             raise RuntimeError(
+   254:                 "kv_cache() takes non-empty plain floating-point tensors laid out as (batch, seq_len, ...)"
+   255:             )
+   256:     probe = _KV_PROBE
+   257:     if probe.mode is None:
+   258:         out = tensors
+   259:     elif probe.layer is None:
+   260:         raise RuntimeError("kv_cache() called outside an attention layer during the KV probe")
+   261:     elif probe.mode == "record":
+   262:         for t in tensors:
+   263:             if tuple(t.shape[:2]) != probe.shape:
+   264:                 raise RuntimeError(
+   265:                     f"kv_cache() tensors must be laid out as (batch, seq_len, ...) = "
+   266:                     f"{probe.shape}; got {tuple(t.shape)}"
+   267:                 )
+   268:             probe.recorded[probe.layer].append(t.detach().clone())
+   269:         # Copies laid out like the replayed tensors below, so both passes compute alike.
+   270:         out = [r.clone() for r in probe.recorded[probe.layer][-len(tensors):]]
+   271:     elif probe.mode == "replay":
+   272:         out = []
+   273:         for t in tensors:
+   274:             if probe.cursor >= len(probe.replay):
+   275:                 raise RuntimeError("attention layer called kv_cache() more often than when recorded")
+   276:             ref = probe.replay[probe.cursor]
+   277:             probe.cursor += 1
+   278:             if t.shape != ref.shape or t.dtype != ref.dtype:
+   279:                 raise RuntimeError("attention layer changed its kv_cache() tensors between calls")
+   280:             # The recorded cache before the probed position, this call's own from it on.
+   281:             probe.live.append(t[:, probe.split].detach().clone())
+   282:             r = t.detach().clone()
+   283:             r[:, : probe.split] = ref[:, : probe.split]
+   284:             out.append(r)
+   285:     else:
+   286:         raise RuntimeError(f"invalid KV probe mode {probe.mode!r}")
+   287:     return out[0] if len(out) == 1 else tuple(out)
+   288: 
+   289: 
+   290: @torch.no_grad()
+   291: def measure_kv_cache(model, idx, ctx, _kv_cache_fn=kv_cache, _probe=_KV_PROBE):
+   292:     """Measure kv_bytes_per_token from the realized cache and verify that the
+   293:     cache is the only path by which attention reads past tokens.  Raises on
+   294:     any violation."""
+   295:     if globals().get("kv_cache") is not _kv_cache_fn or globals().get("_KV_PROBE") is not _probe:
+   296:         raise RuntimeError("kv_cache / _KV_PROBE must not be rebound")
+   297:     bsz, seq_len = idx.shape
+   298:     # Unrelated tokens, secret and fresh on every call (the training RNG is untouched).
+   299:     gen = torch.Generator().manual_seed(int.from_bytes(os.urandom(8), "little") >> 1)
+   300:     other = torch.randint(0, model.config.vocab_size, idx.shape, generator=gen).to(idx.device)
+   301:     blocks = model.transformer.h
+   302:     was_training = model.training
+   303:     model.eval()
+   304: 
+   305:     def embed(tokens):
+   306:         x = model.transformer.drop(model.transformer.wte(tokens))
+   307:         if getattr(blocks[0].attn, "use_pos_emb", True):
+   308:             pos = torch.arange(0, tokens.size(1), dtype=torch.long, device=tokens.device)
+   309:             x = x + model.transformer.wpe(pos)
+   310:         return x
+   311: 
+   312:     try:
+   313:         with ctx:
+   314:             # Pass 1: record every layer's declared cache (same math as Block.forward).
+   315:             _probe.mode, _probe.shape, _probe.recorded = "record", (bsz, seq_len), {}
+   316:             inputs, outputs = [], []
+   317:             x = embed(idx)
+   318:             for li, block in enumerate(blocks):
+   319:                 h = block.ln_1(x)
+   320:                 _probe.layer = li
+   321:                 _probe.recorded[li] = []
+   322:                 a = block.attn(h)
+   323:                 _probe.layer = None
+   324:                 inputs.append(h)
+   325:                 outputs.append(a)
+   326:                 x = x + a
+   327:                 x = x + block.mlp(block.ln_2(x))
+   328:             _probe.mode = None
+   329:             # The layer inputs of an unrelated sequence (this pass also
+   330:             # overwrites whatever state a layer kept from the recorded pass).
+   331:             others = []
+   332:             x = embed(other)
+   333:             for block in blocks:
+   334:                 h = block.ln_1(x)
+   335:                 others.append(h)
+   336:                 x = x + block.attn(h)
+   337:                 x = x + block.mlp(block.ln_2(x))
+   338:             # Pass 2: for every position s, feed every layer the unrelated
+   339:             # sequence everywhere except s; kv_cache() replays the recorded
+   340:             # cache before s and passes the layer's own cache from s on.  The
+   341:             # output at s and the layer's own cache entry at s must not move.
+   342:             for s in range(seq_len):
+   343:                 errs, where = [], []
+   344:                 for li, block in enumerate(blocks):
+   345:                     h = others[li].clone()
+   346:                     h[:, s] = inputs[li][:, s]
+   347:                     _probe.mode, _probe.replay, _probe.cursor, _probe.layer = "replay", _probe.recorded[li], 0, li
+   348:                     _probe.split, _probe.live = s, []
+   349:                     a = block.attn(h)
+   350:                     if _probe.cursor != len(_probe.replay):
+   351:                         raise RuntimeError(
+   352:                             f"layer {li}: kv_cache() received {_probe.cursor} tensors, "
+   353:                             f"{len(_probe.replay)} when recorded"
+   354:                         )
+   355:                     _probe.mode, _probe.layer = None, None
+   356:                     pairs = [(a[:, s], outputs[li][:, s])]
+   357:                     pairs += [(live, rec[:, s]) for live, rec in zip(_probe.live, _probe.recorded[li])]
+   358:                     for j, (got, ref) in enumerate(pairs):
+   359:                         ref = ref.float()
+   360:                         errs.append((got.float() - ref).abs().max() / (ref.abs().max() + 1e-6))
+   361:                         where.append((li, "attention output" if j == 0 else f"kv_cache() tensor {j - 1}"))
+   362:                 # One device sync per position: any change beyond the tolerance fails.
+   363:                 for (li, what), rel in zip(where, torch.stack(errs).tolist()):
+   364:                     if not rel <= _KV_PROBE_TOL:
+   365:                         raise RuntimeError(
+   366:                             f"layer {li}: {what} at position {s} depends on other positions' tokens through "
+   367:                             f"state not declared via kv_cache() (max |diff| {rel:.3g} of its scale); "
+   368:                             f"kv_bytes_per_token cannot be measured"
+   369:                         )
+   370:     finally:
+   371:         _probe.mode, _probe.layer, _probe.shape = None, None, None
+   372:         _probe.replay, _probe.cursor, _probe.split, _probe.live = [], 0, 0, []
+   373:         model.train(was_training)
    374: 
-   375:     def forward(self, x):
-   376:         x = self.c_fc(x)
-   377:         x = self.gelu(x)
-   378:         x = self.c_proj(x)
-   379:         x = self.dropout(x)
-   380:         return x
-   381: 
-   382: 
-   383: class Block(nn.Module):
-   384:     def __init__(self, config, layer_idx):
-   385:         super().__init__()
-   386:         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
-   387:         self.attn = CausalSelfAttention(config, layer_idx=layer_idx)
-   388:         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
-   389:         self.mlp = MLP(config)
-   390: 
-   391:     def forward(self, x):
-   392:         x = x + self.attn(self.ln_1(x))
-   393:         x = x + self.mlp(self.ln_2(x))
-   394:         return x
-   395: 
-   396: 
-   397: @dataclass
-   398: class GPTConfig:
-   399:     block_size: int = 1024
-   400:     vocab_size: int = 50304
-   401:     n_layer: int = 12
-   402:     n_head: int = 12
-   403:     n_embd: int = 768
-   404:     dropout: float = 0.0
-   405:     bias: bool = False
-   406: 
-   407: 
-   408: class GPT(nn.Module):
-   409:     def __init__(self, config):
-   410:         super().__init__()
-   411:         self.config = config
-   412:         self.transformer = nn.ModuleDict(
-   413:             dict(
-   414:                 wte=nn.Embedding(config.vocab_size, config.n_embd),
-   415:                 wpe=nn.Embedding(config.block_size, config.n_embd),
-   416:                 drop=nn.Dropout(config.dropout),
-   417:                 h=nn.ModuleList([Block(config, layer_idx=i) for i in range(config.n_layer)]),
-   418:                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
-   419:             )
-   420:         )
-   421:         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
-   422:         self.transformer.wte.weight = self.lm_head.weight
-   423:         self.apply(self._init_weights)
-   424:         for pn, p in self.named_parameters():
-   425:             if pn.endswith("c_proj.weight"):
-   426:                 torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
-   427:         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
-   428: 
-   429:     def get_num_params(self, non_embedding=True):
-   430:         n_params = sum(p.numel() for p in self.parameters())
-   431:         if non_embedding:
-   432:             n_params -= self.transformer.wpe.weight.numel()
-   433:         return n_params
-   434: 
-   435:     def _init_weights(self, module):
-   436:         if isinstance(module, nn.Linear):
-   437:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-   438:             if module.bias is not None:
-   439:                 torch.nn.init.zeros_(module.bias)
-   440:         elif isinstance(module, nn.Embedding):
-   441:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
-   442: 
-   443:     def structural_metrics(self):
-   444:         # Descriptive only.  kv_bytes_per_token is measured by measure_kv_cache().
-   445:         head_sharing = []
-   446:         latent_rank = []
-   447:         for block in self.transformer.h:
-   448:             attn = block.attn
-   449:             n_head = int(getattr(attn, "n_head", self.config.n_head))
-   450:             n_kv_head = int(getattr(attn, "n_kv_head", n_head))
-   451:             head_dim = int(getattr(attn, "head_dim", self.config.n_embd // self.config.n_head))
-   452:             head_sharing.append(n_head / max(n_kv_head, 1))
-   453: 
-   454:             if getattr(attn, "share_across_layers", False):
-   455:                 latent_rank.append(0.0)
-   456:             elif hasattr(attn, "kv_a_proj_with_mqa") and hasattr(attn, "kv_b_proj"):
-   457:                 if hasattr(attn, "kv_a_layernorm"):
-   458:                     kv_lora_rank = int(attn.kv_a_layernorm.weight.numel())
-   459:                 else:
-   460:                     kv_lora_rank = int(getattr(attn, "kv_lora_rank", head_dim))
-   461:                 qk_rope_head_dim = int(attn.kv_a_proj_with_mqa.out_features - kv_lora_rank)
-   462:                 qk_head_dim = int(getattr(attn, "qk_head_dim", head_dim + qk_rope_head_dim))
-   463:                 latent_rank.append(kv_lora_rank / max(qk_head_dim, 1))
-   464:             else:
-   465:                 latent_rank.append(1.0)
-   466:         return {
-   467:             "head_sharing_ratio": sum(head_sharing) / len(head_sharing),
-   468:             "latent_rank_ratio": sum(latent_rank) / len(latent_rank),
-   469:         }
-   470: 
-   471:     def forward(self, idx, targets=None):
-   472:         device = idx.device
-   473:         _, t = idx.size()
-   474:         assert t <= self.config.block_size
-   475:         tok_emb = self.transformer.wte(idx)
-   476:         x = self.transformer.drop(tok_emb)
-   477:         use_pos = getattr(self.transformer.h[0].attn, "use_pos_emb", True)
-   478:         if use_pos:
-   479:             pos = torch.arange(0, t, dtype=torch.long, device=device)
-   480:             x = x + self.transformer.wpe(pos)
-   481:         for block in self.transformer.h:
-   482:             x = block(x)
-   483:         x = self.transformer.ln_f(x)
-   484:         if targets is not None:
-   485:             logits = self.lm_head(x)
-   486:             loss = F.cross_entropy(logits.view(-1, logits.size(-1)), targets.view(-1), ignore_index=-1)
-   487:         else:
-   488:             logits = self.lm_head(x[:, [-1], :])
-   489:             loss = None
-   490:         return logits, loss
-   491: 
-   492:     @torch.no_grad()
-   493:     def generate(self, idx, max_new_tokens):
-   494:         for _ in range(max_new_tokens):
-   495:             idx_cond = idx if idx.size(1) <= self.config.block_size else idx[:, -self.config.block_size :]
-   496:             logits, _ = self(idx_cond)
-   497:             next_token = torch.argmax(logits[:, -1, :], dim=-1, keepdim=True)
-   498:             idx = torch.cat((idx, next_token), dim=1)
-   499:         return idx
-   500: 
+   375:     per_layer = [
+   376:         float(
+   377:             sum(t.numel() // (bsz * seq_len) * max(2, t.element_size()) for t in _probe.recorded[li])
+   378:         )
+   379:         for li in range(len(blocks))
+   380:     ]
+   381:     _probe.recorded = {}
+   382:     if not sum(per_layer) > 0:
+   383:         raise RuntimeError("no attention layer declared a KV cache via kv_cache()")
+   384:     return {
+   385:         "kv_bytes_per_token": sum(per_layer) / len(per_layer),
+   386:         "kv_bytes_per_layer": per_layer,
+   387:     }
+   388: 
+   389: 
+   390: class MLP(nn.Module):
+   391:     def __init__(self, config):
+   392:         super().__init__()
+   393:         self.c_fc = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+   394:         self.gelu = nn.GELU()
+   395:         self.c_proj = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+   396:         self.dropout = nn.Dropout(config.dropout)
+   397: 
+   398:     def forward(self, x):
+   399:         x = self.c_fc(x)
+   400:         x = self.gelu(x)
+   401:         x = self.c_proj(x)
+   402:         x = self.dropout(x)
+   403:         return x
+   404: 
+   405: 
+   406: class Block(nn.Module):
+   407:     def __init__(self, config, layer_idx):
+   408:         super().__init__()
+   409:         self.ln_1 = LayerNorm(config.n_embd, bias=config.bias)
+   410:         self.attn = CausalSelfAttention(config, layer_idx=layer_idx)
+   411:         self.ln_2 = LayerNorm(config.n_embd, bias=config.bias)
+   412:         self.mlp = MLP(config)
+   413: 
+   414:     def forward(self, x):
+   415:         x = x + self.attn(self.ln_1(x))
+   416:         x = x + self.mlp(self.ln_2(x))
+   417:         return x
+   418: 
+   419: 
+   420: @dataclass
+   421: class GPTConfig:
+   422:     block_size: int = 1024
+   423:     vocab_size: int = 50304
+   424:     n_layer: int = 12
+   425:     n_head: int = 12
+   426:     n_embd: int = 768
+   427:     dropout: float = 0.0
+   428:     bias: bool = False
+   429: 
+   430: 
+   431: class GPT(nn.Module):
+   432:     def __init__(self, config):
+   433:         super().__init__()
+   434:         self.config = config
+   435:         self.transformer = nn.ModuleDict(
+   436:             dict(
+   437:                 wte=nn.Embedding(config.vocab_size, config.n_embd),
+   438:                 wpe=nn.Embedding(config.block_size, config.n_embd),
+   439:                 drop=nn.Dropout(config.dropout),
+   440:                 h=nn.ModuleList([Block(config, layer_idx=i) for i in range(config.n_layer)]),
+   441:                 ln_f=LayerNorm(config.n_embd, bias=config.bias),
+   442:             )
+   443:         )
+   444:         self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+   445:         self.transformer.wte.weight = self.lm_head.weight
+   446:         self.apply(self._init_weights)
+   447:         for pn, p in self.named_parameters():
+   448:             if pn.endswith("c_proj.weight"):
+   449:                 torch.nn.init.normal_(p, mean=0.0, std=0.02 / math.sqrt(2 * config.n_layer))
+   450:         print("number of parameters: %.2fM" % (self.get_num_params() / 1e6,))
+   451: 
+   452:     def get_num_params(self, non_embedding=True):
+   453:         n_params = sum(p.numel() for p in self.parameters())
+   454:         if non_embedding:
+   455:             n_params -= self.transformer.wpe.weight.numel()
+   456:         return n_params
+   457: 
+   458:     def _init_weights(self, module):
+   459:         if isinstance(module, nn.Linear):
+   460:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+   461:             if module.bias is not None:
+   462:                 torch.nn.init.zeros_(module.bias)
+   463:         elif isinstance(module, nn.Embedding):
+   464:             torch.nn.init.normal_(module.weight, mean=0.0, std=0.02)
+   465: 
+   466:     def structural_metrics(self):
+   467:         # Descriptive only.  kv_bytes_per_token is measured by measure_kv_cache().
+   468:         head_sharing = []
+   469:         latent_rank = []
+   470:         for block in self.transformer.h:
+   471:             attn = block.attn
+   472:             n_head = int(getattr(attn, "n_head", self.config.n_head))
+   473:             n_kv_head = int(getattr(attn, "n_kv_head", n_head))
+   474:             head_dim = int(getattr(attn, "head_dim", self.config.n_embd // self.config.n_head))
+   475:             head_sharing.append(n_head / max(n_kv_head, 1))
+   476: 
+   477:             if getattr(attn, "share_across_layers", False):
+   478:                 latent_rank.append(0.0)
+   479:             elif hasattr(attn, "kv_a_proj_with_mqa") and hasattr(attn, "kv_b_proj"):
+   480:                 if hasattr(attn, "kv_a_layernorm"):
+   481:                     kv_lora_rank = int(attn.kv_a_layernorm.weight.numel())
+   482:                 else:
+   483:                     kv_lora_rank = int(getattr(attn, "kv_lora_rank", head_dim))
+   484:                 qk_rope_head_dim = int(attn.kv_a_proj_with_mqa.out_features - kv_lora_rank)
+   485:                 qk_head_dim = int(getattr(attn, "qk_head_dim", head_dim + qk_rope_head_dim))
+   486:                 latent_rank.append(kv_lora_rank / max(qk_head_dim, 1))
+   487:             else:
+   488:                 latent_rank.append(1.0)
+   489:         return {
+   490:             "head_sharing_ratio": sum(head_sharing) / len(head_sharing),
+   491:             "latent_rank_ratio": sum(latent_rank) / len(latent_rank),
+   492:         }
+   493: 
+   494:     def forward(self, idx, targets=None):
+   495:         device = idx.device
+   496:         _, t = idx.size()
+   497:         assert t <= self.config.block_size
+   498:         tok_emb = self.transformer.wte(idx)
+   499:         x = self.transformer.drop(tok_emb)
+   500:         use_pos = getattr(self.transformer.h[0].attn, "use_pos_emb", True)
 
 [truncated: showing at most 500 lines / 60000 bytes from nanoGPT/custom_pretrain.py]
 ```

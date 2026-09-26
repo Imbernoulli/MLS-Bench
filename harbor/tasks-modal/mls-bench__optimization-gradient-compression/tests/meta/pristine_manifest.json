@@ -1,4 +1,4 @@
 {
   "pytorch-vision/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-  "pytorch-vision/custom_compressor.py": "dbd2732bc67545604fe98e2db7a1af7cd6ce73e875a14776d3acdf023cebefd2"
+  "pytorch-vision/custom_compressor.py": "cc72488b707be1fe0b2b7b2fb53bb2a77d113a35564c658737063540409820f7"
 }

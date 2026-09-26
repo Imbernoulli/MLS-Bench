@@ -1,8 +1,8 @@
 """Task-specific output parser for cv-diffusion-cfg.
 
 Extracts per-model FID and CLIP score from generation output. FID is the
-scored metric; CLIP score is recorded and shown for prompt-following, but
-is not (yet) part of score_spec.py.
+scored metric; CLIP score is recorded, shown for prompt-following, and used
+by score_spec.py as a per-model floor (penalty_lower on clip_<model>).
 
 Expected format:
     GENERATION_METRICS model=sd15 method=ddim_cfg++ cfg_guidance=7.5 NFE=50 nfe_used=50 seed=42 fid=25.1234 clip_score=0.3245

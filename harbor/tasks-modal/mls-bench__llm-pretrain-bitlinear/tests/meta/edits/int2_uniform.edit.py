@@ -1,12 +1,12 @@
-"""2-bit uniform quantization baseline.
+"""'2-bit uniform' quantization baseline (as implemented: 5 levels).
 
-Weights are quantized to 4 uniform levels: {-1, -1/3, +1/3, +1} with
-per-tensor absmean scaling. This provides 2 bits per weight (log2(4) = 2),
-giving more precision than ternary while staying very low-bit.
+The name and the intent are 4 uniform levels {-1, -1/3, +1/3, +1} (2 bits
+per weight), but the rounding below maps the absmean-normalized weights to
+the 5 levels {-1, -2/3, 0, +2/3, +1} (log2(5) ~= 2.32 bits per weight).
 
-The quantization grid is symmetric: [-1, -1/3, 1/3, 1], which is the
-uniform spacing of 4 levels in [-1, 1]. Weights are normalized by
-absmean, scaled to the grid, rounded to nearest level, then rescaled.
+Weights are normalized by per-tensor absmean, multiplied by 1.5, rounded to
+the nearest integer, clamped to [-1.5, 1.5] and divided by 1.5; the spacing
+is 2/3 around 0 and 1/3 at the ends. The task's 5-level budget admits it.
 
 Activations are quantized to 8-bit (absmax per-tensor) for consistency
 with BitNet baselines.
@@ -16,20 +16,20 @@ _FILE = "nanoGPT/custom_pretrain.py"
 
 _INT2_UNIFORM = """\
 def weight_quant(weight):
-    \"\"\"2-bit uniform quantization: {-1, -1/3, +1/3, +1} with STE.
+    \"\"\"Absmean-scaled rounding to 5 levels {-1, -2/3, 0, +2/3, +1} with STE.
 
-    Normalizes weights by absmean, maps to 4 uniform levels in [-1, 1],
+    Normalizes weights by absmean, rounds them to those 5 levels (not 4),
     then rescales. Uses STE for gradient flow through rounding.
     \"\"\"
     scale = weight.detach().abs().mean().clamp(min=1e-12)
     w_normed = weight / scale
-    # Map to [-1.5, 1.5] grid with spacing 1.0, round, then map back
-    # Levels: -1.5 -> -1, -0.5 -> -1/3, 0.5 -> 1/3, 1.5 -> 1
-    # Multiply by 1.5 so that [-1,1] -> [-1.5,1.5], round, clip to {-1,0,1} range
-    # Actually: use 4 uniform levels directly
-    # Grid points at: -1, -1/3, 1/3, 1 (spacing = 2/3)
-    # Scale so spacing becomes 1: multiply by 3/2
-    w_scaled = w_normed * 1.5  # now grid at -1.5, -0.5, 0.5, 1.5
+    # Scale by 1.5, round to the nearest integer and clamp to [-1.5, 1.5]:
+    # the values are {-1.5, -1, 0, 1, 1.5} (+-2 is clamped to +-1.5), i.e.
+    # 5 levels {-1, -2/3, 0, 2/3, 1} after the division by 1.5 below. The
+    # spacing is not uniform (2/3 around 0, 1/3 at the ends); the 4-level
+    # grid {-1, -1/3, 1/3, 1} the name suggests would need rounding to
+    # half-integers, which this code does not do.
+    w_scaled = w_normed * 1.5
     w_rounded = w_scaled.clamp(-2, 2).round().clamp(-1.5, 1.5)
     # STE: (rounded - scaled).detach() + scaled
     w_q = (w_rounded - w_scaled).detach() + w_scaled
@@ -54,9 +54,9 @@ def activation_quant(x):
 
 
 class BitLinear(nn.Module):
-    \"\"\"Linear layer with 2-bit uniform weight quantization.
+    \"\"\"Linear layer with 5-level weight quantization (see weight_quant).
 
-    Weights are quantized to {-1, -1/3, +1/3, +1} during both training
+    Weights are quantized to {-1, -2/3, 0, +2/3, +1} during both training
     and eval. Activations quantized to int8 range. Output rescaled by
     weight_scale * activation_scale.
     \"\"\"

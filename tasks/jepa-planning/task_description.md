@@ -37,6 +37,7 @@ def plan(self, obs_init, steps_left=None, eval_mode=True,
 - `obs_init`: initial observation encoding `[1, C, 1, H, W]`
 - `steps_left`: remaining steps in the episode
 - Returns: `PlanningResult(actions=Tensor[T, A], ...)`
+- Each executed action is clipped to L2 norm ≤ 2.45, the environment's maximum step size
 
 ### Available Methods (Inherited)
 - `self.unroll(obs_init, actions)`: forward-simulate actions through the world model.

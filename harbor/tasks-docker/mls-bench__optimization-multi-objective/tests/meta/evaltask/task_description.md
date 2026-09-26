@@ -51,6 +51,12 @@ The scorer does not trust `ind.fitness.values`: it re-evaluates the decision
 vectors of the final non-dominated front with the true objective functions. A
 run whose reported objective values differ from the re-evaluated ones, or whose
 decision variables lie outside the bounds, gets no metrics for that problem.
+Each run evaluates the objectives in a hidden coordinate frame drawn fresh from
+OS entropy (the decision variables are randomly permuted and each is reflected
+`x -> lo + hi - x` with probability 1/2), so the Pareto front and the metrics are
+unchanged but the location of the Pareto-optimal decision vectors changes from
+run to run; the run is aborted if `vary` returns more than `pop_size` offspring
+or `survive` returns no individuals or more than `pop_size`.
 
 Available DEAP utilities:
 - `tools.sortNondominated(pop, k)` -> list of fronts.

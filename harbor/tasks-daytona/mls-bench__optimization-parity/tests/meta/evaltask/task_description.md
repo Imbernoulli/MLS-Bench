@@ -24,8 +24,8 @@ The benchmark is evaluated on three configurations: `(N=32, K=8)`, `(N=50, K=8)`
 - Optimizer type: `AdamW`.
 - Loss: binary cross-entropy.
 - Batch size: 128.
-- Training budget: up to 100,000 steps, reshuffling every epoch.
-- Evaluation: 10 hidden secrets × 10 random epoch-orderings per secret = 100 runs; report mean held-out test accuracy.
+- Training budget: up to 30,000 steps, reshuffling every epoch.
+- Evaluation: 5 hidden secrets × 3 random epoch-orderings per secret = 15 runs; report mean held-out test accuracy.
 
 ## Interface Notes
 - The harness supplies a large pool of **unlabeled** binary training inputs `x_pool` drawn from the task distribution. You never see the labels or the hidden secret subset `S`: `make_dataset` returns which pool rows to train on, and the harness attaches the held-out labels to exactly those rows. Making gradient training learn the parity from the pool is the learning problem — you cannot recover `S` from labels.
@@ -35,7 +35,7 @@ The benchmark is evaluated on three configurations: `(N=32, K=8)`, `(N=50, K=8)`
 - `get_optimizer_config(...)` must return `lr`, `wd`, `beta1`, and `beta2`.
 
 ## Metric
-The leaderboard metric is `test_accuracy` (also emitted as `score`), the mean test accuracy across all 100 training runs. Higher is better.
+The leaderboard metric is `test_accuracy` (also emitted as `score`), the mean test accuracy across all 15 training runs. Higher is better.
 
 ## Baselines (variants of the reference setup)
 - **default** — single-pass training over freshly sampled examples with default AdamW settings (`lr = 1e-3`, `wd = 1e-2`, `(beta1, beta2) = (0.9, 0.999)`), the baseline analysed by Barak et al. (NeurIPS 2022; arXiv:2207.08799).

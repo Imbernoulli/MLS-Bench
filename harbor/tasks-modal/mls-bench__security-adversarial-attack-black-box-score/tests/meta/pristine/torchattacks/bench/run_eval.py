@@ -11,6 +11,24 @@ and no counter the attack could reset.  Nothing the worker sends is unpickled
 (queries and adversarial images arrive as raw float32 buffers), and the
 worker's output is relayed with the metric tag defused, so the only
 ``ATTACK_METRICS`` line is the one printed below.
+
+Process isolation (why the worker cannot forge the score):
+
+* This trusted process is started by the eval script with ``python -I``
+  (isolated mode).  Under ``-I`` the interpreter puts neither the script's
+  directory (``bench/``, which is agent-writable) nor the user site nor any
+  ``PYTHON*`` environment on ``sys.path``, so a stdlib-shadowing file the
+  agent creates next to this script (e.g. ``bench/argparse.py``) is never
+  imported here and cannot run in the trusted process.
+* The worker is spawned with ``preexec_fn`` dropping it to an unprivileged
+  uid (``nobody``) when this process runs as root, so agent code cannot
+  write ``bench/`` (a shadow module a later trusted process would import),
+  ``site-packages`` (a ``.pth``/``sitecustomize`` a later ``-I`` process
+  still runs) or the victim checkpoint cache.
+* Before the worker starts, the victim-weight cache (``TORCH_HOME``) is made
+  unreadable to any other uid, so the unprivileged worker cannot reload the
+  served checkpoints from disk and mount a white-box attack.  (The victims
+  are still public checkpoints; see the task description.)
 """
 
 import argparse
@@ -23,6 +41,7 @@ import struct
 import subprocess
 import sys
 import threading
+import tempfile
 from multiprocessing.connection import Connection
 
 import numpy as np
@@ -32,6 +51,50 @@ from torchvision import datasets, transforms
 
 _WORKER_FLAG = "--attack-worker-fd"
 _METRIC_TAG = b"ATTACK_METRICS"
+_UNPRIVILEGED_UID = 65534  # nobody
+
+
+def _lock_victim_cache() -> None:
+    """Make the torch.hub victim-weight cache unreadable to other uids.
+
+    The trusted process has already loaded the victims; from here on only it
+    (root) needs the files.  Removing group/other permissions stops the
+    unprivileged worker from reloading the exact served checkpoints and
+    running a white-box attack.  Best-effort: a failure never aborts the run,
+    it only leaves the pre-existing (already public) exposure in place."""
+    roots = []
+    th = os.environ.get("TORCH_HOME")
+    if th:
+        roots.append(th)
+    try:
+        roots.append(torch.hub.get_dir())
+    except Exception:
+        pass
+    for root in roots:
+        if not root or not os.path.isdir(root):
+            continue
+        for dirpath, dirnames, filenames in os.walk(root):
+            for name in [dirpath] + [os.path.join(dirpath, f) for f in filenames]:
+                try:
+                    mode = os.stat(name).st_mode
+                    os.chmod(name, mode & ~0o077)
+                except OSError:
+                    pass
+
+
+def _worker_preexec():
+    """Isolate + de-privilege the attack worker before it execs.
+
+    New session (so the trusted process can reap the whole tree) and, when
+    running as root, drop to ``nobody`` so agent code cannot write any path a
+    trusted process reads or imports, nor the victim cache."""
+    def _fn():
+        os.setsid()
+        if os.geteuid() == 0:
+            os.setgroups([])
+            os.setgid(_UNPRIVILEGED_UID)
+            os.setuid(_UNPRIVILEGED_UID)
+    return _fn
 
 
 def _encode_array(kind: bytes, arr: np.ndarray) -> bytes:
@@ -126,16 +189,38 @@ def _relay(stream) -> None:
 
 
 def _start_worker(cfg: dict) -> tuple[subprocess.Popen, Connection, threading.Thread]:
+    # The worker imports the agent's custom_attack.py from bench/ (its script
+    # dir, which stays on sys.path because the worker is NOT started with -I);
+    # make sure the unprivileged worker can read it and its own scratch HOME.
+    worker_module = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                 "custom_attack.py")
+    home = tempfile.mkdtemp(prefix="mlsb_attack_")
+    os.chmod(home, 0o700)
+    if os.geteuid() == 0:
+        os.chown(home, _UNPRIVILEGED_UID, _UNPRIVILEGED_UID)
+        try:
+            os.chmod(worker_module, os.stat(worker_module).st_mode | 0o444)
+        except OSError:
+            pass
+    # Inherit the (trusted, harness-set) environment so SEED, CUDA and thread
+    # budgets reach the attack unchanged; only redirect HOME/TMPDIR to a
+    # scratch dir the unprivileged worker owns.
+    env = os.environ.copy()
+    env["HOME"] = env["TMPDIR"] = home
+
     parent_sock, child_sock = socket.socketpair()
     proc = subprocess.Popen(
         [sys.executable, "-u", os.path.abspath(__file__), _WORKER_FLAG, str(child_sock.fileno())],
         pass_fds=(child_sock.fileno(),),
+        env=env,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        start_new_session=True,
+        preexec_fn=_worker_preexec(),
+        close_fds=True,
     )
     child_sock.close()
     atexit.register(_kill_group, proc.pid)
+    atexit.register(lambda: subprocess.run(["rm", "-rf", home], check=False))
     relay = threading.Thread(target=_relay, args=(proc.stdout,), daemon=True)
     relay.start()
     conn = Connection(parent_sock.detach())
@@ -288,6 +373,10 @@ def main() -> None:
         device=device,
     )
     n_eval = clean_images_cpu.shape[0]
+
+    # Victims are loaded; deny the unprivileged worker any on-disk path to the
+    # exact served checkpoints before it starts.
+    _lock_victim_cache()
 
     eval_loader = DataLoader(
         TensorDataset(clean_images_cpu, clean_labels_cpu),

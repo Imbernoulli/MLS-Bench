@@ -745,9 +745,9 @@ def evaluate_certificate(model, model_type, prior, bound_loader, test_loader,
     - kl_divergence: closed-form KL(Q || P).
     - risk_certificate: PAC-Bayes-kl inversion (Seeger 2002 / Maurer 2004),
       kl^{-1}(empirical_01_risk, (KL + log(2 sqrt(n) / delta)) / n).
-    - ce_bound: McAllester / Maurer bound on the cross-entropy (log-prob floor
-      log(1e-5), one posterior sample per example):
-      nll + sqrt((KL + log(2 sqrt(n) / delta)) / (2n)).
+    - ce_bound: McAllester / Maurer bound on the cross-entropy scaled to [0, 1]
+      (log-prob floor log(1e-5), divided by log(1e5); one posterior sample per
+      example): nll / log(1e5) + sqrt((KL + log(2 sqrt(n) / delta)) / (2n)).
     - test_error: posterior-mean error on the test set.
     """
     post = _cert_posterior(model, model_type, prior)
@@ -789,7 +789,7 @@ def evaluate_certificate(model, model_type, prior, bound_loader, test_loader,
     kl = _cert_kl(post, model_type, prior)
     log_term = math.log(2.0 * math.sqrt(n_bound) / delta)
     risk_cert_01 = _cert_inv_kl(emp_risk_01, (kl + log_term) / n_bound)
-    ce_bound = (torch.tensor(emp_nll) + torch.sqrt(
+    ce_bound = (torch.tensor(emp_nll / math.log(1.0 / _CERT_PMIN)) + torch.sqrt(
         (torch.tensor(kl) + log_term) / (2.0 * n_bound))).item()
     return {
         "risk_certificate": risk_cert_01,

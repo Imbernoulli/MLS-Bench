@@ -387,7 +387,7 @@ stay unchanged.
    313:     return out
    314: 
    315: 
-   316: def _account(tensors, device):
+   316: def _account(tensors, device, *, _to_device=_to_device):
    317:     """Charge and decode the packets of one step, all on the device.
    318: 
    319:     `tensors` is a list of (numel, parts), one per gradient tensor. Cost:
@@ -480,98 +480,98 @@ stay unchanged.
    406:             "a packet has more distinct values than 2**bits")
    407: 
    408: 
-   409: def packet_cost(packet, shape):
-   410:     """Bits `packet` (a packet or a list of them) costs for a tensor of
-   411:     `shape`, exactly as the per-step budget check charges it."""
-   412:     shape = torch.Size(shape)
-   413:     first = packet if isinstance(packet, dict) else (packet or [{}])[0]
-   414:     t = first.get("values") if isinstance(first, dict) else None
-   415:     if t is None and isinstance(first, dict) and first.get("factors"):
-   416:         t = first["factors"][0]
-   417:     device = t.device if torch.is_tensor(t) else torch.device("cpu")
-   418:     bits, ok, _ = _account([(shape.numel(), _parts(packet, shape, device))],
-   419:                            device)
-   420:     _check(ok.tolist())
-   421:     return int(bits.item())
-   422: 
+   409: def packet_cost(packet, shape, *, _parts=_parts, _account=_account,
+   410:                 _check=_check):
+   411:     """Bits `packet` (a packet or a list of them) costs for a tensor of
+   412:     `shape`, exactly as the per-step budget check charges it."""
+   413:     shape = torch.Size(shape)
+   414:     first = packet if isinstance(packet, dict) else (packet or [{}])[0]
+   415:     t = first.get("values") if isinstance(first, dict) else None
+   416:     if t is None and isinstance(first, dict) and first.get("factors"):
+   417:         t = first["factors"][0]
+   418:     device = t.device if torch.is_tensor(t) else torch.device("cpu")
+   419:     bits, ok, _ = _account([(shape.numel(), _parts(packet, shape, device))],
+   420:                            device)
+   421:     _check(ok.tolist())
+   422:     return int(bits.item())
    423: 
-   424: def apply_gradient_compression(model, compressor):
-   425:     """Encode every gradient with the compressor and replace it with the
-   426:     decoding of its packet: decoding is fixed, so the optimizer sees only
-   427:     what was transmitted. Returns the step's receipt (bits, then the three
-   428:     validity checks), filled asynchronously; `settle_step` reads it after
-   429:     the training loop's next host sync and stops the run on a violation."""
-   430:     staged = []
-   431:     for name, param in model.named_parameters():
-   432:         if param.grad is None:
-   433:             continue
-   434:         packet = compressor.compress(param.grad.detach(), name)
-   435:         staged.append((param, _parts(packet, param.shape, param.device)))
-   436:     if not staged:
-   437:         return torch.tensor([0.0, 1.0, 1.0, 1.0], dtype=torch.float64), None
-   438:     device = staged[0][0].device
-   439:     bits, ok, flat = _account([(p.numel(), parts) for p, parts in staged],
-   440:                               device)
-   441:     receipt, done = torch.cat([bits.reshape(1), ok.double()]), None
-   442:     if device.type == "cuda":
-   443:         host = torch.empty(4, dtype=torch.float64, pin_memory=True)
-   444:         receipt = host.copy_(receipt, non_blocking=True)
-   445:         done = torch.cuda.Event()
-   446:         done.record()
-   447:     off = 0
-   448:     for param, _ in staged:
-   449:         n = param.numel()
-   450:         param.grad = flat[off:off + n].view(param.shape).to(param.dtype)
-   451:         off += n
-   452:     return receipt, done
-   453: 
-   454: 
-   455: def settle_step(receipt, budget_bits):
-   456:     """Check a step's receipt against the contract and the budget; returns
-   457:     the bits the step transmitted. Cheap after a host sync (loss.item())."""
-   458:     receipt, done = receipt
-   459:     if done is not None:
-   460:         done.synchronize()
-   461:     result = receipt.tolist()
-   462:     _check([bool(x) for x in result[1:]])
-   463:     if result[0] > budget_bits:
-   464:         raise CompressionContractError(
-   465:             f"a step transmitted {result[0]:.0f} bits, over the budget of "
-   466:             f"{budget_bits} bits (compress_ratio x 32 bits x parameter entries)")
-   467:     return result[0]
-   468: 
-   469: 
-   470: # ============================================================================
-   471: # FIXED SECTION — Training Loop
-   472: # ============================================================================
+   424: 
+   425: def apply_gradient_compression(model, compressor, check_bindings, *,
+   426:                                _parts=_parts, _account=_account):
+   427:     """Encode every gradient with the compressor and replace it with the
+   428:     decoding of its packet: decoding is fixed, so the optimizer sees only
+   429:     what was transmitted. Returns the step's receipt (bits, then the three
+   430:     validity checks), filled asynchronously; `settle_step` reads it after
+   431:     the training loop's next host sync and stops the run on a violation.
+   432:     `check_bindings` runs after every compress call (see `bindings_check`)."""
+   433:     staged = []
+   434:     for name, param in model.named_parameters():
+   435:         if param.grad is None:
+   436:             continue
+   437:         packet = compressor.compress(param.grad.detach(), name)
+   438:         check_bindings()
+   439:         staged.append((param, _parts(packet, param.shape, param.device)))
+   440:     if not staged:
+   441:         return torch.tensor([0.0, 1.0, 1.0, 1.0], dtype=torch.float64), None
+   442:     device = staged[0][0].device
+   443:     bits, ok, flat = _account([(p.numel(), parts) for p, parts in staged],
+   444:                               device)
+   445:     receipt, done = torch.cat([bits.reshape(1), ok.double()]), None
+   446:     if device.type == "cuda":
+   447:         host = torch.empty(4, dtype=torch.float64, pin_memory=True)
+   448:         receipt = host.copy_(receipt, non_blocking=True)
+   449:         done = torch.cuda.Event()
+   450:         done.record()
+   451:     off = 0
+   452:     for param, _ in staged:
+   453:         n = param.numel()
+   454:         param.grad = flat[off:off + n].view(param.shape).to(param.dtype)
+   455:         off += n
+   456:     return receipt, done
+   457: 
+   458: 
+   459: def settle_step(receipt, budget_bits, *, _check=_check):
+   460:     """Check a step's receipt against the contract and the budget; returns
+   461:     the bits the step transmitted. Cheap after a host sync (loss.item())."""
+   462:     receipt, done = receipt
+   463:     if done is not None:
+   464:         done.synchronize()
+   465:     result = receipt.tolist()
+   466:     _check([bool(x) for x in result[1:]])
+   467:     if result[0] > budget_bits:
+   468:         raise CompressionContractError(
+   469:             f"a step transmitted {result[0]:.0f} bits, over the budget of "
+   470:             f"{budget_bits} bits (compress_ratio x 32 bits x parameter entries)")
+   471:     return result[0]
+   472: 
    473: 
-   474: def cosine_lr(optimizer, epoch, total_epochs, warmup_epochs, base_lr, min_lr=0.0):
-   475:     """Cosine learning rate schedule with linear warmup."""
-   476:     if epoch < warmup_epochs:
-   477:         lr = base_lr * (epoch + 1) / (warmup_epochs + 1)
-   478:     else:
-   479:         progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
-   480:         lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
-   481:     for param_group in optimizer.param_groups:
-   482:         param_group['lr'] = lr
-   483:     return lr
-   484: 
-   485: 
-   486: def evaluate(model, test_loader, device):
-   487:     model.eval()
-   488:     correct = 0
-   489:     total = 0
-   490:     total_loss = 0.0
-   491:     with torch.no_grad():
-   492:         for images, labels in test_loader:
-   493:             images, labels = images.to(device), labels.to(device)
-   494:             outputs = model(images)
-   495:             loss = F.cross_entropy(outputs, labels, reduction='sum')
-   496:             total_loss += loss.item()
-   497:             _, predicted = outputs.max(1)
-   498:             total += labels.size(0)
-   499:             correct += predicted.eq(labels).sum().item()
-   500:     acc = 100.0 * correct / total
+   474: # ============================================================================
+   475: # FIXED SECTION — Training Loop
+   476: # ============================================================================
+   477: 
+   478: def cosine_lr(optimizer, epoch, total_epochs, warmup_epochs, base_lr, min_lr=0.0):
+   479:     """Cosine learning rate schedule with linear warmup."""
+   480:     if epoch < warmup_epochs:
+   481:         lr = base_lr * (epoch + 1) / (warmup_epochs + 1)
+   482:     else:
+   483:         progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+   484:         lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
+   485:     for param_group in optimizer.param_groups:
+   486:         param_group['lr'] = lr
+   487:     return lr
+   488: 
+   489: 
+   490: def evaluate(model, test_loader, device):
+   491:     model.eval()
+   492:     correct = 0
+   493:     total = 0
+   494:     total_loss = 0.0
+   495:     with torch.no_grad():
+   496:         for images, labels in test_loader:
+   497:             images, labels = images.to(device), labels.to(device)
+   498:             outputs = model(images)
+   499:             loss = F.cross_entropy(outputs, labels, reduction='sum')
+   500:             total_loss += loss.item()
 
 [truncated: showing at most 500 lines / 60000 bytes from pytorch-vision/custom_compressor.py]
 ```

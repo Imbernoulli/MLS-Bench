@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python -u bench/run_eval.py \
+python -I -u bench/run_eval.py \
   --arch vgg11_bn \
   --dataset cifar100 \
   --data-dir /data/cifar100 \

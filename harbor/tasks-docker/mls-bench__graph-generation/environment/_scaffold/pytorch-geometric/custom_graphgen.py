@@ -594,11 +594,11 @@ class GraphGenerator(nn.Module):
 
 
 # ============================================================================
-# Training-set copy check (FIXED)
+# Dataset copy check (FIXED)
 # ============================================================================
 
-def train_copy_fraction(graphs, train_graphs):
-    """Fraction of `graphs` isomorphic to at least one training graph.
+def dataset_matches(graphs, dataset_graphs):
+    """For each graph, the indices of the dataset graphs isomorphic to it.
 
     Candidates are bucketed by (nodes, edges, WL hash); a bucket hit is
     confirmed with an exact isomorphism test.
@@ -610,15 +610,10 @@ def train_copy_fraction(graphs, train_graphs):
                 nx.weisfeiler_lehman_graph_hash(G, iterations=3))
 
     buckets = defaultdict(list)
-    for G in train_graphs:
-        buckets[key(G)].append(G)
-    if len(graphs) == 0:
-        return 0.0
-    n_copy = 0
-    for G in graphs:
-        if any(nx.is_isomorphic(G, H) for H in buckets.get(key(G), [])):
-            n_copy += 1
-    return n_copy / len(graphs)
+    for i, H in enumerate(dataset_graphs):
+        buckets[key(H)].append(i)
+    return [[i for i in buckets.get(key(G), []) if nx.is_isomorphic(G, dataset_graphs[i])]
+            for G in graphs]
 
 
 # ============================================================================
@@ -679,7 +674,7 @@ def main():
     # - DiGress (graph transformer denoiser, scales with max_nodes linearly)
     # - GraphVAE (VAE with adjacency decoder, scales with max_nodes^2)
     # - GRAN (~0.45M) is never the largest of the three.
-    # On enzymes (max_nodes=125) GraphVAE dominates: ~4.25M vs DiGress ~0.87M.
+    # On enzymes (max_nodes=126) GraphVAE dominates: ~4.32M vs DiGress ~0.87M.
     _H_dg = 128
     _n_gt_layers = 4
     _gt_per_layer = 4 * (_H_dg * _H_dg + _H_dg) + 8 + 4 * _H_dg + 8 * _H_dg * _H_dg + 5 * _H_dg
@@ -743,21 +738,35 @@ def main():
     gen_adjs, gen_counts = gen_adjs[:n_gen], gen_counts[:n_gen]
     gen_graphs = adj_to_graphs(gen_adjs, gen_counts)
 
-    # Compute metrics
-    metrics = evaluate_graphs(gen_graphs, test_graphs)
+    # Memorisation check against the whole dataset (training AND held-out
+    # graphs): a generated graph isomorphic to a dataset graph is a copy of
+    # it. Held-out graphs themselves coincide with some other dataset graph
+    # (copy_frac_ref), so the generated set may reproduce as many distinct
+    # dataset graphs as the held-out split does (its most frequent ones are
+    # kept). Copies of any further dataset graph are excess copies: they are
+    # dropped before the MMD is computed, so replayed graphs beyond that
+    # allowance never enter it, and their fraction is reported as copy_excess.
+    dataset_graphs = train_graphs + test_graphs
+    gen_copies = {idx: min(m) for idx, m in enumerate(dataset_matches(gen_graphs, dataset_graphs)) if m}
+    ref_copies = [min(m) for j, m in enumerate(dataset_matches(test_graphs, dataset_graphs))
+                  if m != [n_train + j]]
+    counts = defaultdict(int)  # dataset graph -> generated copies, in sample order
+    for c in gen_copies.values():
+        counts[c] += 1
+    allowed = set(sorted(counts, key=lambda c: -counts[c])[:len(set(ref_copies))])
+    excess = {idx for idx, c in gen_copies.items() if c not in allowed}
+    if excess:
+        print(f"Dropping {len(excess)} of {n_gen} generated graphs as excess dataset copies", flush=True)
 
-    # Memorisation check: generated graphs that are isomorphic copies of a
-    # training graph, in excess of the rate at which held-out test graphs
-    # already coincide with a training graph (reported clipped at 0).
-    copy_frac = train_copy_fraction(gen_graphs, train_graphs)
-    copy_frac_ref = train_copy_fraction(test_graphs, train_graphs)
+    # Compute metrics
+    metrics = evaluate_graphs([G for idx, G in enumerate(gen_graphs) if idx not in excess], test_graphs)
 
     # Print final metrics
     mmd_avg = np.mean([metrics["mmd_degree"], metrics["mmd_clustering"], metrics["mmd_orbit"]])
     metrics["mmd_avg"] = float(mmd_avg)
-    metrics["copy_frac"] = float(copy_frac)
-    metrics["copy_frac_ref"] = float(copy_frac_ref)
-    metrics["copy_excess"] = float(max(0.0, copy_frac - copy_frac_ref))
+    metrics["copy_frac"] = float(len(gen_copies) / n_gen)
+    metrics["copy_frac_ref"] = float(len(ref_copies) / len(test_graphs))
+    metrics["copy_excess"] = float(len(excess) / n_gen)
 
     metrics_str = " ".join(f"{k}={v:.6f}" for k, v in metrics.items())
     print(f"TEST_METRICS {metrics_str}", flush=True)

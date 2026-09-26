@@ -42,7 +42,8 @@ One editable region in `custom_pretrain.py`:
 
    Every tensor the attention keeps for past tokens (its KV cache) must be
    passed through the fixed helper `kv_cache(...)`, laid out as
-   `(batch, seq_len, ...)`, and the attention must use the tensors it
+   `(batch, seq_len, ...)` with each position's entry computed from that
+   token's own input, and the attention must use the tensors it
    returns (the dense baselines call `k, v = kv_cache(k, v)`; MLA passes its
    compressed latent and rotary key). A layer that reuses an earlier layer's
    returned cache makes no call of its own.
@@ -61,10 +62,13 @@ One editable region in `custom_pretrain.py`:
   flexible.
 - The evaluator measures the KV footprint from the tensors passed to
   `kv_cache(...)`, not from module attributes. It then re-runs every
-  attention layer with unrelated inputs at all other positions while
-  replaying the recorded cache, and rejects the run (before training and
-  again at the end) if a layer's output changes, i.e. if attention reads
-  past tokens through anything other than its declared cache.
+  attention layer once per position with fresh unrelated inputs at all
+  other positions, replaying the recorded cache before that position, and
+  rejects the run (before training and again at the end) if the layer's
+  output or its own cache entry at that position changes at all (the
+  re-run must reproduce them bit for bit, so use deterministic kernels),
+  i.e. if attention reads other tokens through anything other than its
+  declared cache. A run in which no layer declares a cache is rejected too.
 - KV budget: the submitted structure must realize at least a 4x KV
   reduction relative to the dense MHA control, i.e.
   `kv_bytes_per_token <= 1024` at 345M (dense MHA, which is what the

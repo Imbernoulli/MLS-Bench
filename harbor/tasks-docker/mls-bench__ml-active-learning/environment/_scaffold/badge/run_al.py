@@ -10,6 +10,7 @@ Usage:
 """
 
 import argparse
+import copy
 import gc
 import os
 import pickle
@@ -35,6 +36,7 @@ from query_strategies import (
     BALDDropout,
 )
 from query_strategies.custom_sampling import CustomSampling
+from query_strategies.strategy import Strategy
 
 
 # ── MLP model (same as badge repo) ─────────────────────────────────────────
@@ -163,8 +165,8 @@ def main():
 
     # ── Label oracle ────────────────────────────────────────────────────
     # The strategy only ever sees labels it has bought.  `idxs_lb`, `Y_tr` and
-    # `Y_te` stay private to this runner.  The strategy gets a copy of the
-    # labeled mask and `Y_visible`, in which an unbought row holds a
+    # `Y_te` stay private to this runner.  The strategy gets copies of the
+    # labeled mask and of `Y_visible`, in which an unbought row holds a
     # PLACEHOLDER that cycles 0,1,...,nClasses-1 down the pool in index order:
     # a fixed function of the row index that carries no information about the
     # truth but keeps every class present in any slice of the vector, which
@@ -177,7 +179,7 @@ def main():
     Y_te_hidden = torch.zeros(len(Y_te)).long()
 
     def test_accuracy():
-        P = np.asarray(strategy.predict(X_te_np, Y_te_hidden))
+        P = np.asarray(learner.predict(X_te_np, Y_te_hidden))
         if P.shape != (len(Y_te),) or P.dtype.kind not in "iu":
             raise RuntimeError(
                 f"predict() must return {len(Y_te)} integer class ids; "
@@ -186,20 +188,31 @@ def main():
 
     # ── Select strategy ─────────────────────────────────────────────────
     X_tr_np = X_tr.numpy() if isinstance(X_tr, torch.Tensor) else X_tr
+    # The scored classifier belongs to this runner: `learner` is a plain
+    # base-class Strategy over the runner's own pool, visible labels, net,
+    # handler and train_args, and only its train() / predict() are called
+    # below.  The query strategy is handed copies of all of these and, after
+    # every retrain, a copy of the trained classifier as its `clf` / `net`.
+    # Overriding train / predict or changing anything it was handed alters
+    # only the strategy's own view, never the model that is trained on the
+    # bought labels and tested.
+    learner = Strategy(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
+    view = (X_tr_np.copy(), Y_visible.clone(), idxs_lb.copy(),
+            copy.deepcopy(net), handler, copy.deepcopy(train_args))
     if args.alg == "random":
-        strategy = RandomSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
+        strategy = RandomSampling(*view)
     elif args.alg == "least_confidence":
-        strategy = LeastConfidence(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
+        strategy = LeastConfidence(*view)
     elif args.alg == "entropy":
-        strategy = EntropySampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
+        strategy = EntropySampling(*view)
     elif args.alg == "badge":
-        strategy = BadgeSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
+        strategy = BadgeSampling(*view)
     elif args.alg == "bait":
-        strategy = BaitSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
+        strategy = BaitSampling(*view)
     elif args.alg == "bald":
-        strategy = BALDDropout(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args, n_drop=10)
+        strategy = BALDDropout(*view, n_drop=10)
     elif args.alg == "custom":
-        strategy = CustomSampling(X_tr_np, Y_visible, idxs_lb.copy(), net, handler, train_args)
+        strategy = CustomSampling(*view)
     else:
         raise ValueError(f"Unknown algorithm: {args.alg}")
 
@@ -208,7 +221,8 @@ def main():
     accs = []
 
     # Round 0: train on initial labeled set
-    strategy.train()
+    learner.train()
+    strategy.clf = strategy.net = copy.deepcopy(learner.clf)
     acc0 = test_accuracy()
     accs.append(acc0)
     n_labeled = int(sum(idxs_lb))
@@ -233,9 +247,12 @@ def main():
         idxs_lb[q_idxs] = True
         Y_visible[torch.from_numpy(q_idxs)] = Y_tr[torch.from_numpy(q_idxs)]
 
-        # Update and retrain
+        # Update and retrain the learner; refresh the strategy's copies
+        learner.update(idxs_lb.copy())
+        learner.train(verbose=False)
+        strategy.Y = Y_visible.clone()
         strategy.update(idxs_lb.copy())
-        strategy.train(verbose=False)
+        strategy.clf = strategy.net = copy.deepcopy(learner.clf)
 
         # Evaluate
         acc = test_accuracy()

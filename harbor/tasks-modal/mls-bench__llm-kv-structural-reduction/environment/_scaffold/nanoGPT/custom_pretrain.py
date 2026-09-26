@@ -211,10 +211,12 @@ _validate_kv_editable_region()
 # actually cache, never from attributes the editable code sets.  Every tensor
 # an attention layer keeps for past tokens must pass through kv_cache(...),
 # and the attention must use what kv_cache returns.  The probe below records
-# those tensors, then re-runs each layer with every other position's input
-# replaced by an unrelated sequence while replaying the recorded cache: if
-# the output at the probed position changes, the layer reads past tokens
-# through something other than its declared cache and the run is rejected.
+# those tensors, then re-runs each layer once per position s with every
+# other position's input replaced by a fresh unrelated sequence; the cache
+# before s is replayed from the record, from s on the layer's own is used.
+# If the output at s or the layer's own cache entry at s changes, the layer
+# reads past tokens through something other than its declared cache (or
+# caches state that is not per-token) and the run is rejected.
 class _KVCacheProbe:
     mode = None  # None (identity), "record" or "replay"
     layer = None
@@ -222,18 +224,22 @@ class _KVCacheProbe:
     recorded = {}
     replay = []
     cursor = 0
+    split = 0
+    live = []
 
 
 _KV_PROBE = _KVCacheProbe()
-_KV_PROBE_POSITIONS = (7, 511, 1023)
-_KV_PROBE_TOL = 1e-2
+# Exact: an honest re-run reproduces every bit, and any slack (even relative
+# to the output's scale) leaves room to hide an undeclared read in it.
+_KV_PROBE_TOL = 0.0
 
 
 def kv_cache(*tensors):
     """Declare the per-token KV state an attention layer caches.
 
     Pass every tensor the layer keeps for past tokens, laid out as
-    (batch, seq_len, ...), and use the returned tensors (same order; a single
+    (batch, seq_len, ...) with each position's entry computed from that
+    token's own input, and use the returned tensors (same order; a single
     tensor is returned unpacked).  Outside the evaluator's probe this is the
     identity.  kv_bytes_per_token is the per-token size of these tensors,
     counted at max(2, element_size) bytes per element, summed within a layer
@@ -243,9 +249,9 @@ def kv_cache(*tensors):
     if not tensors:
         raise RuntimeError("kv_cache() needs at least one tensor")
     for t in tensors:
-        if type(t) is not torch.Tensor or not t.is_floating_point() or t.dim() < 2:
+        if type(t) is not torch.Tensor or not t.is_floating_point() or t.dim() < 2 or t.numel() == 0:
             raise RuntimeError(
-                "kv_cache() takes plain floating-point tensors laid out as (batch, seq_len, ...)"
+                "kv_cache() takes non-empty plain floating-point tensors laid out as (batch, seq_len, ...)"
             )
     probe = _KV_PROBE
     if probe.mode is None:
@@ -260,7 +266,8 @@ def kv_cache(*tensors):
                     f"{probe.shape}; got {tuple(t.shape)}"
                 )
             probe.recorded[probe.layer].append(t.detach().clone())
-        out = tensors
+        # Copies laid out like the replayed tensors below, so both passes compute alike.
+        out = [r.clone() for r in probe.recorded[probe.layer][-len(tensors):]]
     elif probe.mode == "replay":
         out = []
         for t in tensors:
@@ -270,7 +277,11 @@ def kv_cache(*tensors):
             probe.cursor += 1
             if t.shape != ref.shape or t.dtype != ref.dtype:
                 raise RuntimeError("attention layer changed its kv_cache() tensors between calls")
-            out.append(ref.clone())
+            # The recorded cache before the probed position, this call's own from it on.
+            probe.live.append(t[:, probe.split].detach().clone())
+            r = t.detach().clone()
+            r[:, : probe.split] = ref[:, : probe.split]
+            out.append(r)
     else:
         raise RuntimeError(f"invalid KV probe mode {probe.mode!r}")
     return out[0] if len(out) == 1 else tuple(out)
@@ -284,9 +295,9 @@ def measure_kv_cache(model, idx, ctx, _kv_cache_fn=kv_cache, _probe=_KV_PROBE):
     if globals().get("kv_cache") is not _kv_cache_fn or globals().get("_KV_PROBE") is not _probe:
         raise RuntimeError("kv_cache / _KV_PROBE must not be rebound")
     bsz, seq_len = idx.shape
-    if bsz < 2:
-        raise RuntimeError("the KV probe needs a batch of at least 2 sequences")
-    positions = sorted({min(p, seq_len - 1) for p in _KV_PROBE_POSITIONS})
+    # Unrelated tokens, secret and fresh on every call (the training RNG is untouched).
+    gen = torch.Generator().manual_seed(int.from_bytes(os.urandom(8), "little") >> 1)
+    other = torch.randint(0, model.config.vocab_size, idx.shape, generator=gen).to(idx.device)
     blocks = model.transformer.h
     was_training = model.training
     model.eval()
@@ -315,40 +326,50 @@ def measure_kv_cache(model, idx, ctx, _kv_cache_fn=kv_cache, _probe=_KV_PROBE):
                 x = x + a
                 x = x + block.mlp(block.ln_2(x))
             _probe.mode = None
-            # Overwrite whatever state a layer kept from the recorded pass.
-            model(torch.flip(idx, dims=[1]))
-            # Pass 2: for each probed position s, feed every layer an unrelated
-            # sequence everywhere except s, and replay the recorded cache up to
-            # s (an unrelated cache after s).  The output at s must not move.
-            for s in positions:
+            # The layer inputs of an unrelated sequence (this pass also
+            # overwrites whatever state a layer kept from the recorded pass).
+            others = []
+            x = embed(other)
+            for block in blocks:
+                h = block.ln_1(x)
+                others.append(h)
+                x = x + block.attn(h)
+                x = x + block.mlp(block.ln_2(x))
+            # Pass 2: for every position s, feed every layer the unrelated
+            # sequence everywhere except s; kv_cache() replays the recorded
+            # cache before s and passes the layer's own cache from s on.  The
+            # output at s and the layer's own cache entry at s must not move.
+            for s in range(seq_len):
+                errs, where = [], []
                 for li, block in enumerate(blocks):
-                    h = inputs[li].roll(1, dims=0).clone()
+                    h = others[li].clone()
                     h[:, s] = inputs[li][:, s]
-                    replay = []
-                    for t in _probe.recorded[li]:
-                        r = t.roll(1, dims=0).clone()
-                        r[:, : s + 1] = t[:, : s + 1]
-                        replay.append(r)
-                    _probe.mode, _probe.replay, _probe.cursor, _probe.layer = "replay", replay, 0, li
+                    _probe.mode, _probe.replay, _probe.cursor, _probe.layer = "replay", _probe.recorded[li], 0, li
+                    _probe.split, _probe.live = s, []
                     a = block.attn(h)
-                    if _probe.cursor != len(replay):
+                    if _probe.cursor != len(_probe.replay):
                         raise RuntimeError(
                             f"layer {li}: kv_cache() received {_probe.cursor} tensors, "
-                            f"{len(replay)} when recorded"
+                            f"{len(_probe.replay)} when recorded"
                         )
                     _probe.mode, _probe.layer = None, None
-                    ref = outputs[li][:, s].float()
-                    err = (a[:, s].float() - ref).abs().max().item()
-                    scale = ref.abs().max().item() + 1e-6
-                    if not err <= _KV_PROBE_TOL * scale:
+                    pairs = [(a[:, s], outputs[li][:, s])]
+                    pairs += [(live, rec[:, s]) for live, rec in zip(_probe.live, _probe.recorded[li])]
+                    for j, (got, ref) in enumerate(pairs):
+                        ref = ref.float()
+                        errs.append((got.float() - ref).abs().max() / (ref.abs().max() + 1e-6))
+                        where.append((li, "attention output" if j == 0 else f"kv_cache() tensor {j - 1}"))
+                # One device sync per position: any change beyond the tolerance fails.
+                for (li, what), rel in zip(where, torch.stack(errs).tolist()):
+                    if not rel <= _KV_PROBE_TOL:
                         raise RuntimeError(
-                            f"layer {li}: attention output at position {s} depends on past tokens "
-                            f"through state not declared via kv_cache() (max |diff| {err:.3g}, "
-                            f"output scale {scale:.3g}); kv_bytes_per_token cannot be measured"
+                            f"layer {li}: {what} at position {s} depends on other positions' tokens through "
+                            f"state not declared via kv_cache() (max |diff| {rel:.3g} of its scale); "
+                            f"kv_bytes_per_token cannot be measured"
                         )
     finally:
         _probe.mode, _probe.layer, _probe.shape = None, None, None
-        _probe.replay, _probe.cursor = [], 0
+        _probe.replay, _probe.cursor, _probe.split, _probe.live = [], 0, 0, []
         model.train(was_training)
 
     per_layer = [
@@ -358,6 +379,8 @@ def measure_kv_cache(model, idx, ctx, _kv_cache_fn=kv_cache, _probe=_KV_PROBE):
         for li in range(len(blocks))
     ]
     _probe.recorded = {}
+    if not sum(per_layer) > 0:
+        raise RuntimeError("no attention layer declared a KV cache via kv_cache()")
     return {
         "kv_bytes_per_token": sum(per_layer) / len(per_layer),
         "kv_bytes_per_layer": per_layer,
@@ -633,6 +656,7 @@ if __name__ == "__main__":
         dropout=0.0,
     )
     gptconf = GPTConfig(**model_args)
+    _measure_kv_cache = measure_kv_cache  # bound before the model (editable code) is built
     model = GPT(gptconf)
     model.to(device)
 
@@ -644,7 +668,7 @@ if __name__ == "__main__":
     # Fail fast (before training) if the attention does not route its
     # past-token state through kv_cache(); the scored value is re-measured on
     # the final checkpoint below.
-    kv_probe = measure_kv_cache(model, kv_probe_tokens(), ctx)
+    kv_probe = _measure_kv_cache(model, kv_probe_tokens(), ctx)
     if master_process:
         print(f"KV_CACHE_PROBE: kv_bytes_per_token={kv_probe['kv_bytes_per_token']:.2f} (init)", flush=True)
     scaler = torch.cuda.amp.GradScaler(enabled=False)
@@ -738,7 +762,7 @@ if __name__ == "__main__":
         aux_metrics = evaluate_aux_metrics() if run_aux_eval else {
             "heldout_loss": float("nan"),
         }
-        kv_probe = measure_kv_cache(raw_model, kv_probe_tokens(), ctx)
+        kv_probe = _measure_kv_cache(raw_model, kv_probe_tokens(), ctx)
         final_metrics = {
             "val_loss": float(losses["val"]),
             "kv_bytes_per_token": float(kv_probe["kv_bytes_per_token"]),

@@ -16,7 +16,7 @@ from mlsbench.scoring.dsl import *
 #   perfect privacy with no utility. Every baseline clears it.
 _SETTINGS = {
     "resnet20-cifar10": ("resnet20_cifar10", 0.63),
-    "vgg16bn-cifar100": ("vgg16bn_cifar100", 0.40),
+    "vgg16bn-cifar100": ("vgg16bn_cifar100", 0.39),
     "mobilenetv2-fmnist": ("mobilenetv2_fmnist", 0.74),
 }
 

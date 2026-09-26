@@ -383,6 +383,18 @@ def create_env(data_config):
     )
 
 
+def clip_action(env, action):
+    """Clip one planner action to the env's max step norm (DotWall.step does not)."""
+    action = np.asarray(action)
+    if action.shape != env.action_space.shape or not np.all(np.isfinite(action)):
+        raise ValueError(f"invalid planner action {action!r}")
+    max_norm = float(env.action_space.high[0])
+    norm = float(np.linalg.norm(action))
+    if norm > max_norm * (1 + 1e-6):  # slack for float32 rounding of a clipped action
+        action = action * (max_norm / norm)
+    return action
+
+
 def run_planning_eval(jepa, xy_prober, loader, device, num_episodes=20):
     """Run planning evaluation with the CustomPlanner."""
     jepa.eval()
@@ -403,8 +415,8 @@ def run_planning_eval(jepa, xy_prober, loader, device, num_episodes=20):
         n_iters=20,
     )
 
-    # We need to wire up the unroll function properly
-    # The planner needs access to model unroll through the GCAgent's unroll method
+    # Wire the planner to the world model through a plain closure over the model:
+    # a bound method of the agent would hand the planner the env and the goal.
     class PlanningAgent:
         def __init__(self, model, planner, normalizer, env, prober):
             self.model = model
@@ -419,25 +431,24 @@ def run_planning_eval(jepa, xy_prober, loader, device, num_episodes=20):
             self.objective = None
             self.num_act_stepped = 1
 
-            # Wire planner's unroll to agent's unroll
-            self.planner.unroll = self.unroll
+            def unroll(obs_init, actions, repeat_batch=True):
+                batch_size = actions.shape[0]
+                nsteps = actions.shape[2]
+                if repeat_batch:
+                    obs_init_rep = obs_init.repeat(batch_size, 1, 1, 1, 1)
+                else:
+                    obs_init_rep = obs_init
+                predicted_states, _ = model.unroll(
+                    obs_init_rep, actions,
+                    nsteps=nsteps,
+                    unroll_mode="autoregressive",
+                    ctxt_window_time=1,
+                    compute_loss=False,
+                    return_all_steps=False,
+                )
+                return predicted_states
 
-        def unroll(self, obs_init, actions, repeat_batch=True):
-            batch_size = actions.shape[0]
-            nsteps = actions.shape[2]
-            if repeat_batch:
-                obs_init_rep = obs_init.repeat(batch_size, 1, 1, 1, 1)
-            else:
-                obs_init_rep = obs_init
-            predicted_states, _ = self.model.unroll(
-                obs_init_rep, actions,
-                nsteps=nsteps,
-                unroll_mode="autoregressive",
-                ctxt_window_time=1,
-                compute_loss=False,
-                return_all_steps=False,
-            )
-            return predicted_states
+            self.planner.unroll = unroll
 
         def set_goal(self, goal_state, goal_position=None):
             self.goal_position = goal_position
@@ -501,7 +512,7 @@ def run_planning_eval(jepa, xy_prober, loader, device, num_episodes=20):
                 ).cpu().numpy()
 
             for a in action:
-                obs, reward, done, truncated, info = env.step(a)
+                obs, reward, done, truncated, info = env.step(clip_action(env, a))
                 t0 = False
                 steps_left -= 1
 

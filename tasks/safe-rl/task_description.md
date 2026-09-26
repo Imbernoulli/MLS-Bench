@@ -55,5 +55,13 @@ Metrics:
 - Episode cost (`cost`) — lower is better, with a target threshold of
   25.0 per the Safety-Gymnasium convention used in `omnisafe`.
 
+Both are averaged over the last 100 training episodes. Per environment
+the score is `(0.9 * R + 0.1 * F) * P`: `R` is a return score that is 0
+at the lowest baseline return and 0.5 at the return OmniSafe publishes
+for unconstrained PPO; `F` is 1 when the cost is at most 25 and falls
+linearly to 0 at the highest baseline cost; `P` is 1 when the cost is at
+most 25 and `exp(-0.15 * (cost - 25))` above it. The task score is the
+geometric mean over the environments.
+
 A method should achieve high return only when the cost constraint is
 controlled across all environments.

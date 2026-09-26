@@ -18,16 +18,7 @@ WORKSPACE_FILE = "/workspace/pytorch-geometric/custom_graphgen.py"
 # Ensure the package root is on sys.path
 sys.path.insert(0, "/workspace")
 
-# -- Dataset-specific dimensions (no data loading needed) --
-# max_nodes is the maximum number of nodes across all graphs in each dataset.
-DATASET_DIMS = {
-    "community_small": 20,   # 2-community graphs, 12-20 nodes
-    "ego_small": 18,          # ego graphs from CiteSeer, 4-18 nodes
-    "enzymes": 125,           # ENZYMES protein graphs, up to 125 nodes
-}
-
 env_label = os.environ.get("ENV", "community_small")
-max_nodes = DATASET_DIMS.get(env_label, 20)
 
 
 def load_module(path, name=None):
@@ -81,6 +72,24 @@ for op in mid_edit.OPS:
 
 assert template_content, f"No template found for {editable_file}"
 template_lines = template_content.splitlines()
+
+# -- Dataset dimensions --
+# max_nodes is derived exactly as the harness derives the value it passes to
+# GraphGenerator: the largest graph of the dataset loaded, under the run's
+# seed, by the template's own fixed loaders (enzymes 126, ego_small 17,
+# community_small 20 at seed 42).
+with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
+    f.write(template_content)
+    template_path = f.name
+try:
+    template_mod = load_module(template_path, "_graphgen_template")
+    _seed = int(os.environ.get("SEED", "42"))
+    template_mod.random.seed(_seed)
+    template_mod.np.random.seed(_seed)
+    torch.manual_seed(_seed)
+    max_nodes = max(G.number_of_nodes() for G in template_mod.load_dataset(env_label))
+finally:
+    os.unlink(template_path)
 
 # -- Count params for each baseline --
 baseline_params = {}

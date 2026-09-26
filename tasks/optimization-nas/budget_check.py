@@ -13,6 +13,10 @@ with a floor of 100_000 params — enough room for a small BANANAS-style
 neural predictor (a 2-layer MLP on 30-dim path encoding) plus slack,
 but rules out large surrogate networks that would let an agent circumvent
 the K=30 validation-query budget via learned extrapolation.
+
+The agent's module is imported only inside the unprivileged sandbox of
+scripts/nas_oracle_entry.py (this file re-run with --agent-worker), never in
+this process, which runs as root in the Harbor verifier.
 """
 import importlib.util
 import json
@@ -130,8 +134,36 @@ def count_params_for_module(module_path):
     return count_torch_params(optimizer)
 
 
-# -- Load template --
-mid_edit = load_module(os.path.join(TASK_DIR, "edits", "mid_edit.py"), "_mid_edit")
+if sys.argv[1:2] == ["--agent-worker"]:
+    # Inside the sandbox: the only place the agent's module is imported.
+    print(f"AGENT_PARAMS {count_params_for_module(sys.argv[2])}", flush=True)
+    sys.exit(0)
+
+
+def count_agent_params():
+    """Count the agent optimizer's params in the unprivileged sandbox."""
+    spec = importlib.util.spec_from_file_location(
+        "_nas_sandbox", os.path.join(TASK_DIR, "scripts", "nas_oracle_entry.py"))
+    sandbox = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(sandbox)
+    with open(os.path.abspath(__file__)) as fh:
+        source = fh.read()
+    rc, out = sandbox.run_sandboxed(
+        source, ["--agent-worker", WORKSPACE_FILE], timeout=100)
+    counted = None
+    for line in out.splitlines():
+        if line.startswith("AGENT_PARAMS "):
+            counted = line
+        else:
+            print(f"  [agent] {line}")
+    if rc != 0 or counted is None:
+        print(f"\nFAILED: the agent optimizer could not be loaded (rc={rc})",
+              file=sys.stderr)
+        sys.exit(1)
+    return int(counted.split()[1])
+
+
+# -- Load template (the scaffold's editable file, edits/custom_template.py) --
 config = json.loads(open(os.path.join(TASK_DIR, "config.json")).read())
 editable_file = None
 for f in config.get("files", []):
@@ -139,11 +171,8 @@ for f in config.get("files", []):
         editable_file = f["filename"]
         break
 
-template_content = None
-for op in mid_edit.OPS:
-    if op.get("op") == "create" and op.get("file") == editable_file:
-        template_content = op["content"]
-        break
+with open(os.path.join(TASK_DIR, "edits", "custom_template.py")) as fh:
+    template_content = fh.read()
 
 assert template_content, f"No template found for {editable_file}"
 template_lines = template_content.splitlines()
@@ -181,7 +210,7 @@ max_name = max(baseline_params, key=baseline_params.get)
 # slack, but blocks agent from using a large DNN to extrapolate past K=30.
 budget = max(int(max_baseline * 1.05), 100_000)
 
-agent_params = count_params_for_module(WORKSPACE_FILE)
+agent_params = count_agent_params()
 print(f"\n  agent optimizer: {agent_params} torch params")
 print(f"  budget: {budget} (1.05 x {max_name}={max_baseline}, floor=100000)")
 

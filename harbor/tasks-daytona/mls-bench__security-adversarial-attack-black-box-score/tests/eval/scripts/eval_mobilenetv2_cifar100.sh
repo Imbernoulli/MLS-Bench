@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python -u bench/run_eval.py \
+python -I -u bench/run_eval.py \
   --arch mobilenetv2_x1_0 \
   --dataset cifar100 \
   --data-dir /data/cifar100 \

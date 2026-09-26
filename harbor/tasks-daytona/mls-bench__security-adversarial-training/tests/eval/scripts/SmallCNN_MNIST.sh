@@ -6,7 +6,7 @@
 # harness modules the evaluator imports.
 rm -rf bench/__pycache__
 
-python -B -u bench/run_adv_train.py \
+python -I -B -u bench/run_adv_train.py \
   --arch smallcnn \
   --dataset mnist \
   --data-dir /data/mnist \

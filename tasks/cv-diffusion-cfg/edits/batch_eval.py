@@ -13,12 +13,16 @@ import clip
 import numpy as np
 from pathlib import Path
 from PIL import Image
+from types import SimpleNamespace
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from munch import munchify
 from torchvision.utils import save_image
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
 from pytorch_fid.inception import InceptionV3
 
+import latent_diffusion
+import latent_sdxl
 from latent_diffusion import get_solver
 from latent_sdxl import get_solver as get_solver_sdxl
 from utils.log_util import set_seed
@@ -108,11 +112,16 @@ def compute_fid(gen_dir, ref_stats_path, device, batch_size=50):
 
 # ── NFE accounting (fixed; do not modify) ────────────────────────────
 # The sampler is scored under a fixed budget of --NFE denoiser evaluations per
-# image, so the budget is measured here rather than taken on trust. After the
-# solver is built, its UNet is swapped for a counting facade that holds the
-# network only in a closure: every evaluation the sampler can make, whether
-# through predict_noise() or a direct self.unet(...) call, goes through the
-# counter, which lives in this file and nowhere the sampler can reach.
+# image, so the budget is measured here rather than taken on trust. The fixed
+# StableDiffusion / SDXL base-class __init__ loads its pipeline through the
+# module-level StableDiffusionPipeline / StableDiffusionXLPipeline name; both
+# names are pointed at a loader that returns the pipeline's components with
+# the UNet already swapped for a counting facade, so `self.unet = pipe.unet`
+# stores the facade and the solver never receives the raw network, which the
+# facade holds only in a closure. Every evaluation the sampler can make,
+# whether through predict_noise() or a direct self.unet(...) call, goes
+# through the counter, which lives in this file and nowhere the sampler can
+# reach.
 #
 # One NFE is one UNet forward over at most two latent rows, i.e. one
 # denoiser evaluation of the (single) image being generated: the batched
@@ -120,39 +129,12 @@ def compute_fid(gen_dir, ref_stats_path, device, batch_size=50):
 # so does a single-branch (conditional-only or unconditional-only) call. A
 # call over more rows counts ceil(rows / 2), so batching extra latents or
 # timesteps into one call spends budget like separate calls would.
-def _holds_network(value, net, depth=0):
-    """True if `value` is (or wraps, or directly contains) the raw network."""
-    if value is net:
-        return True
-    if getattr(value, "__self__", None) is net:  # bound method, e.g. unet.forward
-        return True
-    if isinstance(value, torch.nn.Module):
-        return any(m is net for m in value.modules())
-    if depth == 0 and isinstance(value, (list, tuple, set, frozenset)):
-        return any(_holds_network(v, net, 1) for v in value)
-    if depth == 0 and isinstance(value, dict):
-        return any(_holds_network(v, net, 1) for v in value.values())
-    return False
-
-
-def install_nfe_counter(solver):
-    """Replace solver.unet with a counting facade; return the call counter."""
-    net = solver.unet
-    if not isinstance(net, torch.nn.Module):
-        raise RuntimeError("NFE accounting: solver.unet is not the diffusion UNet "
-                           f"(got {type(net).__name__}); the solver must use the "
-                           "UNet loaded by the fixed StableDiffusion/SDXL base class.")
-    for name, value in vars(solver).items():
-        if name != "unet" and _holds_network(value, net):
-            raise RuntimeError(f"NFE accounting: solver attribute {name!r} holds a second "
-                               "handle on the UNet; every denoiser evaluation must go "
-                               "through self.unet / self.predict_noise().")
-    nfe = [0]
+def _counted_unet(net, nfe):
+    """self.unet as the sampler sees it: callable like the UNet, and counted."""
     config = net.config
     add_embedding = getattr(net, "add_embedding", None)
 
     class CountedUNet:
-        """self.unet as the sampler sees it: callable like the UNet."""
         __slots__ = ()
 
         def __call__(self, sample, *args, **kwargs):
@@ -168,8 +150,47 @@ def install_nfe_counter(solver):
         def add_embedding(self):  # read by SDXL._get_add_time_ids
             return add_embedding
 
-    solver.unet = CountedUNet()
-    return nfe
+        @property
+        def dtype(self):
+            return net.dtype
+
+        @property
+        def device(self):
+            return net.device
+
+    return CountedUNet()
+
+
+def install_nfe_counter():
+    """Make the fixed base classes load a counted UNet; return (nfe, check).
+
+    nfe[0] counts evaluations; check(solver) rejects a solver whose self.unet
+    is not the facade its base-class __init__ was given.
+    """
+    nfe, facades = [0], []
+
+    def counting(pipeline_cls):
+        def from_pretrained(*args, **kwargs):
+            loaded = pipeline_cls.from_pretrained(*args, **kwargs)
+
+            def to(*to_args, **to_kwargs):
+                pipe = loaded.to(*to_args, **to_kwargs)
+                parts = {k: v for k, v in pipe.components.items() if k != "unet"}
+                facades.append(_counted_unet(pipe.unet, nfe))
+                return SimpleNamespace(unet=facades[-1], **parts)
+            return SimpleNamespace(to=to)
+        return SimpleNamespace(from_pretrained=from_pretrained)
+
+    latent_diffusion.StableDiffusionPipeline = counting(StableDiffusionPipeline)
+    latent_sdxl.StableDiffusionXLPipeline = counting(StableDiffusionXLPipeline)
+
+    def check(solver):
+        if not any(getattr(solver, "unet", None) is f for f in facades):
+            raise RuntimeError("NFE accounting: solver.unet is not the counted UNet the fixed "
+                               "StableDiffusion/SDXL __init__ loaded; the solver must call "
+                               "super().__init__() and evaluate the denoiser only through "
+                               "self.unet / self.predict_noise().")
+    return nfe, check
 
 
 def main():
@@ -212,6 +233,7 @@ def main():
     # Load diffusion model on this rank's device
     if rank == 0:
         print(f"[{args.model}] Loading model...", flush=True)
+    nfe, check_counted = install_nfe_counter()
     if args.model == "sdxl":
         solver = get_solver_sdxl(
             args.method, solver_config=solver_config, device=device)
@@ -225,7 +247,7 @@ def main():
             model_key=model_keys[args.model], device=device)
     if rank == 0:
         print(f"[{args.model}] Model loaded on {world_size} GPUs.", flush=True)
-    nfe = install_nfe_counter(solver)
+    check_counted(solver)
     nfe_max = 0
 
     # Load CLIP model
