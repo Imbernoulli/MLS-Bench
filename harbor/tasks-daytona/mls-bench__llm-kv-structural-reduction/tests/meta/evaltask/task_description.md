@@ -91,8 +91,8 @@ from the 345M checkpoint.
     the per-token size of the tensors each layer passes to `kv_cache(...)`,
     at max(2, element size) bytes per element, averaged over layers — the
     primary efficiency axis; must be <= 1024, see the KV budget above)
-  - `heldout_loss` (lower is better; average cross-entropy on
-    WikiText-2/103 + LAMBADA held-out corpora at the 345M final checkpoint)
+  - `heldout_loss` (average cross-entropy on WikiText-2/103 + LAMBADA
+    held-out corpora at the 345M final checkpoint; reported, not scored)
   - `arc_easy`, `hellaswag` (0-shot downstream accuracy via lm-eval, from
     the 345M checkpoint)
 - Visible benchmark regimes:

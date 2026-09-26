@@ -90,7 +90,7 @@ def generate_ego_small(n_max=200):
 def load_enzymes(n_max=587):
     """Load ENZYMES dataset from TUDataset.
 
-    Protein tertiary structure graphs, 587 graphs, 10-125 nodes.
+    Protein tertiary structure graphs, 587 graphs, up to 126 nodes.
     """
     try:
         import networkx as nx
@@ -736,6 +736,14 @@ def main():
             f"sample({n_gen}) returned {len(gen_adjs)} adjacency matrices and "
             f"{len(gen_counts)} node counts; expected {n_gen}")
     gen_adjs, gen_counts = gen_adjs[:n_gen], gen_counts[:n_gen]
+    # The budget covers every parameter the model ends up with, including any
+    # created lazily in train_step() or sample() (budget_check.py counts them
+    # only at construction).
+    n_params_final = sum(p.numel() for p in model.parameters())
+    if n_params_final > _param_budget:
+        raise RuntimeError(
+            f"Parameter budget exceeded after training: {n_params_final:,} > "
+            f"{_param_budget:,} parameters (1.05x largest baseline)")
     gen_graphs = adj_to_graphs(gen_adjs, gen_counts)
 
     # Memorisation check against the whole dataset (training AND held-out

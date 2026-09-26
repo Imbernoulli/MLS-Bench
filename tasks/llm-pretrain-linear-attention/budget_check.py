@@ -4,11 +4,13 @@ Run by tools.py before training: python /workspace/_task/budget_check.py
 Imports each baseline, instantiates GPT model, counts params, and
 asserts the agent's model doesn't exceed 1.05x the largest baseline.
 Then probes the agent's model on a GPU and rejects sequence mixing whose cost
-grows quadratically with sequence length (see check_subquadratic).
+grows quadratically with sequence length, or that changes with the batch /
+train-eval context of the real run (see check_subquadratic).
 """
 import importlib.util
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -136,8 +138,21 @@ if agent_params > budget:
 #       largest tensor grows with the sequence length at a fixed token count, or
 #   (c) launches one of FLA's quadratic Triton kernels (softmax attention and
 #       the O(T^2) "parallel" forms), which the two checks above cannot see.
+# The real run feeds the model in other contexts than that sweep: training
+# micro-batches of BATCH_SIZE sequences (train mode, grad enabled), the
+# validation loss on BATCH_SIZE sequences and the perplexity on single sequences
+# (eval mode under torch.no_grad), all at block_size, and lm-eval's single
+# sequences of any length (eval mode, no_grad, the model run eagerly). So the
+# model is also run in each of those contexts -- the lm-eval one at every sweep
+# length, with 1 and 2 sequences -- and rejected if any Block's mixing depends
+# on the context:
+#   (d) at each sweep length, the matmul / SDPA FLOPs of the sweep pass and the
+#       context passes must be affine in the batch size -- the same per-token
+#       cost everywhere, plus any batch-independent cost -- and no context's
+#       largest tensor may exceed the sweep's, scaled up by the batch.
 PROBE_LENS = (192, 384, 768, 1024)  # batch 16 / 8 / 4 / 3: 3072 tokens each
 PROBE_TOKENS = 3072
+CONTEXT_TOL = 0.001            # relative deviation allowed in (d); honest mixing: exactly 0
 PROBE_TXT_LENS = (384, 768)    # the T x T check (at 1024 = n_embd every B x T x C activation
                                # has two such dims; (b) covers quadratic mixing there)
 GROWTH_RATIO = 1.7             # per-token cost growth over a doubling vs the previous doubling:
@@ -159,6 +174,20 @@ def _is_quadratic_kernel(module_name):
             or module_name.rsplit(".", 1)[-1] == "parallel")
 
 
+def _train_batch_size():
+    """Per-GPU micro-batch of the training command, resolved the way its script
+    does (`BATCH_SIZE=${BATCH_SIZE:-16}`; the H200 profile exports BATCH_SIZE)."""
+    if os.environ.get("BATCH_SIZE"):
+        return int(os.environ["BATCH_SIZE"])
+    for tc in config.get("test_cmds", []):
+        script = os.path.join(TASK_DIR, str(tc.get("cmd", "")).split(" ")[0])
+        if os.path.isfile(script):
+            m = re.search(r"BATCH_SIZE=\$\{BATCH_SIZE:-(\d+)\}", open(script).read())
+            if m:
+                return int(m.group(1))
+    raise RuntimeError("cannot resolve the training BATCH_SIZE from the task's scripts")
+
+
 def check_subquadratic(module_path):
     from torch.utils._python_dispatch import TorchDispatchMode
     from torch.utils._pytree import tree_flatten
@@ -167,8 +196,8 @@ def check_subquadratic(module_path):
     if not torch.cuda.is_available():
         return ["the complexity probe needs a CUDA device and none is visible"]
 
-    state = {"block": None, "T": None, "active": False}
-    stats = {}        # (scope, T) -> [flops, largest tensor numel]
+    state = {"block": None, "T": None, "key": None, "active": False}
+    stats = {}        # (scope, pass key) -> [flops, largest tensor numel]
     violations = []
 
     def note(msg):
@@ -243,7 +272,7 @@ def check_subquadratic(module_path):
                     note(f"block {scope}: {func} produced a {tuple(t.shape)} tensor "
                          f"(two dims equal to the sequence length {T})")
             for key in (scope, "all"):
-                acc = stats.setdefault((key, T), [0, 0])
+                acc = stats.setdefault((key, state["key"]), [0, 0])
                 acc[0] += flops
                 acc[1] = max(acc[1], numel)
             return out
@@ -269,15 +298,18 @@ def check_subquadratic(module_path):
     # so it reports that same context to the model while observing it.
     import torch.compiler as _tc
     _compile_flags = (_tc._is_compiling_flag, _tc.is_dynamo_compiling)
-    for T in PROBE_LENS:
-        B = PROBE_TOKENS // T
+
+    def run(key, B, T, train=True, compiling=True):
         idx = torch.randint(0, cfg.vocab_size, (B, T), device=device)
         tgt = torch.randint(0, cfg.vocab_size, (B, T), device=device)
-        state["T"] = T
+        model.train(train)
+        state["T"], state["key"] = T, key
         state["active"] = True
-        _tc._is_compiling_flag, _tc.is_dynamo_compiling = True, (lambda: True)
+        if compiling:
+            _tc._is_compiling_flag, _tc.is_dynamo_compiling = True, (lambda: True)
         try:
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16), _Probe():
+            with torch.set_grad_enabled(train), \
+                    torch.autocast(device_type="cuda", dtype=torch.bfloat16), _Probe():
                 _, loss = model(idx, tgt)
             torch.cuda.synchronize()
         finally:
@@ -285,8 +317,35 @@ def check_subquadratic(module_path):
             state["active"] = False
             state["block"] = None
         if loss is None or not torch.isfinite(loss).item():
-            note(f"forward at T={T} returned a non-finite loss")
+            note(f"forward at {key if isinstance(key, str) else f'T={T}'} "
+                 f"returned a non-finite loss")
         del loss
+
+    for T in PROBE_LENS:
+        run(T, PROBE_TOKENS // T, T)
+    # (d): the real run's contexts, the training batch taken from the script
+    T, Bt = PROBE_LENS[-1], _train_batch_size()
+    contexts = (  # key, batch, length, train mode + grad, compiled context
+        (f"train B={Bt}", Bt, T, True, True),   # training micro-batch
+        (f"eval B={Bt}", Bt, T, False, True),   # validation loss (torch.no_grad)
+        ("eval B=1", 1, T, False, True),        # WikiText-2 / LAMBADA perplexity
+    ) + tuple((f"eager eval B={B} T={t}", B, t, False, False)  # lm-eval (uncompiled
+              for t in PROBE_LENS for B in (1, 2))              # model, any length)
+    for key, B, T, train, compiling in contexts:
+        try:
+            run(key, B, T, train, compiling)
+            continue
+        except torch.cuda.OutOfMemoryError:
+            if not train:
+                raise
+        # Eager autograd keeps every activation for a backward the probe never
+        # runs (more than compiled training holds); if that does not fit, drop
+        # them -- grad mode and requires_grad stay as in training.
+        for k in [k for k in stats if k[1] == key]:
+            del stats[k]
+        torch.cuda.empty_cache()
+        with torch.autograd.graph.saved_tensors_hooks(lambda t: None, lambda _: None):
+            run(key, B, T, train, compiling)
 
     scopes = sorted({k for k, _ in stats}, key=lambda s: (s == "all", s))
     for scope in scopes:
@@ -305,10 +364,31 @@ def check_subquadratic(module_path):
             if m2 > 0 and m3 >= (1 + (MAXNUMEL_RATIO - 1) * (t3 / t2 - 1)) * m2:
                 note(f"{where}: largest tensor grows from {m2} (T={t2}) to {m3} (T={t3}) "
                      f"elements at a fixed token count -- quadratic sequence mixing")
+        for T in PROBE_LENS:
+            B0 = PROBE_TOKENS // T
+            pts = [(f"sweep B={B0}", B0, T)] + [(k, B, k) for k, B, t, _, _ in contexts if t == T]
+            pts = [(name, B, *stats.get((scope, key), [0, 0])) for name, B, key in pts]
+            (_, b_lo, f_lo, _), (_, b_hi, f_hi, _) = (min(pts, key=lambda p: p[1]),
+                                                      max(pts, key=lambda p: p[1]))
+            slope = (f_hi - f_lo) / (b_hi - b_lo)
+            dev = max(abs(f - f_lo - slope * (B - b_lo)) / max(f, 1) for _, B, f, _ in pts)
+            if dev > CONTEXT_TOL:
+                note(f"{where}: matmul/SDPA FLOPs at T={T} change with the batch / mode context ("
+                     + ", ".join(f"{name}: {f / (B * T):.4g}/token" for name, B, f, _ in pts)
+                     + ") -- sequence mixing differs from the length sweep")
+            m0 = pts[0][3]
+            for name, B, _, m in pts[1:]:
+                if m > (1 + CONTEXT_TOL) * m0 * max(1.0, B / B0):
+                    note(f"{where}: largest tensor {m} elements in context {name} vs {m0} in "
+                         f"the sweep at T={T}, B={B0} -- sequence mixing differs from the sweep")
     per_tok = [stats.get(("all", T), [0, 0]) for T in PROBE_LENS]
     print("  complexity probe (all blocks): "
           + ", ".join(f"T={T}: {f / PROBE_TOKENS:.4g} FLOPs/token, largest tensor {n}"
                       for T, (f, n) in zip(PROBE_LENS, per_tok)))
+    print("  complexity probe (all blocks, contexts): "
+          + ", ".join(f"{k}: {f / (B * t):.4g} FLOPs/token, largest tensor {n}"
+                      for k, B, t, _, _ in contexts
+                      for f, n in [stats.get(("all", k), [0, 0])]))
     return violations
 
 

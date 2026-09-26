@@ -658,467 +658,467 @@ stay unchanged.
     37:                  device='cuda'):
     38: 
     39:         self.device = device
-    40:         pipe = StableDiffusionXLPipeline.from_pretrained(model_key, torch_dtype=dtype).to(device)
-    41:         self.dtype = dtype
-    42: 
-    43:         # avoid overflow in float16
-    44:         self.vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to(device)
-    45: 
-    46:         self.tokenizer_1 = pipe.tokenizer
-    47:         self.tokenizer_2 = pipe.tokenizer_2
-    48:         self.text_enc_1 = pipe.text_encoder
-    49:         self.text_enc_2 = pipe.text_encoder_2
-    50:         self.unet = pipe.unet
+    40:         # Offline image ships SDXL unet as safetensors (often only the fp16
+    41:         # variant) — the default from_pretrained looks for diffusion_pytorch_
+    42:         # model.bin and dies (OSError: no .bin found). Prefer the fp16 variant
+    43:         # safetensors, fall back to standard safetensors.
+    44:         try:
+    45:             pipe = StableDiffusionXLPipeline.from_pretrained(
+    46:                 model_key, torch_dtype=dtype, variant="fp16", use_safetensors=True).to(device)
+    47:         except Exception:
+    48:             pipe = StableDiffusionXLPipeline.from_pretrained(
+    49:                 model_key, torch_dtype=dtype, use_safetensors=True).to(device)
+    50:         self.dtype = dtype
     51: 
-    52:         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-    53:         self.default_sample_size = self.unet.config.sample_size
+    52:         # avoid overflow in float16
+    53:         self.vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to(device)
     54: 
-    55:         # sampling parameters
-    56:         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
-    57:         self.total_alphas = self.scheduler.alphas_cumprod.clone()
-    58: 
-    59:         self.sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-    60:         self.log_sigmas = self.sigmas.log()
-    61: 
-    62:         N_ts = len(self.scheduler.timesteps)
-    63:         self.scheduler.set_timesteps(solver_config.num_sampling, device=device)
-    64:         self.skip = N_ts // solver_config.num_sampling
-    65: 
-    66:         self.final_alpha_cumprod = self.scheduler.final_alpha_cumprod.to(device)
-    67:         self.scheduler.alphas_cumprod = torch.cat([torch.tensor([1.0]), self.scheduler.alphas_cumprod])
-    68: 
-    69:     def __call__(self, *args: Any, **kwargs: Any) -> Any:
-    70:         self.sample(*args, **kwargs)
-    71: 
-    72:     def alpha(self, t):
-    73:         at = self.scheduler.alphas_cumprod[t] if t >= 0 else self.final_alpha_cumprod
-    74:         return at
-    75: 
-    76:     @torch.no_grad()
-    77:     def _text_embed(self, prompt, tokenizer, text_enc, clip_skip):
-    78:         text_inputs = tokenizer(
-    79:             prompt,
-    80:             padding='max_length',
-    81:             max_length=tokenizer.model_max_length,
-    82:             truncation=True,
-    83:             return_tensors='pt')
-    84:         text_input_ids = text_inputs.input_ids
-    85:         prompt_embeds = text_enc(text_input_ids.to(self.device), output_hidden_states=True)
-    86: 
-    87:         pool_prompt_embeds = prompt_embeds[0]
-    88:         if clip_skip is None:
-    89:             prompt_embeds = prompt_embeds.hidden_states[-2]
-    90:         else:
-    91:             # +2 because SDXL always indexes from the penultimate layer.
-    92:             prompt_embeds = prompt_embeds.hidden_states[-(clip_skip + 2)]
-    93:         return prompt_embeds, pool_prompt_embeds
-    94: 
-    95:     @torch.no_grad()
-    96:     def get_text_embed(self, null_prompt_1, prompt_1, null_prompt_2=None, prompt_2=None, clip_skip=None):
-    97:         '''
-    98:         At this time, assume that batch_size = 1.
-    99:         We should extend the code to batch_size > 1.
-   100:         '''        
-   101:         # Encode the prompts
-   102:         # if prompt_2 is None, set same as prompt_1
-   103:         prompt_1 = [prompt_1] if isinstance(prompt_1, str) else prompt_1
-   104:         null_prompt_1 = [null_prompt_1] if isinstance(null_prompt_1, str) else null_prompt_1
-   105: 
-   106: 
-   107:         prompt_embed_1, pool_prompt_embed = self._text_embed(prompt_1, self.tokenizer_1, self.text_enc_1, clip_skip)
-   108:         if prompt_2 is None:
-   109:             prompt_embed = [prompt_embed_1]
-   110:         else:
-   111:             # Comment on diffusers' source code:
-   112:             # "We are only ALWAYS interested in the pooled output of the final text encoder"
-   113:             # i.e. we overwrite the pool_prompt_embed with the new one
-   114:             prompt_embed_2, pool_prompt_embed = self._text_embed(prompt_2, self.tokenizer_2, self.text_enc_2, clip_skip)
-   115:             prompt_embed = [prompt_embed_1, prompt_embed_2]
-   116:         
-   117:         null_embed_1, pool_null_embed = self._text_embed(null_prompt_1, self.tokenizer_1, self.text_enc_1, clip_skip)
-   118:         if null_prompt_2 is None:
-   119:             null_embed = [null_embed_1]
-   120:         else:
-   121:             null_embed_2, pool_null_embed = self._text_embed(null_prompt_2, self.tokenizer_2, self.text_enc_2, clip_skip)
-   122:             null_embed = [null_embed_1, null_embed_2]
-   123: 
-   124:         # concat embeds from two encoders
-   125:         null_prompt_embeds = torch.concat(null_embed, dim=-1)
-   126:         prompt_embeds = torch.concat(prompt_embed, dim=-1)
-   127: 
-   128:         return null_prompt_embeds, prompt_embeds, pool_null_embed, pool_prompt_embed            
-   129: 
-   130:     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_upscale.StableDiffusionUpscalePipeline.upcast_vae
-   131:     def upcast_vae(self):
-   132:         dtype = self.vae.dtype
-   133:         self.vae.to(dtype=torch.float32)
-   134:         use_torch_2_0_or_xformers = isinstance(
-   135:             self.vae.decoder.mid_block.attentions[0].processor,
-   136:             (
-   137:                 AttnProcessor2_0,
-   138:                 XFormersAttnProcessor,
-   139:                 LoRAXFormersAttnProcessor,
-   140:                 LoRAAttnProcessor2_0,
-   141:             ),
-   142:         )
-   143:         # if xformers or torch_2_0 is used attention block does not need
-   144:         # to be in float32 which can save lots of memory
-   145:         if use_torch_2_0_or_xformers:
-   146:             self.vae.post_quant_conv.to(dtype)
-   147:             self.vae.decoder.conv_in.to(dtype)
-   148:             self.vae.decoder.mid_block.to(dtype)
-   149: 
-   150:     @torch.no_grad()
-   151:     def encode(self, x):
-   152:         return self.vae.encode(x).latent_dist.sample() * self.vae.config.scaling_factor 
-   153: 
-   154:     # @torch.no_grad() 
-   155:     def decode(self, zt):
-   156:         # make sure the VAE is in float32 mode, as it overflows in float16
-   157:         # needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
+    55:         self.tokenizer_1 = pipe.tokenizer
+    56:         self.tokenizer_2 = pipe.tokenizer_2
+    57:         self.text_enc_1 = pipe.text_encoder
+    58:         self.text_enc_2 = pipe.text_encoder_2
+    59:         self.unet = pipe.unet
+    60: 
+    61:         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+    62:         self.default_sample_size = self.unet.config.sample_size
+    63: 
+    64:         # sampling parameters
+    65:         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler")
+    66:         self.total_alphas = self.scheduler.alphas_cumprod.clone()
+    67: 
+    68:         self.sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+    69:         self.log_sigmas = self.sigmas.log()
+    70: 
+    71:         N_ts = len(self.scheduler.timesteps)
+    72:         self.scheduler.set_timesteps(solver_config.num_sampling, device=device)
+    73:         self.skip = N_ts // solver_config.num_sampling
+    74: 
+    75:         self.final_alpha_cumprod = self.scheduler.final_alpha_cumprod.to(device)
+    76:         self.scheduler.alphas_cumprod = torch.cat([torch.tensor([1.0]), self.scheduler.alphas_cumprod])
+    77: 
+    78:     def __call__(self, *args: Any, **kwargs: Any) -> Any:
+    79:         self.sample(*args, **kwargs)
+    80: 
+    81:     def alpha(self, t):
+    82:         at = self.scheduler.alphas_cumprod[t] if t >= 0 else self.final_alpha_cumprod
+    83:         return at
+    84: 
+    85:     @torch.no_grad()
+    86:     def _text_embed(self, prompt, tokenizer, text_enc, clip_skip):
+    87:         text_inputs = tokenizer(
+    88:             prompt,
+    89:             padding='max_length',
+    90:             max_length=tokenizer.model_max_length,
+    91:             truncation=True,
+    92:             return_tensors='pt')
+    93:         text_input_ids = text_inputs.input_ids
+    94:         prompt_embeds = text_enc(text_input_ids.to(self.device), output_hidden_states=True)
+    95: 
+    96:         pool_prompt_embeds = prompt_embeds[0]
+    97:         if clip_skip is None:
+    98:             prompt_embeds = prompt_embeds.hidden_states[-2]
+    99:         else:
+   100:             # +2 because SDXL always indexes from the penultimate layer.
+   101:             prompt_embeds = prompt_embeds.hidden_states[-(clip_skip + 2)]
+   102:         return prompt_embeds, pool_prompt_embeds
+   103: 
+   104:     @torch.no_grad()
+   105:     def get_text_embed(self, null_prompt_1, prompt_1, null_prompt_2=None, prompt_2=None, clip_skip=None):
+   106:         '''
+   107:         At this time, assume that batch_size = 1.
+   108:         We should extend the code to batch_size > 1.
+   109:         '''        
+   110:         # Encode the prompts
+   111:         # if prompt_2 is None, set same as prompt_1
+   112:         prompt_1 = [prompt_1] if isinstance(prompt_1, str) else prompt_1
+   113:         null_prompt_1 = [null_prompt_1] if isinstance(null_prompt_1, str) else null_prompt_1
+   114: 
+   115: 
+   116:         prompt_embed_1, pool_prompt_embed = self._text_embed(prompt_1, self.tokenizer_1, self.text_enc_1, clip_skip)
+   117:         if prompt_2 is None:
+   118:             prompt_embed = [prompt_embed_1]
+   119:         else:
+   120:             # Comment on diffusers' source code:
+   121:             # "We are only ALWAYS interested in the pooled output of the final text encoder"
+   122:             # i.e. we overwrite the pool_prompt_embed with the new one
+   123:             prompt_embed_2, pool_prompt_embed = self._text_embed(prompt_2, self.tokenizer_2, self.text_enc_2, clip_skip)
+   124:             prompt_embed = [prompt_embed_1, prompt_embed_2]
+   125:         
+   126:         null_embed_1, pool_null_embed = self._text_embed(null_prompt_1, self.tokenizer_1, self.text_enc_1, clip_skip)
+   127:         if null_prompt_2 is None:
+   128:             null_embed = [null_embed_1]
+   129:         else:
+   130:             null_embed_2, pool_null_embed = self._text_embed(null_prompt_2, self.tokenizer_2, self.text_enc_2, clip_skip)
+   131:             null_embed = [null_embed_1, null_embed_2]
+   132: 
+   133:         # concat embeds from two encoders
+   134:         null_prompt_embeds = torch.concat(null_embed, dim=-1)
+   135:         prompt_embeds = torch.concat(prompt_embed, dim=-1)
+   136: 
+   137:         return null_prompt_embeds, prompt_embeds, pool_null_embed, pool_prompt_embed            
+   138: 
+   139:     # Copied from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_upscale.StableDiffusionUpscalePipeline.upcast_vae
+   140:     def upcast_vae(self):
+   141:         dtype = self.vae.dtype
+   142:         self.vae.to(dtype=torch.float32)
+   143:         use_torch_2_0_or_xformers = isinstance(
+   144:             self.vae.decoder.mid_block.attentions[0].processor,
+   145:             (
+   146:                 AttnProcessor2_0,
+   147:                 XFormersAttnProcessor,
+   148:                 LoRAXFormersAttnProcessor,
+   149:                 LoRAAttnProcessor2_0,
+   150:             ),
+   151:         )
+   152:         # if xformers or torch_2_0 is used attention block does not need
+   153:         # to be in float32 which can save lots of memory
+   154:         if use_torch_2_0_or_xformers:
+   155:             self.vae.post_quant_conv.to(dtype)
+   156:             self.vae.decoder.conv_in.to(dtype)
+   157:             self.vae.decoder.mid_block.to(dtype)
    158: 
-   159:         # if needs_upcasting:
-   160:         #     self.upcast_vae()
-   161:         #     zt = zt.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
+   159:     @torch.no_grad()
+   160:     def encode(self, x):
+   161:         return self.vae.encode(x).latent_dist.sample() * self.vae.config.scaling_factor 
    162: 
-   163:         image = self.vae.decode(zt / self.vae.config.scaling_factor).sample.float()
-   164:         return image
-   165: 
-   166: 
-   167:     def predict_noise(self, zt, t, uc, c, added_cond_kwargs):
-   168:         t_in = t.unsqueeze(0)
-   169:         if uc is None:
-   170:             noise_c = self.unet(zt, t_in, encoder_hidden_states=c,
-   171:                                    added_cond_kwargs=added_cond_kwargs)['sample']
-   172:             noise_uc = noise_c
-   173:         elif c is None:
-   174:             noise_uc = self.unet(zt, t_in, encoder_hidden_states=uc,
-   175:                                    added_cond_kwargs=added_cond_kwargs)['sample']
-   176:             noise_c = noise_uc
-   177:         else:
-   178:             c_embed = torch.cat([uc, c], dim=0)
-   179:             z_in = torch.cat([zt] * 2)
-   180:             t_in = torch.cat([t_in] * 2)
-   181:             noise_pred = self.unet(z_in, t_in, encoder_hidden_states=c_embed,
-   182:                                    added_cond_kwargs=added_cond_kwargs)['sample']
-   183:             noise_uc, noise_c = noise_pred.chunk(2)
-   184: 
-   185:         return noise_uc, noise_c
-   186: 
-   187:     def _get_add_time_ids(self, original_size, crops_coords_top_left, target_size, dtype, text_encoder_projection_dim):
-   188:         add_time_ids = list(original_size+crops_coords_top_left+target_size)
-   189:         passed_add_embed_dim = (
-   190:             self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
-   191:         )
-   192:         expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
+   163:     # @torch.no_grad() 
+   164:     def decode(self, zt):
+   165:         # make sure the VAE is in float32 mode, as it overflows in float16
+   166:         # needs_upcasting = self.vae.dtype == torch.float16 and self.vae.config.force_upcast
+   167: 
+   168:         # if needs_upcasting:
+   169:         #     self.upcast_vae()
+   170:         #     zt = zt.to(next(iter(self.vae.post_quant_conv.parameters())).dtype)
+   171: 
+   172:         image = self.vae.decode(zt / self.vae.config.scaling_factor).sample.float()
+   173:         return image
+   174: 
+   175: 
+   176:     def predict_noise(self, zt, t, uc, c, added_cond_kwargs):
+   177:         t_in = t.unsqueeze(0)
+   178:         if uc is None:
+   179:             noise_c = self.unet(zt, t_in, encoder_hidden_states=c,
+   180:                                    added_cond_kwargs=added_cond_kwargs)['sample']
+   181:             noise_uc = noise_c
+   182:         elif c is None:
+   183:             noise_uc = self.unet(zt, t_in, encoder_hidden_states=uc,
+   184:                                    added_cond_kwargs=added_cond_kwargs)['sample']
+   185:             noise_c = noise_uc
+   186:         else:
+   187:             c_embed = torch.cat([uc, c], dim=0)
+   188:             z_in = torch.cat([zt] * 2)
+   189:             t_in = torch.cat([t_in] * 2)
+   190:             noise_pred = self.unet(z_in, t_in, encoder_hidden_states=c_embed,
+   191:                                    added_cond_kwargs=added_cond_kwargs)['sample']
+   192:             noise_uc, noise_c = noise_pred.chunk(2)
    193: 
-   194:         assert expected_add_embed_dim == passed_add_embed_dim, (
-   195:              f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
-   196:         )
-   197:         add_time_ids = torch.tensor([add_time_ids], dtype=dtype)
-   198:         return add_time_ids
-   199: 
-   200:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   201:     def sample(self,
-   202:                prompt1 = ["", ""],
-   203:                prompt2 = ["", ""],
-   204:                cfg_guidance:float=5.0,
-   205:                original_size: Optional[Tuple[int, int]]=None,
-   206:                crops_coords_top_left: Tuple[int, int]=(0, 0),
-   207:                target_size: Optional[Tuple[int, int]]=None,
-   208:                negative_original_size: Optional[Tuple[int, int]]=None,
-   209:                negative_crops_coords_top_left: Tuple[int, int]=(0, 0),
-   210:                negative_target_size: Optional[Tuple[int, int]]=None,
-   211:                clip_skip: Optional[int]=None,
-   212:                **kwargs):
-   213: 
-   214:         # 0. Default height and width to unet
-   215:         height = self.default_sample_size * self.vae_scale_factor
-   216:         width = self.default_sample_size * self.vae_scale_factor
-   217: 
-   218:         original_size = original_size or (height, width)
-   219:         target_size = target_size or (height, width)
-   220: 
-   221:         # embedding
-   222:         (null_prompt_embeds,
-   223:          prompt_embeds,
-   224:          pool_null_embed,
-   225:          pool_prompt_embed) = self.get_text_embed(prompt1[0], prompt1[1], prompt2[0], prompt2[1], clip_skip)
+   194:         return noise_uc, noise_c
+   195: 
+   196:     def _get_add_time_ids(self, original_size, crops_coords_top_left, target_size, dtype, text_encoder_projection_dim):
+   197:         add_time_ids = list(original_size+crops_coords_top_left+target_size)
+   198:         passed_add_embed_dim = (
+   199:             self.unet.config.addition_time_embed_dim * len(add_time_ids) + text_encoder_projection_dim
+   200:         )
+   201:         expected_add_embed_dim = self.unet.add_embedding.linear_1.in_features
+   202: 
+   203:         assert expected_add_embed_dim == passed_add_embed_dim, (
+   204:              f"Model expects an added time embedding vector of length {expected_add_embed_dim}, but a vector of {passed_add_embed_dim} was created. The model has an incorrect config. Please check `unet.config.time_embedding_type` and `text_encoder_2.config.projection_dim`."
+   205:         )
+   206:         add_time_ids = torch.tensor([add_time_ids], dtype=dtype)
+   207:         return add_time_ids
+   208: 
+   209:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   210:     def sample(self,
+   211:                prompt1 = ["", ""],
+   212:                prompt2 = ["", ""],
+   213:                cfg_guidance:float=5.0,
+   214:                original_size: Optional[Tuple[int, int]]=None,
+   215:                crops_coords_top_left: Tuple[int, int]=(0, 0),
+   216:                target_size: Optional[Tuple[int, int]]=None,
+   217:                negative_original_size: Optional[Tuple[int, int]]=None,
+   218:                negative_crops_coords_top_left: Tuple[int, int]=(0, 0),
+   219:                negative_target_size: Optional[Tuple[int, int]]=None,
+   220:                clip_skip: Optional[int]=None,
+   221:                **kwargs):
+   222: 
+   223:         # 0. Default height and width to unet
+   224:         height = self.default_sample_size * self.vae_scale_factor
+   225:         width = self.default_sample_size * self.vae_scale_factor
    226: 
-   227:         # prepare kwargs for SDXL
-   228:         add_text_embeds = pool_prompt_embed
-   229:         add_time_ids = self._get_add_time_ids(
-   230:             original_size,
-   231:             crops_coords_top_left,
-   232:             target_size,
-   233:             dtype=prompt_embeds.dtype,
-   234:             text_encoder_projection_dim=int(pool_prompt_embed.shape[-1]),
-   235:         )
-   236: 
-   237:         if negative_original_size is not None and negative_target_size is not None:
-   238:             negative_add_time_ids = self._get_add_time_ids(
-   239:                 negative_original_size,
-   240:                 negative_crops_coords_top_left,
-   241:                 negative_target_size,
-   242:                 dtype=prompt_embeds.dtype,
-   243:                 text_encoder_projection_dim=int(pool_prompt_embed.shape[-1]),
-   244:             )
-   245:         else:
-   246:             negative_add_time_ids = add_time_ids
-   247:         negative_text_embeds = pool_null_embed 
-   248: 
-   249:         if cfg_guidance != 0.0 and cfg_guidance != 1.0:
-   250:             # do cfg
-   251:             add_text_embeds = torch.cat([negative_text_embeds, add_text_embeds], dim=0)
-   252:             add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
-   253: 
-   254:         add_cond_kwargs = {
-   255:             'text_embeds': add_text_embeds.to(self.device),
-   256:             'time_ids': add_time_ids.to(self.device)
-   257:         }
-   258: 
-   259:         # reverse sampling
-   260:         zt = self.reverse_process(null_prompt_embeds, prompt_embeds, cfg_guidance, add_cond_kwargs, target_size, **kwargs)
-   261: 
-   262:         # decode
-   263:         with torch.no_grad():
-   264:             img = self.decode(zt)
-   265:         img = (img / 2 + 0.5).clamp(0, 1)
-   266:         return img.detach().cpu()
+   227:         original_size = original_size or (height, width)
+   228:         target_size = target_size or (height, width)
+   229: 
+   230:         # embedding
+   231:         (null_prompt_embeds,
+   232:          prompt_embeds,
+   233:          pool_null_embed,
+   234:          pool_prompt_embed) = self.get_text_embed(prompt1[0], prompt1[1], prompt2[0], prompt2[1], clip_skip)
+   235: 
+   236:         # prepare kwargs for SDXL
+   237:         add_text_embeds = pool_prompt_embed
+   238:         add_time_ids = self._get_add_time_ids(
+   239:             original_size,
+   240:             crops_coords_top_left,
+   241:             target_size,
+   242:             dtype=prompt_embeds.dtype,
+   243:             text_encoder_projection_dim=int(pool_prompt_embed.shape[-1]),
+   244:         )
+   245: 
+   246:         if negative_original_size is not None and negative_target_size is not None:
+   247:             negative_add_time_ids = self._get_add_time_ids(
+   248:                 negative_original_size,
+   249:                 negative_crops_coords_top_left,
+   250:                 negative_target_size,
+   251:                 dtype=prompt_embeds.dtype,
+   252:                 text_encoder_projection_dim=int(pool_prompt_embed.shape[-1]),
+   253:             )
+   254:         else:
+   255:             negative_add_time_ids = add_time_ids
+   256:         negative_text_embeds = pool_null_embed 
+   257: 
+   258:         if cfg_guidance != 0.0 and cfg_guidance != 1.0:
+   259:             # do cfg
+   260:             add_text_embeds = torch.cat([negative_text_embeds, add_text_embeds], dim=0)
+   261:             add_time_ids = torch.cat([negative_add_time_ids, add_time_ids], dim=0)
+   262: 
+   263:         add_cond_kwargs = {
+   264:             'text_embeds': add_text_embeds.to(self.device),
+   265:             'time_ids': add_time_ids.to(self.device)
+   266:         }
    267: 
-   268:     def initialize_latent(self,
-   269:                           method: str='random',
-   270:                           src_img: Optional[torch.Tensor]=None,
-   271:                           add_cond_kwargs: Optional[dict]=None,
-   272:                           **kwargs):
-   273:         if method == 'ddim':
-   274:             assert src_img is not None, "src_img must be provided for inversion"
-   275:             z = self.inversion(self.encode(src_img.to(self.dtype).to(self.device)),
-   276:                                kwargs.get('uc'),
-   277:                                kwargs.get('c'),
-   278:                                kwargs.get('cfg_guidance', 0.0),
-   279:                                add_cond_kwargs)
-   280:         elif method == 'npi':
-   281:             assert src_img is not None, "src_img must be provided for inversion"
-   282:             z = self.inversion(self.encode(src_img.to(self.dtype).to(self.device)),
-   283:                                kwargs.get('c'),
-   284:                                kwargs.get('c'),
-   285:                                1.0,
-   286:                                add_cond_kwargs)
-   287:         elif method == 'random':
-   288:             size = kwargs.get('size', (1, 4, 128, 128))
-   289:             z = torch.randn(size).to(self.device)
-   290:         elif method == 'random_kdiffusion':
-   291:             size = kwargs.get('latent_dim', (1, 4, 128, 128))
-   292:             sigmas = kwargs.get('sigmas', [14.6146])
-   293:             z = torch.randn(size).to(self.device)
-   294:             z = z * (sigmas[0] ** 2 + 1) ** 0.5
-   295:             #z = z * sigmas[0]
-   296:         else: 
-   297:             raise NotImplementedError
-   298: 
-   299:         return z.requires_grad_()
-   300:     
-   301:     def inversion(self, z0, uc, c, cfg_guidance, add_cond_kwargs):
-   302:         # if we use cfg_guidance=0.0 or 1.0 for inversion, add_cond_kwargs must be splitted. 
-   303:         if cfg_guidance == 0.0 or cfg_guidance == 1.0:
-   304:             add_cond_kwargs['text_embeds'] = add_cond_kwargs['text_embeds'][-1].unsqueeze(0)
-   305:             add_cond_kwargs['time_ids'] = add_cond_kwargs['time_ids'][-1].unsqueeze(0)
-   306: 
-   307:         zt = z0.clone().to(self.device)
-   308:         pbar = tqdm(reversed(self.scheduler.timesteps), desc='DDIM inversion')
-   309:         for _, t in enumerate(pbar):
-   310:             at = self.alpha(t)
-   311:             at_prev = self.alpha(t - self.skip)
-   312: 
-   313:             with torch.no_grad():
-   314:                 noise_uc, noise_c  = self.predict_noise(zt, t, uc, c, add_cond_kwargs)
-   315:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   316: 
-   317:             z0t = (zt - (1-at_prev).sqrt() * noise_pred) / at_prev.sqrt()
-   318:             zt = at.sqrt() * z0t + (1-at).sqrt() * noise_pred
-   319: 
-   320:         return zt
-   321:     
-   322:     def reverse_process(self, *args, **kwargs):
-   323:         raise NotImplementedError
-   324: 
-   325:     # Belows are for K-diffusion sampling (euler, etc)
-   326:     def calculate_input(self, x, sigma):
-   327:         return x / (sigma ** 2 + 1) ** 0.5
-   328:     
-   329:     # Related to the Tweedie's formula in VE
-   330:     def calculate_denoised(self, x, model_pred, sigma):
-   331:         return x - model_pred * sigma
-   332:     
-   333:     def sigma_to_t(self, sigma, quantize=None):
-   334:         '''Taken from k_diffusion/external.py'''
-   335:         quantize = self.quantize if quantize is None else quantize
-   336:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-   337:         dists = sigma - total_sigmas[:, None]
-   338:         if quantize:
-   339:             return dists.abs().argmin(dim=0).view(sigma.shape)
-   340:         low_idx = dists.ge(0).cumsum(dim=0).argmax(dim=0).clamp(max=total_sigmas.shape[0] - 2)
-   341:         high_idx = low_idx + 1
-   342:         low, high = total_sigmas[low_idx], total_sigmas[high_idx]
-   343:         w = (low - sigma) / (low - high)
-   344:         w = w.clamp(0, 1)
-   345:         t = (1 - w) * low_idx + w * high_idx
-   346:         return t.view(sigma.shape)
-   347:     
-   348:     def timestep(self, sigma):
-   349:         log_sigma = sigma.log()
-   350:         dists = log_sigma.to(self.log_sigmas.device) - self.log_sigmas[:, None]
-   351:         return dists.abs().argmin(dim=0).view(sigma.shape).to(sigma.device)
-   352: 
-   353:     def to_d(self, x, sigma, denoised):
-   354:         '''converts a denoiser output to a Karras ODE derivative'''
-   355:         return (x - denoised) / sigma.item()
+   268:         # reverse sampling
+   269:         zt = self.reverse_process(null_prompt_embeds, prompt_embeds, cfg_guidance, add_cond_kwargs, target_size, **kwargs)
+   270: 
+   271:         # decode
+   272:         with torch.no_grad():
+   273:             img = self.decode(zt)
+   274:         img = (img / 2 + 0.5).clamp(0, 1)
+   275:         return img.detach().cpu()
+   276: 
+   277:     def initialize_latent(self,
+   278:                           method: str='random',
+   279:                           src_img: Optional[torch.Tensor]=None,
+   280:                           add_cond_kwargs: Optional[dict]=None,
+   281:                           **kwargs):
+   282:         if method == 'ddim':
+   283:             assert src_img is not None, "src_img must be provided for inversion"
+   284:             z = self.inversion(self.encode(src_img.to(self.dtype).to(self.device)),
+   285:                                kwargs.get('uc'),
+   286:                                kwargs.get('c'),
+   287:                                kwargs.get('cfg_guidance', 0.0),
+   288:                                add_cond_kwargs)
+   289:         elif method == 'npi':
+   290:             assert src_img is not None, "src_img must be provided for inversion"
+   291:             z = self.inversion(self.encode(src_img.to(self.dtype).to(self.device)),
+   292:                                kwargs.get('c'),
+   293:                                kwargs.get('c'),
+   294:                                1.0,
+   295:                                add_cond_kwargs)
+   296:         elif method == 'random':
+   297:             size = kwargs.get('size', (1, 4, 128, 128))
+   298:             z = torch.randn(size).to(self.device)
+   299:         elif method == 'random_kdiffusion':
+   300:             size = kwargs.get('latent_dim', (1, 4, 128, 128))
+   301:             sigmas = kwargs.get('sigmas', [14.6146])
+   302:             z = torch.randn(size).to(self.device)
+   303:             z = z * (sigmas[0] ** 2 + 1) ** 0.5
+   304:             #z = z * sigmas[0]
+   305:         else: 
+   306:             raise NotImplementedError
+   307: 
+   308:         return z.requires_grad_()
+   309:     
+   310:     def inversion(self, z0, uc, c, cfg_guidance, add_cond_kwargs):
+   311:         # if we use cfg_guidance=0.0 or 1.0 for inversion, add_cond_kwargs must be splitted. 
+   312:         if cfg_guidance == 0.0 or cfg_guidance == 1.0:
+   313:             add_cond_kwargs['text_embeds'] = add_cond_kwargs['text_embeds'][-1].unsqueeze(0)
+   314:             add_cond_kwargs['time_ids'] = add_cond_kwargs['time_ids'][-1].unsqueeze(0)
+   315: 
+   316:         zt = z0.clone().to(self.device)
+   317:         pbar = tqdm(reversed(self.scheduler.timesteps), desc='DDIM inversion')
+   318:         for _, t in enumerate(pbar):
+   319:             at = self.alpha(t)
+   320:             at_prev = self.alpha(t - self.skip)
+   321: 
+   322:             with torch.no_grad():
+   323:                 noise_uc, noise_c  = self.predict_noise(zt, t, uc, c, add_cond_kwargs)
+   324:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+   325: 
+   326:             z0t = (zt - (1-at_prev).sqrt() * noise_pred) / at_prev.sqrt()
+   327:             zt = at.sqrt() * z0t + (1-at).sqrt() * noise_pred
+   328: 
+   329:         return zt
+   330:     
+   331:     def reverse_process(self, *args, **kwargs):
+   332:         raise NotImplementedError
+   333: 
+   334:     # Belows are for K-diffusion sampling (euler, etc)
+   335:     def calculate_input(self, x, sigma):
+   336:         return x / (sigma ** 2 + 1) ** 0.5
+   337:     
+   338:     # Related to the Tweedie's formula in VE
+   339:     def calculate_denoised(self, x, model_pred, sigma):
+   340:         return x - model_pred * sigma
+   341:     
+   342:     def sigma_to_t(self, sigma, quantize=None):
+   343:         '''Taken from k_diffusion/external.py'''
+   344:         quantize = self.quantize if quantize is None else quantize
+   345:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   346:         dists = sigma - total_sigmas[:, None]
+   347:         if quantize:
+   348:             return dists.abs().argmin(dim=0).view(sigma.shape)
+   349:         low_idx = dists.ge(0).cumsum(dim=0).argmax(dim=0).clamp(max=total_sigmas.shape[0] - 2)
+   350:         high_idx = low_idx + 1
+   351:         low, high = total_sigmas[low_idx], total_sigmas[high_idx]
+   352:         w = (low - sigma) / (low - high)
+   353:         w = w.clamp(0, 1)
+   354:         t = (1 - w) * low_idx + w * high_idx
+   355:         return t.view(sigma.shape)
    356:     
-   357:     def kdiffusion_zt_to_denoised(self, x, sigma, uc, c, cfg_guidance, t, add_cond_kwargs):
-   358:         xc = self.calculate_input(x, sigma)
-   359:         noise_uc, noise_c = self.predict_noise(xc, t, uc, c, add_cond_kwargs)
-   360:         noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   361:         denoised = self.calculate_denoised(x, noise_pred, sigma)
-   362:         uncond_denoised = self.calculate_denoised(x, noise_uc, sigma)
-   363:         return denoised, uncond_denoised
-   364: 
-   365: 
-   366: class SDXLLightning(SDXL):
-   367:     def __init__(self, 
-   368:                  solver_config: dict,
-   369:                  base_model_key:str="stabilityai/stable-diffusion-xl-base-1.0",
-   370:                  #light_model_ckpt:str="ckpt/sdxl_lightning_4step_unet.safetensors",
-   371:                  light_model_ckpt:str="ckpt/LEOSAM HelloWorld 极速版_6.0 Lightning.safetensors",
-   372:                  dtype=torch.float16,
-   373:                  device='cuda'):
+   357:     def timestep(self, sigma):
+   358:         log_sigma = sigma.log()
+   359:         dists = log_sigma.to(self.log_sigmas.device) - self.log_sigmas[:, None]
+   360:         return dists.abs().argmin(dim=0).view(sigma.shape).to(sigma.device)
+   361: 
+   362:     def to_d(self, x, sigma, denoised):
+   363:         '''converts a denoiser output to a Karras ODE derivative'''
+   364:         return (x - denoised) / sigma.item()
+   365:     
+   366:     def kdiffusion_zt_to_denoised(self, x, sigma, uc, c, cfg_guidance, t, add_cond_kwargs):
+   367:         xc = self.calculate_input(x, sigma)
+   368:         noise_uc, noise_c = self.predict_noise(xc, t, uc, c, add_cond_kwargs)
+   369:         noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+   370:         denoised = self.calculate_denoised(x, noise_pred, sigma)
+   371:         uncond_denoised = self.calculate_denoised(x, noise_uc, sigma)
+   372:         return denoised, uncond_denoised
+   373: 
    374: 
-   375:         self.device = device
-   376: 
-   377:         # load the student model
-   378:         """
-   379:         unet = UNet2DConditionModel.from_config(base_model_key, subfolder="unet").to("cuda", torch.float16)
-   380:         ext = os.path.splitext(light_model_ckpt)[1]
-   381:         if ext == ".safetensors":
-   382:             state_dict = load_file(light_model_ckpt)
-   383:         else:
-   384:             state_dict = torch.load(light_model_ckpt, map_location="cpu")
-   385:         print(unet.load_state_dict(state_dict, strict=True))
-   386:         unet.requires_grad_(False)
-   387:         self.unet = unet
-   388:         """
-   389: 
-   390:         pipe = StableDiffusionXLPipeline.from_single_file(light_model_ckpt, torch_dtype=dtype).to(device)
-   391:         self.unet = pipe.unet
-   392:         #pipe = StableDiffusionXLPipeline.from_pretrained(base_model_key, unet=self.unet, torch_dtype=dtype).to(device)
-   393:         self.dtype = dtype
-   394: 
-   395:         # avoid overflow in float16
-   396:         self.vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to(device)
-   397: 
-   398:         self.tokenizer_1 = pipe.tokenizer
-   399:         self.tokenizer_2 = pipe.tokenizer_2
-   400:         self.text_enc_1 = pipe.text_encoder
-   401:         self.text_enc_2 = pipe.text_encoder_2
-   402: 
-   403:         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
-   404:         self.default_sample_size = self.unet.config.sample_size
-   405: 
-   406:         # sampling parameters
-   407:         self.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
-   408:         self.total_alphas = self.scheduler.alphas_cumprod.clone()
-   409: 
-   410:         self.sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-   411:         self.log_sigmas = self.sigmas.log()
-   412: 
-   413:         N_ts = len(self.scheduler.timesteps)
-   414:         self.scheduler.set_timesteps(solver_config.num_sampling, device=device)
-   415:         self.skip = N_ts // solver_config.num_sampling
-   416: 
-   417:         #self.final_alpha_cumprod = self.scheduler.final_alpha_cumprod.to(device)
-   418:         self.scheduler.alphas_cumprod = torch.cat([torch.tensor([1.0]), self.scheduler.alphas_cumprod]).to(device)
-   419: 
-   420: 
-   421: ###########################################
-   422: # Base version
-   423: ###########################################
-   424: 
-   425: @register_solver('ddim')
-   426: class BaseDDIM(SDXL):
-   427:     def reverse_process(self,
-   428:                         null_prompt_embeds,
-   429:                         prompt_embeds,
-   430:                         cfg_guidance,
-   431:                         add_cond_kwargs,
-   432:                         shape=(1024, 1024),
-   433:                         callback_fn=None,
-   434:                         **kwargs):
-   435:         #################################
-   436:         # Sample region - where to change
-   437:         #################################
-   438:         # initialize zT
-   439:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
-   440:         
-   441:         # sampling
-   442:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
-   443:         for step, t in enumerate(pbar):
-   444:             next_t = t - self.skip
-   445:             at = self.scheduler.alphas_cumprod[t]
-   446:             at_next = self.scheduler.alphas_cumprod[next_t]
-   447: 
-   448:             with torch.no_grad():
-   449:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
-   450:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   451:             
-   452:             # tweedie
-   453:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-   454: 
-   455:             # add noise
-   456:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
-   457: 
-   458:             if callback_fn is not None:
-   459:                 callback_kwargs = { 'z0t': z0t.detach(),
-   460:                                     'zt': zt.detach(),
-   461:                                     'decode': self.decode}
-   462:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   463:                 z0t = callback_kwargs["z0t"]
-   464:                 zt = callback_kwargs["zt"]
-   465: 
-   466:         # for the last stpe, do not add noise
-   467:         return z0t
-   468: 
-   469: @register_solver('euler')
-   470: class Euler(SDXL):
-   471:     quantize = True
-   472:     """
-   473:     Karras Euler (VE casted)
-   474:     """
-   475:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   476:     def reverse_process(self,
-   477:                         null_prompt_embeds,
-   478:                         prompt_embeds,
-   479:                         cfg_guidance,
-   480:                         add_cond_kwargs,
-   481:                         shape=(1024, 1024),
-   482:                         callback_fn=None,
-   483:                         **kwargs):
-   484:         # convert to karras sigma scheduler
-   485:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-   486:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
-   487: 
-   488:         # initialize
-   489:         zt_dim = (1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor)
-   490:         zt = self.initialize_latent(method="random_kdiffusion",
-   491:                                    latent_dim=zt_dim,
-   492:                                    sigmas=sigmas).to(torch.float16)
-   493:         
-   494:         # sampling
-   495:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
-   496:         for step, t in enumerate(pbar):
-   497:             sigma = sigmas[step]
-   498:             t = self.timestep(sigma).to(self.device)
-   499: 
-   500:             with torch.no_grad():
+   375: class SDXLLightning(SDXL):
+   376:     def __init__(self, 
+   377:                  solver_config: dict,
+   378:                  base_model_key:str="stabilityai/stable-diffusion-xl-base-1.0",
+   379:                  #light_model_ckpt:str="ckpt/sdxl_lightning_4step_unet.safetensors",
+   380:                  light_model_ckpt:str="ckpt/LEOSAM HelloWorld 极速版_6.0 Lightning.safetensors",
+   381:                  dtype=torch.float16,
+   382:                  device='cuda'):
+   383: 
+   384:         self.device = device
+   385: 
+   386:         # load the student model
+   387:         """
+   388:         unet = UNet2DConditionModel.from_config(base_model_key, subfolder="unet").to("cuda", torch.float16)
+   389:         ext = os.path.splitext(light_model_ckpt)[1]
+   390:         if ext == ".safetensors":
+   391:             state_dict = load_file(light_model_ckpt)
+   392:         else:
+   393:             state_dict = torch.load(light_model_ckpt, map_location="cpu")
+   394:         print(unet.load_state_dict(state_dict, strict=True))
+   395:         unet.requires_grad_(False)
+   396:         self.unet = unet
+   397:         """
+   398: 
+   399:         pipe = StableDiffusionXLPipeline.from_single_file(light_model_ckpt, torch_dtype=dtype).to(device)
+   400:         self.unet = pipe.unet
+   401:         #pipe = StableDiffusionXLPipeline.from_pretrained(base_model_key, unet=self.unet, torch_dtype=dtype).to(device)
+   402:         self.dtype = dtype
+   403: 
+   404:         # avoid overflow in float16
+   405:         self.vae = AutoencoderKL.from_pretrained("madebyollin/sdxl-vae-fp16-fix", torch_dtype=dtype).to(device)
+   406: 
+   407:         self.tokenizer_1 = pipe.tokenizer
+   408:         self.tokenizer_2 = pipe.tokenizer_2
+   409:         self.text_enc_1 = pipe.text_encoder
+   410:         self.text_enc_2 = pipe.text_encoder_2
+   411: 
+   412:         self.vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+   413:         self.default_sample_size = self.unet.config.sample_size
+   414: 
+   415:         # sampling parameters
+   416:         self.scheduler = EulerDiscreteScheduler.from_config(pipe.scheduler.config, timestep_spacing="trailing")
+   417:         self.total_alphas = self.scheduler.alphas_cumprod.clone()
+   418: 
+   419:         self.sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   420:         self.log_sigmas = self.sigmas.log()
+   421: 
+   422:         N_ts = len(self.scheduler.timesteps)
+   423:         self.scheduler.set_timesteps(solver_config.num_sampling, device=device)
+   424:         self.skip = N_ts // solver_config.num_sampling
+   425: 
+   426:         #self.final_alpha_cumprod = self.scheduler.final_alpha_cumprod.to(device)
+   427:         self.scheduler.alphas_cumprod = torch.cat([torch.tensor([1.0]), self.scheduler.alphas_cumprod]).to(device)
+   428: 
+   429: 
+   430: ###########################################
+   431: # Base version
+   432: ###########################################
+   433: 
+   434: @register_solver('ddim')
+   435: class BaseDDIM(SDXL):
+   436:     def reverse_process(self,
+   437:                         null_prompt_embeds,
+   438:                         prompt_embeds,
+   439:                         cfg_guidance,
+   440:                         add_cond_kwargs,
+   441:                         shape=(1024, 1024),
+   442:                         callback_fn=None,
+   443:                         **kwargs):
+   444:         #################################
+   445:         # Sample region - where to change
+   446:         #################################
+   447:         # initialize zT
+   448:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
+   449:         
+   450:         # sampling
+   451:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
+   452:         for step, t in enumerate(pbar):
+   453:             next_t = t - self.skip
+   454:             at = self.scheduler.alphas_cumprod[t]
+   455:             at_next = self.scheduler.alphas_cumprod[next_t]
+   456: 
+   457:             with torch.no_grad():
+   458:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   459:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+   460:             
+   461:             # tweedie
+   462:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+   463: 
+   464:             # add noise
+   465:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
+   466: 
+   467:             if callback_fn is not None:
+   468:                 callback_kwargs = { 'z0t': z0t.detach(),
+   469:                                     'zt': zt.detach(),
+   470:                                     'decode': self.decode}
+   471:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
+   472:                 z0t = callback_kwargs["z0t"]
+   473:                 zt = callback_kwargs["zt"]
+   474: 
+   475:         # for the last stpe, do not add noise
+   476:         return z0t
+   477: 
+   478: @register_solver('euler')
+   479: class Euler(SDXL):
+   480:     quantize = True
+   481:     """
+   482:     Karras Euler (VE casted)
+   483:     """
+   484:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   485:     def reverse_process(self,
+   486:                         null_prompt_embeds,
+   487:                         prompt_embeds,
+   488:                         cfg_guidance,
+   489:                         add_cond_kwargs,
+   490:                         shape=(1024, 1024),
+   491:                         callback_fn=None,
+   492:                         **kwargs):
+   493:         # convert to karras sigma scheduler
+   494:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   495:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+   496: 
+   497:         # initialize
+   498:         zt_dim = (1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor)
+   499:         zt = self.initialize_latent(method="random_kdiffusion",
+   500:                                    latent_dim=zt_dim,
 
 [truncated: showing at most 500 lines / 60000 bytes from CFGpp-main/latent_sdxl.py]
 ```
@@ -1137,7 +1137,7 @@ a baseline reproduction.
 In `CFGpp-main/latent_diffusion.py`:
 
 ```python
-Lines 621–675:
+Lines 621–678:
    618: # CFG++ version
    619: ###########################################
    620: 
@@ -1175,30 +1175,33 @@ Lines 621–675:
    652:             at_prev = self.alpha(t - self.skip)
    653: 
    654:             with torch.no_grad():
-   655:                 noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
-   656:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   657: 
-   658:             # Tweedie: estimate clean image
-   659:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+   655:                 if cfg_guidance == 1.0:
+   656:                     noise_pred = self.predict_noise(zt, t, None, c)[1]
+   657:                 else:
+   658:                     noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
+   659:                     noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
    660: 
-   661:             # DDIM update: first-order, use unconditional noise for CFG++
-   662:             zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_uc
+   661:             # Tweedie: estimate clean image
+   662:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
    663: 
-   664:             if callback_fn is not None:
-   665:                 callback_kwargs = {'z0t': z0t.detach(),
-   666:                                     'zt': zt.detach(),
-   667:                                     'decode': self.decode}
-   668:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   669:                 z0t = callback_kwargs["z0t"]
-   670:                 zt = callback_kwargs["zt"]
-   671: 
-   672:         # Decode final latent
-   673:         img = self.decode(z0t)
-   674:         img = (img / 2 + 0.5).clamp(0, 1)
-   675:         return img.detach().cpu()
-   676:     
-   677:     
-   678: @register_solver("euler_cfg++")
+   664:             # DDIM update: standard CFG renoising
+   665:             zt = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_pred
+   666: 
+   667:             if callback_fn is not None:
+   668:                 callback_kwargs = {'z0t': z0t.detach(),
+   669:                                     'zt': zt.detach(),
+   670:                                     'decode': self.decode}
+   671:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
+   672:                 z0t = callback_kwargs["z0t"]
+   673:                 zt = callback_kwargs["zt"]
+   674: 
+   675:         # Decode final latent
+   676:         img = self.decode(z0t)
+   677:         img = (img / 2 + 0.5).clamp(0, 1)
+   678:         return img.detach().cpu()
+   679:     
+   680:     
+   681: @register_solver("euler_cfg++")
 ```
 
 ### `dpm3m_sde` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1306,88 +1309,83 @@ Lines 621–706:
 In `CFGpp-main/latent_diffusion.py`:
 
 ```python
-Lines 621–695:
+Lines 621–690:
    618: # CFG++ version
    619: ###########################################
    620: 
    621: @register_solver("ddim_cfg++")
    622: class BaseDDIMCFGpp(StableDiffusion):
-   623:     """
-   624:     DPM++ 2S sampler with CFG++.
-   625:     Second-order singlestep (Heun's method) - higher quality per step.
-   626:     """
-   627:     def __init__(self,
-   628:                  solver_config: Dict,
-   629:                  model_key:str="runwayml/stable-diffusion-v1-5",
-   630:                  device: Optional[torch.device]=None,
-   631:                  **kwargs):
-   632:         super().__init__(solver_config, model_key, device, **kwargs)
-   633: 
-   634:     @torch.autocast(device_type='cuda', dtype=torch.float16)
-   635:     def sample(self,
-   636:                cfg_guidance=7.5,
-   637:                prompt=["",""],
-   638:                callback_fn=None,
-   639:                **kwargs):
-   640: 
-   641:         # Text embedding
-   642:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
-   643: 
-   644:         # Initialize zT
-   645:         zt = self.initialize_latent()
-   646:         zt = zt.requires_grad_()
-   647: 
-   648:         # Halve timesteps: 2 model evals per step to stay within NFE budget
-   649:         timesteps = self.scheduler.timesteps[::2]
-   650:         double_skip = 2 * self.skip
-   651: 
-   652:         # Sampling
-   653:         pbar = tqdm(timesteps, desc="DPM++2S")
-   654:         for step, t in enumerate(pbar):
-   655:             at = self.alpha(t)
-   656:             at_prev = self.alpha(t - double_skip)
-   657: 
-   658:             with torch.no_grad():
-   659:                 noise_uc, noise_c = self.predict_noise(zt, t, uc, c)
-   660:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   661: 
-   662:             # Tweedie: estimate clean image
-   663:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-   664: 
-   665:             # First prediction (Euler step to next timestep)
-   666:             zt_euler = at_prev.sqrt() * z0t + (1-at_prev).sqrt() * noise_uc
-   667: 
-   668:             # DPM++ 2S: Heun's method for second-order accuracy
-   669:             if step < len(timesteps) - 1:
-   670:                 # Evaluate at the predicted point (endpoint of Euler step)
-   671:                 with torch.no_grad():
-   672:                     noise_uc_2, noise_c_2 = self.predict_noise(zt_euler, t - double_skip, uc, c)
-   673:                     noise_pred_2 = noise_uc_2 + cfg_guidance * (noise_c_2 - noise_uc_2)
+   623:     """DPM++ 2S Ancestral sampler with standard CFG."""
+   624:     def __init__(self,
+   625:                  solver_config: Dict,
+   626:                  model_key:str="runwayml/stable-diffusion-v1-5",
+   627:                  device: Optional[torch.device]=None,
+   628:                  **kwargs):
+   629:         super().__init__(solver_config, model_key, device, **kwargs)
+   630: 
+   631:     @torch.autocast(device_type='cuda', dtype=torch.float16)
+   632:     def sample(self,
+   633:                cfg_guidance=7.5,
+   634:                prompt=["",""],
+   635:                callback_fn=None,
+   636:                **kwargs):
+   637:         t_fn = lambda sigma: sigma.log().neg()
+   638:         sigma_fn = lambda t: t.neg().exp()
+   639: 
+   640:         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
+   641: 
+   642:         # Two evaluations per step: 25 steps = 49 NFE (the last step is Euler).
+   643:         n_steps = len(self.scheduler.timesteps) // 2
+   644:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   645:         sigmas = get_sigmas_karras(n_steps, total_sigmas.min(), total_sigmas.max(), rho=7.)
+   646: 
+   647:         x = self.initialize_latent(method="random_kdiffusion",
+   648:                                    latent_dim=(1, 4, 64, 64),
+   649:                                    sigmas=sigmas).to(torch.float16)
+   650: 
+   651:         pbar = tqdm(range(n_steps), desc="DPM++2S")
+   652:         for i, _ in enumerate(pbar):
+   653:             sigma = sigmas[i]
+   654:             new_t = self.timestep(sigma).to(self.device)
+   655: 
+   656:             with torch.no_grad():
+   657:                 denoised, _ = self.kdiffusion_x_to_denoised(x, sigma, uc, c, cfg_guidance, new_t)
+   658: 
+   659:             sigma_down, sigma_up = self.get_ancestral_step(sigmas[i], sigmas[i + 1])
+   660:             if sigma_down == 0:
+   661:                 d = self.to_d(x, sigmas[i], denoised)
+   662:                 x = denoised + d * sigma_down
+   663:             else:
+   664:                 t, t_next = t_fn(sigmas[i]), t_fn(sigma_down)
+   665:                 r = 1 / 2
+   666:                 h = t_next - t
+   667:                 s = t + r * h
+   668:                 x_2 = (sigma_fn(s) / sigma_fn(t)) * x - (-h * r).expm1() * denoised
+   669: 
+   670:                 with torch.no_grad():
+   671:                     sigma_s = sigma_fn(s)
+   672:                     t_2 = self.timestep(sigma_s).to(self.device)
+   673:                     denoised_2, _ = self.kdiffusion_x_to_denoised(x_2, sigma_s, uc, c, cfg_guidance, t_2)
    674: 
-   675:                 z0t_2 = (zt_euler - (1-at_prev).sqrt() * noise_pred_2) / at_prev.sqrt()
+   675:                 x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_2
    676: 
-   677:                 # Average the two estimates (Heun's method)
-   678:                 z0t_avg = 0.5 * (z0t + z0t_2)
-   679:                 zt = at_prev.sqrt() * z0t_avg + (1-at_prev).sqrt() * noise_uc
-   680:             else:
-   681:                 # Last step: just use first-order
-   682:                 zt = zt_euler
-   683: 
-   684:             if callback_fn is not None:
-   685:                 callback_kwargs = {'z0t': z0t.detach(),
-   686:                                     'zt': zt.detach(),
-   687:                                     'decode': self.decode}
-   688:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   689:                 z0t = callback_kwargs["z0t"]
-   690:                 zt = callback_kwargs["zt"]
-   691: 
-   692:         # Decode final latent
-   693:         img = self.decode(z0t)
-   694:         img = (img / 2 + 0.5).clamp(0, 1)
-   695:         return img.detach().cpu()
-   696:     
-   697:     
-   698: @register_solver("euler_cfg++")
+   677:             if sigmas[i + 1] > 0:
+   678:                 x = x + torch.randn_like(x) * sigma_up
+   679: 
+   680:             if callback_fn is not None:
+   681:                 callback_kwargs = {'z0t': denoised.detach(),
+   682:                                     'zt': x.detach(),
+   683:                                     'decode': self.decode}
+   684:                 callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+   685:                 denoised = callback_kwargs["z0t"]
+   686:                 x = callback_kwargs["zt"]
+   687: 
+   688:         img = self.decode(x)
+   689:         img = (img / 2 + 0.5).clamp(0, 1)
+   690:         return img.detach().cpu()
+   691:     
+   692:     
+   693: @register_solver("euler_cfg++")
 ```
 
 ### `ddim` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1395,49 +1393,148 @@ Lines 621–695:
 In `CFGpp-main/latent_sdxl.py`:
 
 ```python
-Lines 713–748:
-   710: # CFG++ version
-   711: ###########################################
-   712: 
-   713: @register_solver("ddim_cfg++")
-   714: class BaseDDIMCFGpp(SDXL):
-   715:     def reverse_process(self,
-   716:                         null_prompt_embeds,
-   717:                         prompt_embeds,
-   718:                         cfg_guidance,
-   719:                         add_cond_kwargs,
-   720:                         shape=(1024, 1024),
-   721:                         callback_fn=None,
-   722:                         **kwargs):
-   723:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
-   724: 
-   725:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
-   726:         for step, t in enumerate(pbar):
-   727:             next_t = t - self.skip
-   728:             at = self.scheduler.alphas_cumprod[t]
-   729:             at_next = self.scheduler.alphas_cumprod[next_t]
-   730: 
-   731:             with torch.no_grad():
-   732:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
-   733:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
-   734: 
-   735:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-   736: 
-   737:             # DDIM: first-order, use noise_uc for CFG++
-   738:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_uc
+Lines 722–757:
+   719: # CFG++ version
+   720: ###########################################
+   721: 
+   722: @register_solver("ddim_cfg++")
+   723: class BaseDDIMCFGpp(SDXL):
+   724:     def reverse_process(self,
+   725:                         null_prompt_embeds,
+   726:                         prompt_embeds,
+   727:                         cfg_guidance,
+   728:                         add_cond_kwargs,
+   729:                         shape=(1024, 1024),
+   730:                         callback_fn=None,
+   731:                         **kwargs):
+   732:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
+   733: 
+   734:         pbar = tqdm(self.scheduler.timesteps.int(), desc='SDXL')
+   735:         for step, t in enumerate(pbar):
+   736:             next_t = t - self.skip
+   737:             at = self.scheduler.alphas_cumprod[t]
+   738:             at_next = self.scheduler.alphas_cumprod[next_t]
    739: 
-   740:             if callback_fn is not None:
-   741:                 callback_kwargs = {'z0t': z0t.detach(),
-   742:                                     'zt': zt.detach(),
-   743:                                     'decode': self.decode}
-   744:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   745:                 z0t = callback_kwargs["z0t"]
-   746:                 zt = callback_kwargs["zt"]
-   747: 
-   748:         return z0t
-   749: 
-   750: @register_solver('euler_cfg++')
-   751: class EulerCFGpp(SDXL):
+   740:             with torch.no_grad():
+   741:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   742:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+   743: 
+   744:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
+   745: 
+   746:             # DDIM: standard CFG renoising
+   747:             zt = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_pred
+   748: 
+   749:             if callback_fn is not None:
+   750:                 callback_kwargs = {'z0t': z0t.detach(),
+   751:                                     'zt': zt.detach(),
+   752:                                     'decode': self.decode}
+   753:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
+   754:                 z0t = callback_kwargs["z0t"]
+   755:                 zt = callback_kwargs["zt"]
+   756: 
+   757:         return z0t
+   758: 
+   759: @register_solver('euler_cfg++')
+   760: class EulerCFGpp(SDXL):
+```
+
+### `dpm3m_sde` baseline — editable region  [READ-ONLY — reference implementation]
+
+In `CFGpp-main/latent_sdxl.py`:
+
+```python
+Lines 722–806:
+   719: # CFG++ version
+   720: ###########################################
+   721: 
+   722: @register_solver("ddim_cfg++")
+   723: class BaseDDIMCFGpp(SDXL):
+   724:     """DPM-Solver++(3M) SDE with Karras schedule for SDXL."""
+   725:     quantize = True
+   726: 
+   727:     def reverse_process(self,
+   728:                         null_prompt_embeds,
+   729:                         prompt_embeds,
+   730:                         cfg_guidance,
+   731:                         add_cond_kwargs,
+   732:                         shape=(1024, 1024),
+   733:                         callback_fn=None,
+   734:                         **kwargs):
+   735:         t_fn = lambda sigma: sigma.log().neg()
+   736: 
+   737:         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
+   738:         sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+   739: 
+   740:         latent_dim = (1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor)
+   741:         x = self.initialize_latent(method="random_kdiffusion",
+   742:                                    latent_dim=latent_dim,
+   743:                                    sigmas=sigmas).to(torch.float16)
+   744: 
+   745:         eta = 1.2
+   746:         denoised_1, denoised_2 = None, None
+   747:         h_1, h_2 = None, None
+   748: 
+   749:         pbar = tqdm(self.scheduler.timesteps, desc="SDXL-DPM++3M-SDE")
+   750:         for i, _ in enumerate(pbar):
+   751:             sigma = sigmas[i]
+   752:             new_t = self.sigma_to_t(sigma).to(self.device)
+   753:             c_in = (1 / (sigma ** 2 + 1)).sqrt()
+   754:             c_out = -sigma
+   755: 
+   756:             with torch.no_grad():
+   757:                 noise_uc, noise_c = self.predict_noise(
+   758:                     x * c_in, new_t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   759:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+   760: 
+   761:             denoised = x + c_out * noise_pred
+   762: 
+   763:             if sigmas[i + 1] == 0:
+   764:                 x = denoised
+   765:             else:
+   766:                 t, s = t_fn(sigmas[i]), t_fn(sigmas[i + 1])
+   767:                 h = s - t
+   768:                 h_eta = h * (eta + 1)
+   769: 
+   770:                 x = torch.exp(-h_eta) * x + (-h_eta).expm1().neg() * denoised
+   771: 
+   772:                 if denoised_1 is not None:
+   773:                     phi_2 = h_eta.neg().expm1() / h_eta + 1
+   774: 
+   775:                     if denoised_2 is None:
+   776:                         r = h_1 / h
+   777:                         d = (denoised - denoised_1) / r
+   778:                         x = x + phi_2 * d
+   779:                     else:
+   780:                         r0 = h_1 / h
+   781:                         r1 = h_2 / h_1
+   782:                         d1_0 = (denoised - denoised_1) / r0
+   783:                         d1_1 = (denoised_1 - denoised_2) / r1
+   784:                         d1 = d1_0 + (d1_0 - d1_1) * r0 / (r0 + r1)
+   785:                         d2 = (d1_0 - d1_1) / (r0 + r1)
+   786:                         phi_3 = phi_2 / h_eta - 0.5
+   787:                         x = x + phi_2 * d1 + phi_3 * d2
+   788: 
+   789:                 if eta > 0:
+   790:                     noise = torch.randn_like(x)
+   791:                     x = x + noise * sigmas[i + 1] * (-2 * h * eta).expm1().neg().sqrt()
+   792: 
+   793:                 denoised_2 = denoised_1
+   794:                 denoised_1 = denoised
+   795:                 h_2 = h_1
+   796:                 h_1 = h
+   797: 
+   798:             if callback_fn is not None:
+   799:                 callback_kwargs = {'z0t': denoised.detach(),
+   800:                                     'zt': x.detach(),
+   801:                                     'decode': self.decode}
+   802:                 callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+   803:                 denoised = callback_kwargs["z0t"]
+   804:                 x = callback_kwargs["zt"]
+   805: 
+   806:         return x
+   807: 
+   808: @register_solver('euler_cfg++')
+   809: class EulerCFGpp(SDXL):
 ```
 
 ### `dpm2s` baseline — editable region  [READ-ONLY — reference implementation]
@@ -1445,60 +1542,88 @@ Lines 713–748:
 In `CFGpp-main/latent_sdxl.py`:
 
 ```python
-Lines 713–759:
-   710: # CFG++ version
-   711: ###########################################
-   712: 
-   713: @register_solver("ddim_cfg++")
-   714: class BaseDDIMCFGpp(SDXL):
-   715:     def reverse_process(self,
-   716:                         null_prompt_embeds,
-   717:                         prompt_embeds,
-   718:                         cfg_guidance,
-   719:                         add_cond_kwargs,
-   720:                         shape=(1024, 1024),
-   721:                         callback_fn=None,
-   722:                         **kwargs):
-   723:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
-   724: 
-   725:         timesteps = self.scheduler.timesteps.int()[::2]
-   726:         double_skip = 2 * self.skip
-   727: 
-   728:         pbar = tqdm(timesteps, desc='SDXL-DPM++2S')
-   729:         for step, t in enumerate(pbar):
-   730:             at = self.scheduler.alphas_cumprod[t]
-   731:             at_next = self.scheduler.alphas_cumprod[t - double_skip]
-   732: 
-   733:             with torch.no_grad():
-   734:                 noise_uc, noise_c = self.predict_noise(zt, t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
-   735:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
+Lines 722–796:
+   719: # CFG++ version
+   720: ###########################################
+   721: 
+   722: @register_solver("ddim_cfg++")
+   723: class BaseDDIMCFGpp(SDXL):
+   724:     quantize = True
+   725: 
+   726:     def reverse_process(self,
+   727:                         null_prompt_embeds,
+   728:                         prompt_embeds,
+   729:                         cfg_guidance,
+   730:                         add_cond_kwargs,
+   731:                         shape=(1024, 1024),
+   732:                         callback_fn=None,
+   733:                         **kwargs):
+   734:         t_fn = lambda sigma: sigma.log().neg()
+   735:         sigma_fn = lambda t: t.neg().exp()
    736: 
-   737:             z0t = (zt - (1-at).sqrt() * noise_pred) / at.sqrt()
-   738:             zt_euler = at_next.sqrt() * z0t + (1-at_next).sqrt() * noise_uc
-   739: 
-   740:             if step < len(timesteps) - 1:
-   741:                 with torch.no_grad():
-   742:                     noise_uc_2, noise_c_2 = self.predict_noise(zt_euler, t - double_skip, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
-   743:                     noise_pred_2 = noise_uc_2 + cfg_guidance * (noise_c_2 - noise_uc_2)
-   744: 
-   745:                 z0t_2 = (zt_euler - (1-at_next).sqrt() * noise_pred_2) / at_next.sqrt()
-   746:                 z0t_avg = 0.5 * (z0t + z0t_2)
-   747:                 zt = at_next.sqrt() * z0t_avg + (1-at_next).sqrt() * noise_uc
-   748:             else:
-   749:                 zt = zt_euler
-   750: 
-   751:             if callback_fn is not None:
-   752:                 callback_kwargs = {'z0t': z0t.detach(),
-   753:                                     'zt': zt.detach(),
-   754:                                     'decode': self.decode}
-   755:                 callback_kwargs = callback_fn(step, t, callback_kwargs)
-   756:                 z0t = callback_kwargs["z0t"]
-   757:                 zt = callback_kwargs["zt"]
+   737:         # Two evaluations per step: 26 timesteps (first and last kept) = 25 steps = 50 NFE.
+   738:         ts = self.scheduler.timesteps.int().cpu()
+   739:         ts = ts[torch.linspace(0, len(ts) - 1, len(ts) // 2 + 1).round().long()]
+   740:         alphas = self.scheduler.alphas_cumprod[ts].cpu()
+   741:         sigmas = (1-alphas).sqrt() / alphas.sqrt()
+   742: 
+   743:         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
+   744:         x = zt * sigmas[0]
+   745: 
+   746:         pbar = tqdm(ts[:-1], desc='SDXL-DPM++2S')
+   747:         for i, _ in enumerate(pbar):
+   748:             at = alphas[i]
+   749:             sigma = sigmas[i]
+   750:             c_in = at.sqrt()
+   751:             c_out = -sigma
+   752: 
+   753:             new_t = self.sigma_to_t(sigma).to(self.device)
+   754: 
+   755:             with torch.no_grad():
+   756:                 noise_uc, noise_c = self.predict_noise(x * c_in, new_t, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   757:                 noise_pred = noise_uc + cfg_guidance * (noise_c - noise_uc)
    758: 
-   759:         return z0t
+   759:             denoised = x + c_out * noise_pred
    760: 
-   761: @register_solver('euler_cfg++')
-   762: class EulerCFGpp(SDXL):
+   761:             sigma_down, sigma_up = get_ancestral_step(sigmas[i], sigmas[i + 1])
+   762:             if sigma_down == 0:
+   763:                 d = (x - denoised) / sigma
+   764:                 x = denoised + d * sigma_down
+   765:             else:
+   766:                 t, t_next = t_fn(sigmas[i]), t_fn(sigma_down)
+   767:                 r = 1 / 2
+   768:                 h = t_next - t
+   769:                 s = t + r * h
+   770:                 x_2 = (sigma_fn(s) / sigma_fn(t)) * x - (-h * r).expm1() * denoised
+   771: 
+   772:                 sigma_s = sigma_fn(s)
+   773:                 at_s_idx = min(int((sigma_s**2 / (1 + sigma_s**2)) * len(alphas)), len(alphas)-1)
+   774:                 c_in_2 = (1 / (1 + sigma_s**2)).sqrt()
+   775:                 c_out_2 = -sigma_s
+   776:                 t_2 = self.sigma_to_t(sigma_s).to(self.device)
+   777: 
+   778:                 with torch.no_grad():
+   779:                     noise_uc_2, noise_c_2 = self.predict_noise(x_2 * c_in_2, t_2, null_prompt_embeds, prompt_embeds, add_cond_kwargs)
+   780:                     noise_pred_2 = noise_uc_2 + cfg_guidance * (noise_c_2 - noise_uc_2)
+   781: 
+   782:                 denoised_2 = x_2 + c_out_2 * noise_pred_2
+   783:                 x = (sigma_fn(t_next) / sigma_fn(t)) * x - (-h).expm1() * denoised_2
+   784: 
+   785:             if sigmas[i + 1] > 0:
+   786:                 x = x + torch.randn_like(x) * sigma_up
+   787: 
+   788:             if callback_fn is not None:
+   789:                 callback_kwargs = {'z0t': denoised.detach(),
+   790:                                     'zt': x.detach(),
+   791:                                     'decode': self.decode}
+   792:                 callback_kwargs = callback_fn(i, new_t, callback_kwargs)
+   793:                 denoised = callback_kwargs["z0t"]
+   794:                 x = callback_kwargs["zt"]
+   795: 
+   796:         return x
+   797: 
+   798: @register_solver('euler_cfg++')
+   799: class EulerCFGpp(SDXL):
 ```
 
 

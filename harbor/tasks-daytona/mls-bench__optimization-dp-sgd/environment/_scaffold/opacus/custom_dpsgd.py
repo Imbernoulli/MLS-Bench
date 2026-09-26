@@ -82,18 +82,8 @@ class CIFAR10Net(nn.Module):
 # (Mironov et al. 2019, as in Opacus) composed over steps, then (eps, delta).
 
 def compute_epsilon(steps, sigma, q, delta, alphas=None):
-    """Compute (epsilon, best_alpha) via RDP accounting.
-
-    Args:
-        steps: number of training steps
-        sigma: noise multiplier
-        q: sampling probability (batch_size / dataset_size)
-        delta: target delta
-        alphas: list of RDP orders to try
-
-    Returns:
-        (epsilon, best_alpha)
-    """
+    """(epsilon, best_alpha) after `steps` steps at noise multiplier `sigma`,
+    sampling rate q = batch_size / dataset_size, over the RDP orders `alphas`."""
     return compute_epsilon_schedule([(sigma, steps)], q, delta, alphas)
 
 
@@ -104,10 +94,7 @@ def compute_epsilon_schedule(schedule, q, delta, alphas=None):
 
 
 def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
-    """Find the noise multiplier sigma that achieves target_epsilon.
-
-    Uses binary search to find the right noise level.
-    """
+    """Binary-search the noise multiplier sigma that achieves target_epsilon."""
     sigma_low, sigma_high = 0.01, 100.0
     while sigma_high - sigma_low > tol:
         sigma_mid = (sigma_low + sigma_high) / 2
@@ -120,29 +107,42 @@ def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
 
 
 # Originals of what the FIXED harness relies on (noise, clipping check,
-# accountant, accuracy count), captured before the editable section runs.
-# ("module.<builtin>" must stay absent: fixed code looks these names up.)
-import builtins as _builtins
+# accountant, model calls, parameter update, accuracy count), captured before
+# the editable section runs; _check_harness (below) compares against them.
+import builtins as _builtins, torch.utils._device as _tdev
+import torch.nn.modules.module as _tmm, torch.optim.optimizer as _topt, torch.optim.sgd as _tsgd
 from scipy import special as _sp_special
-_HARNESS_BUILTINS = ("bool", "float", "int", "type", "len", "isinstance", "list",
-                     "tuple", "zip", "range", "enumerate", "min", "max", "abs",
-                     "print", "RuntimeError")
+optim.SGD([torch.zeros(1, requires_grad=True)], lr=0.1)  # wraps SGD.step (profiler) now
+_HARNESS_BUILTINS = ("bool", "float", "int", "type", "len", "isinstance", "list", "tuple", "zip",
+                     "range", "enumerate", "min", "max", "abs", "vars", "print", "RuntimeError")
 _HARNESS_REFS = tuple(
     (f"{label}.{name}", ns, name, ns.get(name))
     for label, ns, names in (
-        ("torch", vars(torch), ("Tensor", "randn_like", "cat")),
+        ("torch", vars(torch), ("Tensor", "randn_like", "cat", "_foreach_add", "_foreach_add_",
+                                "_foreach_mul", "_foreach_mul_", "_foreach_neg")),
         ("torch.linalg", vars(torch.linalg), ("vector_norm",)),
-        ("torch._C", vars(torch._C), ("_len_torch_function_stack",
+        ("torch._C", vars(torch._C), ("_len_torch_function_stack", "_get_function_stack_at",
                                       "_len_torch_dispatch_stack")),
         ("torch.Tensor", vars(torch.Tensor), (
-            "__torch_function__", "__getattribute__", "__getattr__", "shape",
-            "to", "clone", "detach", "reshape", "dim", "__mul__", "__add__",
-            "__le__", "__bool__", "all", "mean", "max", "item", "argmax", "eq",
-            "sum")),
+            "__torch_function__", "__getattribute__", "__getattr__", "shape", "grad", "to",
+            "clone", "detach", "reshape", "dim", "__mul__", "__add__", "__le__", "__bool__",
+            "all", "mean", "max", "item", "argmax", "eq", "sum")),
+        ("torch.nn.Module", vars(nn.Module), ("__call__", "_call_impl", "_wrapped_call_impl",
+                                              "__getattr__", "modules", "named_modules")),
+        ("torch.nn.modules.module", vars(_tmm), [n for n in vars(_tmm) if n.startswith("_global_")]),
+        ("torch.optim.optimizer", vars(_topt), ("_global_optimizer_pre_hooks",
+                                                "_global_optimizer_post_hooks")),
+        ("torch.optim", vars(optim), ("SGD",)),
+        # (not SGD._init_group / sgd._fused_sgd: torch.compile legitimately rewraps them)
+        ("torch.optim.SGD", vars(optim.SGD), ("step",)),
+        ("torch.optim.sgd", vars(_tsgd), ("sgd", "_single_tensor_sgd", "_multi_tensor_sgd")),
+        ("torch.utils._device", vars(_tdev), ("DeviceContext",)),
+        ("DeviceContext", vars(_tdev.DeviceContext), ("__torch_function__",)),
         ("math", vars(math), ("log", "log1p", "exp", "expm1", "sqrt", "isfinite")),
         ("scipy.special", vars(_sp_special), ("binom", "log_ndtr")),
         ("builtins", vars(_builtins), _HARNESS_BUILTINS),
-        ("module", globals(), ("torch", "print", "range", "enumerate", "zip",
+        # fixed module-level names; the builtins must stay unshadowed (absent) here
+        ("module", globals(), ("torch", "nn", "optim", "print", "range", "enumerate", "zip",
                                "len", "RuntimeError")),
     )
     for name in names
@@ -173,8 +173,8 @@ _HARNESS_REFS = tuple(
 # IMPORTANT:
 # - The total privacy budget (target_epsilon, target_delta) is FIXED. The
 #   harness accounts every step with the sigma_t it applied and aborts a run
-#   whose epsilon exceeds the target; a scaled per-sample gradient whose norm
-#   exceeds clip_norm also aborts the run.
+#   whose epsilon exceeds 1.01 x target_epsilon (calibration slack); a scaled
+#   per-sample gradient whose norm exceeds clip_norm also aborts the run.
 
 class DPMechanism:
     """Differentially private gradient mechanism.
@@ -244,37 +244,78 @@ class DPMechanism:
 # - The fixed functions below take the helpers and library functions they use
 #   (the originals in _HARNESS_REFS) as default arguments or closure variables
 #   bound at definition time, so reassigning a module-level name (e.g. with
-#   `global`) or a torch/math attribute does not change them.
-# - _check_harness() runs after every call into DPMechanism, before the
-#   harness uses its result, and before the final metrics are printed. It
-#   aborts the run if an entry of _HARNESS_REFS or a fixed name of this file
-#   defined below was replaced (or a listed builtin shadowed), or if a torch
-#   function/dispatch mode is active.
+#   `global`) or a torch/math attribute does not change them. Methods of the
+#   tensors DPMechanism returns are called unbound (never looked up on them).
+# - _check_harness() runs after every call into DPMechanism (before the harness
+#   uses its result), before every optimizer step, before every evaluation and
+#   before the final metrics are printed. It aborts the run if
+#     * an entry of _HARNESS_REFS (the listed torch / torch.nn.Module /
+#       torch.optim / math / scipy.special / builtins attributes and module
+#       names) or a fixed name defined below was replaced, or a listed builtin
+#       is shadowed at module level;
+#     * a global torch.nn module hook or optimizer step hook is registered, or
+#       the harness's model, criterion or optimizer carries its own
+#       forward/backward/step hooks or an instance-level `forward`;
+#     * a torch function mode other than torch's own DeviceContext (set by
+#       torch.set_default_device) or any torch dispatch mode is active.
 # Not covered (in-process residual): code that deliberately rewrites the
 # harness's own objects (_HARNESS_REFS before it is bound, function defaults
-# or closures, frames, gc) or forges the printed output.
+# or closures, frames, gc), torch internals not listed above (e.g. kernel
+# overrides registered through torch.library, layer/loss implementations),
+# and forged printed output.
 _ORIG = {key: obj for key, ns, name, obj in _HARNESS_REFS}
 
 _CLIP_NORM_RTOL = 1e-4  # float slack on the per-sample L2 bound check
 _EPSILON_RTOL = 1e-2    # slack for the sigma calibration's binary-search tolerance
 _RDP_ORDERS = tuple([1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64)))
+_MODULE_HOOKS = ("_forward_hooks", "_forward_pre_hooks", "_backward_hooks",
+                 "_backward_pre_hooks")
+_OPTIMIZER_HOOKS = ("_optimizer_step_pre_hooks", "_optimizer_step_post_hooks")
 
 
-def _make_harness_check(refs=_HARNESS_REFS, _RuntimeError=_ORIG["builtins.RuntimeError"]):
+def _make_harness_check(
+        refs=_HARNESS_REFS, _RuntimeError=_ORIG["builtins.RuntimeError"],
+        _type=_ORIG["builtins.type"], _range=_ORIG["builtins.range"],
+        _vars=_ORIG["builtins.vars"], _modules=_ORIG["torch.nn.Module.modules"],
+        _tf_len=_ORIG["torch._C._len_torch_function_stack"],
+        _tf_at=_ORIG["torch._C._get_function_stack_at"],
+        _dispatch_len=_ORIG["torch._C._len_torch_dispatch_stack"],
+        _DeviceContext=_ORIG["torch.utils._device.DeviceContext"],
+        module_hooks=_MODULE_HOOKS, optimizer_hooks=_OPTIMIZER_HOOKS):
     fixed = []  # (key, namespace, name, object) of the fixed code, see seal()
-    mode_stacks = [obj for key, ns, name, obj in refs if key.startswith("torch._C.")]
+    registries = [(key, obj) for key, ns, name, obj in refs  # global hook dicts
+                  if name.startswith("_global_") and obj is not None]
 
-    def check():
+    def tampered(what):
+        return _RuntimeError(f"DP harness tampering: {what}")
+
+    def check(*modules, optimizer=None):
         for entries in (refs, fixed):
             for key, ns, name, obj in entries:
                 if ns.get(name) is not obj:
-                    raise _RuntimeError(
-                        f"DP harness tampering: `{key}` was replaced or shadowed; "
-                        f"the fixed harness relies on the original")
-        for stack_len in mode_stacks:
-            if stack_len():
-                raise _RuntimeError("DP harness tampering: a torch function or "
-                                    "dispatch mode is active")
+                    raise tampered(f"`{key}` was replaced or shadowed; the fixed "
+                                   f"harness relies on the original")
+        for key, registry in registries:
+            if registry:
+                raise tampered(f"a global hook is registered in `{key}`")
+        for i in _range(_tf_len()):
+            if _type(_tf_at(i)) is not _DeviceContext:
+                raise tampered("a torch function mode is active")
+        if _dispatch_len():
+            raise tampered("a torch dispatch mode is active")
+        for root in modules:
+            for module in _modules(root):
+                ns = _vars(module)
+                if "forward" in ns:
+                    raise tampered(f"{_type(module).__name__}.forward was overridden")
+                for name in module_hooks:
+                    if ns.get(name):
+                        raise tampered(f"{_type(module).__name__} has {name}")
+        if optimizer is not None:
+            ns = _vars(optimizer)
+            for name in optimizer_hooks:
+                if ns.get(name):
+                    raise tampered(f"the optimizer has {name}")
 
     def seal(*groups):
         if fixed:
@@ -435,7 +476,8 @@ def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger,
                    _rtol=_CLIP_NORM_RTOL, _bool=_ORIG["builtins.bool"],
                    _type=_ORIG["builtins.type"], _len=_ORIG["builtins.len"],
                    _isinstance=_ORIG["builtins.isinstance"], _list=_ORIG["builtins.list"],
-                   _tuple=_ORIG["builtins.tuple"], _zip=_ORIG["builtins.zip"]):
+                   _tuple=_ORIG["builtins.tuple"], _zip=_ORIG["builtins.zip"],
+                   _detach=_ORIG["torch.Tensor.detach"]):
     """One step of the Gaussian mechanism with the mechanism's C_t and sigma_t.
 
     The mechanism sees a copy of the per-sample gradients and returns
@@ -451,7 +493,8 @@ def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger,
     sigma = _positive(dp_mechanism.get_noise_multiplier(step, epoch),
                       "noise multiplier")
     scales = _list(scale) if _isinstance(scale, (_list, _tuple)) else [scale] * _len(per_sample_grads)
-    _check()  # no DPMechanism code runs past this point in this step
+    _check()  # no DPMechanism code runs past this point in this step: the
+    # returned scales are only read through `shape` and unbound Tensor methods
 
     if _len(scales) != _len(per_sample_grads):
         raise RuntimeError(f"DPMechanism.clip returned {_len(scales)} scale tensors "
@@ -462,7 +505,7 @@ def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger,
             raise RuntimeError("DPMechanism.clip must return per-sample scales as "
                                f"plain torch.Tensor of shape [{batch_size}]")
         shape = [batch_size] + [1] * (g.dim() - 1)
-        clipped.append(g * s.detach().to(device=g.device, dtype=g.dtype).reshape(shape))
+        clipped.append(g * _detach(s).to(device=g.device, dtype=g.dtype).reshape(shape))
 
     norms = _vector_norm(_cat([c.reshape(batch_size, -1) for c in clipped], dim=1), 2, dim=1)
     if not _bool((norms <= clip_norm * (1 + _rtol)).all()):
@@ -603,7 +646,7 @@ def compute_per_sample_gradients_fast(model, data, target, criterion):
 def train_epoch(model, train_loader, optimizer, criterion, dp_mechanism, device,
                 epoch, total_steps, ledger, log_interval=50,
                 _per_sample_grads=compute_per_sample_gradients,
-                _privatize=privatize_step):
+                _privatize=privatize_step, _check=_check_harness):
     """Train one epoch with DP mechanism."""
     model.train()
     running_loss = 0.0
@@ -629,6 +672,7 @@ def train_epoch(model, train_loader, optimizer, criterion, dp_mechanism, device,
         ):
             param.grad = grad
 
+        _check(model, criterion, optimizer=optimizer)
         optimizer.step()
 
         # Compute batch metrics (without grad)
@@ -665,10 +709,11 @@ def evaluate(model, test_loader, criterion, device):
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
             output = model(data)
-            test_loss += criterion(output, target).item() * data.shape[0]
+            # accuracy is taken before the loss call, which sees output and target
             pred = output.argmax(dim=1)
             correct += pred.eq(target).sum().item()
             total += data.shape[0]
+            test_loss += criterion(output, target).item() * data.shape[0]
 
     return test_loss / total, 100.0 * correct / total
 
@@ -750,7 +795,7 @@ def main(_train_epoch=train_epoch, _evaluate=evaluate, _Ledger=_PrivacyLedger,
         target_epsilon=args.target_epsilon,
         target_delta=args.target_delta,
     )
-    _check()
+    _check(model, criterion, optimizer=optimizer)
 
     # Privacy ledger (FIXED): records the sigma_t applied at every step
     ledger = _Ledger(q, args.target_delta)
@@ -765,6 +810,7 @@ def main(_train_epoch=train_epoch, _evaluate=evaluate, _Ledger=_PrivacyLedger,
             model, train_loader, optimizer, criterion, dp_mechanism, device,
             epoch, global_step, ledger, log_interval=50,
         )
+        _check(model, criterion, optimizer=optimizer)
         test_loss, test_acc = _evaluate(model, test_loader, criterion, device)
 
         # Compute current epsilon spend from the noise actually applied
@@ -790,9 +836,10 @@ def main(_train_epoch=train_epoch, _evaluate=evaluate, _Ledger=_PrivacyLedger,
         scheduler.step()
 
     # Print final test metrics
+    _check(model, criterion, optimizer=optimizer)
     final_test_loss, final_test_acc = _evaluate(model, test_loader, criterion, device)
     eps_final = ledger.epsilon()
-    _check()
+    _check(model, criterion, optimizer=optimizer)
 
     print(f"\nTEST_METRICS accuracy={final_test_acc:.4f} "
           f"epsilon={eps_final:.4f} best_accuracy={best_acc:.4f}",

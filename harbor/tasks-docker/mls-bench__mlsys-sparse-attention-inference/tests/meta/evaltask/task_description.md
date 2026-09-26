@@ -77,8 +77,9 @@ Low-precision arithmetic inside the mask is not penalized: rows with a
 logit above 1024 in magnitude, which fp16 cannot resolve (only layer 0
 of this model has them), are not checked, and on the rest fused SDPA
 on the fp16 inputs or fp32 attention stays well inside the limits.
-Logits from a plain fp16/bf16 matmul are too coarse and can fail, so
-compute hand-written logits in fp32. Any `last_density` the module
+Logits from a plain fp16/bf16 matmul, and fused SDPA on inputs cast to
+bf16, are too coarse and can fail, so keep the fp16 inputs for fused SDPA
+and compute hand-written logits in fp32. Any `last_density` the module
 sets is ignored. The
 harness aggregates the density across all attention layers and aborts
 the run if the mean exceeds the density budget (`0.25 + 0.02 slack`)

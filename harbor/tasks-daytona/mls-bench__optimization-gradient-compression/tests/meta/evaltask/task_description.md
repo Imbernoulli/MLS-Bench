@@ -31,9 +31,9 @@ A packet is one of:
 - `{"values": V, "bits": b, "indices": I}`: sparse, `I` the distinct flat positions of the values `V`;
 - `{"factors": (P, Q)}`: low rank, `P @ Q.T` viewed as `(shape[0], numel / shape[0])`.
 
-Values are transmitted as float32. The harness charges each packet in bits: `len(V) * b`; plus 32 bits per distinct value when `b < 32` (the codebook, which may hold at most `2**b` values); plus the Elias-gamma code of the sorted gaps between sparse positions; plus 32 bits per low-rank factor entry. The helpers `packet_cost(packet, shape)` and `elias_gamma_bound(k, numel)` compute these charges.
+A packet is a plain `dict` (a list of them a plain `list` or `tuple`), `b` a plain `int`, and `V`, `I`, `P`, `Q` plain `torch.Tensor`s, not subclasses. Values are transmitted as float32. The harness charges each packet in bits: `len(V) * b`; plus 32 bits per distinct value when `b < 32` (the codebook, which may hold at most `2**b` values); plus the Elias-gamma code of the sorted gaps between sparse positions; plus 32 bits per low-rank factor entry. The helpers `packet_cost(packet, shape)` and `elias_gamma_bound(k, numel)` compute these charges.
 
-**Budget.** One training step may transmit at most `budget_bits = compress_ratio × 32 × (total parameter entries)` bits over all parameters together, i.e. 100x less than the dense float32 gradient at `compress_ratio = 0.01`. A step over the budget, or a malformed packet (non-finite values, repeated or out-of-range indices, more distinct values than `2**b`), stops the run and the run is invalid.
+**Budget.** One training step may transmit at most `budget_bits = compress_ratio × 32 × (total parameter entries)` bits over all parameters together, i.e. 100x less than the dense float32 gradient at `compress_ratio = 0.01`. A step over the budget, a malformed packet (non-finite values, repeated or out-of-range indices, more distinct values than `2**b`, subclassed containers, ints or tensors), or compressor code that rebinds the harness's names or registers a global optimizer or module hook stops the run, and the run is invalid.
 
 ## Evaluation
 Trained and evaluated on three settings with 100x compression (`compress_ratio = 0.01`):

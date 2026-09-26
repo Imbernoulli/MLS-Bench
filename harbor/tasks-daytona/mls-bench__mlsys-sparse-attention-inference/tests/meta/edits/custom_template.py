@@ -17,7 +17,7 @@ layer per head and is *slower than dense*. To make sparse actually faster:
   3. For low density (≤ 10%), use ``torch.nn.attention.flex_attention`` with
      ``create_block_mask`` — it compiles a true block-sparse kernel that
      skips entire blocks (PyTorch-native, no Triton-by-hand needed).
-  4. Stay in bf16 — fused SDPA handles numerics safely; fp32 upcast 2×s memory.
+  4. Keep the fp16 inputs for fused SDPA (bf16 is too coarse for the output check); hand-written logits in fp32.
 """
 
 import math
@@ -91,7 +91,7 @@ class SparseAttention(nn.Module):
 
         mask, _density = self._get_mask(N, q.device, is_causal)
         self.last_mask = mask  # the harness derives density from this mask
-        # SDPA bool attn_mask: True = attend. Stay in bf16/fp16 (fused SDPA).
+        # SDPA bool attn_mask: True = attend. Keep the fp16 inputs (not bf16).
         out = F.scaled_dot_product_attention(
             q, k, v, attn_mask=mask.view(1, 1, N, N),
             dropout_p=0.0, is_causal=False, scale=scale,

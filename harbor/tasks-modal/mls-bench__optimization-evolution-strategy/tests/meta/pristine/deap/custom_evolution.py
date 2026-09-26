@@ -296,13 +296,21 @@ def _draw_optimum(lo: float, hi: float, dim: int) -> tuple:
 
 
 def _shifted(func, x_opt, base_opt: float):
-    """`func` moved so that its minimum (value 0) lies at `x_opt`: g(x) = func(x - x_opt + base_opt)."""
+    """`func` moved so that its minimum (value 0) lies at `x_opt`: g(x) = func(x - x_opt + base_opt).
+
+    The input is first copied into plain Python floats, so no object supplied
+    by the caller (e.g. a float subclass with its own __add__) ever takes part
+    in arithmetic with the shift.
+    """
     delta = tuple(base_opt - o for o in x_opt)
 
     def objective(x):
-        if len(x) != len(delta):
-            raise ValueError(f"expected {len(delta)} genes, got {len(x)}")
-        return func([v + d for v, d in zip(x, delta)])
+        xs = [float(v) for v in (list.__iter__(x) if isinstance(x, list) else x)]
+        if len(xs) != len(delta):
+            raise ValueError(f"expected {len(delta)} genes, got {len(xs)}")
+        if not all(type(v) is float for v in xs):
+            raise TypeError("genes must convert to plain floats")
+        return func([v + d for v, d in zip(xs, delta)])
 
     return objective
 
@@ -374,9 +382,17 @@ def main():
     # evaluate_func and the final re-evaluation use the same shifted objective.
     ref_func, (lo, hi), base_opt = _REFERENCE[args.function]
     objective = _shifted(ref_func, _draw_optimum(lo, hi, args.dim), base_opt)
+    # Evaluation budget: the initial population plus one full population per
+    # generation. A call beyond it raises and evaluates nothing.
+    max_evals = args.pop_size * (args.n_generations + 1)
     n_evals = [0]
 
     def evaluate_func(individual):
+        if n_evals[0] >= max_evals:
+            raise RuntimeError(
+                f"evaluation budget exhausted: at most {max_evals} calls to evaluate_func "
+                f"(pop_size * (n_generations + 1)) are allowed per run"
+            )
         n_evals[0] += 1
         return (objective(individual),)
 
@@ -413,7 +429,7 @@ def main():
     print(f"\n=== Results ===", flush=True)
     print(f"Best fitness: {best_fitness:.6e}", flush=True)
     print(f"Convergence generation: {convergence_gen}/{args.n_generations}", flush=True)
-    print(f"Function evaluations: {n_evals[0]}", flush=True)
+    print(f"Function evaluations: {n_evals[0]} (budget {max_evals})", flush=True)
     print(f"Wall time: {elapsed:.1f}s", flush=True)
     print(
         f"TEST_METRICS best_fitness={best_fitness:.6e} "

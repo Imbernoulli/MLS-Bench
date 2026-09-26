@@ -32,8 +32,8 @@ class DPMechanism:
 ```
 
 ## Constraints
-- The total privacy budget `(target_epsilon, target_delta)` is FIXED and checked externally: the harness composes the per-step `σ_t` it applied, and a run whose epsilon exceeds the target, or whose clipped per-sample gradient exceeds its declared `C_t`, is aborted.
-- The model architecture, data pipeline, optimizer, and training loop are FIXED.
+- The total privacy budget `(target_epsilon, target_delta)` is FIXED and checked externally: the harness composes the per-step `σ_t` it applied, and a run whose epsilon exceeds the target by more than 1% (the slack for the noise calibration's binary search), or whose clipped per-sample gradient exceeds its declared `C_t`, is aborted.
+- The model architecture, data pipeline, optimizer, and training loop are FIXED; the harness aborts a run that hooks or monkeypatches the functions it relies on (see `_check_harness` in the file).
 - Focus on algorithmic innovation in the DP mechanism: clipping strategies, noise schedules, gradient processing.
 - Available imports: `torch`, `math`, `numpy` (via the FIXED section), `scipy.optimize`.
 
@@ -43,7 +43,7 @@ Trained and evaluated on three datasets at `epsilon = 3.0`, `delta = 1e-5`:
 - **Fashion-MNIST** (28x28 grayscale clothing, 10 classes)
 - **CIFAR-10** (32x32 color images, 10 classes)
 
-Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded but not scored: every run is held to the same budget, and a run that exceeds it is aborted.
+Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded but not scored: every run is held to the same budget, and a run that exceeds it by more than the 1% calibration slack is aborted.
 
 ## Baselines (paper-cited reference implementations)
 - **standard_dpsgd** — Abadi et al. (CCS 2016; arXiv:1607.00133): fixed `C` and constant `σ` calibrated up-front.

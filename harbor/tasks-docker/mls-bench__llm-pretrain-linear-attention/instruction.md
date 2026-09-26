@@ -34,9 +34,10 @@ Two editable regions in `nanoGPT/custom_pretrain.py`:
 - The fixed training script compiles the model with `torch.compile` (`compile_model = True`): training and the validation-loss / perplexity evaluation run the compiled model. Code that must run eagerly can opt out with `@torch.compiler.disable`, as the `gla` baseline does for its FLA layer.
 
 ### Subquadratic requirement (checked)
-Before training, a fixed check runs your model forward on a GPU at four sequence lengths with the same token count, up to and including `block_size` (1024, the length used for training and evaluation), in train mode under bf16 autocast and with `torch.compiler.is_compiling()` reporting the compiled context of the training run. The run is invalid if any `Block`:
+Before training, a fixed check runs your model forward on a GPU at four sequence lengths with the same token count, up to and including `block_size` (1024, the length used for training and evaluation), in train mode under bf16 autocast and with `torch.compiler.is_compiling()` reporting the compiled context of the training run. It then runs it again in the contexts of the real run: at `block_size`, a training micro-batch (`BATCH_SIZE` sequences, train mode, gradients enabled) and the validation-loss and perplexity passes (eval mode under `torch.no_grad`, `BATCH_SIZE` sequences and single sequences); at every probe length, the lm-eval pass (eval mode under `torch.no_grad`, run eagerly, one and two sequences). The run is invalid if any `Block`:
 - materializes a tensor with two sequence-length dimensions (a T×T score, mask, or decay matrix; chunk×chunk blocks are fine),
-- spends matmul / attention FLOPs per token that grow linearly with the sequence length (softmax attention via `scaled_dot_product_attention`, including query-chunked variants), or
+- spends matmul / attention FLOPs per token that grow linearly with the sequence length (softmax attention via `scaled_dot_product_attention`, including query-chunked variants),
+- mixes differently in those contexts: at each length its matmul / attention FLOPs must be the same per token in every context (plus any batch-independent cost), and no context may produce a larger tensor than the sweep at that length, scaled by the batch size, or
 - launches one of FLA's quadratic kernels (`fla.ops.attn`, any `parallel` mode, forgetting / path attention, DeltaFormer, NSA, MoBA).
 
 Chunkwise, recurrent, convolutional, and sliding-window mechanisms pass. The model must run at any sequence length up to `block_size`.

@@ -33,9 +33,9 @@ A packet is one of:
 - `{"values": V, "bits": b, "indices": I}`: sparse, `I` the distinct flat positions of the values `V`;
 - `{"factors": (P, Q)}`: low rank, `P @ Q.T` viewed as `(shape[0], numel / shape[0])`.
 
-Values are transmitted as float32. The harness charges each packet in bits: `len(V) * b`; plus 32 bits per distinct value when `b < 32` (the codebook, which may hold at most `2**b` values); plus the Elias-gamma code of the sorted gaps between sparse positions; plus 32 bits per low-rank factor entry. The helpers `packet_cost(packet, shape)` and `elias_gamma_bound(k, numel)` compute these charges.
+A packet is a plain `dict` (a list of them a plain `list` or `tuple`), `b` a plain `int`, and `V`, `I`, `P`, `Q` plain `torch.Tensor`s, not subclasses. Values are transmitted as float32. The harness charges each packet in bits: `len(V) * b`; plus 32 bits per distinct value when `b < 32` (the codebook, which may hold at most `2**b` values); plus the Elias-gamma code of the sorted gaps between sparse positions; plus 32 bits per low-rank factor entry. The helpers `packet_cost(packet, shape)` and `elias_gamma_bound(k, numel)` compute these charges.
 
-**Budget.** One training step may transmit at most `budget_bits = compress_ratio × 32 × (total parameter entries)` bits over all parameters together, i.e. 100x less than the dense float32 gradient at `compress_ratio = 0.01`. A step over the budget, or a malformed packet (non-finite values, repeated or out-of-range indices, more distinct values than `2**b`), stops the run and the run is invalid.
+**Budget.** One training step may transmit at most `budget_bits = compress_ratio × 32 × (total parameter entries)` bits over all parameters together, i.e. 100x less than the dense float32 gradient at `compress_ratio = 0.01`. A step over the budget, a malformed packet (non-finite values, repeated or out-of-range indices, more distinct values than `2**b`, subclassed containers, ints or tensors), or compressor code that rebinds the harness's names or registers a global optimizer or module hook stops the run, and the run is invalid.
 
 ## Baselines (paper-cited reference implementations, each sized to the budget)
 - **topk_ef** — Top-K sparsification with error feedback (Stich et al., "Sparsified SGD with Memory", NeurIPS 2018; Karimireddy et al., "Error Feedback Fixes SignSGD and Other Gradient Compression Schemes", ICML 2019; arXiv:1901.09847). Sends the largest-magnitude entries as float32 values at Elias-gamma coded positions (about 0.65% of the entries at this budget).
@@ -330,248 +330,248 @@ stay unchanged.
    256: def _parts(packet, shape, device):
    257:     """Check a packet's structure and copy its tensors off the compressor.
    258:     Returns a list of ("dense", v, b) / ("sparse", v, b, idx) /
-   259:     ("lowrank", P, Q) with float32 values and int64 indices."""
-   260:     numel = shape.numel()
-   261:     if isinstance(packet, dict):
-   262:         packet = [packet]
-   263:     if not (isinstance(packet, (list, tuple)) and packet
-   264:             and all(isinstance(p, dict) for p in packet)):
-   265:         raise CompressionContractError(
-   266:             "compress must return a packet dict or a non-empty list of them")
-   267:     out = []
-   268:     for p in packet:
-   269:         if "factors" in p:
-   270:             if set(p) != {"factors"} or len(p["factors"]) != 2:
-   271:                 raise CompressionContractError(
-   272:                     "a low-rank packet is {'factors': (P, Q)}")
-   273:             P, Q = p["factors"]
-   274:             rows = shape[0] if len(shape) >= 1 else 1
-   275:             cols = numel // rows
-   276:             if not (torch.is_tensor(P) and torch.is_tensor(Q)
-   277:                     and P.dim() == 2 and Q.dim() == 2
-   278:                     and P.shape[0] == rows and Q.shape[0] == cols
-   279:                     and P.shape[1] == Q.shape[1] and P.shape[1] >= 1):
-   280:                 raise CompressionContractError(
-   281:                     f"factors must be P ({rows} x r) and Q ({cols} x r)")
-   282:             out.append(("lowrank",
-   283:                         P.detach().to(device=device, dtype=torch.float32) + 0.0,
-   284:                         Q.detach().to(device=device, dtype=torch.float32) + 0.0))
-   285:             continue
-   286:         if not (set(p) <= {"values", "bits", "indices"}
-   287:                 and "values" in p and "bits" in p):
-   288:             raise CompressionContractError(
-   289:                 "a packet is {'values', 'bits'[, 'indices']} or {'factors'}")
-   290:         b = p["bits"]
-   291:         if isinstance(b, bool) or not isinstance(b, int) or not 1 <= b <= 32:
-   292:             raise CompressionContractError("'bits' must be an int in [1, 32]")
-   293:         v = p["values"]
-   294:         if not torch.is_tensor(v) or v.is_complex() or v.dtype == torch.bool:
-   295:             raise CompressionContractError("'values' must be a real tensor")
-   296:         v = v.detach().reshape(-1).to(device=device, dtype=torch.float32) + 0.0
-   297:         idx = p.get("indices")
-   298:         if idx is None:
-   299:             if v.numel() != numel:
-   300:                 raise CompressionContractError(
-   301:                     f"a dense packet needs {numel} values, got {v.numel()}")
-   302:             out.append(("dense", v, b))
-   303:             continue
-   304:         if (not torch.is_tensor(idx) or idx.is_floating_point()
-   305:                 or idx.is_complex() or idx.dtype == torch.bool):
-   306:             raise CompressionContractError("'indices' must be an integer tensor")
-   307:         idx = idx.detach().reshape(-1).to(device=device,
-   308:                                           dtype=torch.int64).clone()
-   309:         if idx.numel() != v.numel():
-   310:             raise CompressionContractError(
-   311:                 "'indices' and 'values' differ in length")
-   312:         out.append(("sparse", v, b, idx))
-   313:     return out
-   314: 
-   315: 
-   316: def _account(tensors, device, *, _to_device=_to_device):
-   317:     """Charge and decode the packets of one step, all on the device.
-   318: 
-   319:     `tensors` is a list of (numel, parts), one per gradient tensor. Cost:
-   320:     len(values) * bits, plus 32 bits per distinct value when bits < 32
-   321:     (the codebook, at most 2**bits entries), plus the Elias-gamma code of
-   322:     each sparse packet's sorted position gaps, plus 32 bits per low-rank
-   323:     factor entry. Returns (bits, ok, flat): ok = [finite, indices valid,
-   324:     codebook valid], flat = the decoded gradients, concatenated."""
-   325:     t_true = torch.ones((), dtype=torch.bool, device=device)
-   326:     total = sum(numel for numel, _ in tensors)
-   327:     flat = torch.zeros(total, dtype=torch.float32, device=device)
-   328:     static = 0
-   329:     finite, cb_vals, cb_caps = [], [], []
-   330:     sp_idx, sp_val, sp_meta = [], [], []  # meta: len, numel, off, part off
-   331:     off = part_off = 0
-   332:     for numel, parts in tensors:
-   333:         for part in parts:
-   334:             if part[0] == "lowrank":
-   335:                 P, Q = part[1], part[2]
-   336:                 static += 32 * (P.numel() + Q.numel())
-   337:                 finite += [P.reshape(-1), Q.reshape(-1)]
-   338:                 flat[off:off + numel].add_((P @ Q.t()).reshape(-1))
-   339:                 continue
-   340:             v, b = part[1], part[2]
-   341:             static += v.numel() * b
-   342:             finite.append(v)
-   343:             if b < 32:
-   344:                 cb_vals.append(v)
-   345:                 cb_caps.append(2 ** b)
-   346:             if part[0] == "dense":
-   347:                 flat[off:off + numel].add_(v)
-   348:             else:
-   349:                 sp_idx.append(part[3])
-   350:                 sp_val.append(v)
-   351:                 sp_meta.append((v.numel(), numel, off, part_off))
-   352:                 part_off += numel
-   353:         off += numel
-   354:     bits = torch.full((), float(static), dtype=torch.float64, device=device)
-   355:     fin_ok = torch.isfinite(torch.cat(finite)).all() if finite else t_true
-   356:     cb_ok, idx_ok = t_true, t_true
-   357:     if cb_vals:
-   358:         lens = [v.numel() for v in cb_vals]
-   359:         v = torch.cat(cb_vals)
-   360:         meta = _to_device([lens, cb_caps], torch.int64, device)
-   361:         seg = torch.repeat_interleave(
-   362:             torch.arange(len(lens), device=device), meta[0],
-   363:             output_size=sum(lens))
-   364:         order = torch.sort(v, stable=True).indices
-   365:         order = order[torch.sort(seg[order], stable=True).indices]
-   366:         vs, ss = v[order], seg[order]
-   367:         start = torch.ones_like(vs, dtype=torch.bool)
-   368:         start[1:] = (vs[1:] != vs[:-1]) | (ss[1:] != ss[:-1])
-   369:         levels = torch.zeros(len(lens), dtype=torch.int64, device=device)
-   370:         levels.index_add_(0, ss, start.long())
-   371:         cb_ok = (levels <= meta[1]).all()
-   372:         bits = bits + 32 * levels.sum()
-   373:     if sp_idx:
-   374:         lens = [m[0] for m in sp_meta]
-   375:         meta = _to_device([list(col) for col in zip(*sp_meta)],
-   376:                           torch.int64, device)
+   259:     ("lowrank", P, Q) with float32 values and int64 indices.
+   260: 
+   261:     Containers must be plain dicts / lists / tuples, `bits` a plain int and
+   262:     every tensor exactly a torch.Tensor (no subclass): the compressor's
+   263:     tensors are first touched only through the unbound torch.Tensor.detach,
+   264:     so neither a subclass nor an instance attribute (say `t.numel = ...`)
+   265:     can make what is charged differ from what is decoded."""
+   266:     numel = shape.numel()
+   267:     if type(packet) is dict:
+   268:         packet = [packet]
+   269:     if not (type(packet) in (list, tuple) and packet
+   270:             and all(type(p) is dict for p in packet)):
+   271:         raise CompressionContractError(
+   272:             "compress must return a packet dict or a non-empty list of them")
+   273:     out = []
+   274:     for p in packet:
+   275:         if "factors" in p:
+   276:             if (set(p) != {"factors"} or type(p["factors"]) not in (tuple, list)
+   277:                     or len(p["factors"]) != 2):
+   278:                 raise CompressionContractError(
+   279:                     "a low-rank packet is {'factors': (P, Q)}")
+   280:             P, Q = p["factors"]
+   281:             if type(P) is not torch.Tensor or type(Q) is not torch.Tensor:
+   282:                 raise CompressionContractError(
+   283:                     "factors must be torch.Tensor (not a subclass)")
+   284:             P, Q = torch.Tensor.detach(P), torch.Tensor.detach(Q)
+   285:             rows = shape[0] if len(shape) >= 1 else 1
+   286:             cols = numel // rows
+   287:             if not (P.dim() == 2 and Q.dim() == 2
+   288:                     and P.shape[0] == rows and Q.shape[0] == cols
+   289:                     and P.shape[1] == Q.shape[1] and P.shape[1] >= 1):
+   290:                 raise CompressionContractError(
+   291:                     f"factors must be P ({rows} x r) and Q ({cols} x r)")
+   292:             out.append(("lowrank",
+   293:                         P.to(device=device, dtype=torch.float32) + 0.0,
+   294:                         Q.to(device=device, dtype=torch.float32) + 0.0))
+   295:             continue
+   296:         if not (set(p) <= {"values", "bits", "indices"}
+   297:                 and "values" in p and "bits" in p):
+   298:             raise CompressionContractError(
+   299:                 "a packet is {'values', 'bits'[, 'indices']} or {'factors'}")
+   300:         b = p["bits"]
+   301:         if type(b) is not int or not 1 <= b <= 32:
+   302:             raise CompressionContractError("'bits' must be an int in [1, 32]")
+   303:         v = p["values"]
+   304:         if type(v) is not torch.Tensor:
+   305:             raise CompressionContractError(
+   306:                 "'values' must be a torch.Tensor (not a subclass)")
+   307:         v = torch.Tensor.detach(v)
+   308:         if v.is_complex() or v.dtype == torch.bool:
+   309:             raise CompressionContractError("'values' must be a real tensor")
+   310:         v = v.reshape(-1).to(device=device, dtype=torch.float32) + 0.0
+   311:         idx = p.get("indices")
+   312:         if idx is None:
+   313:             if v.numel() != numel:
+   314:                 raise CompressionContractError(
+   315:                     f"a dense packet needs {numel} values, got {v.numel()}")
+   316:             out.append(("dense", v, b))
+   317:             continue
+   318:         if type(idx) is not torch.Tensor:
+   319:             raise CompressionContractError(
+   320:                 "'indices' must be a torch.Tensor (not a subclass)")
+   321:         idx = torch.Tensor.detach(idx)
+   322:         if idx.is_floating_point() or idx.is_complex() or idx.dtype == torch.bool:
+   323:             raise CompressionContractError("'indices' must be an integer tensor")
+   324:         idx = idx.reshape(-1).to(device=device, dtype=torch.int64).clone()
+   325:         if idx.numel() != v.numel():
+   326:             raise CompressionContractError(
+   327:                 "'indices' and 'values' differ in length")
+   328:         out.append(("sparse", v, b, idx))
+   329:     return out
+   330: 
+   331: 
+   332: def _account(tensors, device, *, _to_device=_to_device):
+   333:     """Charge and decode the packets of one step, all on the device.
+   334: 
+   335:     `tensors` is a list of (numel, parts), one per gradient tensor. Cost:
+   336:     len(values) * bits, plus 32 bits per distinct value when bits < 32
+   337:     (the codebook, at most 2**bits entries), plus the Elias-gamma code of
+   338:     each sparse packet's sorted position gaps, plus 32 bits per low-rank
+   339:     factor entry. Returns (bits, ok, flat): ok = [finite, indices valid,
+   340:     codebook valid], flat = the decoded gradients, concatenated."""
+   341:     t_true = torch.ones((), dtype=torch.bool, device=device)
+   342:     total = sum(numel for numel, _ in tensors)
+   343:     flat = torch.zeros(total, dtype=torch.float32, device=device)
+   344:     static = 0
+   345:     finite, cb_vals, cb_caps = [], [], []
+   346:     sp_idx, sp_val, sp_meta = [], [], []  # meta: len, numel, off, part off
+   347:     off = part_off = 0
+   348:     for numel, parts in tensors:
+   349:         for part in parts:
+   350:             if part[0] == "lowrank":
+   351:                 P, Q = part[1], part[2]
+   352:                 static += 32 * (torch.Tensor.numel(P) + torch.Tensor.numel(Q))
+   353:                 finite += [P.reshape(-1), Q.reshape(-1)]
+   354:                 flat[off:off + numel].add_((P @ Q.t()).reshape(-1))
+   355:                 continue
+   356:             v, b = part[1], part[2]
+   357:             static += torch.Tensor.numel(v) * b
+   358:             finite.append(v)
+   359:             if b < 32:
+   360:                 cb_vals.append(v)
+   361:                 cb_caps.append(2 ** b)
+   362:             if part[0] == "dense":
+   363:                 flat[off:off + numel].add_(v)
+   364:             else:
+   365:                 sp_idx.append(part[3])
+   366:                 sp_val.append(v)
+   367:                 sp_meta.append((torch.Tensor.numel(v), numel, off, part_off))
+   368:                 part_off += numel
+   369:         off += numel
+   370:     bits = torch.full((), float(static), dtype=torch.float64, device=device)
+   371:     fin_ok = torch.isfinite(torch.cat(finite)).all() if finite else t_true
+   372:     cb_ok, idx_ok = t_true, t_true
+   373:     if cb_vals:
+   374:         lens = [torch.Tensor.numel(v) for v in cb_vals]
+   375:         v = torch.cat(cb_vals)
+   376:         meta = _to_device([lens, cb_caps], torch.int64, device)
    377:         seg = torch.repeat_interleave(
    378:             torch.arange(len(lens), device=device), meta[0],
    379:             output_size=sum(lens))
-   380:         idx = torch.cat(sp_idx)
-   381:         numels = meta[1][seg]
-   382:         in_range = ((idx >= 0) & (idx < numels)).all()
-   383:         # Invalid indices fail the check; clamp so that, until the run
-   384:         # stops, the scatter stays inside the packet's own tensor.
-   385:         safe = torch.minimum(idx.clamp(min=0), numels - 1)
-   386:         flat.index_add_(0, safe + meta[2][seg], torch.cat(sp_val))
-   387:         order = torch.sort(safe + meta[3][seg]).indices
-   388:         local, ss = idx[order], seg[order]
-   389:         first = torch.ones_like(local, dtype=torch.bool)
-   390:         first[1:] = ss[1:] != ss[:-1]
-   391:         gap = torch.where(first, local + 1, local - torch.roll(local, 1))
-   392:         idx_ok = in_range & (gap > 0).all()
-   393:         bits = bits + (2 * torch.floor(torch.log2(
-   394:             gap.clamp(min=1).double())) + 1).sum()
-   395:     return bits, torch.stack([fin_ok, idx_ok, cb_ok]), flat
-   396: 
-   397: 
-   398: def _check(ok):
-   399:     if not ok[0]:
-   400:         raise CompressionContractError("a packet carries non-finite values")
-   401:     if not ok[1]:
-   402:         raise CompressionContractError(
-   403:             "packet indices must be distinct and inside the tensor")
-   404:     if not ok[2]:
-   405:         raise CompressionContractError(
-   406:             "a packet has more distinct values than 2**bits")
-   407: 
-   408: 
-   409: def packet_cost(packet, shape, *, _parts=_parts, _account=_account,
-   410:                 _check=_check):
-   411:     """Bits `packet` (a packet or a list of them) costs for a tensor of
-   412:     `shape`, exactly as the per-step budget check charges it."""
-   413:     shape = torch.Size(shape)
-   414:     first = packet if isinstance(packet, dict) else (packet or [{}])[0]
-   415:     t = first.get("values") if isinstance(first, dict) else None
-   416:     if t is None and isinstance(first, dict) and first.get("factors"):
-   417:         t = first["factors"][0]
-   418:     device = t.device if torch.is_tensor(t) else torch.device("cpu")
-   419:     bits, ok, _ = _account([(shape.numel(), _parts(packet, shape, device))],
-   420:                            device)
-   421:     _check(ok.tolist())
-   422:     return int(bits.item())
+   380:         order = torch.sort(v, stable=True).indices
+   381:         order = order[torch.sort(seg[order], stable=True).indices]
+   382:         vs, ss = v[order], seg[order]
+   383:         start = torch.ones_like(vs, dtype=torch.bool)
+   384:         start[1:] = (vs[1:] != vs[:-1]) | (ss[1:] != ss[:-1])
+   385:         levels = torch.zeros(len(lens), dtype=torch.int64, device=device)
+   386:         levels.index_add_(0, ss, start.long())
+   387:         cb_ok = (levels <= meta[1]).all()
+   388:         bits = bits + 32 * levels.sum()
+   389:     if sp_idx:
+   390:         lens = [m[0] for m in sp_meta]
+   391:         meta = _to_device([list(col) for col in zip(*sp_meta)],
+   392:                           torch.int64, device)
+   393:         seg = torch.repeat_interleave(
+   394:             torch.arange(len(lens), device=device), meta[0],
+   395:             output_size=sum(lens))
+   396:         idx = torch.cat(sp_idx)
+   397:         numels = meta[1][seg]
+   398:         in_range = ((idx >= 0) & (idx < numels)).all()
+   399:         # Invalid indices fail the check; clamp so that, until the run
+   400:         # stops, the scatter stays inside the packet's own tensor.
+   401:         safe = torch.minimum(idx.clamp(min=0), numels - 1)
+   402:         flat.index_add_(0, safe + meta[2][seg], torch.cat(sp_val))
+   403:         order = torch.sort(safe + meta[3][seg]).indices
+   404:         local, ss = idx[order], seg[order]
+   405:         first = torch.ones_like(local, dtype=torch.bool)
+   406:         first[1:] = ss[1:] != ss[:-1]
+   407:         gap = torch.where(first, local + 1, local - torch.roll(local, 1))
+   408:         idx_ok = in_range & (gap > 0).all()
+   409:         bits = bits + (2 * torch.floor(torch.log2(
+   410:             gap.clamp(min=1).double())) + 1).sum()
+   411:     return bits, torch.stack([fin_ok, idx_ok, cb_ok]), flat
+   412: 
+   413: 
+   414: def _check(ok):
+   415:     if not ok[0]:
+   416:         raise CompressionContractError("a packet carries non-finite values")
+   417:     if not ok[1]:
+   418:         raise CompressionContractError(
+   419:             "packet indices must be distinct and inside the tensor")
+   420:     if not ok[2]:
+   421:         raise CompressionContractError(
+   422:             "a packet has more distinct values than 2**bits")
    423: 
    424: 
-   425: def apply_gradient_compression(model, compressor, check_bindings, *,
-   426:                                _parts=_parts, _account=_account):
-   427:     """Encode every gradient with the compressor and replace it with the
-   428:     decoding of its packet: decoding is fixed, so the optimizer sees only
-   429:     what was transmitted. Returns the step's receipt (bits, then the three
-   430:     validity checks), filled asynchronously; `settle_step` reads it after
-   431:     the training loop's next host sync and stops the run on a violation.
-   432:     `check_bindings` runs after every compress call (see `bindings_check`)."""
-   433:     staged = []
-   434:     for name, param in model.named_parameters():
-   435:         if param.grad is None:
-   436:             continue
-   437:         packet = compressor.compress(param.grad.detach(), name)
-   438:         check_bindings()
-   439:         staged.append((param, _parts(packet, param.shape, param.device)))
-   440:     if not staged:
-   441:         return torch.tensor([0.0, 1.0, 1.0, 1.0], dtype=torch.float64), None
-   442:     device = staged[0][0].device
-   443:     bits, ok, flat = _account([(p.numel(), parts) for p, parts in staged],
-   444:                               device)
-   445:     receipt, done = torch.cat([bits.reshape(1), ok.double()]), None
-   446:     if device.type == "cuda":
-   447:         host = torch.empty(4, dtype=torch.float64, pin_memory=True)
-   448:         receipt = host.copy_(receipt, non_blocking=True)
-   449:         done = torch.cuda.Event()
-   450:         done.record()
-   451:     off = 0
-   452:     for param, _ in staged:
-   453:         n = param.numel()
-   454:         param.grad = flat[off:off + n].view(param.shape).to(param.dtype)
-   455:         off += n
-   456:     return receipt, done
-   457: 
-   458: 
-   459: def settle_step(receipt, budget_bits, *, _check=_check):
-   460:     """Check a step's receipt against the contract and the budget; returns
-   461:     the bits the step transmitted. Cheap after a host sync (loss.item())."""
-   462:     receipt, done = receipt
-   463:     if done is not None:
-   464:         done.synchronize()
-   465:     result = receipt.tolist()
-   466:     _check([bool(x) for x in result[1:]])
-   467:     if result[0] > budget_bits:
-   468:         raise CompressionContractError(
-   469:             f"a step transmitted {result[0]:.0f} bits, over the budget of "
-   470:             f"{budget_bits} bits (compress_ratio x 32 bits x parameter entries)")
-   471:     return result[0]
-   472: 
+   425: def packet_cost(packet, shape, *, _parts=_parts, _account=_account,
+   426:                 _check=_check):
+   427:     """Bits `packet` (a packet or a list of them) costs for a tensor of
+   428:     `shape`, exactly as the per-step budget check charges it."""
+   429:     shape = torch.Size(shape)
+   430:     first = packet if isinstance(packet, dict) else (packet or [{}])[0]
+   431:     t = first.get("values") if isinstance(first, dict) else None
+   432:     if t is None and isinstance(first, dict) and first.get("factors"):
+   433:         t = first["factors"][0]
+   434:     device = t.device if torch.is_tensor(t) else torch.device("cpu")
+   435:     bits, ok, _ = _account([(shape.numel(), _parts(packet, shape, device))],
+   436:                            device)
+   437:     _check(ok.tolist())
+   438:     return int(bits.item())
+   439: 
+   440: 
+   441: def apply_gradient_compression(model, compressor, check_bindings, *,
+   442:                                _parts=_parts, _account=_account):
+   443:     """Encode every gradient with the compressor and replace it with the
+   444:     decoding of its packet: decoding is fixed, so the optimizer sees only
+   445:     what was transmitted. Returns the step's receipt (bits, then the three
+   446:     validity checks), filled asynchronously; `settle_step` reads it after
+   447:     the training loop's next host sync and stops the run on a violation.
+   448:     `check_bindings` runs after every compress call (see `bindings_check`)."""
+   449:     staged = []
+   450:     for name, param in model.named_parameters():
+   451:         if param.grad is None:
+   452:             continue
+   453:         packet = compressor.compress(param.grad.detach(), name)
+   454:         check_bindings()
+   455:         staged.append((param, _parts(packet, param.shape, param.device)))
+   456:     if not staged:
+   457:         return torch.tensor([0.0, 1.0, 1.0, 1.0], dtype=torch.float64), None
+   458:     device = staged[0][0].device
+   459:     bits, ok, flat = _account([(p.numel(), parts) for p, parts in staged],
+   460:                               device)
+   461:     receipt, done = torch.cat([bits.reshape(1), ok.double()]), None
+   462:     if device.type == "cuda":
+   463:         host = torch.empty(4, dtype=torch.float64, pin_memory=True)
+   464:         receipt = host.copy_(receipt, non_blocking=True)
+   465:         done = torch.cuda.Event()
+   466:         done.record()
+   467:     off = 0
+   468:     for param, _ in staged:
+   469:         n = param.numel()
+   470:         param.grad = flat[off:off + n].view(param.shape).to(param.dtype)
+   471:         off += n
+   472:     return receipt, done
    473: 
-   474: # ============================================================================
-   475: # FIXED SECTION — Training Loop
-   476: # ============================================================================
-   477: 
-   478: def cosine_lr(optimizer, epoch, total_epochs, warmup_epochs, base_lr, min_lr=0.0):
-   479:     """Cosine learning rate schedule with linear warmup."""
-   480:     if epoch < warmup_epochs:
-   481:         lr = base_lr * (epoch + 1) / (warmup_epochs + 1)
-   482:     else:
-   483:         progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
-   484:         lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
-   485:     for param_group in optimizer.param_groups:
-   486:         param_group['lr'] = lr
-   487:     return lr
+   474: 
+   475: def settle_step(receipt, budget_bits, *, _check=_check):
+   476:     """Check a step's receipt against the contract and the budget; returns
+   477:     the bits the step transmitted. Cheap after a host sync (loss.item())."""
+   478:     receipt, done = receipt
+   479:     if done is not None:
+   480:         done.synchronize()
+   481:     result = receipt.tolist()
+   482:     _check([bool(x) for x in result[1:]])
+   483:     if result[0] > budget_bits:
+   484:         raise CompressionContractError(
+   485:             f"a step transmitted {result[0]:.0f} bits, over the budget of "
+   486:             f"{budget_bits} bits (compress_ratio x 32 bits x parameter entries)")
+   487:     return result[0]
    488: 
    489: 
-   490: def evaluate(model, test_loader, device):
-   491:     model.eval()
-   492:     correct = 0
-   493:     total = 0
-   494:     total_loss = 0.0
-   495:     with torch.no_grad():
-   496:         for images, labels in test_loader:
-   497:             images, labels = images.to(device), labels.to(device)
-   498:             outputs = model(images)
-   499:             loss = F.cross_entropy(outputs, labels, reduction='sum')
-   500:             total_loss += loss.item()
+   490: # ============================================================================
+   491: # FIXED SECTION — Training Loop
+   492: # ============================================================================
+   493: 
+   494: def cosine_lr(optimizer, epoch, total_epochs, warmup_epochs, base_lr, min_lr=0.0):
+   495:     """Cosine learning rate schedule with linear warmup."""
+   496:     if epoch < warmup_epochs:
+   497:         lr = base_lr * (epoch + 1) / (warmup_epochs + 1)
+   498:     else:
+   499:         progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+   500:         lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
 
 [truncated: showing at most 500 lines / 60000 bytes from pytorch-vision/custom_compressor.py]
 ```

@@ -57,7 +57,7 @@ Available imports inside the editable region: `torch`, `torch.nn`,
 Datasets:
 - `community_small`: 100 synthetic 2-community graphs (12-20 nodes).
 - `ego_small`: 200 ego graphs from Citeseer (4-18 nodes).
-- `enzymes`: 587 protein structure graphs from BRENDA (10-125 nodes).
+- `enzymes`: 587 protein structure graphs from BRENDA (up to 126 nodes).
 
 Fixed pipeline (shared by all baselines and the agent):
 - 500 epochs, batch size 32, single GPU. (This is reduced from the 3000 epochs

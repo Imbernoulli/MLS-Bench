@@ -34,8 +34,8 @@ class DPMechanism:
 ```
 
 ## Constraints
-- The total privacy budget `(target_epsilon, target_delta)` is FIXED and checked externally: the harness composes the per-step `σ_t` it applied, and a run whose epsilon exceeds the target, or whose clipped per-sample gradient exceeds its declared `C_t`, is aborted.
-- The model architecture, data pipeline, optimizer, and training loop are FIXED.
+- The total privacy budget `(target_epsilon, target_delta)` is FIXED and checked externally: the harness composes the per-step `σ_t` it applied, and a run whose epsilon exceeds the target by more than 1% (the slack for the noise calibration's binary search), or whose clipped per-sample gradient exceeds its declared `C_t`, is aborted.
+- The model architecture, data pipeline, optimizer, and training loop are FIXED; the harness aborts a run that hooks or monkeypatches the functions it relies on (see `_check_harness` in the file).
 - Focus on algorithmic innovation in the DP mechanism: clipping strategies, noise schedules, gradient processing.
 - Available imports: `torch`, `math`, `numpy` (via the FIXED section), `scipy.optimize`.
 
@@ -157,67 +157,67 @@ stay unchanged.
     82: # (Mironov et al. 2019, as in Opacus) composed over steps, then (eps, delta).
     83: 
     84: def compute_epsilon(steps, sigma, q, delta, alphas=None):
-    85:     """Compute (epsilon, best_alpha) via RDP accounting.
-    86: 
-    87:     Args:
-    88:         steps: number of training steps
-    89:         sigma: noise multiplier
-    90:         q: sampling probability (batch_size / dataset_size)
-    91:         delta: target delta
-    92:         alphas: list of RDP orders to try
-    93: 
-    94:     Returns:
-    95:         (epsilon, best_alpha)
-    96:     """
-    97:     return compute_epsilon_schedule([(sigma, steps)], q, delta, alphas)
-    98: 
-    99: 
-   100: def compute_epsilon_schedule(schedule, q, delta, alphas=None):
-   101:     """(epsilon, best_alpha) of a noise schedule given as (sigma, n_steps)
-   102:     pairs, composed exactly as the harness's privacy ledger does."""
-   103:     return _rdp_epsilon(schedule, q, delta, alphas)
-   104: 
-   105: 
-   106: def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
-   107:     """Find the noise multiplier sigma that achieves target_epsilon.
+    85:     """(epsilon, best_alpha) after `steps` steps at noise multiplier `sigma`,
+    86:     sampling rate q = batch_size / dataset_size, over the RDP orders `alphas`."""
+    87:     return compute_epsilon_schedule([(sigma, steps)], q, delta, alphas)
+    88: 
+    89: 
+    90: def compute_epsilon_schedule(schedule, q, delta, alphas=None):
+    91:     """(epsilon, best_alpha) of a noise schedule given as (sigma, n_steps)
+    92:     pairs, composed exactly as the harness's privacy ledger does."""
+    93:     return _rdp_epsilon(schedule, q, delta, alphas)
+    94: 
+    95: 
+    96: def calibrate_noise_to_epsilon(target_epsilon, steps, q, delta, tol=1e-3):
+    97:     """Binary-search the noise multiplier sigma that achieves target_epsilon."""
+    98:     sigma_low, sigma_high = 0.01, 100.0
+    99:     while sigma_high - sigma_low > tol:
+   100:         sigma_mid = (sigma_low + sigma_high) / 2
+   101:         eps, _ = compute_epsilon(steps, sigma_mid, q, delta)
+   102:         if eps > target_epsilon:
+   103:             sigma_low = sigma_mid
+   104:         else:
+   105:             sigma_high = sigma_mid
+   106:     return (sigma_low + sigma_high) / 2
+   107: 
    108: 
-   109:     Uses binary search to find the right noise level.
-   110:     """
-   111:     sigma_low, sigma_high = 0.01, 100.0
-   112:     while sigma_high - sigma_low > tol:
-   113:         sigma_mid = (sigma_low + sigma_high) / 2
-   114:         eps, _ = compute_epsilon(steps, sigma_mid, q, delta)
-   115:         if eps > target_epsilon:
-   116:             sigma_low = sigma_mid
-   117:         else:
-   118:             sigma_high = sigma_mid
-   119:     return (sigma_low + sigma_high) / 2
-   120: 
-   121: 
-   122: # Originals of what the FIXED harness relies on (noise, clipping check,
-   123: # accountant, accuracy count), captured before the editable section runs.
-   124: # ("module.<builtin>" must stay absent: fixed code looks these names up.)
-   125: import builtins as _builtins
-   126: from scipy import special as _sp_special
-   127: _HARNESS_BUILTINS = ("bool", "float", "int", "type", "len", "isinstance", "list",
-   128:                      "tuple", "zip", "range", "enumerate", "min", "max", "abs",
-   129:                      "print", "RuntimeError")
-   130: _HARNESS_REFS = tuple(
-   131:     (f"{label}.{name}", ns, name, ns.get(name))
-   132:     for label, ns, names in (
-   133:         ("torch", vars(torch), ("Tensor", "randn_like", "cat")),
-   134:         ("torch.linalg", vars(torch.linalg), ("vector_norm",)),
-   135:         ("torch._C", vars(torch._C), ("_len_torch_function_stack",
-   136:                                       "_len_torch_dispatch_stack")),
-   137:         ("torch.Tensor", vars(torch.Tensor), (
-   138:             "__torch_function__", "__getattribute__", "__getattr__", "shape",
-   139:             "to", "clone", "detach", "reshape", "dim", "__mul__", "__add__",
-   140:             "__le__", "__bool__", "all", "mean", "max", "item", "argmax", "eq",
-   141:             "sum")),
-   142:         ("math", vars(math), ("log", "log1p", "exp", "expm1", "sqrt", "isfinite")),
-   143:         ("scipy.special", vars(_sp_special), ("binom", "log_ndtr")),
-   144:         ("builtins", vars(_builtins), _HARNESS_BUILTINS),
-   145:         ("module", globals(), ("torch", "print", "range", "enumerate", "zip",
+   109: # Originals of what the FIXED harness relies on (noise, clipping check,
+   110: # accountant, model calls, parameter update, accuracy count), captured before
+   111: # the editable section runs; _check_harness (below) compares against them.
+   112: import builtins as _builtins, torch.utils._device as _tdev
+   113: import torch.nn.modules.module as _tmm, torch.optim.optimizer as _topt, torch.optim.sgd as _tsgd
+   114: from scipy import special as _sp_special
+   115: optim.SGD([torch.zeros(1, requires_grad=True)], lr=0.1)  # wraps SGD.step (profiler) now
+   116: _HARNESS_BUILTINS = ("bool", "float", "int", "type", "len", "isinstance", "list", "tuple", "zip",
+   117:                      "range", "enumerate", "min", "max", "abs", "vars", "print", "RuntimeError")
+   118: _HARNESS_REFS = tuple(
+   119:     (f"{label}.{name}", ns, name, ns.get(name))
+   120:     for label, ns, names in (
+   121:         ("torch", vars(torch), ("Tensor", "randn_like", "cat", "_foreach_add", "_foreach_add_",
+   122:                                 "_foreach_mul", "_foreach_mul_", "_foreach_neg")),
+   123:         ("torch.linalg", vars(torch.linalg), ("vector_norm",)),
+   124:         ("torch._C", vars(torch._C), ("_len_torch_function_stack", "_get_function_stack_at",
+   125:                                       "_len_torch_dispatch_stack")),
+   126:         ("torch.Tensor", vars(torch.Tensor), (
+   127:             "__torch_function__", "__getattribute__", "__getattr__", "shape", "grad", "to",
+   128:             "clone", "detach", "reshape", "dim", "__mul__", "__add__", "__le__", "__bool__",
+   129:             "all", "mean", "max", "item", "argmax", "eq", "sum")),
+   130:         ("torch.nn.Module", vars(nn.Module), ("__call__", "_call_impl", "_wrapped_call_impl",
+   131:                                               "__getattr__", "modules", "named_modules")),
+   132:         ("torch.nn.modules.module", vars(_tmm), [n for n in vars(_tmm) if n.startswith("_global_")]),
+   133:         ("torch.optim.optimizer", vars(_topt), ("_global_optimizer_pre_hooks",
+   134:                                                 "_global_optimizer_post_hooks")),
+   135:         ("torch.optim", vars(optim), ("SGD",)),
+   136:         # (not SGD._init_group / sgd._fused_sgd: torch.compile legitimately rewraps them)
+   137:         ("torch.optim.SGD", vars(optim.SGD), ("step",)),
+   138:         ("torch.optim.sgd", vars(_tsgd), ("sgd", "_single_tensor_sgd", "_multi_tensor_sgd")),
+   139:         ("torch.utils._device", vars(_tdev), ("DeviceContext",)),
+   140:         ("DeviceContext", vars(_tdev.DeviceContext), ("__torch_function__",)),
+   141:         ("math", vars(math), ("log", "log1p", "exp", "expm1", "sqrt", "isfinite")),
+   142:         ("scipy.special", vars(_sp_special), ("binom", "log_ndtr")),
+   143:         ("builtins", vars(_builtins), _HARNESS_BUILTINS),
+   144:         # fixed module-level names; the builtins must stay unshadowed (absent) here
+   145:         ("module", globals(), ("torch", "nn", "optim", "print", "range", "enumerate", "zip",
    146:                                "len", "RuntimeError")),
    147:     )
    148:     for name in names
@@ -248,8 +248,8 @@ stay unchanged.
    173: # IMPORTANT:
    174: # - The total privacy budget (target_epsilon, target_delta) is FIXED. The
    175: #   harness accounts every step with the sigma_t it applied and aborts a run
-   176: #   whose epsilon exceeds the target; a scaled per-sample gradient whose norm
-   177: #   exceeds clip_norm also aborts the run.
+   176: #   whose epsilon exceeds 1.01 x target_epsilon (calibration slack); a scaled
+   177: #   per-sample gradient whose norm exceeds clip_norm also aborts the run.
    178: 
    179: class DPMechanism:
    180:     """Differentially private gradient mechanism.
@@ -319,260 +319,260 @@ stay unchanged.
    244: # - The fixed functions below take the helpers and library functions they use
    245: #   (the originals in _HARNESS_REFS) as default arguments or closure variables
    246: #   bound at definition time, so reassigning a module-level name (e.g. with
-   247: #   `global`) or a torch/math attribute does not change them.
-   248: # - _check_harness() runs after every call into DPMechanism, before the
-   249: #   harness uses its result, and before the final metrics are printed. It
-   250: #   aborts the run if an entry of _HARNESS_REFS or a fixed name of this file
-   251: #   defined below was replaced (or a listed builtin shadowed), or if a torch
-   252: #   function/dispatch mode is active.
-   253: # Not covered (in-process residual): code that deliberately rewrites the
-   254: # harness's own objects (_HARNESS_REFS before it is bound, function defaults
-   255: # or closures, frames, gc) or forges the printed output.
-   256: _ORIG = {key: obj for key, ns, name, obj in _HARNESS_REFS}
-   257: 
-   258: _CLIP_NORM_RTOL = 1e-4  # float slack on the per-sample L2 bound check
-   259: _EPSILON_RTOL = 1e-2    # slack for the sigma calibration's binary-search tolerance
-   260: _RDP_ORDERS = tuple([1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64)))
-   261: 
-   262: 
-   263: def _make_harness_check(refs=_HARNESS_REFS, _RuntimeError=_ORIG["builtins.RuntimeError"]):
-   264:     fixed = []  # (key, namespace, name, object) of the fixed code, see seal()
-   265:     mode_stacks = [obj for key, ns, name, obj in refs if key.startswith("torch._C.")]
-   266: 
-   267:     def check():
-   268:         for entries in (refs, fixed):
-   269:             for key, ns, name, obj in entries:
-   270:                 if ns.get(name) is not obj:
-   271:                     raise _RuntimeError(
-   272:                         f"DP harness tampering: `{key}` was replaced or shadowed; "
-   273:                         f"the fixed harness relies on the original")
-   274:         for stack_len in mode_stacks:
-   275:             if stack_len():
-   276:                 raise _RuntimeError("DP harness tampering: a torch function or "
-   277:                                     "dispatch mode is active")
-   278: 
-   279:     def seal(*groups):
-   280:         if fixed:
-   281:             raise _RuntimeError("the DP harness is already sealed")
-   282:         for label, ns, names in groups:
-   283:             for name in names:
-   284:                 fixed.append((f"{label}.{name}", ns, name, ns[name]))
-   285:         check()
-   286: 
-   287:     return check, seal
+   247: #   `global`) or a torch/math attribute does not change them. Methods of the
+   248: #   tensors DPMechanism returns are called unbound (never looked up on them).
+   249: # - _check_harness() runs after every call into DPMechanism (before the harness
+   250: #   uses its result), before every optimizer step, before every evaluation and
+   251: #   before the final metrics are printed. It aborts the run if
+   252: #     * an entry of _HARNESS_REFS (the listed torch / torch.nn.Module /
+   253: #       torch.optim / math / scipy.special / builtins attributes and module
+   254: #       names) or a fixed name defined below was replaced, or a listed builtin
+   255: #       is shadowed at module level;
+   256: #     * a global torch.nn module hook or optimizer step hook is registered, or
+   257: #       the harness's model, criterion or optimizer carries its own
+   258: #       forward/backward/step hooks or an instance-level `forward`;
+   259: #     * a torch function mode other than torch's own DeviceContext (set by
+   260: #       torch.set_default_device) or any torch dispatch mode is active.
+   261: # Not covered (in-process residual): code that deliberately rewrites the
+   262: # harness's own objects (_HARNESS_REFS before it is bound, function defaults
+   263: # or closures, frames, gc), torch internals not listed above (e.g. kernel
+   264: # overrides registered through torch.library, layer/loss implementations),
+   265: # and forged printed output.
+   266: _ORIG = {key: obj for key, ns, name, obj in _HARNESS_REFS}
+   267: 
+   268: _CLIP_NORM_RTOL = 1e-4  # float slack on the per-sample L2 bound check
+   269: _EPSILON_RTOL = 1e-2    # slack for the sigma calibration's binary-search tolerance
+   270: _RDP_ORDERS = tuple([1 + x / 10.0 for x in range(1, 100)] + list(range(12, 64)))
+   271: _MODULE_HOOKS = ("_forward_hooks", "_forward_pre_hooks", "_backward_hooks",
+   272:                  "_backward_pre_hooks")
+   273: _OPTIMIZER_HOOKS = ("_optimizer_step_pre_hooks", "_optimizer_step_post_hooks")
+   274: 
+   275: 
+   276: def _make_harness_check(
+   277:         refs=_HARNESS_REFS, _RuntimeError=_ORIG["builtins.RuntimeError"],
+   278:         _type=_ORIG["builtins.type"], _range=_ORIG["builtins.range"],
+   279:         _vars=_ORIG["builtins.vars"], _modules=_ORIG["torch.nn.Module.modules"],
+   280:         _tf_len=_ORIG["torch._C._len_torch_function_stack"],
+   281:         _tf_at=_ORIG["torch._C._get_function_stack_at"],
+   282:         _dispatch_len=_ORIG["torch._C._len_torch_dispatch_stack"],
+   283:         _DeviceContext=_ORIG["torch.utils._device.DeviceContext"],
+   284:         module_hooks=_MODULE_HOOKS, optimizer_hooks=_OPTIMIZER_HOOKS):
+   285:     fixed = []  # (key, namespace, name, object) of the fixed code, see seal()
+   286:     registries = [(key, obj) for key, ns, name, obj in refs  # global hook dicts
+   287:                   if name.startswith("_global_") and obj is not None]
    288: 
-   289: 
-   290: _check_harness, _seal_harness = _make_harness_check()
-   291: _check_harness()  # module-level code of the editable section replaced nothing
-   292: 
-   293: 
-   294: def _make_rdp_accountant(
-   295:         orders=_RDP_ORDERS, log=_ORIG["math.log"], log1p=_ORIG["math.log1p"],
-   296:         exp=_ORIG["math.exp"], expm1=_ORIG["math.expm1"], sqrt=_ORIG["math.sqrt"],
-   297:         binom=_ORIG["scipy.special.binom"], log_ndtr=_ORIG["scipy.special.log_ndtr"],
-   298:         _float=_ORIG["builtins.float"], _int=_ORIG["builtins.int"],
-   299:         _abs=_ORIG["builtins.abs"], _min=_ORIG["builtins.min"],
-   300:         _max=_ORIG["builtins.max"], _range=_ORIG["builtins.range"],
-   301:         _zip=_ORIG["builtins.zip"], _len=_ORIG["builtins.len"],
-   302:         _tuple=_ORIG["builtins.tuple"]):
-   303:     """RDP of the subsampled Gaussian mechanism with sampling rate q (Mironov,
-   304:     Talwar and Zhang 2019, "Renyi Differential Privacy of the Sampled Gaussian
-   305:     Mechanism"; the computation used by Opacus and TF-Privacy), composed per
-   306:     order over a noise schedule and converted to (epsilon, delta) with
-   307:     eps = rdp + log(1/delta)/(alpha-1) + log(1-1/alpha), minimised over alpha.
-   308:     """
-   309:     inf = _float("inf")
-   310: 
-   311:     def log_add(x, y):
-   312:         a, b = _min(x, y), _max(x, y)
-   313:         return b if a == -inf else log1p(exp(a - b)) + b
-   314: 
-   315:     def log_sub(x, y):
-   316:         if x < y:
-   317:             raise ValueError("The result of subtraction must be non-negative.")
-   318:         if y == -inf:
-   319:             return x
-   320:         if x == y:
-   321:             return -inf
-   322:         try:
-   323:             return log(expm1(x - y)) + y
-   324:         except OverflowError:
-   325:             return x
-   326: 
-   327:     def log_erfc(x):
-   328:         return log(2) + log_ndtr(-x * 2 ** 0.5)
+   289:     def tampered(what):
+   290:         return _RuntimeError(f"DP harness tampering: {what}")
+   291: 
+   292:     def check(*modules, optimizer=None):
+   293:         for entries in (refs, fixed):
+   294:             for key, ns, name, obj in entries:
+   295:                 if ns.get(name) is not obj:
+   296:                     raise tampered(f"`{key}` was replaced or shadowed; the fixed "
+   297:                                    f"harness relies on the original")
+   298:         for key, registry in registries:
+   299:             if registry:
+   300:                 raise tampered(f"a global hook is registered in `{key}`")
+   301:         for i in _range(_tf_len()):
+   302:             if _type(_tf_at(i)) is not _DeviceContext:
+   303:                 raise tampered("a torch function mode is active")
+   304:         if _dispatch_len():
+   305:             raise tampered("a torch dispatch mode is active")
+   306:         for root in modules:
+   307:             for module in _modules(root):
+   308:                 ns = _vars(module)
+   309:                 if "forward" in ns:
+   310:                     raise tampered(f"{_type(module).__name__}.forward was overridden")
+   311:                 for name in module_hooks:
+   312:                     if ns.get(name):
+   313:                         raise tampered(f"{_type(module).__name__} has {name}")
+   314:         if optimizer is not None:
+   315:             ns = _vars(optimizer)
+   316:             for name in optimizer_hooks:
+   317:                 if ns.get(name):
+   318:                     raise tampered(f"the optimizer has {name}")
+   319: 
+   320:     def seal(*groups):
+   321:         if fixed:
+   322:             raise _RuntimeError("the DP harness is already sealed")
+   323:         for label, ns, names in groups:
+   324:             for name in names:
+   325:                 fixed.append((f"{label}.{name}", ns, name, ns[name]))
+   326:         check()
+   327: 
+   328:     return check, seal
    329: 
-   330:     def log_a_int(q, sigma, alpha):
-   331:         log_a = -inf
-   332:         for i in _range(alpha + 1):
-   333:             log_coef_i = log(binom(alpha, i)) + i * log(q) + (alpha - i) * log(1 - q)
-   334:             log_a = log_add(log_a, log_coef_i + (i * i - i) / (2 * (sigma ** 2)))
-   335:         return _float(log_a)
-   336: 
-   337:     def log_a_frac(q, sigma, alpha):
-   338:         log_a0, log_a1 = -inf, -inf
-   339:         i = 0
-   340:         z0 = sigma ** 2 * log(1 / q - 1) + 0.5
-   341:         while True:
-   342:             coef = binom(alpha, i)
-   343:             log_coef = log(_abs(coef))
-   344:             j = alpha - i
-   345:             log_t0 = log_coef + i * log(q) + j * log(1 - q)
-   346:             log_t1 = log_coef + j * log(q) + i * log(1 - q)
-   347:             log_e0 = log(0.5) + log_erfc((i - z0) / (sqrt(2) * sigma))
-   348:             log_e1 = log(0.5) + log_erfc((z0 - j) / (sqrt(2) * sigma))
-   349:             log_s0 = log_t0 + (i * i - i) / (2 * (sigma ** 2)) + log_e0
-   350:             log_s1 = log_t1 + (j * j - j) / (2 * (sigma ** 2)) + log_e1
-   351:             if coef > 0:
-   352:                 log_a0, log_a1 = log_add(log_a0, log_s0), log_add(log_a1, log_s1)
-   353:             else:
-   354:                 log_a0, log_a1 = log_sub(log_a0, log_s0), log_sub(log_a1, log_s1)
-   355:             i += 1
-   356:             if _max(log_s0, log_s1) < -30:
-   357:                 break
-   358:         return log_add(log_a0, log_a1)
-   359: 
-   360:     def step_rdp(q, sigma, alpha):
-   361:         if q == 0:
-   362:             return 0.0
-   363:         if sigma == 0:
-   364:             return inf
-   365:         if q == 1.0:
-   366:             return alpha / (2 * sigma ** 2)
-   367:         if _float(alpha).is_integer():
-   368:             return log_a_int(q, sigma, _int(alpha)) / (alpha - 1)
-   369:         return log_a_frac(q, sigma, alpha) / (alpha - 1)
+   330: 
+   331: _check_harness, _seal_harness = _make_harness_check()
+   332: _check_harness()  # module-level code of the editable section replaced nothing
+   333: 
+   334: 
+   335: def _make_rdp_accountant(
+   336:         orders=_RDP_ORDERS, log=_ORIG["math.log"], log1p=_ORIG["math.log1p"],
+   337:         exp=_ORIG["math.exp"], expm1=_ORIG["math.expm1"], sqrt=_ORIG["math.sqrt"],
+   338:         binom=_ORIG["scipy.special.binom"], log_ndtr=_ORIG["scipy.special.log_ndtr"],
+   339:         _float=_ORIG["builtins.float"], _int=_ORIG["builtins.int"],
+   340:         _abs=_ORIG["builtins.abs"], _min=_ORIG["builtins.min"],
+   341:         _max=_ORIG["builtins.max"], _range=_ORIG["builtins.range"],
+   342:         _zip=_ORIG["builtins.zip"], _len=_ORIG["builtins.len"],
+   343:         _tuple=_ORIG["builtins.tuple"]):
+   344:     """RDP of the subsampled Gaussian mechanism with sampling rate q (Mironov,
+   345:     Talwar and Zhang 2019, "Renyi Differential Privacy of the Sampled Gaussian
+   346:     Mechanism"; the computation used by Opacus and TF-Privacy), composed per
+   347:     order over a noise schedule and converted to (epsilon, delta) with
+   348:     eps = rdp + log(1/delta)/(alpha-1) + log(1-1/alpha), minimised over alpha.
+   349:     """
+   350:     inf = _float("inf")
+   351: 
+   352:     def log_add(x, y):
+   353:         a, b = _min(x, y), _max(x, y)
+   354:         return b if a == -inf else log1p(exp(a - b)) + b
+   355: 
+   356:     def log_sub(x, y):
+   357:         if x < y:
+   358:             raise ValueError("The result of subtraction must be non-negative.")
+   359:         if y == -inf:
+   360:             return x
+   361:         if x == y:
+   362:             return -inf
+   363:         try:
+   364:             return log(expm1(x - y)) + y
+   365:         except OverflowError:
+   366:             return x
+   367: 
+   368:     def log_erfc(x):
+   369:         return log(2) + log_ndtr(-x * 2 ** 0.5)
    370: 
-   371:     def epsilon(schedule, q, delta, alphas=None, cache=None):
-   372:         """(epsilon, best_alpha) of `schedule`, a list of (sigma, n_steps);
-   373:         `cache` (a dict) keeps each sigma's one-step RDP across calls."""
-   374:         q, delta = _float(q), _float(delta)
-   375:         alphas = orders if alphas is None else _tuple(alphas)
-   376:         cache = {} if cache is None else cache
-   377:         rdp = [0.0] * _len(alphas)
-   378:         for sigma, n_steps in schedule:
-   379:             key = (q, _float(sigma), alphas)
-   380:             per_step = cache.get(key)
-   381:             if per_step is None:
-   382:                 per_step = cache[key] = [step_rdp(q, key[1], a) for a in alphas]
-   383:             rdp = [r + n_steps * s for r, s in _zip(rdp, per_step)]
-   384:         best_eps, best_alpha = inf, None
-   385:         for alpha, r in _zip(alphas, rdp):
-   386:             if alpha <= 1:
-   387:                 continue
-   388:             eps = r - log(delta) / (alpha - 1) + log(1 - 1 / alpha)
-   389:             if eps < best_eps:
-   390:                 best_eps, best_alpha = eps, alpha
-   391:         return _max(0, best_eps), best_alpha
-   392: 
-   393:     return epsilon
-   394: 
-   395: 
-   396: _rdp_epsilon = _make_rdp_accountant()
-   397: 
-   398: 
-   399: class _PrivacyLedger:
-   400:     """Counts the steps run at each noise multiplier sigma_t the harness
-   401:     applied; epsilon() composes their subsampled-Gaussian RDP per order (no
-   402:     shortcut through an "effective" sigma)."""
-   403: 
-   404:     def __init__(self, q, delta, _float=_ORIG["builtins.float"]):
-   405:         self.q = _float(q)
-   406:         self.delta = _float(delta)
-   407:         self.steps = 0
-   408:         self.last_sigma = None
-   409:         self.counts = {}  # sigma_t -> number of steps
-   410:         self.rdp_cache = {}
+   371:     def log_a_int(q, sigma, alpha):
+   372:         log_a = -inf
+   373:         for i in _range(alpha + 1):
+   374:             log_coef_i = log(binom(alpha, i)) + i * log(q) + (alpha - i) * log(1 - q)
+   375:             log_a = log_add(log_a, log_coef_i + (i * i - i) / (2 * (sigma ** 2)))
+   376:         return _float(log_a)
+   377: 
+   378:     def log_a_frac(q, sigma, alpha):
+   379:         log_a0, log_a1 = -inf, -inf
+   380:         i = 0
+   381:         z0 = sigma ** 2 * log(1 / q - 1) + 0.5
+   382:         while True:
+   383:             coef = binom(alpha, i)
+   384:             log_coef = log(_abs(coef))
+   385:             j = alpha - i
+   386:             log_t0 = log_coef + i * log(q) + j * log(1 - q)
+   387:             log_t1 = log_coef + j * log(q) + i * log(1 - q)
+   388:             log_e0 = log(0.5) + log_erfc((i - z0) / (sqrt(2) * sigma))
+   389:             log_e1 = log(0.5) + log_erfc((z0 - j) / (sqrt(2) * sigma))
+   390:             log_s0 = log_t0 + (i * i - i) / (2 * (sigma ** 2)) + log_e0
+   391:             log_s1 = log_t1 + (j * j - j) / (2 * (sigma ** 2)) + log_e1
+   392:             if coef > 0:
+   393:                 log_a0, log_a1 = log_add(log_a0, log_s0), log_add(log_a1, log_s1)
+   394:             else:
+   395:                 log_a0, log_a1 = log_sub(log_a0, log_s0), log_sub(log_a1, log_s1)
+   396:             i += 1
+   397:             if _max(log_s0, log_s1) < -30:
+   398:                 break
+   399:         return log_add(log_a0, log_a1)
+   400: 
+   401:     def step_rdp(q, sigma, alpha):
+   402:         if q == 0:
+   403:             return 0.0
+   404:         if sigma == 0:
+   405:             return inf
+   406:         if q == 1.0:
+   407:             return alpha / (2 * sigma ** 2)
+   408:         if _float(alpha).is_integer():
+   409:             return log_a_int(q, sigma, _int(alpha)) / (alpha - 1)
+   410:         return log_a_frac(q, sigma, alpha) / (alpha - 1)
    411: 
-   412:     def record(self, sigma):
-   413:         self.steps += 1
-   414:         self.last_sigma = sigma
-   415:         self.counts[sigma] = self.counts.get(sigma, 0) + 1
-   416: 
-   417:     def epsilon(self, _epsilon=_rdp_epsilon, _list=_ORIG["builtins.list"]):
-   418:         return _epsilon(_list(self.counts.items()), self.q, self.delta,
-   419:                         cache=self.rdp_cache)[0]
-   420: 
-   421: 
-   422: def _positive_finite(value, name, _float=_ORIG["builtins.float"],
-   423:                      _isfinite=_ORIG["math.isfinite"]):
-   424:     value = _float(value)
-   425:     if not _isfinite(value) or value <= 0:
-   426:         raise RuntimeError(f"DPMechanism returned invalid {name}={value!r}; "
-   427:                            f"it must be a finite positive number")
-   428:     return value
-   429: 
-   430: 
-   431: def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger,
-   432:                    _check=_check_harness, _positive=_positive_finite,
-   433:                    _Tensor=_ORIG["torch.Tensor"], _randn_like=_ORIG["torch.randn_like"],
-   434:                    _cat=_ORIG["torch.cat"], _vector_norm=_ORIG["torch.linalg.vector_norm"],
-   435:                    _rtol=_CLIP_NORM_RTOL, _bool=_ORIG["builtins.bool"],
-   436:                    _type=_ORIG["builtins.type"], _len=_ORIG["builtins.len"],
-   437:                    _isinstance=_ORIG["builtins.isinstance"], _list=_ORIG["builtins.list"],
-   438:                    _tuple=_ORIG["builtins.tuple"], _zip=_ORIG["builtins.zip"]):
-   439:     """One step of the Gaussian mechanism with the mechanism's C_t and sigma_t.
-   440: 
-   441:     The mechanism sees a copy of the per-sample gradients and returns
-   442:     per-sample multipliers plus the bound C_t; the harness scales the
-   443:     original gradients, verifies ||scaled_i|| <= C_t for every sample, averages
-   444:     over the batch, adds N(0, (sigma_t * C_t / B)^2) noise and records sigma_t.
-   445:     """
-   446:     batch_size = per_sample_grads[0].shape[0]
-   447:     scale, clip_norm = dp_mechanism.clip(
-   448:         [g.clone() for g in per_sample_grads], step, epoch
-   449:     )
-   450:     clip_norm = _positive(clip_norm, "clip_norm")
-   451:     sigma = _positive(dp_mechanism.get_noise_multiplier(step, epoch),
-   452:                       "noise multiplier")
-   453:     scales = _list(scale) if _isinstance(scale, (_list, _tuple)) else [scale] * _len(per_sample_grads)
-   454:     _check()  # no DPMechanism code runs past this point in this step
-   455: 
-   456:     if _len(scales) != _len(per_sample_grads):
-   457:         raise RuntimeError(f"DPMechanism.clip returned {_len(scales)} scale tensors "
-   458:                            f"for {_len(per_sample_grads)} parameters")
-   459:     clipped = []
-   460:     for g, s in _zip(per_sample_grads, scales):
-   461:         if _type(s) is not _Tensor or _tuple(s.shape) != (batch_size,):
-   462:             raise RuntimeError("DPMechanism.clip must return per-sample scales as "
-   463:                                f"plain torch.Tensor of shape [{batch_size}]")
-   464:         shape = [batch_size] + [1] * (g.dim() - 1)
-   465:         clipped.append(g * s.detach().to(device=g.device, dtype=g.dtype).reshape(shape))
-   466: 
-   467:     norms = _vector_norm(_cat([c.reshape(batch_size, -1) for c in clipped], dim=1), 2, dim=1)
-   468:     if not _bool((norms <= clip_norm * (1 + _rtol)).all()):
-   469:         raise RuntimeError(
-   470:             f"DP violation at step {step}: a scaled per-sample gradient has norm "
-   471:             f"{norms.max().item():.6g} > clip_norm={clip_norm:.6g}"
-   472:         )
-   473: 
-   474:     noised_grads = []
-   475:     for c in clipped:
-   476:         avg = c.mean(dim=0)
-   477:         noise = _randn_like(avg) * (sigma * clip_norm / batch_size)
-   478:         noised_grads.append(avg + noise)
-   479:     ledger.record(sigma)
-   480:     return noised_grads
-   481: 
+   412:     def epsilon(schedule, q, delta, alphas=None, cache=None):
+   413:         """(epsilon, best_alpha) of `schedule`, a list of (sigma, n_steps);
+   414:         `cache` (a dict) keeps each sigma's one-step RDP across calls."""
+   415:         q, delta = _float(q), _float(delta)
+   416:         alphas = orders if alphas is None else _tuple(alphas)
+   417:         cache = {} if cache is None else cache
+   418:         rdp = [0.0] * _len(alphas)
+   419:         for sigma, n_steps in schedule:
+   420:             key = (q, _float(sigma), alphas)
+   421:             per_step = cache.get(key)
+   422:             if per_step is None:
+   423:                 per_step = cache[key] = [step_rdp(q, key[1], a) for a in alphas]
+   424:             rdp = [r + n_steps * s for r, s in _zip(rdp, per_step)]
+   425:         best_eps, best_alpha = inf, None
+   426:         for alpha, r in _zip(alphas, rdp):
+   427:             if alpha <= 1:
+   428:                 continue
+   429:             eps = r - log(delta) / (alpha - 1) + log(1 - 1 / alpha)
+   430:             if eps < best_eps:
+   431:                 best_eps, best_alpha = eps, alpha
+   432:         return _max(0, best_eps), best_alpha
+   433: 
+   434:     return epsilon
+   435: 
+   436: 
+   437: _rdp_epsilon = _make_rdp_accountant()
+   438: 
+   439: 
+   440: class _PrivacyLedger:
+   441:     """Counts the steps run at each noise multiplier sigma_t the harness
+   442:     applied; epsilon() composes their subsampled-Gaussian RDP per order (no
+   443:     shortcut through an "effective" sigma)."""
+   444: 
+   445:     def __init__(self, q, delta, _float=_ORIG["builtins.float"]):
+   446:         self.q = _float(q)
+   447:         self.delta = _float(delta)
+   448:         self.steps = 0
+   449:         self.last_sigma = None
+   450:         self.counts = {}  # sigma_t -> number of steps
+   451:         self.rdp_cache = {}
+   452: 
+   453:     def record(self, sigma):
+   454:         self.steps += 1
+   455:         self.last_sigma = sigma
+   456:         self.counts[sigma] = self.counts.get(sigma, 0) + 1
+   457: 
+   458:     def epsilon(self, _epsilon=_rdp_epsilon, _list=_ORIG["builtins.list"]):
+   459:         return _epsilon(_list(self.counts.items()), self.q, self.delta,
+   460:                         cache=self.rdp_cache)[0]
+   461: 
+   462: 
+   463: def _positive_finite(value, name, _float=_ORIG["builtins.float"],
+   464:                      _isfinite=_ORIG["math.isfinite"]):
+   465:     value = _float(value)
+   466:     if not _isfinite(value) or value <= 0:
+   467:         raise RuntimeError(f"DPMechanism returned invalid {name}={value!r}; "
+   468:                            f"it must be a finite positive number")
+   469:     return value
+   470: 
+   471: 
+   472: def privatize_step(dp_mechanism, per_sample_grads, step, epoch, ledger,
+   473:                    _check=_check_harness, _positive=_positive_finite,
+   474:                    _Tensor=_ORIG["torch.Tensor"], _randn_like=_ORIG["torch.randn_like"],
+   475:                    _cat=_ORIG["torch.cat"], _vector_norm=_ORIG["torch.linalg.vector_norm"],
+   476:                    _rtol=_CLIP_NORM_RTOL, _bool=_ORIG["builtins.bool"],
+   477:                    _type=_ORIG["builtins.type"], _len=_ORIG["builtins.len"],
+   478:                    _isinstance=_ORIG["builtins.isinstance"], _list=_ORIG["builtins.list"],
+   479:                    _tuple=_ORIG["builtins.tuple"], _zip=_ORIG["builtins.zip"],
+   480:                    _detach=_ORIG["torch.Tensor.detach"]):
+   481:     """One step of the Gaussian mechanism with the mechanism's C_t and sigma_t.
    482: 
-   483: # =====================================================================
-   484: # FIXED: Data loading (DO NOT MODIFY)
-   485: # =====================================================================
-   486: 
-   487: def get_data_loaders(dataset_name, batch_size, data_root=os.environ.get("DATA_ROOT", "/data")):
-   488:     """Create train and test data loaders."""
-   489:     if dataset_name == "mnist":
-   490:         transform = transforms.Compose([
-   491:             transforms.ToTensor(),
-   492:             transforms.Normalize((0.1307,), (0.3081,)),
-   493:         ])
-   494:         train_ds = datasets.MNIST(
-   495:             os.path.join(data_root, "mnist"), train=True, download=False, transform=transform
-   496:         )
-   497:         test_ds = datasets.MNIST(
-   498:             os.path.join(data_root, "mnist"), train=False, download=False, transform=transform
-   499:         )
-   500:         model_cls = MNISTNet
+   483:     The mechanism sees a copy of the per-sample gradients and returns
+   484:     per-sample multipliers plus the bound C_t; the harness scales the
+   485:     original gradients, verifies ||scaled_i|| <= C_t for every sample, averages
+   486:     over the batch, adds N(0, (sigma_t * C_t / B)^2) noise and records sigma_t.
+   487:     """
+   488:     batch_size = per_sample_grads[0].shape[0]
+   489:     scale, clip_norm = dp_mechanism.clip(
+   490:         [g.clone() for g in per_sample_grads], step, epoch
+   491:     )
+   492:     clip_norm = _positive(clip_norm, "clip_norm")
+   493:     sigma = _positive(dp_mechanism.get_noise_multiplier(step, epoch),
+   494:                       "noise multiplier")
+   495:     scales = _list(scale) if _isinstance(scale, (_list, _tuple)) else [scale] * _len(per_sample_grads)
+   496:     _check()  # no DPMechanism code runs past this point in this step: the
+   497:     # returned scales are only read through `shape` and unbound Tensor methods
+   498: 
+   499:     if _len(scales) != _len(per_sample_grads):
+   500:         raise RuntimeError(f"DPMechanism.clip returned {_len(scales)} scale tensors "
 
 [truncated: showing at most 500 lines / 60000 bytes from opacus/custom_dpsgd.py]
 ```

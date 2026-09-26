@@ -28,6 +28,7 @@ The DEAP library (`deap.base`, `deap.creator`, `deap.tools`) is available. You m
 - Respect the function signature and return types — the evaluation harness below the editable section is fixed.
 - The harness scores `best_individual` by re-evaluating it with the true objective; its `.fitness` attribute is not trusted. A returned individual with the wrong dimension, or with any coordinate that is non-finite or outside the domain, is rejected and the run gets no score.
 - Each run shifts the objective so that its optimum lies at a fresh random location (uniform in the central 80% of the domain in every coordinate; the optimum value stays 0); `evaluate_func` and the final re-evaluation use the same shifted objective.
+- Evaluation budget: `evaluate_func` may be called at most `pop_size * (n_generations + 1)` times per run (the initial population plus one full population per generation); a further call raises `RuntimeError` and evaluates nothing.
 
 ## Evaluation
 Strategies are evaluated on benchmarks (all minimization, lower is better):

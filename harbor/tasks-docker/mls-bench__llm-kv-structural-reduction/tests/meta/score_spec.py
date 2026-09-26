@@ -32,6 +32,13 @@ cache is worth the same (the linear sigmoid gave 192 -> 96 B only +0.01 on the
 term, and 0 B scored 0.52). Anchors are unchanged: 4096 B scores 0, the best
 baseline (MLA, 192 B) scores 0.5.
 
+heldout_loss is reported but NOT scored. It is measured on only 64 random
+windows (16 iters x batch 4), and a re-run of the same code in the current
+image shifts it by ~0.10 for every baseline (mla 3.885 vs 3.988, mha 3.864 vs
+3.967) while val_loss reproduces to ~0.001; that shift is ~3x the whole
+baseline spread (3.967-3.999), so the term measured the environment rather
+than the method. val_loss carries the same quality signal reproducibly.
+
 Generation throughput is intentionally NOT scored — `kv_bytes_per_token`
 already captures MLA's structural advantage, and a wall-clock t/s number
 in pure-PyTorch eager mode reflects per-layer op count more than model
@@ -55,11 +62,6 @@ term("kv_budget_345m",
     penalty_upper(col("kv_bytes_per_token_gpt-345m").lower().id(),
                   target=1024.0, sharpness=0.003))
 
-# heldout_loss (avg over wikitext2/103/lambada): lower is better.
-term("heldout_loss_345m",
-    col("heldout_loss_gpt-345m").lower().id()
-    .bounded_power(bound=0.0))
-
 # --- lm-eval downstream tasks (0-shot) ---
 term("arc_easy",
     col("arc_easy_lm-eval-345m").higher().id()
@@ -79,7 +81,6 @@ term("winogrande",
 
 setting("gpt-345m", weighted_mean(
     ("val_loss_345m", 2.0),
-    ("heldout_loss_345m", 0.5),
     ("kv_bytes_per_token_345m", 1.5),
 ), constraints=["kv_budget_345m"])
 

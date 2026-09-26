@@ -11,16 +11,18 @@ from mlsbench.scoring.dsl import *
 # deferral_rate_gap: lower is better (smaller subgroup deferral gap)
 # auroc: higher is better, bounded at 1.0
 
-# Sanity gates. A policy that defers blindly (constant or random score, or a
-# random accept/defer split) gets a near-zero deferral_rate_gap for free while
-# the risk terms only fall to 0, so ungated such non-solutions scored like, or
-# above, the reference baselines. Both the acceptance score and the accepted
-# 80% must keep at least half of the weakest baseline's information over
-# chance; a chance-level policy has its setting multiplied by e^-3.
-#   auroc gate: AUROC >= 0.5 + 0.5 * (min baseline AUROC - 0.5)
-#   risk gate:  selective risk <= e - 0.5 * (e - max baseline selective risk),
-#               e = the fixed base model's no-deferral test error, which is
-#               the expected selective risk of a random 80% subset
+# Sanity gates. The objective terms stop at 0 at the weakest baseline, so on
+# their own they never charge for errors beyond it, while deferral_rate_gap
+# pays up to 1.0 for any subgroup-balanced split -- including a blind or
+# partly random one. Ungated, such non-solutions outscored every baseline.
+#   auroc gate: the acceptance score must keep at least half of the weakest
+#     baseline's AUROC margin over chance; chance level multiplies the
+#     setting by e^-3.
+#   risk gate (no regression): the selective risk may give up at most 15% of
+#     the weakest baseline's error reduction over a random 80% (whose expected
+#     risk is e, the fixed base model's no-deferral test error); beyond that
+#     the setting is multiplied by e^-3 per further 10%. A subgroup-exact
+#     confidence policy gives up <= 9%; half-random splits give up 23-44%.
 # Constants measured with seed 42 (leaderboard.csv baseline rows; e is
 # 1238/9045, 342/1055, 1773/4469 misclassified test examples).
 _MIN_BASELINE_AUROC = {"adult": 0.851883, "compas": 0.629582, "law_school": 0.614418}
@@ -46,11 +48,11 @@ def _add_setting(label):
     term(f"auroc_gate_{label}",
         penalty_lower(col(f"auroc_{label}").higher().id(),
                       target=0.5 + auroc_margin, sharpness=3.0 / auroc_margin))
-    risk_margin = 0.5 * (_NO_DEFERRAL_RISK[label] - _MAX_BASELINE_RISK[label])
+    reduction = _NO_DEFERRAL_RISK[label] - _MAX_BASELINE_RISK[label]
     term(f"risk_gate_{label}",
         penalty_upper(col(f"selective_risk_at80_{label}").lower().id(),
-                      target=_NO_DEFERRAL_RISK[label] - risk_margin,
-                      sharpness=3.0 / risk_margin))
+                      target=_MAX_BASELINE_RISK[label] + 0.15 * reduction,
+                      sharpness=3.0 / (0.1 * reduction)))
 
     setting(label, weighted_mean(
         (f"selective_risk_at80_{label}", 1.0),

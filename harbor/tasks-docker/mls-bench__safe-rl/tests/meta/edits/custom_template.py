@@ -72,6 +72,27 @@ class CustomLag(PPO):
     # ===============================================================
     # FIXED: Training loop with MLS-Bench metrics reporting
     # ===============================================================
+    def _init_env(self) -> None:
+        super()._init_env()
+        self._mlsbench_env_steps = [0]
+        self._count_env_steps()
+
+    def _count_env_steps(self) -> None:
+        """Make every step of the innermost env(s) under ``self._env`` add to the step count."""
+        count = self._mlsbench_env_steps
+        for env in (self._env, getattr(self._env, '_eval_env', None)):
+            while env is not None and {'_env', 'env'} & vars(env).keys():
+                env = vars(env).get('_env', vars(env).get('env'))
+            if env is None or getattr(env.step, 'mlsbench_counted', False):
+                continue
+
+            def counted_step(*args, _step=env.step, _n=getattr(env, 'num_envs', 1), **kwargs):
+                count[0] += _n
+                return _step(*args, **kwargs)
+
+            counted_step.mlsbench_counted = True
+            env.step = counted_step
+
     def learn(self) -> tuple[float, float, float]:
         """Training loop with TRAIN_METRICS and TEST_METRICS output.
 
@@ -80,10 +101,11 @@ class CustomLag(PPO):
         copy that only the rollout below writes to: values stored into
         ``self._logger`` elsewhere do not reach them.
 
-        The environment steps the rollout takes are counted against the
-        ``--total-steps`` budget on the command line (not ``self._cfgs``,
-        which editable code can change). A run that is over its pro-rata share
-        of the budget at the end of any epoch is aborted.
+        Every step taken on the environment ``self._env`` wraps, from its
+        creation on and by any code, is counted against the ``--total-steps``
+        budget on the command line (not ``self._cfgs``, which editable code
+        can change). A run that is over its pro-rata share of the budget at the
+        end of any epoch is aborted.
         """
         import argparse
         import os
@@ -100,7 +122,7 @@ class CustomLag(PPO):
         if budget is None:  # not launched through train_safe_rl.py
             budget = int(self._cfgs.train_cfgs.total_steps)
         epochs = self._cfgs.train_cfgs.epochs
-        env_steps = 0
+        env_steps = self._mlsbench_env_steps
 
         logger = self._logger
         episodes = {key: deque(maxlen=100) for key in ('Metrics/EpRet', 'Metrics/EpCost', 'Metrics/EpLen')}
@@ -112,12 +134,9 @@ class CustomLag(PPO):
                 return getattr(logger, name)
 
             def store(self, data=None, /, **kwargs):
-                nonlocal env_steps
                 logger.store(data, **kwargs)
                 if data is not None:
                     kwargs.update(data)
-                if 'Value/reward' in kwargs:  # stored once per rollout step, one value per env
-                    env_steps += kwargs['Value/reward'].numel()
                 for key in episodes.keys() & kwargs.keys():
                     val = kwargs[key]  # converted as Logger.store converts it
                     if isinstance(val, torch.Tensor):
@@ -132,6 +151,7 @@ class CustomLag(PPO):
             return dist_statistics_scalar(vals)[0].item()
 
         for epoch in range(epochs):
+            self._count_env_steps()  # also if editable code replaced self._env
             epoch_time = time.time()
 
             rollout_time = time.time()
@@ -141,12 +161,6 @@ class CustomLag(PPO):
                 buffer=self._buf,
                 logger=RolloutLogger(),
             )
-            if env_steps > budget * (epoch + 1) // epochs:
-                raise RuntimeError(
-                    f'MLS-Bench step budget exceeded: {env_steps} environment steps after '
-                    f'{epoch + 1} of {epochs} epochs, over the pro-rata share of '
-                    f'--total-steps {budget}',
-                )
             self._logger.store({'Time/Rollout': time.time() - rollout_time})
 
             update_time = time.time()
@@ -191,6 +205,13 @@ class CustomLag(PPO):
                 epoch + 1
             ) == self._cfgs.train_cfgs.epochs:
                 self._logger.torch_save()
+
+            if env_steps[0] > budget * (epoch + 1) // epochs:
+                raise RuntimeError(
+                    f'MLS-Bench step budget exceeded: {env_steps[0]} environment steps after '
+                    f'{epoch + 1} of {epochs} epochs, over the pro-rata share of '
+                    f'--total-steps {budget}',
+                )
 
         ep_ret = episode_mean('Metrics/EpRet')
         ep_cost = episode_mean('Metrics/EpCost')

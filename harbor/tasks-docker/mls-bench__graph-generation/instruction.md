@@ -184,7 +184,7 @@ stay unchanged.
     90: def load_enzymes(n_max=587):
     91:     """Load ENZYMES dataset from TUDataset.
     92: 
-    93:     Protein tertiary structure graphs, 587 graphs, 10-125 nodes.
+    93:     Protein tertiary structure graphs, 587 graphs, up to 126 nodes.
     94:     """
     95:     try:
     96:         import networkx as nx

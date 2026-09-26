@@ -73,8 +73,9 @@ Low-precision arithmetic inside the mask is not penalized: rows with a
 logit above 1024 in magnitude, which fp16 cannot resolve (only layer 0
 of this model has them), are not checked, and on the rest fused SDPA
 on the fp16 inputs or fp32 attention stays well inside the limits.
-Logits from a plain fp16/bf16 matmul are too coarse and can fail, so
-compute hand-written logits in fp32. Any `last_density` the module
+Logits from a plain fp16/bf16 matmul, and fused SDPA on inputs cast to
+bf16, are too coarse and can fail, so keep the fp16 inputs for fused SDPA
+and compute hand-written logits in fp32. Any `last_density` the module
 sets is ignored. The
 harness aggregates the density across all attention layers and aborts
 the run if the mean exceeds the density budget (`0.25 + 0.02 slack`)
@@ -170,7 +171,7 @@ Other files you may **read** for context (do not modify):
     17:   3. For low density (≤ 10%), use ``torch.nn.attention.flex_attention`` with
     18:      ``create_block_mask`` — it compiles a true block-sparse kernel that
     19:      skips entire blocks (PyTorch-native, no Triton-by-hand needed).
-    20:   4. Stay in bf16 — fused SDPA handles numerics safely; fp32 upcast 2×s memory.
+    20:   4. Keep the fp16 inputs for fused SDPA (bf16 is too coarse for the output check); hand-written logits in fp32.
     21: """
     22: 
     23: import math
@@ -244,7 +245,7 @@ Other files you may **read** for context (do not modify):
     91: 
     92:         mask, _density = self._get_mask(N, q.device, is_causal)
     93:         self.last_mask = mask  # the harness derives density from this mask
-    94:         # SDPA bool attn_mask: True = attend. Stay in bf16/fp16 (fused SDPA).
+    94:         # SDPA bool attn_mask: True = attend. Keep the fp16 inputs (not bf16).
     95:         out = F.scaled_dot_product_attention(
     96:             q, k, v, attn_mask=mask.view(1, 1, N, N),
     97:             dropout_p=0.0, is_causal=False, scale=scale,

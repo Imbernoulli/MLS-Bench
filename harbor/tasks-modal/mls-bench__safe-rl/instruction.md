@@ -151,141 +151,162 @@ Other files you may **read** for context (do not modify):
     72:     # ===============================================================
     73:     # FIXED: Training loop with MLS-Bench metrics reporting
     74:     # ===============================================================
-    75:     def learn(self) -> tuple[float, float, float]:
-    76:         """Training loop with TRAIN_METRICS and TEST_METRICS output.
-    77: 
-    78:         The reported ep_ret / ep_cost / ep_len are the mean of the last 100
-    79:         episodes (OmniSafe's default ``logger_cfgs.window_lens``), taken from a
-    80:         copy that only the rollout below writes to: values stored into
-    81:         ``self._logger`` elsewhere do not reach them.
-    82: 
-    83:         The environment steps the rollout takes are counted against the
-    84:         ``--total-steps`` budget on the command line (not ``self._cfgs``,
-    85:         which editable code can change). A run that is over its pro-rata share
-    86:         of the budget at the end of any epoch is aborted.
-    87:         """
-    88:         import argparse
-    89:         import os
-    90:         from collections import deque
-    91: 
-    92:         from omnisafe.utils.distributed import dist_statistics_scalar
-    93: 
-    94:         start_time = time.time()
-    95:         self._logger.log('INFO: Start training')
-    96: 
-    97:         cli = argparse.ArgumentParser(add_help=False)
-    98:         cli.add_argument('--total-steps', type=int)
-    99:         budget = cli.parse_known_args()[0].total_steps
-   100:         if budget is None:  # not launched through train_safe_rl.py
-   101:             budget = int(self._cfgs.train_cfgs.total_steps)
-   102:         epochs = self._cfgs.train_cfgs.epochs
-   103:         env_steps = 0
-   104: 
-   105:         logger = self._logger
-   106:         episodes = {key: deque(maxlen=100) for key in ('Metrics/EpRet', 'Metrics/EpCost', 'Metrics/EpLen')}
-   107: 
-   108:         class RolloutLogger:
-   109:             """Forwards to the logger and keeps a copy of the episode statistics."""
-   110: 
-   111:             def __getattr__(self, name):
-   112:                 return getattr(logger, name)
+    75:     def _init_env(self) -> None:
+    76:         super()._init_env()
+    77:         self._mlsbench_env_steps = [0]
+    78:         self._count_env_steps()
+    79: 
+    80:     def _count_env_steps(self) -> None:
+    81:         """Make every step of the innermost env(s) under ``self._env`` add to the step count."""
+    82:         count = self._mlsbench_env_steps
+    83:         for env in (self._env, getattr(self._env, '_eval_env', None)):
+    84:             while env is not None and {'_env', 'env'} & vars(env).keys():
+    85:                 env = vars(env).get('_env', vars(env).get('env'))
+    86:             if env is None or getattr(env.step, 'mlsbench_counted', False):
+    87:                 continue
+    88: 
+    89:             def counted_step(*args, _step=env.step, _n=getattr(env, 'num_envs', 1), **kwargs):
+    90:                 count[0] += _n
+    91:                 return _step(*args, **kwargs)
+    92: 
+    93:             counted_step.mlsbench_counted = True
+    94:             env.step = counted_step
+    95: 
+    96:     def learn(self) -> tuple[float, float, float]:
+    97:         """Training loop with TRAIN_METRICS and TEST_METRICS output.
+    98: 
+    99:         The reported ep_ret / ep_cost / ep_len are the mean of the last 100
+   100:         episodes (OmniSafe's default ``logger_cfgs.window_lens``), taken from a
+   101:         copy that only the rollout below writes to: values stored into
+   102:         ``self._logger`` elsewhere do not reach them.
+   103: 
+   104:         Every step taken on the environment ``self._env`` wraps, from its
+   105:         creation on and by any code, is counted against the ``--total-steps``
+   106:         budget on the command line (not ``self._cfgs``, which editable code
+   107:         can change). A run that is over its pro-rata share of the budget at the
+   108:         end of any epoch is aborted.
+   109:         """
+   110:         import argparse
+   111:         import os
+   112:         from collections import deque
    113: 
-   114:             def store(self, data=None, /, **kwargs):
-   115:                 nonlocal env_steps
-   116:                 logger.store(data, **kwargs)
-   117:                 if data is not None:
-   118:                     kwargs.update(data)
-   119:                 if 'Value/reward' in kwargs:  # stored once per rollout step, one value per env
-   120:                     env_steps += kwargs['Value/reward'].numel()
-   121:                 for key in episodes.keys() & kwargs.keys():
-   122:                     val = kwargs[key]  # converted as Logger.store converts it
-   123:                     if isinstance(val, torch.Tensor):
-   124:                         val = val.mean().item()
-   125:                     elif isinstance(val, np.ndarray):
-   126:                         val = val.mean()
-   127:                     episodes[key].append(val)
-   128: 
-   129:         def episode_mean(key: str) -> float:
-   130:             """What ``Logger.get_stats(key)[0]`` computes, over the copy."""
-   131:             vals = torch.tensor(list(episodes[key])).to(os.getenv('OMNISAFE_DEVICE', 'cpu'))
-   132:             return dist_statistics_scalar(vals)[0].item()
-   133: 
-   134:         for epoch in range(epochs):
-   135:             epoch_time = time.time()
-   136: 
-   137:             rollout_time = time.time()
-   138:             self._env.rollout(
-   139:                 steps_per_epoch=self._steps_per_epoch,
-   140:                 agent=self._actor_critic,
-   141:                 buffer=self._buf,
-   142:                 logger=RolloutLogger(),
-   143:             )
-   144:             if env_steps > budget * (epoch + 1) // epochs:
-   145:                 raise RuntimeError(
-   146:                     f'MLS-Bench step budget exceeded: {env_steps} environment steps after '
-   147:                     f'{epoch + 1} of {epochs} epochs, over the pro-rata share of '
-   148:                     f'--total-steps {budget}',
-   149:                 )
-   150:             self._logger.store({'Time/Rollout': time.time() - rollout_time})
-   151: 
-   152:             update_time = time.time()
-   153:             self._update()
-   154:             self._logger.store({'Time/Update': time.time() - update_time})
-   155: 
-   156:             if self._cfgs.model_cfgs.exploration_noise_anneal:
-   157:                 self._actor_critic.annealing(epoch)
-   158: 
-   159:             if self._cfgs.model_cfgs.actor.lr is not None:
-   160:                 self._actor_critic.actor_scheduler.step()
-   161: 
-   162:             self._logger.store(
-   163:                 {
-   164:                     'TotalEnvSteps': (epoch + 1) * self._cfgs.algo_cfgs.steps_per_epoch,
-   165:                     'Time/FPS': self._cfgs.algo_cfgs.steps_per_epoch / (time.time() - epoch_time),
-   166:                     'Time/Total': (time.time() - start_time),
-   167:                     'Time/Epoch': (time.time() - epoch_time),
-   168:                     'Train/Epoch': epoch,
-   169:                     'Train/LR': (
-   170:                         0.0
-   171:                         if self._cfgs.model_cfgs.actor.lr is None
-   172:                         else self._actor_critic.actor_scheduler.get_last_lr()[0]
-   173:                     ),
-   174:                 },
-   175:             )
-   176: 
-   177:             self._logger.dump_tabular()
-   178: 
-   179:             # -- MLS-Bench: TRAIN_METRICS --
-   180:             _ep_ret = episode_mean('Metrics/EpRet')
-   181:             _ep_cost = episode_mean('Metrics/EpCost')
-   182:             _ep_len = episode_mean('Metrics/EpLen')
-   183:             print(
-   184:                 f'TRAIN_METRICS epoch={epoch} '
-   185:                 f'ep_ret={_ep_ret:.4f} ep_cost={_ep_cost:.4f} '
-   186:                 f'ep_len={_ep_len:.1f}',
-   187:                 flush=True,
-   188:             )
-   189: 
-   190:             if (epoch + 1) % self._cfgs.logger_cfgs.save_model_freq == 0 or (
-   191:                 epoch + 1
-   192:             ) == self._cfgs.train_cfgs.epochs:
-   193:                 self._logger.torch_save()
-   194: 
-   195:         ep_ret = episode_mean('Metrics/EpRet')
-   196:         ep_cost = episode_mean('Metrics/EpCost')
-   197:         ep_len = episode_mean('Metrics/EpLen')
-   198: 
-   199:         # -- MLS-Bench: TEST_METRICS --
-   200:         print(
-   201:             f'TEST_METRICS ep_ret={ep_ret:.4f} ep_cost={ep_cost:.4f} '
-   202:             f'ep_len={ep_len:.1f}',
-   203:             flush=True,
-   204:         )
-   205: 
-   206:         self._logger.close()
-   207:         self._env.close()
+   114:         from omnisafe.utils.distributed import dist_statistics_scalar
+   115: 
+   116:         start_time = time.time()
+   117:         self._logger.log('INFO: Start training')
+   118: 
+   119:         cli = argparse.ArgumentParser(add_help=False)
+   120:         cli.add_argument('--total-steps', type=int)
+   121:         budget = cli.parse_known_args()[0].total_steps
+   122:         if budget is None:  # not launched through train_safe_rl.py
+   123:             budget = int(self._cfgs.train_cfgs.total_steps)
+   124:         epochs = self._cfgs.train_cfgs.epochs
+   125:         env_steps = self._mlsbench_env_steps
+   126: 
+   127:         logger = self._logger
+   128:         episodes = {key: deque(maxlen=100) for key in ('Metrics/EpRet', 'Metrics/EpCost', 'Metrics/EpLen')}
+   129: 
+   130:         class RolloutLogger:
+   131:             """Forwards to the logger and keeps a copy of the episode statistics."""
+   132: 
+   133:             def __getattr__(self, name):
+   134:                 return getattr(logger, name)
+   135: 
+   136:             def store(self, data=None, /, **kwargs):
+   137:                 logger.store(data, **kwargs)
+   138:                 if data is not None:
+   139:                     kwargs.update(data)
+   140:                 for key in episodes.keys() & kwargs.keys():
+   141:                     val = kwargs[key]  # converted as Logger.store converts it
+   142:                     if isinstance(val, torch.Tensor):
+   143:                         val = val.mean().item()
+   144:                     elif isinstance(val, np.ndarray):
+   145:                         val = val.mean()
+   146:                     episodes[key].append(val)
+   147: 
+   148:         def episode_mean(key: str) -> float:
+   149:             """What ``Logger.get_stats(key)[0]`` computes, over the copy."""
+   150:             vals = torch.tensor(list(episodes[key])).to(os.getenv('OMNISAFE_DEVICE', 'cpu'))
+   151:             return dist_statistics_scalar(vals)[0].item()
+   152: 
+   153:         for epoch in range(epochs):
+   154:             self._count_env_steps()  # also if editable code replaced self._env
+   155:             epoch_time = time.time()
+   156: 
+   157:             rollout_time = time.time()
+   158:             self._env.rollout(
+   159:                 steps_per_epoch=self._steps_per_epoch,
+   160:                 agent=self._actor_critic,
+   161:                 buffer=self._buf,
+   162:                 logger=RolloutLogger(),
+   163:             )
+   164:             self._logger.store({'Time/Rollout': time.time() - rollout_time})
+   165: 
+   166:             update_time = time.time()
+   167:             self._update()
+   168:             self._logger.store({'Time/Update': time.time() - update_time})
+   169: 
+   170:             if self._cfgs.model_cfgs.exploration_noise_anneal:
+   171:                 self._actor_critic.annealing(epoch)
+   172: 
+   173:             if self._cfgs.model_cfgs.actor.lr is not None:
+   174:                 self._actor_critic.actor_scheduler.step()
+   175: 
+   176:             self._logger.store(
+   177:                 {
+   178:                     'TotalEnvSteps': (epoch + 1) * self._cfgs.algo_cfgs.steps_per_epoch,
+   179:                     'Time/FPS': self._cfgs.algo_cfgs.steps_per_epoch / (time.time() - epoch_time),
+   180:                     'Time/Total': (time.time() - start_time),
+   181:                     'Time/Epoch': (time.time() - epoch_time),
+   182:                     'Train/Epoch': epoch,
+   183:                     'Train/LR': (
+   184:                         0.0
+   185:                         if self._cfgs.model_cfgs.actor.lr is None
+   186:                         else self._actor_critic.actor_scheduler.get_last_lr()[0]
+   187:                     ),
+   188:                 },
+   189:             )
+   190: 
+   191:             self._logger.dump_tabular()
+   192: 
+   193:             # -- MLS-Bench: TRAIN_METRICS --
+   194:             _ep_ret = episode_mean('Metrics/EpRet')
+   195:             _ep_cost = episode_mean('Metrics/EpCost')
+   196:             _ep_len = episode_mean('Metrics/EpLen')
+   197:             print(
+   198:                 f'TRAIN_METRICS epoch={epoch} '
+   199:                 f'ep_ret={_ep_ret:.4f} ep_cost={_ep_cost:.4f} '
+   200:                 f'ep_len={_ep_len:.1f}',
+   201:                 flush=True,
+   202:             )
+   203: 
+   204:             if (epoch + 1) % self._cfgs.logger_cfgs.save_model_freq == 0 or (
+   205:                 epoch + 1
+   206:             ) == self._cfgs.train_cfgs.epochs:
+   207:                 self._logger.torch_save()
    208: 
-   209:         return ep_ret, ep_cost, ep_len
+   209:             if env_steps[0] > budget * (epoch + 1) // epochs:
+   210:                 raise RuntimeError(
+   211:                     f'MLS-Bench step budget exceeded: {env_steps[0]} environment steps after '
+   212:                     f'{epoch + 1} of {epochs} epochs, over the pro-rata share of '
+   213:                     f'--total-steps {budget}',
+   214:                 )
+   215: 
+   216:         ep_ret = episode_mean('Metrics/EpRet')
+   217:         ep_cost = episode_mean('Metrics/EpCost')
+   218:         ep_len = episode_mean('Metrics/EpLen')
+   219: 
+   220:         # -- MLS-Bench: TEST_METRICS --
+   221:         print(
+   222:             f'TEST_METRICS ep_ret={ep_ret:.4f} ep_cost={ep_cost:.4f} '
+   223:             f'ep_len={ep_len:.1f}',
+   224:             flush=True,
+   225:         )
+   226: 
+   227:         self._logger.close()
+   228:         self._env.close()
+   229: 
+   230:         return ep_ret, ep_cost, ep_len
 ```
 
 ## Reference Baselines

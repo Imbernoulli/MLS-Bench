@@ -349,7 +349,11 @@ def _selective_metrics(
     worst_group_risk = float(max(group_risks)) if group_risks else selective_risk
     deferral_gap = float(max(group_deferrals) - min(group_deferrals)) if group_deferrals else 0.0
     correctness = (y_pred == y_true).astype(int)
-    auroc = _safe_roc_auc(correctness, scores)
+    # AUROC depends only on the ordering. Scoring the ranks keeps +-inf
+    # acceptance scores (e.g. -inf for 'never accept') in order, which
+    # roc_auc_score would reject; NaN was already rejected above.
+    from scipy.stats import rankdata
+    auroc = _safe_roc_auc(correctness, rankdata(np.asarray(scores, dtype=float).reshape(-1)))
     return {
         "selective_risk_at80": selective_risk,
         "coverage_at80": coverage,

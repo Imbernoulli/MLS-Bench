@@ -47,10 +47,20 @@ compared are those whose qlib MTSDatasetH window is itself padded with another
 instrument's later rows (a qlib quirk for an instrument's first seq_len-1
 samples, also reaching TRA's memory).
 
-KNOWN RESIDUAL (in-process): the check cannot stop code that deliberately
-carries the full-panel answers into the check -- e.g. test-segment features
-stashed during ``fit()`` (fit receives the dataset), a cache kept in a module
-global or on disk, or reading the provider's ``.bin`` files directly.
+Training cutoff
+---------------
+The editable model is constructed and fit with qlib's data provider cut off
+before the first test date (the same ``_DataCutoff`` the check uses), and
+``DatasetH.prepare`` returns test-segment rows fully NaN-ed (features and
+label) during that phase, so ``fit()`` / ``__init__`` cannot read the test
+period through ``qlib.data.D`` (e.g. the label expression itself) or
+``prepare('test')`` and stash it for replay in ``predict()``.
+
+KNOWN RESIDUAL (in-process): the checks cannot stop code that deliberately
+carries test-period data into ``predict()`` by other means -- e.g. reading the
+already-loaded handler's internal frames or a TSDatasetH/MTSDatasetH sampler
+during ``fit()``, a cache kept in a module global or on disk, or reading the
+provider's ``.bin`` files directly.
 """
 
 import bisect
@@ -65,6 +75,11 @@ import pandas as pd
 # When False, the fit-guard prepare() patch passes labels through untouched
 # (used only while the host-side scorer reads the held-out test label).
 _GUARD_ACTIVE = True
+
+# True only while the editable CustomModel is constructed and fit (set by the
+# training cutoff below): prepare() then masks every column of test-segment
+# rows, not just the label.
+_FIT_PHASE = False
 
 # Workflow dataset config (set by install()); the causality check re-builds
 # the dataset from it.
@@ -430,6 +445,61 @@ def install(dataset_config):
     SignalRecord._mlsbench_label_guarded = True
 
     _install_fit_label_guard()
+    _install_training_cutoff(dataset_config)
+
+
+def _install_training_cutoff(dataset_config):
+    """Construct and fit the editable model with qlib's data provider cut off
+    before the first test date, and with ``_FIT_PHASE`` set so ``prepare()``
+    masks whole test-segment rows. Patches the two names qlib's trainer uses
+    (``init_instance_by_config`` for the model, ``auto_filter_kwargs`` for
+    ``model.fit``); dataset and record construction run unrestricted, so the
+    handler still loads the test features ``predict()`` needs. Idempotent."""
+    import functools
+
+    import qlib.model.trainer as trainer
+    from qlib.model.base import Model
+
+    if getattr(trainer, "_mlsbench_training_cutoff", False):
+        return
+    segs = (dataset_config.get("kwargs") or {}).get("segments") or {}
+    test_seg = segs.get("test")
+    if not test_seg:
+        raise RuntimeError("training cutoff: the workflow has no test segment")
+    cutoff = pd.Timestamp(test_seg[0]) - pd.Timedelta(days=1)
+
+    def _restricted(fn):
+        @functools.wraps(fn)
+        def run(*args, **kwargs):
+            global _FIT_PHASE
+            prev = _FIT_PHASE
+            _FIT_PHASE = True
+            try:
+                with _DataCutoff(cutoff):
+                    return fn(*args, **kwargs)
+            finally:
+                _FIT_PHASE = prev
+        return run
+
+    orig_init = trainer.init_instance_by_config
+    orig_filter = trainer.auto_filter_kwargs
+
+    def init_instance_by_config(config, *args, **kwargs):
+        types = kwargs.get("accept_types", args[1] if len(args) > 1 else None)
+        if isinstance(types, type) and issubclass(types, Model):
+            return _restricted(orig_init)(config, *args, **kwargs)
+        return orig_init(config, *args, **kwargs)
+
+    def auto_filter_kwargs(func, *args, **kwargs):
+        filtered = orig_filter(func, *args, **kwargs)
+        if getattr(func, "__name__", "") == "fit" and isinstance(
+                getattr(func, "__self__", None), Model):
+            return _restricted(filtered)
+        return filtered
+
+    trainer.init_instance_by_config = init_instance_by_config
+    trainer.auto_filter_kwargs = auto_filter_kwargs
+    trainer._mlsbench_training_cutoff = True
 
 
 def _install_fit_label_guard():
@@ -451,14 +521,16 @@ def _install_fit_label_guard():
         return
     _orig_prepare = DatasetH.prepare
 
-    def _nan_test_labels(obj, test_seg):
+    def _nan_test_labels(obj, test_seg, all_cols=False):
         if isinstance(obj, (list, tuple)):
-            return type(obj)(_nan_test_labels(x, test_seg) for x in obj)
+            return type(obj)(_nan_test_labels(x, test_seg, all_cols) for x in obj)
         df = obj
         if df is None or not hasattr(df, "columns") or not hasattr(df, "index"):
             return df
         cols = df.columns
-        if isinstance(cols, pd.MultiIndex):
+        if all_cols:
+            lab_cols = None
+        elif isinstance(cols, pd.MultiIndex):
             lab_mask = cols.get_level_values(0) == "label"
             if not lab_mask.any():
                 return df
@@ -496,7 +568,7 @@ def _install_fit_label_guard():
         test_seg = segs.get("test") if isinstance(segs, dict) else None
         if test_seg is None:
             return df
-        return _nan_test_labels(df, test_seg)
+        return _nan_test_labels(df, test_seg, all_cols=_FIT_PHASE)
 
     DatasetH.prepare = prepare
     DatasetH._mlsbench_fit_guarded = True

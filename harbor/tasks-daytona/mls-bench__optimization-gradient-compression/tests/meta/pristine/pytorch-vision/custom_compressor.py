@@ -256,44 +256,58 @@ def _to_device(values, dtype, device):
 def _parts(packet, shape, device):
     """Check a packet's structure and copy its tensors off the compressor.
     Returns a list of ("dense", v, b) / ("sparse", v, b, idx) /
-    ("lowrank", P, Q) with float32 values and int64 indices."""
+    ("lowrank", P, Q) with float32 values and int64 indices.
+
+    Containers must be plain dicts / lists / tuples, `bits` a plain int and
+    every tensor exactly a torch.Tensor (no subclass): the compressor's
+    tensors are first touched only through the unbound torch.Tensor.detach,
+    so neither a subclass nor an instance attribute (say `t.numel = ...`)
+    can make what is charged differ from what is decoded."""
     numel = shape.numel()
-    if isinstance(packet, dict):
+    if type(packet) is dict:
         packet = [packet]
-    if not (isinstance(packet, (list, tuple)) and packet
-            and all(isinstance(p, dict) for p in packet)):
+    if not (type(packet) in (list, tuple) and packet
+            and all(type(p) is dict for p in packet)):
         raise CompressionContractError(
             "compress must return a packet dict or a non-empty list of them")
     out = []
     for p in packet:
         if "factors" in p:
-            if set(p) != {"factors"} or len(p["factors"]) != 2:
+            if (set(p) != {"factors"} or type(p["factors"]) not in (tuple, list)
+                    or len(p["factors"]) != 2):
                 raise CompressionContractError(
                     "a low-rank packet is {'factors': (P, Q)}")
             P, Q = p["factors"]
+            if type(P) is not torch.Tensor or type(Q) is not torch.Tensor:
+                raise CompressionContractError(
+                    "factors must be torch.Tensor (not a subclass)")
+            P, Q = torch.Tensor.detach(P), torch.Tensor.detach(Q)
             rows = shape[0] if len(shape) >= 1 else 1
             cols = numel // rows
-            if not (torch.is_tensor(P) and torch.is_tensor(Q)
-                    and P.dim() == 2 and Q.dim() == 2
+            if not (P.dim() == 2 and Q.dim() == 2
                     and P.shape[0] == rows and Q.shape[0] == cols
                     and P.shape[1] == Q.shape[1] and P.shape[1] >= 1):
                 raise CompressionContractError(
                     f"factors must be P ({rows} x r) and Q ({cols} x r)")
             out.append(("lowrank",
-                        P.detach().to(device=device, dtype=torch.float32) + 0.0,
-                        Q.detach().to(device=device, dtype=torch.float32) + 0.0))
+                        P.to(device=device, dtype=torch.float32) + 0.0,
+                        Q.to(device=device, dtype=torch.float32) + 0.0))
             continue
         if not (set(p) <= {"values", "bits", "indices"}
                 and "values" in p and "bits" in p):
             raise CompressionContractError(
                 "a packet is {'values', 'bits'[, 'indices']} or {'factors'}")
         b = p["bits"]
-        if isinstance(b, bool) or not isinstance(b, int) or not 1 <= b <= 32:
+        if type(b) is not int or not 1 <= b <= 32:
             raise CompressionContractError("'bits' must be an int in [1, 32]")
         v = p["values"]
-        if not torch.is_tensor(v) or v.is_complex() or v.dtype == torch.bool:
+        if type(v) is not torch.Tensor:
+            raise CompressionContractError(
+                "'values' must be a torch.Tensor (not a subclass)")
+        v = torch.Tensor.detach(v)
+        if v.is_complex() or v.dtype == torch.bool:
             raise CompressionContractError("'values' must be a real tensor")
-        v = v.detach().reshape(-1).to(device=device, dtype=torch.float32) + 0.0
+        v = v.reshape(-1).to(device=device, dtype=torch.float32) + 0.0
         idx = p.get("indices")
         if idx is None:
             if v.numel() != numel:
@@ -301,11 +315,13 @@ def _parts(packet, shape, device):
                     f"a dense packet needs {numel} values, got {v.numel()}")
             out.append(("dense", v, b))
             continue
-        if (not torch.is_tensor(idx) or idx.is_floating_point()
-                or idx.is_complex() or idx.dtype == torch.bool):
+        if type(idx) is not torch.Tensor:
+            raise CompressionContractError(
+                "'indices' must be a torch.Tensor (not a subclass)")
+        idx = torch.Tensor.detach(idx)
+        if idx.is_floating_point() or idx.is_complex() or idx.dtype == torch.bool:
             raise CompressionContractError("'indices' must be an integer tensor")
-        idx = idx.detach().reshape(-1).to(device=device,
-                                          dtype=torch.int64).clone()
+        idx = idx.reshape(-1).to(device=device, dtype=torch.int64).clone()
         if idx.numel() != v.numel():
             raise CompressionContractError(
                 "'indices' and 'values' differ in length")
@@ -333,12 +349,12 @@ def _account(tensors, device, *, _to_device=_to_device):
         for part in parts:
             if part[0] == "lowrank":
                 P, Q = part[1], part[2]
-                static += 32 * (P.numel() + Q.numel())
+                static += 32 * (torch.Tensor.numel(P) + torch.Tensor.numel(Q))
                 finite += [P.reshape(-1), Q.reshape(-1)]
                 flat[off:off + numel].add_((P @ Q.t()).reshape(-1))
                 continue
             v, b = part[1], part[2]
-            static += v.numel() * b
+            static += torch.Tensor.numel(v) * b
             finite.append(v)
             if b < 32:
                 cb_vals.append(v)
@@ -348,14 +364,14 @@ def _account(tensors, device, *, _to_device=_to_device):
             else:
                 sp_idx.append(part[3])
                 sp_val.append(v)
-                sp_meta.append((v.numel(), numel, off, part_off))
+                sp_meta.append((torch.Tensor.numel(v), numel, off, part_off))
                 part_off += numel
         off += numel
     bits = torch.full((), float(static), dtype=torch.float64, device=device)
     fin_ok = torch.isfinite(torch.cat(finite)).all() if finite else t_true
     cb_ok, idx_ok = t_true, t_true
     if cb_vals:
-        lens = [v.numel() for v in cb_vals]
+        lens = [torch.Tensor.numel(v) for v in cb_vals]
         v = torch.cat(cb_vals)
         meta = _to_device([lens, cb_caps], torch.int64, device)
         seg = torch.repeat_interleave(
@@ -506,6 +522,10 @@ def evaluate(model, test_loader, device):
     return acc, avg_loss
 
 
+import collections  # noqa: E402  (fixed code only)
+import torch.nn.modules.module as _torch_module_py  # noqa: E402
+import torch.optim.optimizer as _torch_optimizer_py  # noqa: E402
+
 # The fixed functions reach one another through default arguments bound
 # when they are defined, so compressor code that rebinds a module-level name
 # (`global settle_step`, say) does not change what they run; the check below
@@ -520,15 +540,25 @@ _FIXED_NAMES = (
 # The builtins the fixed code calls; no module-level name may shadow them.
 _FIXED_BUILTINS = (
     "all", "bool", "dict", "enumerate", "float", "int", "isinstance", "len",
-    "list", "max", "print", "range", "set", "str", "sum", "tuple", "zip")
+    "list", "max", "print", "range", "set", "str", "sum", "tuple", "type",
+    "zip")
 
 
 def bindings_check(names=_FIXED_NAMES, builtin_names=_FIXED_BUILTINS, *,
-                   _g=globals(), _error=CompressionContractError):
-    """Snapshot the module-level `names`; the returned check stops the run if
-    any of them has since been rebound, or if a module-level name shadows
-    one of `builtin_names`."""
+                   _g=globals(), _error=CompressionContractError,
+                   _hook_modules=(_torch_optimizer_py, _torch_module_py)):
+    """Snapshot the module-level `names` and torch's global optimizer and
+    module hook registries; the returned check stops the run if any of the
+    names has since been rebound, if a module-level name shadows one of
+    `builtin_names`, or if a global hook is registered (one could hand the
+    optimizer something other than the decoded gradient)."""
     bound = tuple((name, _g[name]) for name in names)
+    hooks = tuple((vars(mod), name, reg) for mod in _hook_modules
+                  for name, reg in vars(mod).items()
+                  if name.startswith("_global_") and "_hooks" in name)
+    for _, name, reg in hooks:
+        if type(reg) not in (dict, collections.OrderedDict):
+            raise _error(f"torch's hook registry {name!r} was replaced")
 
     def check():
         for name, obj in bound:
@@ -538,6 +568,9 @@ def bindings_check(names=_FIXED_NAMES, builtin_names=_FIXED_BUILTINS, *,
             if name in _g:
                 raise _error(f"a module-level {name!r} shadows the builtin "
                              f"the fixed code calls")
+        for mod_vars, name, reg in hooks:
+            if reg or mod_vars.get(name) is not reg:
+                raise _error(f"a global hook is registered in torch's {name!r}")
     return check
 
 
