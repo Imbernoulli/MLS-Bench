@@ -335,7 +335,7 @@ Other files you may **read** for context (do not modify):
    256: 
    257:     envs.close()
    258:     returns_np = np.asarray(returns, dtype=np.float32)
-   259:     return float(returns_np.mean()), float((returns_np != 0.0).mean())
+   259:     return float(returns_np.mean()), float((returns_np > 0.0).mean())  # nonzero_rate counts positive returns only; a negative return (Private Eye hazards) is not progress
    260: 
    261: 
    262: if __name__ == "__main__":

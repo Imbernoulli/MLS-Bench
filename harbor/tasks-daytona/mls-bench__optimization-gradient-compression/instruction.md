@@ -17,28 +17,30 @@ A key challenge is that naive compression introduces bias or variance that degra
 
 ## Task
 Modify the `Compressor` class in `custom_compressor.py`. Your compressor must implement:
-- `__init__(self, compress_ratio)`: initialize with a target compression ratio (`0.01` = 100x compression).
-- `compress(self, tensor, name)`: compress a gradient tensor, returning `(compressed_tensors, ctx)`.
-- `decompress(self, compressed_tensors, ctx)`: reconstruct the gradient.
+- `__init__(self, compress_ratio, param_numels, budget_bits)`: `param_numels` maps every parameter name to its number of entries; `budget_bits` is the communication budget of one training step.
+- `compress(self, tensor, name)`: encode a gradient tensor into a packet (format below).
 
-The compressor may maintain internal state (e.g., error feedback residuals) across calls. The `name` parameter identifies parameters for per-parameter state tracking.
+The compressor may maintain internal state (e.g., error feedback residuals) across calls. The `name` parameter identifies parameters for per-parameter state tracking. Decoding is fixed: the harness reconstructs each gradient from its packet alone, and only that reconstruction reaches the optimizer.
 
 ## Interface
 ```python
 class Compressor:
-    def __init__(self, compress_ratio=0.01): ...
-    def compress(self, tensor, name) -> (list[Tensor], ctx): ...
-    def decompress(self, compressed_tensors, ctx) -> Tensor: ...
+    def __init__(self, compress_ratio, param_numels, budget_bits): ...
+    def compress(self, tensor, name) -> packet: ...  # or a list of packets, whose decodings are summed
 ```
-- `compress_ratio`: fraction of gradient elements/information to retain (`0.01` = keep 1%).
-- `compressed_tensors`: list of tensors that would be communicated over the network.
-- `ctx`: local context (not communicated) needed for decompression.
-- The decompressed tensor must have the same shape as the original input.
+A packet is one of:
+- `{"values": V, "bits": b}`: dense, one value per gradient entry;
+- `{"values": V, "bits": b, "indices": I}`: sparse, `I` the distinct flat positions of the values `V`;
+- `{"factors": (P, Q)}`: low rank, `P @ Q.T` viewed as `(shape[0], numel / shape[0])`.
 
-## Baselines (paper-cited reference implementations)
-- **topk_ef** — Top-K sparsification with error feedback (Stich et al., "Sparsified SGD with Memory", NeurIPS 2018; Karimireddy et al., "Error Feedback Fixes SignSGD and Other Gradient Compression Schemes", ICML 2019; arXiv:1901.09847). Keeps the `k = compress_ratio * d` largest-magnitude entries.
-- **qsgd** — Quantized SGD with stochastic uniform quantization (Alistarh, Grubic, Li, Tomioka, and Vojnovic, "QSGD: Communication-Efficient SGD via Gradient Quantization and Encoding", NeurIPS 2017; arXiv:1610.02132).
-- **signsgd** — Sign-only gradient compression (Bernstein, Wang, Azizzadenesheli, and Anandkumar, "signSGD: Compressed Optimisation for Non-Convex Problems", ICML 2018; arXiv:1802.04434), typically combined with majority-vote aggregation.
+A packet is a plain `dict` (a list of them a plain `list` or `tuple`), `b` a plain `int`, and `V`, `I`, `P`, `Q` plain `torch.Tensor`s, not subclasses. Values are transmitted as float32. The harness charges each packet in bits: `len(V) * b`; plus 32 bits per distinct value when `b < 32` (the codebook, which may hold at most `2**b` values); plus the Elias-gamma code of the sorted gaps between sparse positions; plus 32 bits per low-rank factor entry. The helpers `packet_cost(packet, shape)` and `elias_gamma_bound(k, numel)` compute these charges.
+
+**Budget.** One training step may transmit at most `budget_bits = compress_ratio × 32 × (total parameter entries)` bits over all parameters together, i.e. 100x less than the dense float32 gradient at `compress_ratio = 0.01`. A step over the budget, a malformed packet (non-finite values, repeated or out-of-range indices, more distinct values than `2**b`, subclassed containers, ints or tensors), or compressor code that rebinds the harness's names or registers a global optimizer or module hook stops the run, and the run is invalid.
+
+## Baselines (paper-cited reference implementations, each sized to the budget)
+- **topk_ef** — Top-K sparsification with error feedback (Stich et al., "Sparsified SGD with Memory", NeurIPS 2018; Karimireddy et al., "Error Feedback Fixes SignSGD and Other Gradient Compression Schemes", ICML 2019; arXiv:1901.09847). Sends the largest-magnitude entries as float32 values at Elias-gamma coded positions (about 0.65% of the entries at this budget).
+- **qsgd** — Quantized SGD with stochastic uniform quantization (Alistarh, Grubic, Li, Tomioka, and Vojnovic, "QSGD: Communication-Efficient SGD via Gradient Quantization and Encoding", NeurIPS 2017; arXiv:1610.02132), in the paper's Elias-coded sparse encoding with the largest number of levels that fits the budget.
+- **signsgd** — Scaled sign compression with error feedback (Bernstein, Wang, Azizzadenesheli, and Anandkumar, "signSGD: Compressed Optimisation for Non-Convex Problems", ICML 2018; arXiv:1802.04434; Karimireddy et al. 2019). One bit for every entry is only 32x, so it sends the signs of the largest-magnitude entries the budget can carry (about 2.5%), scaled by their mean magnitude.
 
 A reference low-rank method (Vogels, Karimireddy, and Jaggi, "PowerSGD: Practical Low-Rank Gradient Compression for Distributed Optimization", NeurIPS 2019; arXiv:1905.13727) is a useful design point even though it is not run as a baseline here.
 
@@ -59,7 +61,7 @@ may add or remove lines inside it. Only code outside the editable ranges must
 stay unchanged.
 
 - `pytorch-vision/custom_compressor.py`
-- editable lines **182–232**
+- editable lines **182–224**
 
 
 
@@ -67,7 +69,7 @@ stay unchanged.
 ## Readable Context
 
 
-### `pytorch-vision/custom_compressor.py`  [EDITABLE — lines 182–232 only]
+### `pytorch-vision/custom_compressor.py`  [EDITABLE — lines 182–224 only]
 
 ```python
      1: """Gradient Compression for Communication-Efficient Distributed Training.
@@ -77,12 +79,12 @@ stay unchanged.
      5: 
      6: The script simulates distributed training on a single node by:
      7: 1. Computing gradients normally
-     8: 2. Applying compress() -> decompress() to each gradient (simulating communication)
-     9: 3. Using the decompressed gradient for the optimizer step
-    10: 
-    11: This faithfully measures the effect of gradient compression on convergence
-    12: quality, which is the core ML-science question, without requiring multi-node
-    13: infrastructure.
+     8: 2. Encoding each gradient with the editable Compressor into a packet whose
+     9:    size fixed code charges in bits against a per-step budget
+    10: 3. Decoding the packet in fixed code and using it for the optimizer step
+    11: 
+    12: This measures the effect of gradient compression on convergence quality at
+    13: a fixed communication budget, without requiring multi-node infrastructure.
     14: """
     15: 
     16: import argparse
@@ -249,200 +251,329 @@ stay unchanged.
    177: 
    178: 
    179: # ============================================================================
-   180: # EDITABLE SECTION — Gradient Compressor (lines 182-232)
+   180: # EDITABLE SECTION — Gradient Compressor (lines 182-224)
    181: # ============================================================================
    182: 
    183: class Compressor:
-   184:     """Gradient compressor base implementation.
-   185: 
-   186:     Interface contract:
-   187:     - compress(tensor) -> (compressed_tensors: list[Tensor], ctx: any)
-   188:         Compress a gradient tensor. Only `compressed_tensors` would be
-   189:         "communicated" in a real distributed setting. `ctx` stays local.
-   190:     - decompress(compressed_tensors, ctx) -> Tensor
-   191:         Reconstruct the gradient from compressed representation.
-   192:         Must return a tensor of the same shape as the original.
-   193:     - The compressor may maintain internal state (e.g., error feedback
-   194:         residuals) across calls for the same parameter.
-   195: 
-   196:     Default: identity (no compression). Replace with your method.
-   197:     """
-   198: 
-   199:     def __init__(self, compress_ratio=0.01):
-   200:         """Initialize the compressor.
-   201: 
-   202:         Args:
-   203:             compress_ratio: Target compression ratio (fraction of elements
-   204:                 to keep for sparsification, or quantization level).
-   205:                 0.01 = 100x compression, 0.1 = 10x compression.
-   206:         """
-   207:         self.compress_ratio = compress_ratio
+   184:     """Gradient compressor. Default: plain Top-K sparsification (no error
+   185:     feedback), each tensor's k sized to its share of the step budget.
+   186: 
+   187:     Interface contract (enforced by the fixed code below this class):
+   188:     - __init__(compress_ratio, param_numels, budget_bits): `param_numels`
+   189:       maps every parameter name to its number of entries; `budget_bits` is
+   190:       the most one training step may transmit for all parameters together
+   191:       (compress_ratio x 32 bits x total entries, i.e. 100x at 0.01).
+   192:     - compress(tensor, name) -> packet, or a list of packets whose decodings
+   193:       are summed. Fixed code decodes the packet; only its contents reach
+   194:       the optimizer. A packet is one of
+   195:         {"values": V, "bits": b}                dense: V has one entry per
+   196:                                                 gradient entry
+   197:         {"values": V, "bits": b, "indices": I}  sparse: I = distinct flat
+   198:                                                 positions of the entries V
+   199:         {"factors": (P, Q)}                     low rank: P @ Q.T viewed as
+   200:                                                 (shape[0], numel/shape[0])
+   201:       Values are sent as float32. Cost in bits (fixed `packet_cost`):
+   202:       len(V) * b, plus 32 per distinct value when b < 32 (the codebook;
+   203:       at most 2**b distinct values), plus Elias-gamma coded gaps of I,
+   204:       plus 32 per factor entry. A step over budget_bits stops the run.
+   205:     - The compressor may keep state across calls (e.g. error feedback).
+   206:       `name` identifies the parameter.
+   207:     """
    208: 
-   209:     def compress(self, tensor, name):
-   210:         """Compress a gradient tensor.
-   211: 
-   212:         Args:
-   213:             tensor: Gradient tensor to compress (flattened or original shape).
-   214:             name: Parameter name (useful for maintaining per-parameter state).
-   215: 
-   216:         Returns:
-   217:             compressed_tensors: list of tensors that would be communicated.
-   218:             ctx: local context needed for decompression (not communicated).
-   219:         """
-   220:         return [tensor.clone()], tensor.shape
-   221: 
-   222:     def decompress(self, compressed_tensors, ctx):
-   223:         """Decompress gradients back to original shape.
-   224: 
-   225:         Args:
-   226:             compressed_tensors: list of tensors from compress().
-   227:             ctx: local context from compress().
-   228: 
-   229:         Returns:
-   230:             Decompressed gradient tensor matching original shape.
-   231:         """
-   232:         return compressed_tensors[0].view(ctx)
+   209:     def __init__(self, compress_ratio, param_numels, budget_bits):
+   210:         self.compress_ratio = compress_ratio
+   211:         total = sum(param_numels.values())
+   212:         self.k = {}
+   213:         for name, numel in param_numels.items():
+   214:             share = budget_bits * numel // total
+   215:             k = 0
+   216:             while (k < numel and
+   217:                    32 * (k + 1) + elias_gamma_bound(k + 1, numel) <= share):
+   218:                 k += 1
+   219:             self.k[name] = k
+   220: 
+   221:     def compress(self, tensor, name):
+   222:         flat = tensor.flatten()
+   223:         _, indices = torch.topk(flat.abs(), self.k[name], sorted=False)
+   224:         return {"values": flat[indices], "bits": 32, "indices": indices}
+   225: 
+   226: 
+   227: # ============================================================================
+   228: # FIXED SECTION — Transmission Format, Bit Accounting and Decoding
+   229: # ============================================================================
+   230: 
+   231: class CompressionContractError(RuntimeError):
+   232:     """A packet is malformed, or a step transmits more than its budget."""
    233: 
    234: 
-   235: # ============================================================================
-   236: # FIXED SECTION — Training Loop
-   237: # ============================================================================
+   235: def step_budget_bits(compress_ratio, param_numels):
+   236:     """Bits one step may transmit: compress_ratio x the dense float32 payload."""
+   237:     return int(compress_ratio * 32 * sum(param_numels.values()))
    238: 
-   239: def cosine_lr(optimizer, epoch, total_epochs, warmup_epochs, base_lr, min_lr=0.0):
-   240:     """Cosine learning rate schedule with linear warmup."""
-   241:     if epoch < warmup_epochs:
-   242:         lr = base_lr * (epoch + 1) / (warmup_epochs + 1)
-   243:     else:
-   244:         progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
-   245:         lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
-   246:     for param_group in optimizer.param_groups:
-   247:         param_group['lr'] = lr
-   248:     return lr
-   249: 
-   250: 
-   251: def apply_gradient_compression(model, compressor):
-   252:     """Apply gradient compression to all model parameters.
-   253: 
-   254:     Simulates the compress -> communicate -> decompress pipeline of
-   255:     distributed training. In a real system, only compressed_tensors
-   256:     would be sent over the network.
-   257:     """
-   258:     for name, param in model.named_parameters():
-   259:         if param.grad is None:
-   260:             continue
-   261:         grad = param.grad.data
-   262:         compressed, ctx = compressor.compress(grad, name)
-   263:         decompressed = compressor.decompress(compressed, ctx)
-   264:         param.grad.data = decompressed
-   265: 
-   266: 
-   267: def evaluate(model, test_loader, device):
-   268:     model.eval()
-   269:     correct = 0
-   270:     total = 0
-   271:     total_loss = 0.0
-   272:     with torch.no_grad():
-   273:         for images, labels in test_loader:
-   274:             images, labels = images.to(device), labels.to(device)
-   275:             outputs = model(images)
-   276:             loss = F.cross_entropy(outputs, labels, reduction='sum')
-   277:             total_loss += loss.item()
-   278:             _, predicted = outputs.max(1)
-   279:             total += labels.size(0)
-   280:             correct += predicted.eq(labels).sum().item()
-   281:     acc = 100.0 * correct / total
-   282:     avg_loss = total_loss / total
-   283:     return acc, avg_loss
-   284: 
-   285: 
-   286: def train(args):
-   287:     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-   288:     torch.manual_seed(args.seed)
-   289: 
-   290:     train_loader, test_loader, num_classes = get_dataloaders(
-   291:         args.dataset, args.batch_size)
-   292:     model = build_model(args.model, num_classes, device)
-   293: 
-   294:     n_params = sum(p.numel() for p in model.parameters())
-   295:     print(f"Model: {args.model}, Dataset: {args.dataset}, "
-   296:           f"Parameters: {n_params:,}, Compress ratio: {args.compress_ratio}")
-   297: 
-   298:     optimizer = optim.SGD(model.parameters(), lr=args.lr,
-   299:                           momentum=0.9, weight_decay=args.weight_decay)
-   300: 
-   301:     compressor = Compressor(compress_ratio=args.compress_ratio)
-   302: 
-   303:     best_acc = 0.0
-   304:     for epoch in range(args.epochs):
-   305:         lr = cosine_lr(optimizer, epoch, args.epochs, args.warmup_epochs,
-   306:                        args.lr, min_lr=args.lr * 0.01)
-   307:         model.train()
-   308:         running_loss = 0.0
-   309:         correct = 0
-   310:         total = 0
-   311: 
-   312:         for batch_idx, (images, labels) in enumerate(train_loader):
-   313:             images, labels = images.to(device), labels.to(device)
-   314: 
-   315:             optimizer.zero_grad()
-   316:             outputs = model(images)
-   317:             loss = F.cross_entropy(outputs, labels)
-   318:             loss.backward()
-   319: 
-   320:             # Apply gradient compression before optimizer step
-   321:             apply_gradient_compression(model, compressor)
-   322: 
-   323:             optimizer.step()
-   324: 
-   325:             running_loss += loss.item()
-   326:             _, predicted = outputs.max(1)
-   327:             total += labels.size(0)
-   328:             correct += predicted.eq(labels).sum().item()
-   329: 
-   330:         train_acc = 100.0 * correct / total
-   331:         train_loss = running_loss / len(train_loader)
-   332: 
-   333:         if (epoch + 1) % 10 == 0 or epoch == 0 or epoch == args.epochs - 1:
-   334:             test_acc, test_loss = evaluate(model, test_loader, device)
-   335:             if test_acc > best_acc:
-   336:                 best_acc = test_acc
-   337:             print(f"TRAIN_METRICS epoch={epoch+1} lr={lr:.6f} "
-   338:                   f"train_loss={train_loss:.4f} train_acc={train_acc:.2f} "
-   339:                   f"test_acc={test_acc:.2f} test_loss={test_loss:.4f}",
-   340:                   flush=True)
-   341:         else:
-   342:             print(f"TRAIN_METRICS epoch={epoch+1} lr={lr:.6f} "
-   343:                   f"train_loss={train_loss:.4f} train_acc={train_acc:.2f}",
-   344:                   flush=True)
-   345: 
-   346:     # Final evaluation
-   347:     test_acc, test_loss = evaluate(model, test_loader, device)
-   348:     if test_acc > best_acc:
-   349:         best_acc = test_acc
-   350:     print(f"TEST_METRICS test_acc={test_acc:.2f} best_acc={best_acc:.2f} "
-   351:           f"test_loss={test_loss:.4f}", flush=True)
-   352: 
-   353: 
-   354: def main():
-   355:     parser = argparse.ArgumentParser(description='Gradient Compression Benchmark')
-   356:     parser.add_argument('--model', type=str, default='resnet20',
-   357:                         choices=['resnet20', 'resnet56', 'vgg11'])
-   358:     parser.add_argument('--dataset', type=str, default='cifar10',
-   359:                         choices=['cifar10', 'cifar100'])
-   360:     parser.add_argument('--batch-size', type=int, default=128)
-   361:     parser.add_argument('--epochs', type=int, default=200)
-   362:     parser.add_argument('--lr', type=float, default=0.1)
-   363:     parser.add_argument('--weight-decay', type=float, default=5e-4)
-   364:     parser.add_argument('--warmup-epochs', type=int, default=5)
-   365:     parser.add_argument('--compress-ratio', type=float, default=0.01,
-   366:                         help='Compression ratio (fraction of gradient to keep)')
-   367:     parser.add_argument('--seed', type=int, default=42)
-   368:     args = parser.parse_args()
-   369:     train(args)
-   370: 
-   371: 
-   372: if __name__ == '__main__':
-   373:     main()
+   239: 
+   240: def elias_gamma_bound(k, numel):
+   241:     """Most Elias-gamma bits any k distinct positions in [0, numel) can cost
+   242:     (equal gaps are the worst case)."""
+   243:     if k <= 0:
+   244:         return 0
+   245:     return k + int(math.floor(2 * k * math.log2(numel / k) + 1e-9))
+   246: 
+   247: 
+   248: def _to_device(values, dtype, device):
+   249:     """A host list as a device tensor without waiting on the device queue."""
+   250:     t = torch.tensor(values, dtype=dtype)
+   251:     if device.type == "cuda":
+   252:         return t.pin_memory().to(device, non_blocking=True)
+   253:     return t.to(device)
+   254: 
+   255: 
+   256: def _parts(packet, shape, device):
+   257:     """Check a packet's structure and copy its tensors off the compressor.
+   258:     Returns a list of ("dense", v, b) / ("sparse", v, b, idx) /
+   259:     ("lowrank", P, Q) with float32 values and int64 indices.
+   260: 
+   261:     Containers must be plain dicts / lists / tuples, `bits` a plain int and
+   262:     every tensor exactly a torch.Tensor (no subclass): the compressor's
+   263:     tensors are first touched only through the unbound torch.Tensor.detach,
+   264:     so neither a subclass nor an instance attribute (say `t.numel = ...`)
+   265:     can make what is charged differ from what is decoded."""
+   266:     numel = shape.numel()
+   267:     if type(packet) is dict:
+   268:         packet = [packet]
+   269:     if not (type(packet) in (list, tuple) and packet
+   270:             and all(type(p) is dict for p in packet)):
+   271:         raise CompressionContractError(
+   272:             "compress must return a packet dict or a non-empty list of them")
+   273:     out = []
+   274:     for p in packet:
+   275:         if "factors" in p:
+   276:             if (set(p) != {"factors"} or type(p["factors"]) not in (tuple, list)
+   277:                     or len(p["factors"]) != 2):
+   278:                 raise CompressionContractError(
+   279:                     "a low-rank packet is {'factors': (P, Q)}")
+   280:             P, Q = p["factors"]
+   281:             if type(P) is not torch.Tensor or type(Q) is not torch.Tensor:
+   282:                 raise CompressionContractError(
+   283:                     "factors must be torch.Tensor (not a subclass)")
+   284:             P, Q = torch.Tensor.detach(P), torch.Tensor.detach(Q)
+   285:             rows = shape[0] if len(shape) >= 1 else 1
+   286:             cols = numel // rows
+   287:             if not (P.dim() == 2 and Q.dim() == 2
+   288:                     and P.shape[0] == rows and Q.shape[0] == cols
+   289:                     and P.shape[1] == Q.shape[1] and P.shape[1] >= 1):
+   290:                 raise CompressionContractError(
+   291:                     f"factors must be P ({rows} x r) and Q ({cols} x r)")
+   292:             out.append(("lowrank",
+   293:                         P.to(device=device, dtype=torch.float32) + 0.0,
+   294:                         Q.to(device=device, dtype=torch.float32) + 0.0))
+   295:             continue
+   296:         if not (set(p) <= {"values", "bits", "indices"}
+   297:                 and "values" in p and "bits" in p):
+   298:             raise CompressionContractError(
+   299:                 "a packet is {'values', 'bits'[, 'indices']} or {'factors'}")
+   300:         b = p["bits"]
+   301:         if type(b) is not int or not 1 <= b <= 32:
+   302:             raise CompressionContractError("'bits' must be an int in [1, 32]")
+   303:         v = p["values"]
+   304:         if type(v) is not torch.Tensor:
+   305:             raise CompressionContractError(
+   306:                 "'values' must be a torch.Tensor (not a subclass)")
+   307:         v = torch.Tensor.detach(v)
+   308:         if v.is_complex() or v.dtype == torch.bool:
+   309:             raise CompressionContractError("'values' must be a real tensor")
+   310:         v = v.reshape(-1).to(device=device, dtype=torch.float32) + 0.0
+   311:         idx = p.get("indices")
+   312:         if idx is None:
+   313:             if v.numel() != numel:
+   314:                 raise CompressionContractError(
+   315:                     f"a dense packet needs {numel} values, got {v.numel()}")
+   316:             out.append(("dense", v, b))
+   317:             continue
+   318:         if type(idx) is not torch.Tensor:
+   319:             raise CompressionContractError(
+   320:                 "'indices' must be a torch.Tensor (not a subclass)")
+   321:         idx = torch.Tensor.detach(idx)
+   322:         if idx.is_floating_point() or idx.is_complex() or idx.dtype == torch.bool:
+   323:             raise CompressionContractError("'indices' must be an integer tensor")
+   324:         idx = idx.reshape(-1).to(device=device, dtype=torch.int64).clone()
+   325:         if idx.numel() != v.numel():
+   326:             raise CompressionContractError(
+   327:                 "'indices' and 'values' differ in length")
+   328:         out.append(("sparse", v, b, idx))
+   329:     return out
+   330: 
+   331: 
+   332: def _account(tensors, device, *, _to_device=_to_device):
+   333:     """Charge and decode the packets of one step, all on the device.
+   334: 
+   335:     `tensors` is a list of (numel, parts), one per gradient tensor. Cost:
+   336:     len(values) * bits, plus 32 bits per distinct value when bits < 32
+   337:     (the codebook, at most 2**bits entries), plus the Elias-gamma code of
+   338:     each sparse packet's sorted position gaps, plus 32 bits per low-rank
+   339:     factor entry. Returns (bits, ok, flat): ok = [finite, indices valid,
+   340:     codebook valid], flat = the decoded gradients, concatenated."""
+   341:     t_true = torch.ones((), dtype=torch.bool, device=device)
+   342:     total = sum(numel for numel, _ in tensors)
+   343:     flat = torch.zeros(total, dtype=torch.float32, device=device)
+   344:     static = 0
+   345:     finite, cb_vals, cb_caps = [], [], []
+   346:     sp_idx, sp_val, sp_meta = [], [], []  # meta: len, numel, off, part off
+   347:     off = part_off = 0
+   348:     for numel, parts in tensors:
+   349:         for part in parts:
+   350:             if part[0] == "lowrank":
+   351:                 P, Q = part[1], part[2]
+   352:                 static += 32 * (torch.Tensor.numel(P) + torch.Tensor.numel(Q))
+   353:                 finite += [P.reshape(-1), Q.reshape(-1)]
+   354:                 flat[off:off + numel].add_((P @ Q.t()).reshape(-1))
+   355:                 continue
+   356:             v, b = part[1], part[2]
+   357:             static += torch.Tensor.numel(v) * b
+   358:             finite.append(v)
+   359:             if b < 32:
+   360:                 cb_vals.append(v)
+   361:                 cb_caps.append(2 ** b)
+   362:             if part[0] == "dense":
+   363:                 flat[off:off + numel].add_(v)
+   364:             else:
+   365:                 sp_idx.append(part[3])
+   366:                 sp_val.append(v)
+   367:                 sp_meta.append((torch.Tensor.numel(v), numel, off, part_off))
+   368:                 part_off += numel
+   369:         off += numel
+   370:     bits = torch.full((), float(static), dtype=torch.float64, device=device)
+   371:     fin_ok = torch.isfinite(torch.cat(finite)).all() if finite else t_true
+   372:     cb_ok, idx_ok = t_true, t_true
+   373:     if cb_vals:
+   374:         lens = [torch.Tensor.numel(v) for v in cb_vals]
+   375:         v = torch.cat(cb_vals)
+   376:         meta = _to_device([lens, cb_caps], torch.int64, device)
+   377:         seg = torch.repeat_interleave(
+   378:             torch.arange(len(lens), device=device), meta[0],
+   379:             output_size=sum(lens))
+   380:         order = torch.sort(v, stable=True).indices
+   381:         order = order[torch.sort(seg[order], stable=True).indices]
+   382:         vs, ss = v[order], seg[order]
+   383:         start = torch.ones_like(vs, dtype=torch.bool)
+   384:         start[1:] = (vs[1:] != vs[:-1]) | (ss[1:] != ss[:-1])
+   385:         levels = torch.zeros(len(lens), dtype=torch.int64, device=device)
+   386:         levels.index_add_(0, ss, start.long())
+   387:         cb_ok = (levels <= meta[1]).all()
+   388:         bits = bits + 32 * levels.sum()
+   389:     if sp_idx:
+   390:         lens = [m[0] for m in sp_meta]
+   391:         meta = _to_device([list(col) for col in zip(*sp_meta)],
+   392:                           torch.int64, device)
+   393:         seg = torch.repeat_interleave(
+   394:             torch.arange(len(lens), device=device), meta[0],
+   395:             output_size=sum(lens))
+   396:         idx = torch.cat(sp_idx)
+   397:         numels = meta[1][seg]
+   398:         in_range = ((idx >= 0) & (idx < numels)).all()
+   399:         # Invalid indices fail the check; clamp so that, until the run
+   400:         # stops, the scatter stays inside the packet's own tensor.
+   401:         safe = torch.minimum(idx.clamp(min=0), numels - 1)
+   402:         flat.index_add_(0, safe + meta[2][seg], torch.cat(sp_val))
+   403:         order = torch.sort(safe + meta[3][seg]).indices
+   404:         local, ss = idx[order], seg[order]
+   405:         first = torch.ones_like(local, dtype=torch.bool)
+   406:         first[1:] = ss[1:] != ss[:-1]
+   407:         gap = torch.where(first, local + 1, local - torch.roll(local, 1))
+   408:         idx_ok = in_range & (gap > 0).all()
+   409:         bits = bits + (2 * torch.floor(torch.log2(
+   410:             gap.clamp(min=1).double())) + 1).sum()
+   411:     return bits, torch.stack([fin_ok, idx_ok, cb_ok]), flat
+   412: 
+   413: 
+   414: def _check(ok):
+   415:     if not ok[0]:
+   416:         raise CompressionContractError("a packet carries non-finite values")
+   417:     if not ok[1]:
+   418:         raise CompressionContractError(
+   419:             "packet indices must be distinct and inside the tensor")
+   420:     if not ok[2]:
+   421:         raise CompressionContractError(
+   422:             "a packet has more distinct values than 2**bits")
+   423: 
+   424: 
+   425: def packet_cost(packet, shape, *, _parts=_parts, _account=_account,
+   426:                 _check=_check):
+   427:     """Bits `packet` (a packet or a list of them) costs for a tensor of
+   428:     `shape`, exactly as the per-step budget check charges it."""
+   429:     shape = torch.Size(shape)
+   430:     first = packet if isinstance(packet, dict) else (packet or [{}])[0]
+   431:     t = first.get("values") if isinstance(first, dict) else None
+   432:     if t is None and isinstance(first, dict) and first.get("factors"):
+   433:         t = first["factors"][0]
+   434:     device = t.device if torch.is_tensor(t) else torch.device("cpu")
+   435:     bits, ok, _ = _account([(shape.numel(), _parts(packet, shape, device))],
+   436:                            device)
+   437:     _check(ok.tolist())
+   438:     return int(bits.item())
+   439: 
+   440: 
+   441: def apply_gradient_compression(model, compressor, check_bindings, *,
+   442:                                _parts=_parts, _account=_account):
+   443:     """Encode every gradient with the compressor and replace it with the
+   444:     decoding of its packet: decoding is fixed, so the optimizer sees only
+   445:     what was transmitted. Returns the step's receipt (bits, then the three
+   446:     validity checks), filled asynchronously; `settle_step` reads it after
+   447:     the training loop's next host sync and stops the run on a violation.
+   448:     `check_bindings` runs after every compress call (see `bindings_check`)."""
+   449:     staged = []
+   450:     for name, param in model.named_parameters():
+   451:         if param.grad is None:
+   452:             continue
+   453:         packet = compressor.compress(param.grad.detach(), name)
+   454:         check_bindings()
+   455:         staged.append((param, _parts(packet, param.shape, param.device)))
+   456:     if not staged:
+   457:         return torch.tensor([0.0, 1.0, 1.0, 1.0], dtype=torch.float64), None
+   458:     device = staged[0][0].device
+   459:     bits, ok, flat = _account([(p.numel(), parts) for p, parts in staged],
+   460:                               device)
+   461:     receipt, done = torch.cat([bits.reshape(1), ok.double()]), None
+   462:     if device.type == "cuda":
+   463:         host = torch.empty(4, dtype=torch.float64, pin_memory=True)
+   464:         receipt = host.copy_(receipt, non_blocking=True)
+   465:         done = torch.cuda.Event()
+   466:         done.record()
+   467:     off = 0
+   468:     for param, _ in staged:
+   469:         n = param.numel()
+   470:         param.grad = flat[off:off + n].view(param.shape).to(param.dtype)
+   471:         off += n
+   472:     return receipt, done
+   473: 
+   474: 
+   475: def settle_step(receipt, budget_bits, *, _check=_check):
+   476:     """Check a step's receipt against the contract and the budget; returns
+   477:     the bits the step transmitted. Cheap after a host sync (loss.item())."""
+   478:     receipt, done = receipt
+   479:     if done is not None:
+   480:         done.synchronize()
+   481:     result = receipt.tolist()
+   482:     _check([bool(x) for x in result[1:]])
+   483:     if result[0] > budget_bits:
+   484:         raise CompressionContractError(
+   485:             f"a step transmitted {result[0]:.0f} bits, over the budget of "
+   486:             f"{budget_bits} bits (compress_ratio x 32 bits x parameter entries)")
+   487:     return result[0]
+   488: 
+   489: 
+   490: # ============================================================================
+   491: # FIXED SECTION — Training Loop
+   492: # ============================================================================
+   493: 
+   494: def cosine_lr(optimizer, epoch, total_epochs, warmup_epochs, base_lr, min_lr=0.0):
+   495:     """Cosine learning rate schedule with linear warmup."""
+   496:     if epoch < warmup_epochs:
+   497:         lr = base_lr * (epoch + 1) / (warmup_epochs + 1)
+   498:     else:
+   499:         progress = (epoch - warmup_epochs) / (total_epochs - warmup_epochs)
+   500:         lr = min_lr + 0.5 * (base_lr - min_lr) * (1 + math.cos(math.pi * progress))
+
+[truncated: showing at most 500 lines / 60000 bytes from pytorch-vision/custom_compressor.py]
 ```
 
 ## Reference Baselines
@@ -459,54 +590,56 @@ a baseline reproduction.
 In `pytorch-vision/custom_compressor.py`:
 
 ```python
-Lines 182–222:
+Lines 182–224:
    179: # ============================================================================
-   180: # EDITABLE SECTION — Gradient Compressor (lines 182-232)
+   180: # EDITABLE SECTION — Gradient Compressor (lines 182-224)
    181: # ============================================================================
    182: class Compressor:
    183:     """TopK sparsification with error feedback (EF-TopK).
    184: 
-   185:     Keeps the K largest-magnitude gradient elements per tensor.
-   186:     Error feedback accumulates the compression error (original - decompressed)
-   187:     and adds it to the next gradient before compression, ensuring convergence.
-   188:     """
-   189: 
-   190:     def __init__(self, compress_ratio=0.01):
-   191:         self.compress_ratio = compress_ratio
-   192:         self.residuals = {}
-   193: 
-   194:     def compress(self, tensor, name):
-   195:         # Error feedback: add accumulated residual
-   196:         if name in self.residuals:
-   197:             tensor = tensor + self.residuals[name]
+   185:     Keeps the K largest-magnitude entries of each (error-corrected)
+   186:     gradient, sent as float32 values with Elias-gamma coded positions.
+   187:     K is the largest count whose worst-case packet fits the tensor's share
+   188:     of the step budget (one entry per tensor first, the rest of the budget
+   189:     split in proportion to tensor size). Error feedback accumulates what
+   190:     was not sent and adds it to the next gradient before compression.
+   191:     """
+   192: 
+   193:     def __init__(self, compress_ratio, param_numels, budget_bits):
+   194:         self.compress_ratio = compress_ratio
+   195:         self.residuals = {}
+   196:         self.k = self._plan(param_numels, budget_bits,
+   197:                             lambda k, n: 32 * k + elias_gamma_bound(k, n))
    198: 
-   199:         shape = tensor.shape
-   200:         tensor_flat = tensor.flatten()
-   201:         numel = tensor_flat.numel()
-   202:         k = max(1, int(numel * self.compress_ratio))
-   203: 
-   204:         # Select top-k by magnitude
-   205:         _, indices = torch.topk(tensor_flat.abs(), k, sorted=False)
-   206:         values = tensor_flat[indices]
-   207: 
-   208:         # Update residual: store what was NOT communicated
-   209:         decompressed_flat = torch.zeros_like(tensor_flat)
-   210:         decompressed_flat.scatter_(0, indices, values)
-   211:         self.residuals[name] = tensor_flat - decompressed_flat
-   212:         self.residuals[name] = self.residuals[name].view(shape)
-   213: 
-   214:         return [values, indices], (numel, shape)
+   199:     @staticmethod
+   200:     def _plan(param_numels, budget_bits, cost):
+   201:         total = sum(param_numels.values())
+   202:         spare = budget_bits - sum(cost(1, n) for n in param_numels.values())
+   203:         plan = {}
+   204:         for name, n in param_numels.items():
+   205:             share = cost(1, n) + spare * n // total
+   206:             lo, hi = 1, n
+   207:             while lo < hi:
+   208:                 mid = (lo + hi + 1) // 2
+   209:                 if cost(mid, n) <= share:
+   210:                     lo = mid
+   211:                 else:
+   212:                     hi = mid - 1
+   213:             plan[name] = lo
+   214:         return plan
    215: 
-   216:     def decompress(self, compressed_tensors, ctx):
-   217:         values, indices = compressed_tensors
-   218:         numel, shape = ctx
-   219:         tensor_decompressed = torch.zeros(
-   220:             numel, dtype=values.dtype, device=values.device)
-   221:         tensor_decompressed.scatter_(0, indices, values)
-   222:         return tensor_decompressed.view(shape)
-   223: 
-   224: 
-   225: # ============================================================================
+   216:     def compress(self, tensor, name):
+   217:         if name in self.residuals:
+   218:             tensor = tensor + self.residuals[name]
+   219:         flat = tensor.flatten()
+   220:         _, indices = torch.topk(flat.abs(), self.k[name], sorted=False)
+   221:         values = flat[indices]
+   222:         sent = torch.zeros_like(flat).scatter_(0, indices, values)
+   223:         self.residuals[name] = (flat - sent).view(tensor.shape)
+   224:         return {"values": values, "bits": 32, "indices": indices}
+   225: 
+   226: 
+   227: # ============================================================================
 ```
 
 ### `qsgd` baseline — editable region  [READ-ONLY — reference implementation]
@@ -514,84 +647,87 @@ Lines 182–222:
 In `pytorch-vision/custom_compressor.py`:
 
 ```python
-Lines 182–252:
+Lines 182–255:
    179: # ============================================================================
-   180: # EDITABLE SECTION — Gradient Compressor (lines 182-232)
+   180: # EDITABLE SECTION — Gradient Compressor (lines 182-224)
    181: # ============================================================================
    182: class Compressor:
-   183:     """QSGD — Quantized Stochastic Gradient Descent.
+   183:     """QSGD with Elias coding, at the step budget.
    184: 
-   185:     Quantizes each gradient element to one of `s` discrete levels using
-   186:     randomized rounding. The quantization is unbiased: E[Q(g)] = g.
-   187:     Communication cost: O(n * log(s) / 32) of original, where n = numel.
-   188: 
-   189:     Uses s=256 quantization levels for a stable communication/variance tradeoff.
-   190: 
-   191:     Note: QSGD is an *unbiased* compressor, so error feedback is not needed
-   192:     and can actually hurt convergence. Unlike biased compressors (TopK,
-   193:     SignSGD) that systematically lose information, QSGD preserves the
-   194:     expected gradient value, making the vanilla SGD convergence guarantees
-   195:     applicable with only increased variance.
+   185:     Unbiased stochastic quantization of |g_i| / ||g|| to s levels
+   186:     (Alistarh et al., NeurIPS 2017), sent in the paper's sparse encoding:
+   187:     sign-and-level codes (a codebook of the values +-l * ||g|| / s and 0)
+   188:     at Elias-gamma coded positions. Each tensor uses the largest
+   189:     power-of-two s (up to 256) whose expected packet, measured on its
+   190:     previous gradient, fits its share of the step budget; the packet
+   191:     carries at most K entries, K the most that fit that share (should a
+   192:     gradient have more nonzero levels, the largest are kept). No error
+   193:     feedback (QSGD is unbiased). Per-tensor gradient clipping keeps
+   194:     quantization noise from diverging.
+   195:     """
    196: 
-   197:     Reference: Alistarh et al., "QSGD: Communication-Efficient SGD via
-   198:     Gradient Quantization and Encoding", NeurIPS 2017.
-   199:     """
-   200: 
-   201:     def __init__(self, compress_ratio=0.01):
-   202:         self.compress_ratio = compress_ratio
-   203:         # QSGD: s = number of quantization levels (~log2(s)+1 bits/element).
-   204:         # Var(Q(g)) ~ ||g||^2 * min(d/s^2, sqrt(d)/s). For deep nets with
-   205:         # d ~ 1e7 params, small s produces huge variance that interacts with
-   206:         # momentum SGD causing divergence on some seeds. s=256 gives ~9
-   207:         # bits/element (~3.5x compression) and keeps variance bounded.
-   208:         self.quantum_num = 256
-   209:         # Per-tensor gradient clip: prevent rare large-norm gradients from
-   210:         # amplifying quantization noise into divergence (standard QSGD
-   211:         # practice, cf. Alistarh 2017 Algorithm 1 discussion).
-   212:         self.clip_norm = 1.0
-   213: 
-   214:     def compress(self, tensor, name):
-   215:         shape = tensor.shape
-   216:         tensor_flat = tensor.flatten()
-   217: 
-   218:         # Gradient clipping BEFORE quantization — critical for stability.
-   219:         norm = tensor_flat.norm()
-   220:         if norm == 0:
-   221:             return [tensor_flat.to(torch.int16), norm], shape
-   222:         clip_coef = self.clip_norm / (norm + 1e-6)
-   223:         if clip_coef < 1.0:
-   224:             tensor_flat = tensor_flat * clip_coef
-   225:             norm = tensor_flat.norm()
-   226:             if norm == 0:
-   227:                 return [tensor_flat.to(torch.int16), norm], shape
-   228: 
-   229:         abs_gradient = tensor_flat.abs()
-   230: 
-   231:         # Quantize: level = floor(s * |g_i| / ||g||) with stochastic rounding
-   232:         level_float = self.quantum_num / norm * abs_gradient
-   233:         previous_level = level_float.floor()
-   234:         prob = torch.rand_like(tensor_flat)
-   235:         is_next_level = (prob < (level_float - previous_level)).float()
-   236:         new_level = previous_level + is_next_level
-   237: 
-   238:         # Store sign and quantized level
-   239:         sign = tensor_flat.sign()
-   240:         tensor_compressed = (new_level * sign)
-   241:         tensor_compressed = tensor_compressed.to(torch.int16)
-   242: 
-   243:         return [tensor_compressed, norm], shape
-   244: 
-   245:     def decompress(self, compressed_tensors, ctx):
-   246:         shape = ctx
-   247:         tensor_compressed, norm = compressed_tensors
-   248: 
-   249:         # Dequantize: g_hat = (norm / s) * quantized_value
-   250:         decode_output = tensor_compressed.float()
-   251:         tensor_decompressed = norm / self.quantum_num * decode_output
-   252:         return tensor_decompressed.view(shape)
-   253: 
-   254: 
-   255: # ============================================================================
+   197:     def __init__(self, compress_ratio, param_numels, budget_bits):
+   198:         self.compress_ratio = compress_ratio
+   199:         self.clip_norm = 1.0
+   200:         self.levels = [2 ** j for j in range(9)]  # s = 1 .. 256
+   201:         total = sum(param_numels.values())
+   202:         floor = {n: self._cost(1, 1, n) for n in set(param_numels.values())}
+   203:         spare = budget_bits - sum(floor[n] for n in param_numels.values())
+   204:         self.share = {name: floor[n] + spare * n // total
+   205:                       for name, n in param_numels.items()}
+   206:         self.expected = {}  # name -> (host tensor of E[nnz] per s, event)
+   207: 
+   208:     @staticmethod
+   209:     def _cost(k, s, n):
+   210:         bits = math.ceil(math.log2(2 * s + 1))
+   211:         return k * bits + 32 * (2 * s + 1) + elias_gamma_bound(k, n)
+   212: 
+   213:     def _largest_k(self, s, n, share):
+   214:         lo, hi = 0, n
+   215:         while lo < hi:
+   216:             mid = (lo + hi + 1) // 2
+   217:             if self._cost(mid, s, n) <= share:
+   218:                 lo = mid
+   219:             else:
+   220:                 hi = mid - 1
+   221:         return lo
+   222: 
+   223:     def compress(self, tensor, name):
+   224:         flat = tensor.flatten()
+   225:         n = flat.numel()
+   226:         share = self.share[name]
+   227:         s = 1
+   228:         if name in self.expected:
+   229:             host, done = self.expected[name]
+   230:             if done is not None:
+   231:                 done.synchronize()
+   232:             for s_try, e in zip(self.levels, host.tolist()):
+   233:                 if self._cost(min(n, math.ceil(1.1 * e) + 8), s_try, n) <= share:
+   234:                     s = s_try
+   235:         k = min(n, self._largest_k(s, n, share))
+   236:         flat = flat * (self.clip_norm / (flat.norm() + 1e-6)).clamp(max=1.0)
+   237:         norm = flat.norm()
+   238:         unit = flat.abs() / norm.clamp(min=1e-30)
+   239:         # Expected nonzeros at each s, read at this tensor's next call.
+   240:         s_vec = torch.tensor(self.levels, dtype=unit.dtype).to(unit.device)
+   241:         e = (s_vec.unsqueeze(1) * unit.unsqueeze(0)).clamp(max=1.0).sum(1)
+   242:         done = None
+   243:         if e.is_cuda:
+   244:             e = torch.empty(e.shape, dtype=e.dtype,
+   245:                             pin_memory=True).copy_(e, non_blocking=True)
+   246:             done = torch.cuda.Event()
+   247:             done.record()
+   248:         self.expected[name] = (e, done)
+   249:         level = s * unit
+   250:         level = level.floor() + (torch.rand_like(level) < level - level.floor()).float()
+   251:         idx = torch.topk((level > 0).float() * (1.0 + unit), k,
+   252:                          sorted=False).indices
+   253:         values = flat[idx].sign() * level[idx] * (norm / s)
+   254:         return {"values": values, "bits": math.ceil(math.log2(2 * s + 1)),
+   255:                 "indices": idx}
+   256: 
+   257: 
+   258: # ============================================================================
 ```
 
 ### `signsgd` baseline — editable region  [READ-ONLY — reference implementation]
@@ -601,54 +737,54 @@ In `pytorch-vision/custom_compressor.py`:
 ```python
 Lines 182–227:
    179: # ============================================================================
-   180: # EDITABLE SECTION — Gradient Compressor (lines 182-232)
+   180: # EDITABLE SECTION — Gradient Compressor (lines 182-224)
    181: # ============================================================================
    182: class Compressor:
-   183:     """SignSGD with error feedback.
+   183:     """Scaled signSGD with error feedback, at the step budget.
    184: 
-   185:     Compresses each gradient element to its sign (+1 or -1), achieving
-   186:     32x compression. Error feedback accumulates the magnitude information
-   187:     lost during sign extraction, improving convergence.
-   188: 
-   189:     The compress_ratio parameter is not used for sign compression (always
-   190:     1-bit), but the error feedback momentum can be tuned.
-   191:     """
-   192: 
-   193:     def __init__(self, compress_ratio=0.01):
-   194:         self.compress_ratio = compress_ratio
-   195:         self.residuals = {}
-   196:         # Error feedback momentum
-   197:         self.ef_beta = 1.0
-   198: 
-   199:     def compress(self, tensor, name):
-   200:         # Error feedback: add accumulated residual
-   201:         if name in self.residuals:
-   202:             tensor = tensor + self.ef_beta * self.residuals[name]
-   203: 
-   204:         shape = tensor.shape
-   205:         tensor_flat = tensor.flatten()
-   206: 
-   207:         # Sign compression: 1 bit per element
-   208:         signs = (tensor_flat >= 0).to(torch.uint8)
-   209: 
-   210:         # Scale by mean magnitude for better reconstruction
-   211:         mean_magnitude = tensor_flat.abs().mean()
-   212: 
-   213:         # Update residual: original - reconstructed
-   214:         sign_float = signs.float() * 2 - 1  # map {0,1} -> {-1,+1}
-   215:         reconstructed = sign_float * mean_magnitude
-   216:         self.residuals[name] = (tensor_flat - reconstructed).view(shape)
-   217: 
-   218:         return [signs, mean_magnitude], shape
-   219: 
-   220:     def decompress(self, compressed_tensors, ctx):
-   221:         shape = ctx
-   222:         signs, mean_magnitude = compressed_tensors
-   223: 
-   224:         # Reconstruct: sign * mean_magnitude
-   225:         sign_float = signs.float() * 2 - 1
-   226:         tensor_decompressed = sign_float * mean_magnitude
-   227:         return tensor_decompressed.view(shape)
+   185:     Sends one sign bit per entry, scaled by the mean magnitude of the sent
+   186:     entries (a two-value codebook), with error feedback carrying what the
+   187:     sign loses into the next gradient. One bit for every entry would be
+   188:     32x, not the 100x budget, so each tensor sends the signs of its K
+   189:     largest-magnitude error-corrected entries, K being the largest count
+   190:     whose worst-case packet (sign bits, codebook, Elias-gamma coded
+   191:     positions) fits the tensor's share of the step budget.
+   192:     """
+   193: 
+   194:     def __init__(self, compress_ratio, param_numels, budget_bits):
+   195:         self.compress_ratio = compress_ratio
+   196:         self.residuals = {}
+   197:         self.k = self._plan(param_numels, budget_bits,
+   198:                             lambda k, n: k + 64 + elias_gamma_bound(k, n))
+   199: 
+   200:     @staticmethod
+   201:     def _plan(param_numels, budget_bits, cost):
+   202:         total = sum(param_numels.values())
+   203:         spare = budget_bits - sum(cost(1, n) for n in param_numels.values())
+   204:         plan = {}
+   205:         for name, n in param_numels.items():
+   206:             share = cost(1, n) + spare * n // total
+   207:             lo, hi = 1, n
+   208:             while lo < hi:
+   209:                 mid = (lo + hi + 1) // 2
+   210:                 if cost(mid, n) <= share:
+   211:                     lo = mid
+   212:                 else:
+   213:                     hi = mid - 1
+   214:             plan[name] = lo
+   215:         return plan
+   216: 
+   217:     def compress(self, tensor, name):
+   218:         if name in self.residuals:
+   219:             tensor = tensor + self.residuals[name]
+   220:         flat = tensor.flatten()
+   221:         _, indices = torch.topk(flat.abs(), self.k[name], sorted=False)
+   222:         picked = flat[indices]
+   223:         scale = picked.abs().mean()
+   224:         values = torch.where(picked >= 0, scale, -scale)
+   225:         sent = torch.zeros_like(flat).scatter_(0, indices, values)
+   226:         self.residuals[name] = (flat - sent).view(tensor.shape)
+   227:         return {"values": values, "bits": 1, "indices": indices}
    228: 
    229: 
    230: # ============================================================================

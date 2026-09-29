@@ -11,7 +11,7 @@ Membership inference attacks exploit the gap between train and non-train example
 ## Task
 Implement a better privacy-preserving training objective in `bench/membership/custom_membership_defense.py`. The fixed harness will train a model on a 50/50 train/non-train split of the full dataset, then run a confidence-based membership inference attack on train versus held-out examples.
 
-Your method should improve the privacy-utility tradeoff: lower membership-attack AUC while retaining high test accuracy.
+Your method should improve the privacy-utility tradeoff: bring the membership-attack AUC close to 0.5 (chance) while retaining high test accuracy.
 
 ## Editable Interface
 You must implement:
@@ -27,7 +27,7 @@ class MembershipDefense:
 - `epoch`: current training epoch (0-indexed).
 - Return value: scalar loss tensor used by the fixed training loop.
 
-The optimizer (SGD + CosineAnnealing), architecture, data pipeline, and attack implementation are fixed.
+The optimizer (SGD with momentum and a step learning-rate decay; on `vgg16bn-cifar100` the learning rate is also warmed up linearly over the first 5 epochs), architecture, data pipeline, and attack implementation are fixed.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:

@@ -55,7 +55,14 @@ Available imports inside the editable region: `torch`, `torch.nn`,
 ## Implementation Contract
 Suitable contributions may be autoregressive, latent-variable, diffusion-like,
 energy-based, score-based, or otherwise structured, provided they can sample
-valid undirected graphs without relying on the evaluation labels.
+valid undirected graphs without relying on the evaluation labels. Samples must
+come from the learned model: replaying stored training graphs, or calling or
+re-implementing the harness's dataset generators, is not a valid submission.
+The harness draws exactly as many graphs as the held-out split. Generated
+graphs that copy dataset graphs (training or held-out, up to isomorphism)
+beyond what the held-out graphs themselves do are dropped before the MMD is
+computed, and a dataset's score is penalized when they exceed 10% of the
+samples (20% on ego_small).
 
 
 ## Your Workspace
@@ -177,7 +184,7 @@ stay unchanged.
     90: def load_enzymes(n_max=587):
     91:     """Load ENZYMES dataset from TUDataset.
     92: 
-    93:     Protein tertiary structure graphs, 587 graphs, 10-125 nodes.
+    93:     Protein tertiary structure graphs, 587 graphs, up to 126 nodes.
     94:     """
     95:     try:
     96:         import networkx as nx
@@ -409,7 +416,7 @@ stay unchanged.
    322:     return float(np.exp(-d2 / (2.0 * sigma * sigma)))
    323: 
    324: 
-   325: def compute_mmd(samples1, samples2, kernel="gaussian_emd", sigma=1.0, is_hist=True):
+   325: def compute_mmd(samples1, samples2, kernel="gaussian_emd", sigma=1.0, is_hist=True, distance_scaling=1.0):
    326:     """Compute MMD between two sets of graph statistics (biased estimator).
    327: 
    328:     Uses GDSS-style graph-statistic MMD conventions:
@@ -421,7 +428,7 @@ stay unchanged.
    334:     """
    335:     # Pick kernel
    336:     if kernel == "gaussian_emd":
-   337:         kfn = lambda a, b: _gaussian_emd(a, b, sigma=sigma)
+   337:         kfn = lambda a, b: _gaussian_emd(a, b, sigma=sigma, distance_scaling=distance_scaling)
    338:     else:
    339:         kfn = lambda a, b: _gaussian(a, b, sigma=sigma)
    340: 
@@ -515,8 +522,8 @@ stay unchanged.
    428:     # Compute MMD for each statistic (GDSS conventions)
    429:     # degree: histogrammed integer degrees, gaussian_emd kernel, sigma=1.0
    430:     mmd_deg = compute_mmd(ref_degree, gen_degree, kernel="gaussian_emd", sigma=1.0, is_hist=True)
-   431:     # clustering: histogrammed over [0,1], gaussian_emd kernel, sigma=1.0 / bins=100
-   432:     mmd_clus = compute_mmd(ref_cluster, gen_cluster, kernel="gaussian_emd", sigma=1.0 / 10.0, is_hist=True)
+   431:     # clustering: 100 bins over [0,1], gaussian_emd, sigma=0.1, EMD in coefficient units (GraphRNN: distance_scaling=bins)
+   432:     mmd_clus = compute_mmd(ref_cluster, gen_cluster, kernel="gaussian_emd", sigma=1.0 / 10.0, is_hist=True, distance_scaling=1.0 / 100)
    433:     # orbit: raw per-graph orbit count vectors, gaussian kernel, sigma=30.0
    434:     mmd_orb = compute_mmd(ref_orbit, gen_orbit, kernel="gaussian", sigma=30.0, is_hist=False)
    435: 

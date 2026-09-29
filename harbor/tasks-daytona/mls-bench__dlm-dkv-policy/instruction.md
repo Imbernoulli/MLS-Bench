@@ -54,7 +54,7 @@ The required hook families are:
 
 | Method | Purpose |
 |---|---|
-| `block_schedule(request_meta)` | Controls generation length, block length, steps per block, and whether a block starts with a full warm forward. |
+| `block_schedule(request_meta)` | Controls block length, steps per block, and whether a block starts with a full warm forward. The generation length is fixed per workload (`WORKLOAD_CONFIGS`); a schedule that returns a different `gen_length` is rejected. |
 | `query_plan(step_meta, mask_state, cache_state)` | Selects token positions to forward or recompute: full sequence, current block, active query rows, tracked tokens, or a masked query window. |
 | `cache_refresh_plan(layer_meta, step_meta, token_stats, cache_state)` | Decides per-layer recompute/reuse, prompt-vs-generation refresh, selected row refresh, KV overwrite, and layer reset. |
 | `attention_probe_plan(layer_meta, step_meta)` | Requests attention weights or attention-similarity probes and supplies parameters such as rollout fraction, `current_k`, `gamma`, and `track_num`. |

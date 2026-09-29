@@ -3,7 +3,7 @@
   "CFGpp-main/README.md": "608a4eceff0ecc1fb52b693ae93a529e6c6465547670ade6fbf49edd339d2d65",
   "CFGpp-main/assets/main_figure.png": "d8a1bc25be4f98d7ac19ace369bc50e96e969079f62c19ad7f370e4ed4bbba2f",
   "CFGpp-main/assets/main_test_v5.png": "d8a1bc25be4f98d7ac19ace369bc50e96e969079f62c19ad7f370e4ed4bbba2f",
-  "CFGpp-main/batch_eval.py": "cca6c03a3fdd4d347fd4d5bb68a4edd6d6e3b6038ca533d62915d955ec064e47",
+  "CFGpp-main/batch_eval.py": "676c479b68457192309a0a0e1fef03e0add4cffc7a1f87efe69e17ae7a956395",
   "CFGpp-main/ckpt/put_safetensors_here": "eb4bd64f7014f7d42e9d358035802242741b974e8dfcd37c59f9c21ce29d781e",
   "CFGpp-main/environment.yaml": "9f5ac58a71fd2508507bfee3c96930d85ff99d87f67bf080d5e3c0556cb2863b",
   "CFGpp-main/examples/assets/COCO_text.txt": "127a8cc1394f93be7c4b5d2ace30ea41ec5568fbb43c03a5b2246da6afe486a3",

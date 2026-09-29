@@ -1,6 +1,8 @@
 """DPM++ 2S Ancestral baseline — from CFGpp-main/latent_diffusion.py dpm++_2s_a.
 
 Standard CFG version with karras sigma schedule and ancestral sampling.
+Single-step 2nd order spends two denoiser evaluations per step, so under the
+task's NFE = 50 budget it takes half as many steps (25 on SD and on SDXL).
 Reference: vendor/external_packages/CFGpp-main/latent_diffusion.py line 393.
 """
 
@@ -29,14 +31,16 @@ class BaseDDIMCFGpp(StableDiffusion):
 
         uc, c = self.get_text_embed(null_prompt=prompt[0], prompt=prompt[1])
 
+        # Two evaluations per step: 25 steps = 49 NFE (the last step is Euler).
+        n_steps = len(self.scheduler.timesteps) // 2
         total_sigmas = (1-self.total_alphas).sqrt() / self.total_alphas.sqrt()
-        sigmas = get_sigmas_karras(len(self.scheduler.timesteps), total_sigmas.min(), total_sigmas.max(), rho=7.)
+        sigmas = get_sigmas_karras(n_steps, total_sigmas.min(), total_sigmas.max(), rho=7.)
 
         x = self.initialize_latent(method="random_kdiffusion",
                                    latent_dim=(1, 4, 64, 64),
                                    sigmas=sigmas).to(torch.float16)
 
-        pbar = tqdm(self.scheduler.timesteps, desc="DPM++2S")
+        pbar = tqdm(range(n_steps), desc="DPM++2S")
         for i, _ in enumerate(pbar):
             sigma = sigmas[i]
             new_t = self.timestep(sigma).to(self.device)
@@ -94,13 +98,16 @@ class BaseDDIMCFGpp(SDXL):
         t_fn = lambda sigma: sigma.log().neg()
         sigma_fn = lambda t: t.neg().exp()
 
-        alphas = self.scheduler.alphas_cumprod[self.scheduler.timesteps.int().cpu()].cpu()
+        # Two evaluations per step: 26 timesteps (first and last kept) = 25 steps = 50 NFE.
+        ts = self.scheduler.timesteps.int().cpu()
+        ts = ts[torch.linspace(0, len(ts) - 1, len(ts) // 2 + 1).round().long()]
+        alphas = self.scheduler.alphas_cumprod[ts].cpu()
         sigmas = (1-alphas).sqrt() / alphas.sqrt()
 
         zt = self.initialize_latent(size=(1, 4, shape[1] // self.vae_scale_factor, shape[0] // self.vae_scale_factor))
         x = zt * sigmas[0]
 
-        pbar = tqdm(self.scheduler.timesteps[:-1].int(), desc='SDXL-DPM++2S')
+        pbar = tqdm(ts[:-1], desc='SDXL-DPM++2S')
         for i, _ in enumerate(pbar):
             at = alphas[i]
             sigma = sigmas[i]

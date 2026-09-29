@@ -13,12 +13,14 @@ This is the regime in which real-world NAS is actually hard: the full benchmark 
 ## Search Space
 - NAS-Bench-201 cell: 4 nodes, 6 edges, 5 operations per edge (Dong and Yang, "NAS-Bench-201: Extending the Scope of Reproducible Neural Architecture Search", ICLR 2020; arXiv:2001.00326).
 - Operations: `skip_connect, none, nor_conv_3x3, nor_conv_1x1, avg_pool_3x3`.
+- **Hidden per-run relabeling:** in every evaluation run the harness maps the four non-`none` operation indices (0, 2, 3, 4) to the NAS-Bench-201 operations `skip_connect, nor_conv_3x3, nor_conv_1x1, avg_pool_3x3` through a secret random permutation drawn for that run; index 1 is always `none`. The names in `OP_NAMES` and in architecture strings are labels only: which index is which operation has to be learned from queries, and a fixed index list names a different cell in every run.
 - 5^6 = 15,625 architectures total.
 - An architecture is represented as a list of 6 integers in `[0, 4]`.
 
 ## Evaluation Protocol
 - **Query budget: `NAS_EPOCHS`** validation queries per run (the harness enforces this; exceeding it aborts the run).
 - After search, the harness performs one final unbudgeted test query on your returned architecture; this does not count against your budget.
+- The search runs in a separate, unprivileged process that reaches the benchmark only through `api.query_val_accuracy`; the harness maps the returned architecture through the run's relabeling and looks up its test accuracy.
 
 ## What Counts as a Contribution
 Acceptable research directions (this list is not exhaustive):
@@ -187,43 +189,43 @@ stay unchanged.
    118: 
    119: 
    120: class BenchmarkAPI:
-   121:     """Wrapper for querying NAS-Bench-201 with a hard validation-query budget.
+   121:     """Client for NAS-Bench-201 validation queries with a hard budget.
    122: 
-   123:     Only the VALIDATION-accuracy table for the active dataset exists in this
-   124:     process, captured privately below. The held-out TEST accuracy of the
-   125:     final architecture is looked up by the harness afterwards, outside this
-   126:     process (see the FINAL_ARCH report in the main entry point).
-   127:     """
-   128: 
-   129:     def __init__(self, val_table, dataset_key, query_budget):
-   130:         self.dataset_key = dataset_key
-   131:         self.query_budget = int(query_budget)
-   132:         self.query_count = 0
-   133:         self._cache = {}  # repeated queries don't cost extra but still count
-   134:         val = dict(val_table)
-   135: 
-   136:         def _val_lookup(arch_str):
-   137:             return val[arch_str]
-   138: 
-   139:         self._val_lookup = _val_lookup
-   140: 
-   141:     @property
-   142:     def remaining_budget(self):
-   143:         return max(0, self.query_budget - self.query_count)
+   123:     The validation table is NOT in this process: a separate FIXED oracle
+   124:     process (the harness's nas_oracle_entry.py) holds it, counts every query
+   125:     and enforces the budget; this object only forwards architecture strings
+   126:     to it over a pipe. ``query_count`` here is a local mirror for logging;
+   127:     the oracle's own count is authoritative. The held-out TEST accuracy of
+   128:     the final architecture is looked up by the harness afterwards, outside
+   129:     this process (see the FINAL_ARCH report in the main entry point).
+   130:     """
+   131: 
+   132:     def __init__(self, oracle, dataset_key, query_budget):
+   133:         self.dataset_key = dataset_key
+   134:         self.query_budget = int(query_budget)
+   135:         self.query_count = 0
+   136:         self._oracle = oracle  # _OracleClient (FIXED, defined below)
+   137: 
+   138:     @property
+   139:     def remaining_budget(self):
+   140:         return max(0, self.query_budget - self.query_count)
+   141: 
+   142:     def query_val_accuracy(self, op_indices):
+   143:         """Query validation accuracy (counts against the budget).
    144: 
-   145:     def query_val_accuracy(self, op_indices):
-   146:         """Query validation accuracy (counts against the budget).
-   147: 
-   148:         For cifar10, validation accuracy is from the 'cifar10-valid' split.
-   149:         For cifar100 and ImageNet16-120, validation accuracy uses 'eval_acc1es'
-   150:         from the respective split (standard NAS-Bench-201 search protocol).
+   145:         For cifar10, validation accuracy is from the 'cifar10-valid' split.
+   146:         For cifar100 and ImageNet16-120, validation accuracy uses 'eval_acc1es'
+   147:         from the respective split (standard NAS-Bench-201 search protocol).
+   148:         The oracle process counts this query and refuses every query past
+   149:         the budget, whatever the local mirror ``query_count`` says (it may
+   150:         be reset or overwritten; that does not buy extra queries).
    151:         """
    152:         if self.query_count >= self.query_budget:
    153:             raise BudgetExceededError(
    154:                 f"Validation query budget of {self.query_budget} exhausted."
    155:             )
    156:         self.query_count += 1
-   157:         return self._val_lookup(op_indices_to_arch_str(op_indices))
+   157:         return self._oracle.query(op_indices_to_arch_str(op_indices))
    158: 
    159: 
    160: # =====================================================================
@@ -305,124 +307,126 @@ stay unchanged.
    236: # =====================================================================
    237: # FIXED: Main entry point — search + final-architecture report
    238: # =====================================================================
-   239: # Set by the FIXED wrapper (scripts/fixed_entry.py) AFTER it read and
-   240: # unlinked the staged validation table and BEFORE this module was imported:
-   241: # maps blob basename -> file content. None when the module is launched
-   242: # directly — _load_val_table then reads the on-disk table (legacy flow).
-   243: _PRELOADED_INPUTS: dict[str, str] | None = None
-   244: 
-   245: 
-   246: def _load_val_table(env_name, seed):
-   247:     """Load this run's validation table. Prefers the payload preloaded by the
-   248:     FIXED wrapper (which read and unlinked the table before any editable code
-   249:     could run); falls back to the on-disk copy when launched directly, deleting
-   250:     it after loading when the harness marks the materialized inputs as
-   251:     ephemeral (i.e. re-created for every evaluation)."""
-   252:     global _PRELOADED_INPUTS
-   253:     name = f"nb201_tables_{env_name}_s{seed}.json"
-   254:     preloaded = _PRELOADED_INPUTS
-   255:     # Drop the raw payloads before any editable code runs: from here on the
-   256:     # table lives only in this fixed entry's scope (handed to BenchmarkAPI).
-   257:     _PRELOADED_INPUTS = None
-   258:     payload = (preloaded or {}).pop(name, None)
-   259:     if payload is not None:
-   260:         tables = json.loads(payload)
-   261:         return tables["val"]
-   262:     path = Path(__file__).resolve().parent / "naslib" / "data" / name
-   263:     if not path.exists():
-   264:         print(f"ERROR: validation table not found: {path}", flush=True)
-   265:         sys.exit(1)
-   266:     with open(path) as f:
-   267:         tables = json.load(f)
-   268:     if os.environ.get("MLSBENCH_EPHEMERAL_INPUTS") == "1":
-   269:         try:
-   270:             os.remove(path)
-   271:         except OSError:
-   272:             pass
-   273:     return tables["val"]
-   274: 
-   275: 
-   276: def _main():
-   277:     # ── Configuration from environment ──
-   278:     seed = int(os.environ.get("SEED", 42))
-   279:     output_dir = os.environ.get("OUTPUT_DIR", "/tmp/nas_output")
-   280:     env_name = os.environ.get("ENV", "cifar10")
-   281:     num_epochs = int(os.environ.get("NAS_EPOCHS", 30))  # sample-efficient: K=30
-   282: 
-   283:     os.makedirs(output_dir, exist_ok=True)
-   284: 
-   285:     # ── Seeding ──
-   286:     random.seed(seed)
-   287:     np.random.seed(seed)
+   239: class _OracleClient:
+   240:     """FIXED pipe client for the out-of-process validation oracle.
+   241: 
+   242:     The harness (nas_oracle_entry.py) starts this program with two pipe file
+   243:     descriptors in MLSBENCH_NAS_ORACLE_FDS ("<request>,<reply>"). The oracle
+   244:     process on the other end holds the only copy of the validation table,
+   245:     counts every request and refuses those past the budget.
+   246:     """
+   247: 
+   248:     def __init__(self, spec):
+   249:         req_fd, resp_fd = (int(x) for x in spec.split(","))
+   250:         self._req = os.fdopen(req_fd, "w", encoding="utf-8", newline="\n")
+   251:         self._resp = os.fdopen(resp_fd, "r", encoding="utf-8", newline="\n")
+   252: 
+   253:     def query(self, arch_str):
+   254:         self._req.write(arch_str + "\n")
+   255:         self._req.flush()
+   256:         reply = self._resp.readline().rstrip("\n")
+   257:         if reply.startswith("OK "):
+   258:             return float(reply[3:])
+   259:         if reply.startswith("BUDGET"):
+   260:             raise BudgetExceededError(
+   261:                 f"Validation query budget of {reply.split()[-1]} exhausted "
+   262:                 "(refused by the oracle)."
+   263:             )
+   264:         if reply == "KEYERR":
+   265:             raise KeyError(arch_str)
+   266:         raise RuntimeError(f"validation oracle failed (reply={reply!r})")
+   267: 
+   268: 
+   269: def _connect_oracle():
+   270:     """Connect to the harness's out-of-process validation oracle."""
+   271:     spec = os.environ.get("MLSBENCH_NAS_ORACLE_FDS")
+   272:     if not spec:
+   273:         print("ERROR: no validation oracle (MLSBENCH_NAS_ORACLE_FDS unset); "
+   274:               "run this program through the harness's nas_oracle_entry.py.",
+   275:               flush=True)
+   276:         sys.exit(1)
+   277:     return _OracleClient(spec)
+   278: 
+   279: 
+   280: def _main():
+   281:     # ── Configuration from environment ──
+   282:     seed = int(os.environ.get("SEED", 42))
+   283:     output_dir = os.environ.get("OUTPUT_DIR", "/tmp/nas_output")
+   284:     env_name = os.environ.get("ENV", "cifar10")
+   285:     num_epochs = int(os.environ.get("NAS_EPOCHS", 30))  # sample-efficient: K=30
+   286: 
+   287:     os.makedirs(output_dir, exist_ok=True)
    288: 
-   289:     # ── Map environment name to dataset key ──
-   290:     dataset_key = DATASET_MAP.get(env_name)
-   291:     if dataset_key is None:
-   292:         print(f"ERROR: Unknown environment '{env_name}'. Must be one of: {list(DATASET_MAP.keys())}")
-   293:         sys.exit(1)
-   294: 
-   295:     # ── Load this run's validation table (test accuracies stay outside) ──
-   296:     val_table = _load_val_table(env_name, seed)
-   297:     print(f"Loaded validation table for {env_name} "
-   298:           f"({len(val_table)} architectures).", flush=True)
-   299: 
-   300:     # ── Create benchmark API with strict budget ──
-   301:     api = BenchmarkAPI(val_table, dataset_key, query_budget=num_epochs)
-   302:     del val_table
-   303: 
-   304:     # ── Run search ──
-   305:     print(f"Starting sample-efficient NAS on {env_name} (dataset={dataset_key}) "
-   306:           f"with budget={num_epochs} queries, seed={seed}", flush=True)
-   307: 
-   308:     optimizer = NASOptimizer(api, num_epochs, seed)
+   289:     # ── Seeding ──
+   290:     random.seed(seed)
+   291:     np.random.seed(seed)
+   292: 
+   293:     # ── Map environment name to dataset key ──
+   294:     dataset_key = DATASET_MAP.get(env_name)
+   295:     if dataset_key is None:
+   296:         print(f"ERROR: Unknown environment '{env_name}'. Must be one of: {list(DATASET_MAP.keys())}")
+   297:         sys.exit(1)
+   298: 
+   299:     # ── Connect to the out-of-process validation oracle (the table and the ──
+   300:     # ── authoritative query count live there; test accuracies stay outside) ──
+   301:     oracle = _connect_oracle()
+   302: 
+   303:     # ── Create benchmark API with strict budget ──
+   304:     api = BenchmarkAPI(oracle, dataset_key, query_budget=num_epochs)
+   305: 
+   306:     # ── Run search ──
+   307:     print(f"Starting sample-efficient NAS on {env_name} (dataset={dataset_key}) "
+   308:           f"with budget={num_epochs} queries, seed={seed}", flush=True)
    309: 
-   310:     start_time = time.time()
-   311:     for epoch in range(num_epochs):
-   312:         if api.remaining_budget <= 0:
-   313:             print(f"Budget exhausted at epoch {epoch}; stopping search.", flush=True)
-   314:             break
-   315:         try:
-   316:             metrics = optimizer.search_step(epoch)
-   317:         except BudgetExceededError as e:
-   318:             print(f"BUDGET EXCEEDED at epoch {epoch}: {e}", flush=True)
-   319:             break
-   320: 
-   321:         # Log training metrics every step (K=30 is small)
-   322:         elapsed = time.time() - start_time
-   323:         metrics_str = " ".join(
-   324:             f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
-   325:             for k, v in metrics.items()
-   326:         )
-   327:         print(f"TRAIN_METRICS epoch={epoch+1} {metrics_str} "
-   328:               f"elapsed={elapsed:.1f}s", flush=True)
-   329: 
-   330:     # ── Final-architecture report (the held-out test accuracy is looked ──
-   331:     # ── up by the harness outside this process)                         ──
-   332:     best_arch = optimizer.get_best_architecture()
-   333:     if best_arch is None:
-   334:         print("ERROR: No architecture found during search!", flush=True)
-   335:         sys.exit(1)
-   336:     if not is_valid_arch(best_arch):
-   337:         print(f"ERROR: Returned architecture {best_arch} is invalid.", flush=True)
-   338:         sys.exit(1)
-   339: 
-   340:     best_arch_str = op_indices_to_arch_str(best_arch)
-   341:     total_queries = api.query_count
-   342:     total_time = time.time() - start_time
-   343: 
-   344:     print(f"\n{'='*60}", flush=True)
-   345:     print(f"Search complete on {env_name} (dataset={dataset_key})", flush=True)
-   346:     print(f"Best architecture: {best_arch} -> {best_arch_str}", flush=True)
-   347:     print(f"Total val queries used: {total_queries} / {num_epochs}", flush=True)
-   348:     print(f"Total time: {total_time:.1f}s", flush=True)
-   349:     print(f"{'='*60}", flush=True)
-   350: 
-   351:     # Report the chosen architecture for external (held-out) evaluation
-   352:     print(f"FINAL_ARCH arch={best_arch_str} queries={total_queries}", flush=True)
-   353: 
-   354: 
-   355: if __name__ == "__main__":
-   356:     _main()
+   310:     optimizer = NASOptimizer(api, num_epochs, seed)
+   311: 
+   312:     start_time = time.time()
+   313:     for epoch in range(num_epochs):
+   314:         if api.remaining_budget <= 0:
+   315:             print(f"Budget exhausted at epoch {epoch}; stopping search.", flush=True)
+   316:             break
+   317:         try:
+   318:             metrics = optimizer.search_step(epoch)
+   319:         except BudgetExceededError as e:
+   320:             print(f"BUDGET EXCEEDED at epoch {epoch}: {e}", flush=True)
+   321:             break
+   322: 
+   323:         # Log training metrics every step (K=30 is small)
+   324:         elapsed = time.time() - start_time
+   325:         metrics_str = " ".join(
+   326:             f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}"
+   327:             for k, v in metrics.items()
+   328:         )
+   329:         print(f"TRAIN_METRICS epoch={epoch+1} {metrics_str} "
+   330:               f"elapsed={elapsed:.1f}s", flush=True)
+   331: 
+   332:     # ── Final-architecture report (the held-out test accuracy is looked ──
+   333:     # ── up by the harness outside this process)                         ──
+   334:     best_arch = optimizer.get_best_architecture()
+   335:     if best_arch is None:
+   336:         print("ERROR: No architecture found during search!", flush=True)
+   337:         sys.exit(1)
+   338:     if not is_valid_arch(best_arch):
+   339:         print(f"ERROR: Returned architecture {best_arch} is invalid.", flush=True)
+   340:         sys.exit(1)
+   341: 
+   342:     best_arch_str = op_indices_to_arch_str(best_arch)
+   343:     total_queries = api.query_count
+   344:     total_time = time.time() - start_time
+   345: 
+   346:     print(f"\n{'='*60}", flush=True)
+   347:     print(f"Search complete on {env_name} (dataset={dataset_key})", flush=True)
+   348:     print(f"Best architecture: {best_arch} -> {best_arch_str}", flush=True)
+   349:     print(f"Total val queries used: {total_queries} / {num_epochs}", flush=True)
+   350:     print(f"Total time: {total_time:.1f}s", flush=True)
+   351:     print(f"{'='*60}", flush=True)
+   352: 
+   353:     # Report the chosen architecture for external (held-out) evaluation
+   354:     print(f"FINAL_ARCH arch={best_arch_str} queries={total_queries}", flush=True)
+   355: 
+   356: 
+   357: if __name__ == "__main__":
+   358:     _main()
 ```
 
 ## Parameter Budget

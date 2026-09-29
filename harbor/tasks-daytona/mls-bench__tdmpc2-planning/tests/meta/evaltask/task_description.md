@@ -31,8 +31,8 @@ The `custom_plan()` function in `custom_planner.py`. You have access to:
 
 ## Evaluation
 - **Metric**: episode reward (higher is better)
-- **Environments**: DMControl walker-walk and cheetah-run
-- **Model**: TD-MPC2 with 1M parameters, 200K training steps
+- **Environments**: DMControl walker-walk, cheetah-run, and cartpole-swingup
+- **Model**: TD-MPC2 with 1M parameters, 300K training steps
 - **Note**: the planning algorithm affects both data collection quality during training and action selection during evaluation.
 
 ## Key Constraints

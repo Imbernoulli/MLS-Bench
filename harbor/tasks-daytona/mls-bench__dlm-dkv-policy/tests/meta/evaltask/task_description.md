@@ -57,7 +57,7 @@ The required hook families are:
 
 | Method | Purpose |
 |---|---|
-| `block_schedule(request_meta)` | Controls generation length, block length, steps per block, and whether a block starts with a full warm forward. |
+| `block_schedule(request_meta)` | Controls block length, steps per block, and whether a block starts with a full warm forward. The generation length is fixed per workload (`WORKLOAD_CONFIGS`); a schedule that returns a different `gen_length` is rejected. |
 | `query_plan(step_meta, mask_state, cache_state)` | Selects token positions to forward or recompute: full sequence, current block, active query rows, tracked tokens, or a masked query window. |
 | `cache_refresh_plan(layer_meta, step_meta, token_stats, cache_state)` | Decides per-layer recompute/reuse, prompt-vs-generation refresh, selected row refresh, KV overwrite, and layer reset. |
 | `attention_probe_plan(layer_meta, step_meta)` | Requests attention weights or attention-similarity probes and supplies parameters such as rollout fraction, `current_k`, `gamma`, and `track_num`. |
@@ -98,11 +98,12 @@ score and runtime diagnostics:
 | Metric | Direction | Meaning |
 |---|---|---|
 | `final_score` | higher | benchmark-native final task score on a 0-100 scale |
-| `reuse_ratio` | higher | diagnostic fraction of generated-token cache work reused by the hook plan |
+| `reuse_ratio` | higher | fraction of the uncached reference rollout's work that the rollout avoided, measured by the harness: `1 - performed / reference`, counting the multiply-accumulates of every linear layer inside the LLaDA blocks over the rows actually recomputed; the reference is the workload's `num_steps` full prompt+generation forwards for the same prompt (negative if a policy does more work than that) |
 | `refresh_ratio` | lower | diagnostic `1 - reuse_ratio` |
-| `tokens_per_s` | higher | diagnostic decode throughput on the current hardware |
+| `tokens_per_s` | higher | decode throughput on the current hardware: examples x fixed `gen_length` / measured decode time |
 | `peak_memory_mb` | lower | diagnostic peak GPU memory allocated during the example loop |
 | `n_examples` | fixed | number of examples evaluated |
+| `decoded_tokens` | diagnostic | generated positions actually committed (an EOS early exit leaves the tail uncommitted) |
 | `elapsed` | lower | diagnostic wall-clock time recorded by the harness for the script |
 
 `final_score` is the canonical quality metric. `reuse_ratio` and

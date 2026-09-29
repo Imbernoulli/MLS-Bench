@@ -39,6 +39,7 @@ def plan(self, obs_init, steps_left=None, eval_mode=True,
 - `obs_init`: initial observation encoding `[1, C, 1, H, W]`
 - `steps_left`: remaining steps in the episode
 - Returns: `PlanningResult(actions=Tensor[T, A], ...)`
+- Each executed action is clipped to L2 norm ≤ 2.45, the environment's maximum step size
 
 ### Available Methods (Inherited)
 - `self.unroll(obs_init, actions)`: forward-simulate actions through the world model.
@@ -466,121 +467,121 @@ Other files you may **read** for context (do not modify):
    383:     )
    384: 
    385: 
-   386: def run_planning_eval(jepa, xy_prober, loader, device, num_episodes=20):
-   387:     """Run planning evaluation with the CustomPlanner."""
-   388:     jepa.eval()
-   389: 
-   390:     data_config = loader.dataset.config
-   391:     env = create_env(data_config)
-   392:     reset_env(env, SEED)
-   393: 
-   394:     # Create a lightweight GCAgent-like wrapper that uses CustomPlanner
-   395:     normalizer = env.normalizer
+   386: def clip_action(env, action):
+   387:     """Clip one planner action to the env's max step norm (DotWall.step does not)."""
+   388:     action = np.asarray(action)
+   389:     if action.shape != env.action_space.shape or not np.all(np.isfinite(action)):
+   390:         raise ValueError(f"invalid planner action {action!r}")
+   391:     max_norm = float(env.action_space.high[0])
+   392:     norm = float(np.linalg.norm(action))
+   393:     if norm > max_norm * (1 + 1e-6):  # slack for float32 rounding of a clipped action
+   394:         action = action * (max_norm / norm)
+   395:     return action
    396: 
-   397:     # Create the planner
-   398:     planner = CustomPlanner(
-   399:         unroll=None,  # Will be set via agent wrapper
-   400:         action_dim=2,
-   401:         plan_length=PLAN_LENGTH,
-   402:         num_samples=200,
-   403:         n_iters=20,
-   404:     )
+   397: 
+   398: def run_planning_eval(jepa, xy_prober, loader, device, num_episodes=20):
+   399:     """Run planning evaluation with the CustomPlanner."""
+   400:     jepa.eval()
+   401: 
+   402:     data_config = loader.dataset.config
+   403:     env = create_env(data_config)
+   404:     reset_env(env, SEED)
    405: 
-   406:     # We need to wire up the unroll function properly
-   407:     # The planner needs access to model unroll through the GCAgent's unroll method
-   408:     class PlanningAgent:
-   409:         def __init__(self, model, planner, normalizer, env, prober):
-   410:             self.model = model
-   411:             self.planner = planner
-   412:             self.normalizer = normalizer
-   413:             self.env = env
-   414:             self.device = next(model.parameters()).device
-   415:             self.loc_prober = prober
-   416:             self.goal_state = None
-   417:             self.goal_position = None
-   418:             self.goal_state_enc = None
-   419:             self.objective = None
-   420:             self.num_act_stepped = 1
-   421: 
-   422:             # Wire planner's unroll to agent's unroll
-   423:             self.planner.unroll = self.unroll
-   424: 
-   425:         def unroll(self, obs_init, actions, repeat_batch=True):
-   426:             batch_size = actions.shape[0]
-   427:             nsteps = actions.shape[2]
-   428:             if repeat_batch:
-   429:                 obs_init_rep = obs_init.repeat(batch_size, 1, 1, 1, 1)
-   430:             else:
-   431:                 obs_init_rep = obs_init
-   432:             predicted_states, _ = self.model.unroll(
-   433:                 obs_init_rep, actions,
-   434:                 nsteps=nsteps,
-   435:                 unroll_mode="autoregressive",
-   436:                 ctxt_window_time=1,
-   437:                 compute_loss=False,
-   438:                 return_all_steps=False,
-   439:             )
-   440:             return predicted_states
-   441: 
-   442:         def set_goal(self, goal_state, goal_position=None):
-   443:             self.goal_position = goal_position
-   444:             self.goal_state = goal_state
-   445:             self.goal_state_enc = self.model.encode(
-   446:                 self.normalizer.normalize_state(goal_state.to(self.device))
-   447:                 .unsqueeze(0)
-   448:                 .unsqueeze(2)
-   449:             )
-   450:             self.objective = ReprTargetDistMPCObjective(
-   451:                 target_enc=self.goal_state_enc,
-   452:                 sum_all_diffs=True,
-   453:             )
-   454:             self.planner.set_objective(self.objective)
-   455: 
-   456:         def act(self, obs_tensor, steps_left=None, t0=False):
-   457:             planning_result = self.planner.plan(
-   458:                 obs_tensor,
-   459:                 steps_left=steps_left,
-   460:                 eval_mode=True,
-   461:                 t0=t0,
-   462:             )
-   463:             return planning_result.actions[:self.num_act_stepped]
-   464: 
-   465:     agent = PlanningAgent(jepa, planner, normalizer, env, xy_prober)
+   406:     # Create a lightweight GCAgent-like wrapper that uses CustomPlanner
+   407:     normalizer = env.normalizer
+   408: 
+   409:     # Create the planner
+   410:     planner = CustomPlanner(
+   411:         unroll=None,  # Will be set via agent wrapper
+   412:         action_dim=2,
+   413:         plan_length=PLAN_LENGTH,
+   414:         num_samples=200,
+   415:         n_iters=20,
+   416:     )
+   417: 
+   418:     # Wire the planner to the world model through a plain closure over the model:
+   419:     # a bound method of the agent would hand the planner the env and the goal.
+   420:     class PlanningAgent:
+   421:         def __init__(self, model, planner, normalizer, env, prober):
+   422:             self.model = model
+   423:             self.planner = planner
+   424:             self.normalizer = normalizer
+   425:             self.env = env
+   426:             self.device = next(model.parameters()).device
+   427:             self.loc_prober = prober
+   428:             self.goal_state = None
+   429:             self.goal_position = None
+   430:             self.goal_state_enc = None
+   431:             self.objective = None
+   432:             self.num_act_stepped = 1
+   433: 
+   434:             def unroll(obs_init, actions, repeat_batch=True):
+   435:                 batch_size = actions.shape[0]
+   436:                 nsteps = actions.shape[2]
+   437:                 if repeat_batch:
+   438:                     obs_init_rep = obs_init.repeat(batch_size, 1, 1, 1, 1)
+   439:                 else:
+   440:                     obs_init_rep = obs_init
+   441:                 predicted_states, _ = model.unroll(
+   442:                     obs_init_rep, actions,
+   443:                     nsteps=nsteps,
+   444:                     unroll_mode="autoregressive",
+   445:                     ctxt_window_time=1,
+   446:                     compute_loss=False,
+   447:                     return_all_steps=False,
+   448:                 )
+   449:                 return predicted_states
+   450: 
+   451:             self.planner.unroll = unroll
+   452: 
+   453:         def set_goal(self, goal_state, goal_position=None):
+   454:             self.goal_position = goal_position
+   455:             self.goal_state = goal_state
+   456:             self.goal_state_enc = self.model.encode(
+   457:                 self.normalizer.normalize_state(goal_state.to(self.device))
+   458:                 .unsqueeze(0)
+   459:                 .unsqueeze(2)
+   460:             )
+   461:             self.objective = ReprTargetDistMPCObjective(
+   462:                 target_enc=self.goal_state_enc,
+   463:                 sum_all_diffs=True,
+   464:             )
+   465:             self.planner.set_objective(self.objective)
    466: 
-   467:     successes = []
-   468:     distances = []
-   469:     steps_to_success = []
-   470: 
-   471:     for ep in range(num_episodes):
-   472:         obs, info = reset_env(env, SEED + ep)
-   473:         obs, reward, done, truncated, info = env.step(
-   474:             np.zeros(env.action_space.shape[0])
-   475:         )
-   476:         goal_img = info["target_obs"]
+   467:         def act(self, obs_tensor, steps_left=None, t0=False):
+   468:             planning_result = self.planner.plan(
+   469:                 obs_tensor,
+   470:                 steps_left=steps_left,
+   471:                 eval_mode=True,
+   472:                 t0=t0,
+   473:             )
+   474:             return planning_result.actions[:self.num_act_stepped]
+   475: 
+   476:     agent = PlanningAgent(jepa, planner, normalizer, env, xy_prober)
    477: 
-   478:         agent.set_goal(
-   479:             goal_img.detach().clone().to(dtype=torch.float32),
-   480:             info["target_position"],
-   481:         )
-   482: 
-   483:         steps_left = env.n_allowed_steps
-   484:         total_steps = env.n_allowed_steps
-   485:         t0 = True
-   486:         success = False
-   487:         state_dist = float("inf")
-   488:         first_success_step = None
-   489: 
-   490:         while steps_left > 0:
-   491:             obs_tensor = (
-   492:                 normalizer.normalize_state(
-   493:                     obs.detach().clone().to(dtype=torch.float32, device=device)
-   494:                 )
-   495:                 .unsqueeze(0)
-   496:                 .unsqueeze(2)
-   497:             )
-   498:             with torch.no_grad():
-   499:                 action = agent.act(
-   500:                     obs_tensor, steps_left=steps_left, t0=t0
+   478:     successes = []
+   479:     distances = []
+   480:     steps_to_success = []
+   481: 
+   482:     for ep in range(num_episodes):
+   483:         obs, info = reset_env(env, SEED + ep)
+   484:         obs, reward, done, truncated, info = env.step(
+   485:             np.zeros(env.action_space.shape[0])
+   486:         )
+   487:         goal_img = info["target_obs"]
+   488: 
+   489:         agent.set_goal(
+   490:             goal_img.detach().clone().to(dtype=torch.float32),
+   491:             info["target_position"],
+   492:         )
+   493: 
+   494:         steps_left = env.n_allowed_steps
+   495:         total_steps = env.n_allowed_steps
+   496:         t0 = True
+   497:         success = False
+   498:         state_dist = float("inf")
+   499:         first_success_step = None
+   500: 
 
 [truncated: showing at most 500 lines / 60000 bytes from eb_jepa/custom_planner.py]
 ```

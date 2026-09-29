@@ -4763,7 +4763,7 @@
   "nanoGPT/config/train_gpt2.py": "0add8a916edf704e001e87aaf63647eea9d6df964c10129ff60ad479bdbd55c4",
   "nanoGPT/config/train_shakespeare_char.py": "9b41cdfb2c917259d796a8184d835221a349c23cd18a0a63b46da431d95d9c05",
   "nanoGPT/configurator.py": "5cc23aca26b4ab3c0d9e5f82740f4781f9444f42718c15abcee70d93c5aabe8f",
-  "nanoGPT/custom_pretrain.py": "ba7c29071b6b92bb3189e1319ac34151e9449fda8abb0caee75761014b41f1ae",
+  "nanoGPT/custom_pretrain.py": "cf55dfd5cbc2abe5b02fabba9444804790c48789721c855b9f7e216f3614c045",
   "nanoGPT/data/openwebtext/prepare.py": "77f3ef0cc8132d77f90c2bd5f9c3be86d1b3da7428e100559c58aee2bcb6eb12",
   "nanoGPT/data/openwebtext/readme.md": "e1f86c0641994478162be888a1f120eee2777b758ac2682f9508c8835414d192",
   "nanoGPT/data/shakespeare/prepare.py": "f8d47267f00963138314bb969e75071211bf1140c248bf31b9e60e7750027f06",

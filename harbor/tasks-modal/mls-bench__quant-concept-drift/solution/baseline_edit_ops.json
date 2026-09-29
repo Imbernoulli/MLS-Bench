@@ -3,8 +3,8 @@
     "op": "replace",
     "file": "qlib/workflow_config.yaml",
     "start_line": 32,
-    "end_line": 45,
-    "content": "          infer_processors: []\n          learn_processors:\n            - class: DropnaLabel\n            - class: CSRankNorm\n              kwargs:\n                fields_group: label\n          label: [\"Ref($close, -2) / Ref($close, -1) - 1\"]\n"
+    "end_line": 44,
+    "content": "          infer_processors: []\n          learn_processors:\n            - class: DropnaLabel\n            - class: CSRankNorm\n              kwargs:\n                fields_group: label\n"
   },
   {
     "op": "replace",

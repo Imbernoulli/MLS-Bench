@@ -3,8 +3,8 @@
 Single class ``SparseAttention`` is monkey-patched into Qwen2.5-1.5B-Instruct
 by the harness, which calls ``forward(q, k, v, is_causal=True, scale=...)``
 once per attention layer (q/k/v already shaped (B, H, N, D), GQA replicated).
-The harness reads ``self.last_density`` after every forward and aborts if
-density > 0.25 (small slack), except for the dense reference baseline.
+The harness reads the mask in ``self.last_mask`` after every forward, computes
+the density from it, checks the output against it, and aborts if density > 0.25.
 
 PERFORMANCE — read this before redesigning forward(). At N=8192 a naïve
 ``einsum + softmax + einsum`` materializes a 3 GB bf16 attention matrix per
@@ -17,7 +17,7 @@ layer per head and is *slower than dense*. To make sparse actually faster:
   3. For low density (≤ 10%), use ``torch.nn.attention.flex_attention`` with
      ``create_block_mask`` — it compiles a true block-sparse kernel that
      skips entire blocks (PyTorch-native, no Triton-by-hand needed).
-  4. Stay in bf16 — fused SDPA handles numerics safely; fp32 upcast 2×s memory.
+  4. Keep the fp16 inputs for fused SDPA (bf16 is too coarse for the output check); hand-written logits in fp32.
 """
 
 import math
@@ -53,8 +53,8 @@ class SparseAttention(nn.Module):
         self.window = 1024      # local window radius (tokens per side)
         self.num_sinks = 4      # number of "always attended" sink tokens
 
-        # Diagnostic: harness reads this after each forward to validate budget.
-        self.last_density = None
+        # The harness reads this mask after each forward (density + output check).
+        self.last_mask = None
 
         # (N, is_causal, device) -> (mask BoolTensor, density float).
         # Reused across the 24 layers for the same prompt — built once per N.
@@ -89,9 +89,9 @@ class SparseAttention(nn.Module):
         B, H, N, D = q.shape
         scale = scale if scale is not None else 1.0 / math.sqrt(D)
 
-        mask, self.last_density = self._get_mask(N, q.device, is_causal)
-        # SDPA accepts a bool attn_mask: True = attend. Stay in bf16/fp16 —
-        # fused SDPA handles numerics safely.
+        mask, _density = self._get_mask(N, q.device, is_causal)
+        self.last_mask = mask  # the harness derives density from this mask
+        # SDPA bool attn_mask: True = attend. Keep the fp16 inputs (not bf16).
         out = F.scaled_dot_product_attention(
             q, k, v, attn_mask=mask.view(1, 1, N, N),
             dropout_p=0.0, is_causal=False, scale=scale,

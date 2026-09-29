@@ -23,6 +23,7 @@ The `compute_loss` function in `nanoGPT/custom_pretrain.py`:
 - Signature must remain `compute_loss(logits, targets)`.
 - `logits` shape `(B, T, V)`; `targets` shape `(B, T)`.
 - The function is called inside the model's forward pass during training.
+- Evaluation never calls `compute_loss`: validation loss and the WikiText-2/LAMBADA perplexities are plain next-token cross-entropy on the model's raw `lm_head` logits, computed by fixed code (the downstream benchmarks also score the raw logits). Logit processing inside `compute_loss` therefore shapes training only.
 - Stable throughout training; do not lower reported loss by distorting probabilities (e.g., via temperature) without improving the actual modeling distribution.
 
 ## Reference baselines
@@ -80,7 +81,7 @@ Other files you may **read** for context (do not modify):
     13: import torch
     14: import torch.nn as nn
     15: from torch.nn import functional as F
-    16: 
+    16: _EVAL_CROSS_ENTROPY = F.cross_entropy  # bound before the editable region; used only by fixed evaluation
     17: # ============================================================================
     18: # Model Components
     19: # ============================================================================
@@ -388,122 +389,144 @@ Other files you may **read** for context (do not modify):
    321:         model = DDP(model, device_ids=[ddp_local_rank], find_unused_parameters=False)
    322: 
    323:     # ── Evaluation ──
-   324:     @torch.no_grad()
-   325:     def estimate_loss():
-   326:         out = {}
-   327:         raw = model.module if ddp else model
-   328:         raw.eval()
-   329:         for split, data in [('train', train_data), ('val', val_data)]:
-   330:             losses = torch.zeros(eval_iters)
-   331:             for k in range(eval_iters):
-   332:                 X, Y = get_batch(data, batch_size, block_size, device)
-   333:                 with ctx:
-   334:                     logits, loss = raw(X, Y)
-   335:                 losses[k] = loss.item()
-   336:             out[split] = losses.mean()
-   337:         raw.train()
-   338:         return out
-   339: 
-   340:     # ── Training Loop ──
-   341:     t0 = time.time()
-   342:     best_val_loss = 1e9
-   343: 
-   344:     for iter_num in range(max_iters + 1):
-   345:         lr = get_lr(iter_num, warmup_iters, lr_decay_iters, learning_rate, min_lr)
-   346:         for param_group in optimizer.param_groups:
-   347:             param_group['lr'] = lr
-   348: 
-   349:         if iter_num % eval_interval == 0 and master_process:
-   350:             losses = estimate_loss()
-   351:             train_loss = losses['train'].item()
-   352:             val_loss = losses['val'].item()
-   353:             print(f"step {iter_num}: train loss {train_loss:.4f}, val loss {val_loss:.4f}")
-   354:             print(f"TRAIN_METRICS: step={iter_num}, train_loss={train_loss:.4f}, val_loss={val_loss:.4f}", flush=True)
-   355:             if val_loss < best_val_loss:
-   356:                 best_val_loss = val_loss
-   357: 
-   358:         for micro_step in range(gradient_accumulation_steps):
-   359:             if ddp:
-   360:                 model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
-   361:             with ctx:
-   362:                 X, Y = get_batch(train_data, batch_size, block_size, device)
-   363:                 logits, loss = model(X, Y)
-   364:                 loss = loss / gradient_accumulation_steps
-   365:             scaler.scale(loss).backward()
-   366: 
-   367:         if grad_clip != 0.0:
-   368:             scaler.unscale_(optimizer)
-   369:             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
-   370:         scaler.step(optimizer)
-   371:         scaler.update()
-   372:         optimizer.zero_grad(set_to_none=True)
-   373: 
-   374:         t1 = time.time()
-   375:         dt = t1 - t0
-   376:         t0 = t1
-   377:         if iter_num % log_interval == 0 and iter_num > 0 and master_process:
-   378:             lossf = loss.item() * gradient_accumulation_steps
-   379:             print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, lr {lr:.6f}")
-   380: 
-   381:     # ── Free training state to reclaim GPU memory ──
-   382:     del optimizer, scaler
-   383:     import gc; gc.collect()
-   384:     torch.cuda.empty_cache()
-   385: 
-   386:     # ── Final Evaluation ──
-   387:     if master_process:
-   388:         losses = estimate_loss()
-   389:         val_loss = losses['val'].item()
-   390:         train_loss = losses['train'].item()
-   391:         print(f"Final: train loss {train_loss:.4f}, val loss {val_loss:.4f}, best val loss {best_val_loss:.4f}")
-   392: 
-   393:         # ── PPL on benchmark datasets ──
-   394:         eval_dir = os.environ.get('EVAL_DIR', '/data/eval')
-   395:         raw = model.module if ddp else model
-   396:         raw.eval()
-   397:         eval_datasets = ['wikitext2', 'lambada']
-   398:         ppl_results = {}
-   399:         for ds_name in eval_datasets:
-   400:             ds_path = os.path.join(eval_dir, f'{ds_name}.bin')
-   401:             if not os.path.exists(ds_path):
-   402:                 print(f"Eval dataset not found: {ds_path}")
-   403:                 continue
-   404:             data = np.memmap(ds_path, dtype=np.uint16, mode='r')
-   405:             n_tokens = len(data)
-   406:             # Process in non-overlapping chunks of block_size
-   407:             total_loss = 0.0
-   408:             n_chunks = 0
-   409:             with torch.no_grad():
-   410:                 for start in range(0, n_tokens - block_size, block_size):
-   411:                     x = torch.from_numpy(data[start:start+block_size].astype(np.int64)).unsqueeze(0).to(device)
-   412:                     y = torch.from_numpy(data[start+1:start+1+block_size].astype(np.int64)).unsqueeze(0).to(device)
-   413:                     with ctx:
-   414:                         _, loss = raw(x, y)
-   415:                     total_loss += loss.item()
-   416:                     n_chunks += 1
-   417:             avg_loss = total_loss / n_chunks
-   418:             ppl = math.exp(avg_loss)
-   419:             ppl_results[ds_name] = ppl
-   420:             print(f"PPL {ds_name}: {ppl:.2f} (avg_loss={avg_loss:.4f}, {n_chunks} chunks)")
-   421: 
-   422:         ppl_str = ', '.join(f'{k}_ppl={v:.2f}' for k, v in ppl_results.items())
-   423:         print(f"TEST_METRICS: val_loss={val_loss:.4f}, {ppl_str}", flush=True)
-   424: 
-   425:         # ── Save checkpoint for downstream evaluation (lm-eval-harness) ──
-   426:         import shutil
-   427:         env_label = os.environ.get('ENV', 'model')
-   428:         # Unwrap torch.compile to get clean state_dict keys
-   429:         save_model = raw._orig_mod if hasattr(raw, '_orig_mod') else raw
-   430:         ckpt_data = {'model_state_dict': save_model.state_dict(), 'model_args': model_args}
-   431:         ckpt_path = os.path.join(output_dir, f'ckpt_{env_label}.pt')
-   432:         torch.save(ckpt_data, ckpt_path)
-   433:         print(f"Checkpoint saved to {ckpt_path}")
-   434:         src_path = os.path.join(output_dir, f'model_source_{env_label}.py')
-   435:         shutil.copy2(os.path.abspath(__file__), src_path)
-   436:         print(f"Model source saved to {src_path}")
-   437: 
-   438:     if ddp:
-   439:         dist.destroy_process_group()
+   324:     # Every reported loss (train/val loss, WikiText-2/LAMBADA perplexity) is
+   325:     # plain token-level cross-entropy on the model's raw lm_head logits,
+   326:     # computed here in fixed code. Evaluation never calls compute_loss, which
+   327:     # only defines the training objective.
+   328:     def eval_cross_entropy(m, idx, targets, chunk=8192):
+   329:         """Mean next-token CE of the raw lm_head logits (GPT.forward without the loss)."""
+   330:         m = getattr(m, '_orig_mod', m)
+   331:         t = idx.size(1)
+   332:         x = m.transformer.drop(m.transformer.wte(idx))
+   333:         if getattr(m.transformer.h[0].attn, 'use_pos_emb', True):
+   334:             x = x + m.transformer.wpe(torch.arange(0, t, dtype=torch.long, device=idx.device))
+   335:         for block in m.transformer.h:
+   336:             x = block(x)
+   337:         x = m.transformer.ln_f(x)
+   338:         x = x.view(-1, x.size(-1))
+   339:         y = targets.view(-1)
+   340:         total = torch.zeros((), dtype=torch.float32, device=idx.device)
+   341:         for i in range(0, y.numel(), chunk):  # chunked so full (B*T, V) fp32 logits never materialize
+   342:             total += _EVAL_CROSS_ENTROPY(m.lm_head(x[i:i + chunk]), y[i:i + chunk],
+   343:                                          ignore_index=-1, reduction='sum').float()
+   344:         return total / (y != -1).sum()
+   345: 
+   346:     @torch.no_grad()
+   347:     def estimate_loss():
+   348:         out = {}
+   349:         raw = model.module if ddp else model
+   350:         raw.eval()
+   351:         for split, data in [('train', train_data), ('val', val_data)]:
+   352:             losses = torch.zeros(eval_iters)
+   353:             for k in range(eval_iters):
+   354:                 X, Y = get_batch(data, batch_size, block_size, device)
+   355:                 with ctx:
+   356:                     loss = eval_cross_entropy(raw, X, Y)
+   357:                 losses[k] = loss.item()
+   358:             out[split] = losses.mean()
+   359:         raw.train()
+   360:         return out
+   361: 
+   362:     # ── Training Loop ──
+   363:     t0 = time.time()
+   364:     best_val_loss = 1e9
+   365: 
+   366:     for iter_num in range(max_iters + 1):
+   367:         lr = get_lr(iter_num, warmup_iters, lr_decay_iters, learning_rate, min_lr)
+   368:         for param_group in optimizer.param_groups:
+   369:             param_group['lr'] = lr
+   370: 
+   371:         if iter_num % eval_interval == 0 and master_process:
+   372:             losses = estimate_loss()
+   373:             train_loss = losses['train'].item()
+   374:             val_loss = losses['val'].item()
+   375:             print(f"step {iter_num}: train loss {train_loss:.4f}, val loss {val_loss:.4f}")
+   376:             print(f"TRAIN_METRICS: step={iter_num}, train_loss={train_loss:.4f}, val_loss={val_loss:.4f}", flush=True)
+   377:             if val_loss < best_val_loss:
+   378:                 best_val_loss = val_loss
+   379: 
+   380:         for micro_step in range(gradient_accumulation_steps):
+   381:             if ddp:
+   382:                 model.require_backward_grad_sync = (micro_step == gradient_accumulation_steps - 1)
+   383:             with ctx:
+   384:                 X, Y = get_batch(train_data, batch_size, block_size, device)
+   385:                 logits, loss = model(X, Y)
+   386:                 loss = loss / gradient_accumulation_steps
+   387:             scaler.scale(loss).backward()
+   388: 
+   389:         if grad_clip != 0.0:
+   390:             scaler.unscale_(optimizer)
+   391:             torch.nn.utils.clip_grad_norm_(model.parameters(), grad_clip)
+   392:         scaler.step(optimizer)
+   393:         scaler.update()
+   394:         optimizer.zero_grad(set_to_none=True)
+   395: 
+   396:         t1 = time.time()
+   397:         dt = t1 - t0
+   398:         t0 = t1
+   399:         if iter_num % log_interval == 0 and iter_num > 0 and master_process:
+   400:             lossf = loss.item() * gradient_accumulation_steps
+   401:             print(f"iter {iter_num}: loss {lossf:.4f}, time {dt*1000:.2f}ms, lr {lr:.6f}")
+   402: 
+   403:     # ── Free training state to reclaim GPU memory ──
+   404:     del optimizer, scaler
+   405:     import gc; gc.collect()
+   406:     torch.cuda.empty_cache()
+   407: 
+   408:     # ── Final Evaluation ──
+   409:     if master_process:
+   410:         losses = estimate_loss()
+   411:         val_loss = losses['val'].item()
+   412:         train_loss = losses['train'].item()
+   413:         print(f"Final: train loss {train_loss:.4f}, val loss {val_loss:.4f}, best val loss {best_val_loss:.4f}")
+   414: 
+   415:         # ── PPL on benchmark datasets ──
+   416:         eval_dir = os.environ.get('EVAL_DIR', '/data/eval')
+   417:         raw = model.module if ddp else model
+   418:         raw.eval()
+   419:         eval_datasets = ['wikitext2', 'lambada']
+   420:         ppl_results = {}
+   421:         for ds_name in eval_datasets:
+   422:             ds_path = os.path.join(eval_dir, f'{ds_name}.bin')
+   423:             if not os.path.exists(ds_path):
+   424:                 print(f"Eval dataset not found: {ds_path}")
+   425:                 continue
+   426:             data = np.memmap(ds_path, dtype=np.uint16, mode='r')
+   427:             n_tokens = len(data)
+   428:             # Process in non-overlapping chunks of block_size
+   429:             total_loss = 0.0
+   430:             n_chunks = 0
+   431:             with torch.no_grad():
+   432:                 for start in range(0, n_tokens - block_size, block_size):
+   433:                     x = torch.from_numpy(data[start:start+block_size].astype(np.int64)).unsqueeze(0).to(device)
+   434:                     y = torch.from_numpy(data[start+1:start+1+block_size].astype(np.int64)).unsqueeze(0).to(device)
+   435:                     with ctx:
+   436:                         loss = eval_cross_entropy(raw, x, y)
+   437:                     total_loss += loss.item()
+   438:                     n_chunks += 1
+   439:             avg_loss = total_loss / n_chunks
+   440:             ppl = math.exp(avg_loss)
+   441:             ppl_results[ds_name] = ppl
+   442:             print(f"PPL {ds_name}: {ppl:.2f} (avg_loss={avg_loss:.4f}, {n_chunks} chunks)")
+   443: 
+   444:         ppl_str = ', '.join(f'{k}_ppl={v:.2f}' for k, v in ppl_results.items())
+   445:         print(f"TEST_METRICS: val_loss={val_loss:.4f}, {ppl_str}", flush=True)
+   446: 
+   447:         # ── Save checkpoint for downstream evaluation (lm-eval-harness) ──
+   448:         import shutil
+   449:         env_label = os.environ.get('ENV', 'model')
+   450:         # Unwrap torch.compile to get clean state_dict keys
+   451:         save_model = raw._orig_mod if hasattr(raw, '_orig_mod') else raw
+   452:         ckpt_data = {'model_state_dict': save_model.state_dict(), 'model_args': model_args}
+   453:         ckpt_path = os.path.join(output_dir, f'ckpt_{env_label}.pt')
+   454:         torch.save(ckpt_data, ckpt_path)
+   455:         print(f"Checkpoint saved to {ckpt_path}")
+   456:         src_path = os.path.join(output_dir, f'model_source_{env_label}.py')
+   457:         shutil.copy2(os.path.abspath(__file__), src_path)
+   458:         print(f"Model source saved to {src_path}")
+   459: 
+   460:     if ddp:
+   461:         dist.destroy_process_group()
 ```
 
 ## Parameter Budget

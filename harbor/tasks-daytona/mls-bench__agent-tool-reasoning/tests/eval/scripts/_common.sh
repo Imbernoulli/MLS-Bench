@@ -58,6 +58,12 @@ case "${AGENT_PROVIDER:-}" in
         ;;
 esac
 
+# SoPR judge key (OpenRouter), same key compute_sopr.sh uses. train.sh runs
+# the judge right after inference; without the key it cannot produce sopr_*,
+# so refuse to start instead of scoring 0 hours later.
+OPENROUTER_API_KEY_NEW="$(read_key OPENROUTER_API_KEY_NEW .openrouter_key)" || exit 1
+export OPENROUTER_API_KEY_NEW
+
 # Tool server defaults: DeepSeek official deepseek-chat. Override any of
 # TOOL_SERVER_MODEL / TOOL_SERVER_BASE_URL / TOOL_SERVER_KEY from the
 # caller's environment (e.g. set TOOL_SERVER_BASE_URL to dashscope when

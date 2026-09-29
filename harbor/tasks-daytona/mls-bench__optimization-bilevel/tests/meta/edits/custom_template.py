@@ -319,9 +319,26 @@ def project_x(x: float, config: ToyProblemConfig) -> float:
 
 
 def run_toy(seed: int, output_dir: Path, label: str) -> dict[str, float]:
+    """Toy convergence driver.
+
+    Every scored quantity is recomputed here from the iterate ``(x, y)`` that
+    ``algorithm`` returns; the bookkeeping fields of the state dict
+    (``total_steps``, ``projected_grad``, ``residual``, ``success``, ...) are
+    never read. A step is one ``algorithm`` call, and a call that queries the
+    ``grad_fns`` oracles more than once is charged one step per query of its
+    most-used oracle. A run converges once the returned iterate is
+    ``stationarity_tol``-stationary for the declared penalty problem; certifying
+    that costs one more gradient evaluation, which is charged as one step (the
+    reference PBGD loop spends exactly that step to detect convergence).
+    """
     config = DEFAULT_TOY
     hparams = _resolve_hparams_for_state(TOY_HPARAMS, {"task": "toy"})
-    grad_fns = _make_toy_grad_fns(config)
+    oracle_counts: dict[str, int] = {}
+    grad_fns = _make_toy_grad_fns(config, oracle_counts)
+    penalty = _toy_penalty(hparams)
+    gams = _toy_gams(hparams)
+    alpha0 = _toy_strategy_from_hparams(hparams, penalty).alpha0
+    max_total_steps = _toy_max_steps(hparams, config)
     rng = random.Random(seed)
     start_time = time.perf_counter()
 
@@ -335,31 +352,37 @@ def run_toy(seed: int, output_dir: Path, label: str) -> dict[str, float]:
         x = rng.uniform(config.init_x_lower, config.init_x_upper)
         y = rng.uniform(config.init_y_lower, config.init_y_upper)
         state = grad_fns["init_state"](x, y)
-        max_total_steps = _toy_max_steps(hparams, config)
+        counts_at_start = dict(oracle_counts)
+        calls = 0
+        charged_steps = 0
+        success = False
+        agent_done = False
+        projected_grad = float("inf")
 
-        while not bool(state.get("done", False)):
-            previous_steps = int(state.get("total_steps", 0))
+        while charged_steps < max_total_steps:
+            gamma = gams[min(charged_steps // config.max_steps_per_gamma, len(gams) - 1)]
+            projected_grad = _toy_gradient_mapping_norm(x, y, penalty, gamma, alpha0, config)
+            if projected_grad <= config.stationarity_tol:
+                success = True
+                charged_steps += 1
+                break
+            if agent_done:
+                break
             state = algorithm(state, hparams, grad_fns)
             if not isinstance(state, dict):
                 raise TypeError("algorithm must return an updated state dict.")
-            current_steps = int(state.get("total_steps", previous_steps))
-            if current_steps <= previous_steps:
-                raise RuntimeError("algorithm must advance state['total_steps'] for toy mode.")
-            projected_grad = float(state.get("projected_grad", float("inf")))
-            if projected_grad <= config.stationarity_tol:
-                state["success"] = True
-                state["done"] = True
-            if current_steps >= max_total_steps:
-                state["total_steps"] = max_total_steps
-                state["done"] = True
+            calls += 1
+            x, y = _toy_checked_iterate(state, config)
+            oracle_queries = max(
+                (oracle_counts.get(name, 0) - counts_at_start.get(name, 0) for name in oracle_counts),
+                default=0,
+            )
+            charged_steps = max(calls, oracle_queries)
+            agent_done = bool(state.get("done", False))
 
-        x = float(state["x"])
-        y = float(state["y"])
-        total_steps = int(state.get("total_steps", max_total_steps))
-        upper_value = float(state.get("upper_value", grad_fns["f"](x, y)))
-        residual = float(state.get("residual", abs(x + y)))
-        projected_grad = float(state.get("projected_grad", float("inf")))
-        success = bool(state.get("success", projected_grad <= config.stationarity_tol))
+        total_steps = min(charged_steps, max_total_steps) if success else max_total_steps
+        upper_value = toy_f(x, y)
+        residual = abs(x + y)
 
         successes += int(success)
         convergence_steps.append(total_steps)
@@ -893,7 +916,56 @@ def _toy_max_steps(hparams: dict, config: ToyProblemConfig) -> int:
     return len(_toy_gams(hparams)) * config.max_steps_per_gamma
 
 
-def _make_toy_grad_fns(config: ToyProblemConfig) -> dict:
+# Largest step size the stationarity check uses. The gradient-mapping norm
+# shrinks as its step size grows (a huge step clips every x to a bound), so the
+# check caps it at the reference value alpha0 / gamma = 0.1 / 10.
+_TOY_CHECK_MAX_ALPHA = 0.01
+
+
+def _toy_penalty(hparams: dict) -> str:
+    penalty = str(hparams.get("penalty", "v_pbgd"))
+    if penalty not in {"v_pbgd", "g_pbgd"}:
+        raise ValueError(f"TOY_HPARAMS['penalty'] must be 'v_pbgd' or 'g_pbgd', got {penalty!r}")
+    return penalty
+
+
+def _toy_gradient_mapping_norm(
+    x: float, y: float, penalty: str, gamma: float, alpha0: float, config: ToyProblemConfig
+) -> float:
+    """Projected-gradient (gradient-mapping) norm of the penalized objective at (x, y)."""
+    alpha = min(alpha0 / gamma, _TOY_CHECK_MAX_ALPHA)
+    _, _, grad_x, grad_y = toy_penalized_gradient(x, y, penalty, gamma)
+    x_next = project_x(x - alpha * grad_x, config)
+    y_next = y - alpha * grad_y
+    return math.hypot((x - x_next) / alpha, (y - y_next) / alpha)
+
+
+def _toy_checked_iterate(state: dict, config: ToyProblemConfig) -> tuple[float, float]:
+    x = float(state["x"])
+    y = float(state["y"])
+    if not (math.isfinite(x) and math.isfinite(y)):
+        raise ValueError(f"algorithm returned a non-finite toy iterate (x={x}, y={y}).")
+    if not config.x_lower <= x <= config.x_upper:
+        raise ValueError(
+            f"algorithm returned x={x} outside the feasible set [{config.x_lower}, {config.x_upper}]."
+        )
+    return x, y
+
+
+def _make_toy_grad_fns(config: ToyProblemConfig, oracle_counts: dict[str, int] | None = None) -> dict:
+    """Toy oracles. When ``oracle_counts`` is given, every call is counted per oracle."""
+
+    def counted(name: str, fn):
+        if oracle_counts is None:
+            return fn
+        oracle_counts.setdefault(name, 0)
+
+        def wrapped(*args, **kwargs):
+            oracle_counts[name] += 1
+            return fn(*args, **kwargs)
+
+        return wrapped
+
     def init_state(x: float, y: float) -> dict:
         return {
             "task": "toy",
@@ -911,11 +983,12 @@ def _make_toy_grad_fns(config: ToyProblemConfig) -> dict:
         }
 
     return {
-        "f": toy_f,
-        "df": toy_df,
-        "g": toy_g,
-        "dg_dy": lambda x, y: toy_dg(x, y)[1],
-        "dg_dl": lambda x, y: toy_dg(x, y)[0],
+        "f": counted("f", toy_f),
+        "df": counted("df", toy_df),
+        "g": counted("g", toy_g),
+        "dg_dy": counted("dg_dy", lambda x, y: toy_dg(x, y)[1]),
+        "dg_dl": counted("dg_dl", lambda x, y: toy_dg(x, y)[0]),
+        "gpbgd_penalty_grad": counted("gpbgd_penalty_grad", toy_gpbgd_penalty_grad),
         "proj": lambda x: project_x(x, config),
         "init_state": init_state,
     }
@@ -941,7 +1014,7 @@ def _toy_pbgd_step(state: dict, hparams: dict, grad_fns: dict, method: str) -> d
     upper_value = grad_fns["f"](x, y)
     grad_fx, grad_fy = grad_fns["df"](x, y)
     if method == "g_pbgd":
-        grad_gx, grad_gy = toy_gpbgd_penalty_grad(x, y)
+        grad_gx, grad_gy = grad_fns.get("gpbgd_penalty_grad", toy_gpbgd_penalty_grad)(x, y)
     else:
         grad_gx = grad_fns["dg_dl"](x, y)
         grad_gy = grad_fns["dg_dy"](x, y)
@@ -1005,6 +1078,60 @@ def _hyperclean_weighted_train_loss(model: nn.Module, x: torch.Tensor, train: Hy
     return (torch.sigmoid(x) * ce_train).mean() + reg * sum_squared_norm(model.parameters())
 
 
+# Parameter shapes of the fixed hyper-cleaning architectures (see make_model).
+_HYPERCLEAN_PARAM_SHAPES = {
+    "linear": ((10, 784), (10,)),
+    "mlp": ((300, 784), (300,), (10, 300), (10,)),
+}
+
+
+def _agent_split_view(split: HypercleanSplit) -> HypercleanSplit:
+    """What `algorithm` may see of a split: the inputs and the labels it trains on.
+
+    The training view drops the ground-truth clean mask and clean labels; the
+    validation view keeps its clean labels (they define the outer objective).
+    The tensors are shared, so the reference updates are unchanged.
+    """
+    view = HypercleanSplit.__new__(HypercleanSplit)
+    view.data = split.data
+    view.dirty_target = split.dirty_target
+    view.clean_target = None if split.polluted else split.clean_target
+    view.clean = None
+    view.polluted = split.polluted
+    view.rho = split.rho
+    view.label_set = set(split.label_set)
+    return view
+
+
+def _init_hyperclean_run(
+    seed: int,
+    net_name: str,
+    output_dir: Path,
+    label: str,
+    device: torch.device,
+) -> tuple[tuple[HypercleanSplit, HypercleanSplit, HypercleanSplit], dict]:
+    """Load the splits and build the initial state. The driver keeps the full
+    splits (test split, clean mask) for scoring; the state only gets views."""
+    train, val, test = load_hyperclean_splits(seed, device)
+    model = make_model(net_name, device)
+    x = torch.zeros(train.data.shape[0], device=device, requires_grad=True)
+    state = {
+        "task": "hyperclean",
+        "net_name": net_name,
+        "output_dir": output_dir,
+        "label": label,
+        "device": device,
+        "train": _agent_split_view(train),
+        "val": _agent_split_view(val),
+        "model": model,
+        "x": x,
+        "step": 0,
+        "last_step": -1,
+        "start_time": time.perf_counter(),
+    }
+    return (train, val, test), state
+
+
 def _make_hyperclean_grad_fns(
     seed: int,
     net_name: str,
@@ -1013,27 +1140,7 @@ def _make_hyperclean_grad_fns(
     device: torch.device,
 ) -> dict:
     def init_state() -> dict:
-        train, val, test = load_hyperclean_splits(seed, device)
-        model = make_model(net_name, device)
-        x = torch.zeros(train.data.shape[0], device=device, requires_grad=True)
-        return {
-            "task": "hyperclean",
-            "seed": seed,
-            "net_name": net_name,
-            "output_dir": output_dir,
-            "label": label,
-            "device": device,
-            "train": train,
-            "val": val,
-            "test": test,
-            "model": model,
-            "x": x,
-            "step": 0,
-            "last_step": -1,
-            "best_accuracy": None,
-            "best_f1": None,
-            "start_time": time.perf_counter(),
-        }
+        return _init_hyperclean_run(seed, net_name, output_dir, label, device)[1]
 
     def inner_val(state: dict, hparams: dict) -> torch.Tensor:
         model = state["model"]
@@ -1263,13 +1370,39 @@ def run_rhg_family(state: dict, hparams: dict, grad_fns: dict) -> dict:
     return _hyperclean_rhg_step(state, hparams, grad_fns)
 
 
-def _evaluate_hyperclean_state(state: dict, hparams: dict) -> None:
-    train = state["train"]
-    val = state["val"]
-    test = state["test"]
-    x = state["x"]
-    net_name = state["net_name"]
-    step = int(state.get("last_step", max(int(state.get("step", 1)) - 1, 0)))
+def _hyperclean_checked_params(params, net_name: str) -> list[torch.Tensor]:
+    """Parameters to score, checked against the fixed architecture's shapes."""
+    params = list(params)
+    expected = _HYPERCLEAN_PARAM_SHAPES[net_name]
+    if len(params) != len(expected) or any(
+        not isinstance(param, torch.Tensor) or tuple(param.shape) != shape
+        for param, shape in zip(params, expected)
+    ):
+        got = [tuple(param.shape) if isinstance(param, torch.Tensor) else type(param).__name__ for param in params]
+        raise ValueError(f"algorithm returned parameters {got}; the fixed {net_name} model needs {list(expected)}.")
+    return params
+
+
+def _hyperclean_checked_x(x, train: HypercleanSplit) -> torch.Tensor:
+    if not isinstance(x, torch.Tensor) or tuple(x.shape) != (train.data.shape[0],):
+        got = tuple(x.shape) if isinstance(x, torch.Tensor) else type(x).__name__
+        raise ValueError(f"state['x'] must be a tensor of shape ({train.data.shape[0]},), got {got}.")
+    return x
+
+
+def _evaluate_hyperclean_state(
+    state: dict,
+    hparams: dict,
+    splits: tuple[HypercleanSplit, HypercleanSplit, HypercleanSplit],
+    net_name: str,
+    step: int,
+    start_time: float,
+) -> HypercleanEval:
+    """Score the returned weights `x` and model parameters against the driver's
+    own splits. Test accuracy and the cleaner metrics never come from the state;
+    the losses read from it are only logged."""
+    train, val, test = splits
+    x = _hyperclean_checked_x(state["x"], train)
     iter_time = float(state.get("iter_time", 0.0))
     aux_name = str(state.get("aux_name", "aux_value"))
     resolved = _resolve_hparams_for_state(hparams, state)
@@ -1277,6 +1410,9 @@ def _evaluate_hyperclean_state(state: dict, hparams: dict) -> None:
     with torch.no_grad():
         params_history = state.get("params_history")
         if params_history is not None:
+            params_history = [_hyperclean_checked_params(params_t, net_name) for params_t in params_history]
+            if not params_history:
+                raise ValueError("state['params_history'] must not be empty.")
             fx = F.cross_entropy(yforward(params_history[-1], val.data, net_name), val.clean_target)
             weighted_train = torch.tensor(float('inf'), device=x.device)
             best_test_acc = 0.0
@@ -1292,15 +1428,17 @@ def _evaluate_hyperclean_state(state: dict, hparams: dict) -> None:
             aux_value = state.get("aux_value", weighted_train)
         else:
             model = state["model"]
-            model.eval()
-            logits_test = model(test.data)
+            if not isinstance(model, nn.Module):
+                raise TypeError("state['model'] must be the torch.nn.Module holding the lower-level parameters.")
+            params = _hyperclean_checked_params(model.parameters(), net_name)
+            logits_test = yforward(params, test.data, net_name)
             test_accuracy = compute_accuracy(logits_test, test.clean_target)
             train_loss = state.get("train_loss")
             if train_loss is None:
                 train_loss = _hyperclean_weighted_train_loss(model, x, train, float(resolved.get("reg", 0.0)))
             val_loss = state.get("val_loss")
             if val_loss is None:
-                val_loss = F.cross_entropy(model(val.data), val.clean_target)
+                val_loss = F.cross_entropy(yforward(params, val.data, net_name), val.clean_target)
             aux_value = state.get("aux_value", train_loss)
 
         precision, recall, f1_score = compute_cleaner_metrics(x, train.clean, train.rho)
@@ -1313,10 +1451,8 @@ def _evaluate_hyperclean_state(state: dict, hparams: dict) -> None:
             cleaner_precision=precision,
             cleaner_recall=recall,
             aux_value=aux_value,
-            runtime_sec=time.perf_counter() - float(state["start_time"]),
+            runtime_sec=time.perf_counter() - start_time,
         )
-        state["best_accuracy"] = update_best_by_accuracy(state.get("best_accuracy"), current)
-        state["best_f1"] = update_best_by_f1(state.get("best_f1"), current)
         print(
             'TRAIN_METRICS '
             f'step={step} train_loss={current.train_loss:.6f} val_loss={current.val_loss:.6f} '
@@ -1325,9 +1461,13 @@ def _evaluate_hyperclean_state(state: dict, hparams: dict) -> None:
             f'{aux_name}={current.aux_value:.6f} iter_time={iter_time:.6f}',
             flush=True,
         )
+    return current
 
 
 def run_hyperclean(seed: int, net_name: str, output_dir: Path, label: str, device: torch.device) -> dict[str, float]:
+    """Hyper-cleaning driver. One `algorithm` call is one outer step; the driver
+    counts the steps, scores every `eval_interval`-th one itself, and keeps the
+    best records outside the state."""
     state_seed = {
         "task": "hyperclean",
         "net_name": net_name,
@@ -1335,26 +1475,26 @@ def run_hyperclean(seed: int, net_name: str, output_dir: Path, label: str, devic
     hparams = _resolve_hparams_for_state(HYPERCLEAN_HPARAMS, state_seed)
     strategy = _hyperclean_strategy_from_hparams(hparams, "v_pbgd")
     grad_fns = _make_hyperclean_grad_fns(seed, net_name, output_dir, label, device)
-    state = grad_fns["init_state"]()
+    splits, state = _init_hyperclean_run(seed, net_name, output_dir, label, device)
+    start_time = float(state["start_time"])
+    best_accuracy: HypercleanEval | None = None
+    best_f1: HypercleanEval | None = None
 
-    for _ in range(strategy.outer_itr):
-        previous_step = int(state.get("step", 0))
+    for step in range(strategy.outer_itr):
         state = algorithm(state, hparams, grad_fns)
         if not isinstance(state, dict):
             raise TypeError("algorithm must return an updated state dict.")
-        current_step = int(state.get("step", previous_step))
-        if current_step <= previous_step:
-            state["last_step"] = previous_step
-            state["step"] = previous_step + 1
-        elif int(state.get("last_step", -1)) < previous_step:
-            state["last_step"] = current_step - 1
-        if int(state["last_step"]) % strategy.eval_interval == 0:
-            _evaluate_hyperclean_state(state, hparams)
+        state["last_step"] = step
+        state["step"] = step + 1
+        if step % strategy.eval_interval == 0:
+            current = _evaluate_hyperclean_state(state, hparams, splits, net_name, step, start_time)
+            best_accuracy = update_best_by_accuracy(best_accuracy, current)
+            best_f1 = update_best_by_f1(best_f1, current)
 
-    if state.get("best_accuracy") is None or state.get("best_f1") is None:
+    if best_accuracy is None or best_f1 is None:
         raise RuntimeError('algorithm did not emit any evaluation records.')
-    total_runtime = time.perf_counter() - float(state["start_time"])
-    metrics = summarize_hyperclean_metrics(state["best_accuracy"], state["best_f1"], total_runtime)
+    total_runtime = time.perf_counter() - start_time
+    metrics = summarize_hyperclean_metrics(best_accuracy, best_f1, total_runtime)
     print(
         'FINAL_METRICS ' + ' '.join(
             f'{key}={value:.6f}' if isinstance(value, float) else f'{key}={value}'

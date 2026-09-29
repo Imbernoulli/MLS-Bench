@@ -39,6 +39,17 @@ Modify only the `SelectionPolicy` class in
 - `score_tokens(module, hidden_states, keys, values, kwargs, plan)`
 - `select_cache(module, keys, values, scores, n_kept)`
 
+`module` is the layer's attention module (projections, rotary embedding,
+config) and `kwargs` are its forward keyword arguments (position
+embeddings, attention mask, position ids, cache position) with the
+KV-cache handle removed, so the policy never holds the cache the decode
+loop reads. The policy affects decoding only through the
+`(keys, values)` pair that `select_cache` returns: the harness snapshots
+the cache and its layers, every attention module (hooks, submodules,
+attributes, `forward`), the model config and the attention-function
+registry before the prefill, and aborts the run if any of them differs
+after the prefill or after decoding.
+
 The harness owns the model, datasets, prompt templates, cache budget,
 decode loop, and scoring. The editable policy owns the retention metadata
 and the per-token scoring rule used to rank prefill KV entries. The shared
@@ -119,13 +130,15 @@ cache state:
 | Field | Status | Notes |
 |---|---|---|
 | `compression_ratio` | enforced | Harness force-overrides to its own value at the call site (`PrefillSelectionCompressor.forward_hook`). Policies cannot lie about the budget. |
-| `mean_retained_fraction` | measured, enforced | Computed from `select_cache`'s actual output `n_kept / keys.shape[2]` per layer, then averaged. Drives the soft budget penalty in `score_spec.py`. |
+| `mean_retained_fraction` | measured, enforced | Computed per layer from the tensors `select_cache` actually returns (`selected_keys.shape[2] / keys.shape[2]`), cross-checked against the post-prefill cache length and against one new entry per decode step after decoding, then averaged. Drives the reduction term and the soft budget penalty in `score_spec.py`. |
+| `n_kept` | enforced | `select_cache` must return plain `torch.Tensor` keys and values that keep at most `n_kept` tokens along the sequence dimension and leave every other dimension unchanged; a larger or malformed selection aborts the run. The cap applies to every layer separately, so budgets that shift tokens between layers cannot be expressed; a layer may keep fewer than `n_kept`. |
 | `disable_compression` | enforced | If `True`, harness skips `score_tokens`/`select_cache` entirely and reports `retained = 1.0`. Used by the `full_attention` anchor. |
 | `method` | logged only | Recorded for provenance; not used in scoring. |
 | `sink_tokens`, `lag_size`, `n_future_positions`, `subspace_dim`, etc. | advisory | Used internally by the policy's own `score_tokens`. The harness does not verify that declared "sinks" are actually preserved by `select_cache`'s top-K output. Honesty here only matters for provenance and ablation reproducibility, not for scoring. |
 
 Final scoring depends only on the end-to-end measured signals
-(`final_score`, `mean_retained_fraction`, `runtime_seconds`).
+`final_score` and `mean_retained_fraction`; `runtime_seconds` is reported
+but not scored.
 
 ## Metrics
 
@@ -134,23 +147,35 @@ The parser expects one `TEST_METRICS:` line per workload with:
 - `final_score`: benchmark-native final task score on a 0-100 scale
 - `mean_retained_fraction`: average retained prefill KV fraction after the
   policy runs
-- `runtime_seconds`: workload wall-clock runtime in seconds
+- `runtime_seconds`: workload wall-clock runtime in seconds (reported,
+  not scored)
 
 ## Canonical Ranking
 
-The leaderboard uses a single scalar computed from accuracy, runtime, and
-cache reduction under the fixed retained-fraction constraint. Each workload
-combines three normalized terms with weights `accuracy:time:reduction = 6:2:2`:
+The leaderboard uses a single scalar computed from accuracy and cache
+reduction under the fixed retained-fraction constraint. Each workload
+combines two normalized terms with weights `accuracy:reduction = 3:1`:
 
-- `accuracy_score`: bounded 0-100 quality normalization calibrated against
-  the visible baseline envelope
-- `time_score`: soft lower-is-better sigmoid normalization of
-  `runtime_seconds`, calibrated from the visible baseline runtime envelope
-- `reduction_score`: bounded lower-is-better normalization of
-  `mean_retained_fraction`
+- `accuracy_score`: 0-100 quality normalization whose floor is the worst
+  baseline. On LongBench v2, where every baseline sits near the 25 %
+  chance level, a gain of 4 points over that floor scores 0.5; on the
+  other workloads the best baseline's accuracy scores 0.5.
+- `reduction_score`: the removed prefill fraction,
+  `1 - mean_retained_fraction`.
 
-The per-workload score is the weighted mean of those three terms, and the
-task score is the geometric mean across workloads. Rows whose
-`mean_retained_fraction_*` exceeds the fixed budget tolerance receive a
-soft upper-bound penalty, so the `full_attention` row remains a visible
-reference anchor rather than a valid compressed-cache submission.
+Runtime is not scored: wall-clock time depends on the hardware the
+evaluation runs on, and the reference methods differ by only a few
+percent.
+
+The per-workload score is the weighted mean of those two terms, and the
+task score is the geometric mean across workloads. Two soft penalties
+multiply the per-workload score:
+
+- Rows whose `mean_retained_fraction_*` exceeds the fixed budget
+  tolerance (0.25) are penalized, so the `full_attention` row remains a
+  visible reference anchor rather than a valid compressed-cache
+  submission.
+- Rows whose accuracy on a workload falls below half of the weakest
+  sparse reference baseline's accuracy there are penalized, down to 0.01
+  at zero accuracy, so cache reduction earns credit only while the kept
+  entries still carry the context.

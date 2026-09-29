@@ -1,12 +1,18 @@
 # Custom online bandit algorithm for MLS-Bench
 #
 # EDITABLE section: BanditPolicy class — the exploration-exploitation strategy.
-# FIXED sections: everything else (environments, evaluation, main loop).
+# FIXED sections: everything else (utilities and the worker loop below).
 #
-# Three evaluation settings:
+# Three evaluation settings (see mlsb_bandit_harness.py, read-only):
 #   1. Stochastic MAB (K=10 Bernoulli arms, T=10000)
 #   2. Contextual Bandits (d=10 context, K=5 linear arms, T=10000)
 #   3. Non-stationary MAB (K=5 Bernoulli arms with 4 abrupt changes, T=10000)
+#
+# The environments live in the fixed harness, not in this file.  The harness
+# runs this file as a separate process (`custom_bandit.py --worker`) and
+# drives BanditPolicy over a pipe; every instance (arm means, parameters,
+# changepoints, noise, contexts) is drawn from fresh OS entropy in the harness
+# and is never visible to this process.  SEED seeds only np.random here.
 #
 # Metric: normalized cumulative regret at horizon T (lower is better).
 
@@ -14,214 +20,10 @@ import argparse
 import math
 import os
 import sys
-from abc import ABC, abstractmethod
 
 import numpy as np
 from scipy.optimize import brentq
 from scipy.special import rel_entr
-
-
-# =====================================================================
-# FIXED: Arm Distributions
-# =====================================================================
-class Arm(ABC):
-    """Abstract arm with a mean reward and a draw method."""
-
-    @abstractmethod
-    def mean(self) -> float:
-        ...
-
-    @abstractmethod
-    def draw(self, rng: np.random.Generator) -> float:
-        ...
-
-
-class BernoulliArm(Arm):
-    """Bernoulli arm with parameter p in [0, 1]."""
-
-    def __init__(self, p: float):
-        assert 0.0 <= p <= 1.0
-        self._p = p
-
-    def mean(self) -> float:
-        return self._p
-
-    def draw(self, rng: np.random.Generator) -> float:
-        return float(rng.random() < self._p)
-
-
-class GaussianArm(Arm):
-    """Gaussian arm with mean mu and std sigma (rewards clipped to [0, 1])."""
-
-    def __init__(self, mu: float, sigma: float = 0.25):
-        self._mu = mu
-        self._sigma = sigma
-
-    def mean(self) -> float:
-        return self._mu
-
-    def draw(self, rng: np.random.Generator) -> float:
-        return float(np.clip(rng.normal(self._mu, self._sigma), 0.0, 1.0))
-
-
-# =====================================================================
-# FIXED: Bandit Environments
-# =====================================================================
-class StochasticMAB:
-    """Standard stochastic multi-armed bandit with K Bernoulli arms.
-
-    Arms have fixed, unknown reward probabilities.  The optimal policy
-    always plays the arm with the highest mean.
-    """
-
-    def __init__(self, arm_means: list[float], seed: int = 42):
-        self.arms = [BernoulliArm(p) for p in arm_means]
-        self.K = len(self.arms)
-        self.best_mean = max(a.mean() for a in self.arms)
-        self.rng = np.random.default_rng(seed)
-        self.context_dim = 0  # no context
-
-    def reset(self):
-        """Called at the start of each episode (no-op for stationary)."""
-        pass
-
-    def get_context(self) -> np.ndarray | None:
-        """Return context vector, or None for context-free bandits."""
-        return None
-
-    def pull(self, arm: int) -> tuple[float, float]:
-        """Pull an arm.  Returns (reward, instantaneous_regret)."""
-        reward = self.arms[arm].draw(self.rng)
-        regret = self.best_mean - self.arms[arm].mean()
-        return reward, regret
-
-
-class ContextualBandit:
-    """Linear contextual bandit: reward = context^T theta_arm + noise.
-
-    Each arm has a fixed (unknown) parameter vector theta_arm of dimension d.
-    At each round, a context x is drawn uniformly from the unit sphere.
-    Expected reward for arm a given context x is x^T theta_a.
-    Noise is Gaussian with std=0.1, rewards clipped to [0, 1].
-    """
-
-    def __init__(self, K: int, d: int, seed: int = 42):
-        self.K = K
-        self.d = d
-        self.context_dim = d
-        self.rng = np.random.default_rng(seed)
-        # Generate arm parameters: theta_a are unit-norm vectors
-        raw = self.rng.standard_normal((K, d))
-        self.theta = raw / np.linalg.norm(raw, axis=1, keepdims=True) * 0.5
-        self._noise_std = 0.1
-        self._current_context: np.ndarray | None = None
-
-    def reset(self):
-        self._current_context = None
-
-    def get_context(self) -> np.ndarray:
-        """Draw a fresh context vector from the unit sphere."""
-        x = self.rng.standard_normal(self.d)
-        x = x / np.linalg.norm(x)
-        self._current_context = x
-        return x.copy()
-
-    def pull(self, arm: int) -> tuple[float, float]:
-        """Pull an arm given the current context."""
-        assert self._current_context is not None, "Call get_context() first"
-        x = self._current_context
-        expected_rewards = self.theta @ x  # (K,)
-        best_reward = expected_rewards.max()
-        arm_reward = expected_rewards[arm]
-        noise = self.rng.normal(0, self._noise_std)
-        reward = float(np.clip(arm_reward + noise, 0.0, 1.0))
-        regret = best_reward - arm_reward
-        return reward, regret
-
-
-class NonStationaryMAB:
-    """Piece-wise stationary MAB with abrupt changepoints.
-
-    The arm means change at pre-specified timesteps.  A good algorithm
-    must detect or adapt to these changes.
-    """
-
-    def __init__(
-        self,
-        arm_configs: list[list[float]],
-        changepoints: list[int],
-        seed: int = 42,
-    ):
-        """
-        Args:
-            arm_configs: list of arm-mean vectors, one per segment.
-                         arm_configs[i] gives the K arm means for segment i.
-            changepoints: sorted list of timesteps where the means change.
-                          len(changepoints) == len(arm_configs) - 1.
-        """
-        assert len(arm_configs) == len(changepoints) + 1
-        self.arm_configs = [np.array(c) for c in arm_configs]
-        self.changepoints = changepoints
-        self.K = len(arm_configs[0])
-        self.context_dim = 0
-        self.rng = np.random.default_rng(seed)
-        self._t = 0
-        self._segment = 0
-
-    def reset(self):
-        self._t = 0
-        self._segment = 0
-
-    def get_context(self) -> np.ndarray | None:
-        return None
-
-    def pull(self, arm: int) -> tuple[float, float]:
-        # Advance segment if needed
-        while (
-            self._segment < len(self.changepoints)
-            and self._t >= self.changepoints[self._segment]
-        ):
-            self._segment += 1
-        means = self.arm_configs[self._segment]
-        best_mean = means.max()
-        arm_mean = means[arm]
-        reward = float(self.rng.random() < arm_mean)  # Bernoulli
-        regret = best_mean - arm_mean
-        self._t += 1
-        return reward, regret
-
-
-# =====================================================================
-# FIXED: Environment Factory
-# =====================================================================
-def make_env(env_name: str, seed: int):
-    """Create a bandit environment by name.
-
-    Returns (env, horizon) where horizon is the number of rounds.
-    """
-    if env_name == "stochastic_mab":
-        # 10-armed Bernoulli bandit
-        arm_means = [0.10, 0.20, 0.30, 0.35, 0.40, 0.50, 0.55, 0.60, 0.70, 0.80]
-        return StochasticMAB(arm_means, seed=seed), 10000
-
-    elif env_name == "contextual":
-        # 5-armed linear contextual bandit, d=10
-        return ContextualBandit(K=5, d=10, seed=seed), 10000
-
-    elif env_name == "nonstationary":
-        # 5-armed piece-wise stationary with 4 changepoints
-        configs = [
-            [0.9, 0.3, 0.2, 0.1, 0.5],   # segment 0: arm 0 best
-            [0.2, 0.8, 0.3, 0.1, 0.4],   # segment 1: arm 1 best
-            [0.1, 0.2, 0.7, 0.3, 0.5],   # segment 2: arm 2 best
-            [0.3, 0.1, 0.2, 0.85, 0.4],  # segment 3: arm 3 best
-            [0.2, 0.4, 0.3, 0.1, 0.9],   # segment 4: arm 4 best
-        ]
-        changepoints = [2000, 4000, 6000, 8000]
-        return NonStationaryMAB(configs, changepoints, seed=seed), 10000
-
-    else:
-        raise ValueError(f"Unknown environment: {env_name}")
 
 
 # =====================================================================
@@ -320,76 +122,63 @@ class BanditPolicy:
         self.rewards[arm] += reward
 
 
-# =====================================================================
-# FIXED: Evaluation Protocol
-# =====================================================================
-def run_bandit(env, policy, horizon: int) -> dict:
-    """Run a bandit algorithm for `horizon` steps.
 
-    Returns dict with cumulative_regret, normalized_regret, and per-step info.
+# =====================================================================
+# FIXED: Worker loop (driven by mlsb_bandit_harness.py over a pipe)
+# =====================================================================
+def _worker_main():
+    """Serve BanditPolicy decisions to the harness.
+
+    Protocol lines are written to the original stdout only; anything the
+    policy prints goes to stderr.
     """
-    env.reset()
-    policy.reset()
+    proto_in = sys.stdin
+    proto_out = os.fdopen(os.dup(1), "w", buffering=1)
+    os.dup2(2, 1)
+    sys.stdout = sys.stderr
 
-    cumulative_regret = 0.0
-    regret_history = []
-
-    for t in range(horizon):
-        context = env.get_context()
-        arm = policy.select_arm(t, context)
-        reward, regret = env.pull(arm)
-        policy.update(arm, reward, context)
-        cumulative_regret += regret
-        if (t + 1) % 1000 == 0:
-            regret_history.append((t + 1, cumulative_regret))
-
-    # Normalized regret: cumulative_regret / horizon
-    normalized_regret = cumulative_regret / horizon
-
-    return {
-        "cumulative_regret": cumulative_regret,
-        "normalized_regret": normalized_regret,
-        "regret_history": regret_history,
-    }
-
-
-def evaluate(env_name: str, seed: int, output_dir: str | None = None):
-    """Evaluate the BanditPolicy on a given environment."""
-    env, horizon = make_env(env_name, seed=seed)
-    policy = BanditPolicy(K=env.K, context_dim=env.context_dim)
-    result = run_bandit(env, policy, horizon)
-
-    # Print training progress
-    for step, cum_reg in result["regret_history"]:
-        norm_reg = cum_reg / step
-        print(
-            f"TRAIN_METRICS step={step} cumulative_regret={cum_reg:.4f} "
-            f"normalized_regret={norm_reg:.6f}",
-            flush=True,
-        )
-
-    # Print final test metrics
-    print(
-        f"TEST_METRICS cumulative_regret={result['cumulative_regret']:.4f} "
-        f"normalized_regret={result['normalized_regret']:.6f}",
-        flush=True,
-    )
-
-    return result
+    policy = None
+    prev_context = None
+    for line in proto_in:
+        parts = line.split()
+        if not parts:
+            continue
+        cmd = parts[0]
+        if cmd == "INIT":
+            K, context_dim, _horizon, seed = (int(v) for v in parts[1:5])
+            np.random.seed(seed)
+            policy = BanditPolicy(K=K, context_dim=context_dim)
+            policy.reset()
+            prev_context = None
+            proto_out.write("READY\n")
+        elif cmd == "S":
+            t, prev_arm = int(parts[1]), int(parts[2])
+            prev_reward = float(parts[3])
+            if prev_arm >= 0:
+                policy.update(prev_arm, prev_reward, prev_context)
+            context = (np.array([float(v) for v in parts[4:]])
+                       if len(parts) > 4 else None)
+            arm = policy.select_arm(t, None if context is None
+                                    else context.copy())
+            prev_context = context
+            proto_out.write("%d\n" % int(arm))
+        elif cmd == "U":
+            policy.update(int(parts[1]), float(parts[2]), prev_context)
+        elif cmd == "BYE":
+            break
+    proto_out.close()
 
 
 # =====================================================================
 # FIXED: Main
 # =====================================================================
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Online Bandit Evaluation")
-    parser.add_argument("--env", type=str, required=True,
-                        choices=["stochastic_mab", "contextual", "nonstationary"],
-                        help="Bandit environment name")
-    parser.add_argument("--seed", type=int, default=42, help="Random seed")
-    parser.add_argument("--output-dir", type=str, default=None,
-                        help="Output directory (optional)")
+    parser = argparse.ArgumentParser(description="Online bandit policy worker")
+    parser.add_argument("--worker", action="store_true",
+                        help="serve the harness protocol on stdin/stdout")
     args = parser.parse_args()
-
-    np.random.seed(args.seed)
-    evaluate(args.env, seed=args.seed, output_dir=args.output_dir)
+    if not args.worker:
+        sys.exit("custom_bandit.py is driven by the harness; run e.g. "
+                 "scripts/stochastic_mab.sh (python -I "
+                 "SMPyBandits/mlsb_bandit_harness.py ...).")
+    _worker_main()

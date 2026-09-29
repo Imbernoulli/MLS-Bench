@@ -9,7 +9,7 @@ Differentially Private Stochastic Gradient Descent (DP-SGD) was introduced in Ab
 A constant clipping threshold and constant noise schedule are suboptimal: gradient magnitudes evolve during training, so a fixed threshold either over-clips (losing useful signal) or under-clips (adding excess noise relative to the post-clip norm), and uniform noise allocation ignores varying gradient informativeness across stages. Recent work explores adaptive clipping (Andrew et al., NeurIPS 2021; arXiv:1905.03871), automatic per-sample clipping (Bu et al., "Automatic Clipping", NeurIPS 2023), and noise-decay schedules.
 
 ## Task
-Modify the `DPMechanism` class in `custom_dpsgd.py`. Your mechanism receives per-sample gradients and must return aggregated noised gradients. You control gradient clipping strategy, noise calibration, and any per-step adaptation.
+Modify the `DPMechanism` class in `custom_dpsgd.py`. Your mechanism receives per-sample gradients and decides how each one is clipped (per-sample multipliers and the clipping bound `C_t`) and the noise multiplier `σ_t` of each step. You control gradient clipping strategy, noise calibration, and any per-step adaptation. The FIXED harness applies your multipliers, checks that every clipped per-sample gradient has `L2`-norm at most `C_t`, averages over the batch, adds Gaussian noise of std `σ_t·C_t/B`, and accounts the privacy spent from the `σ_t` it applied.
 
 ## Interface
 ```python
@@ -18,19 +18,22 @@ class DPMechanism:
                  dataset_size, batch_size, epochs, target_epsilon, target_delta):
         ...
 
-    def clip_and_noise(self, per_sample_grads, step, epoch) -> list[Tensor]:
-        # per_sample_grads: list of tensors [B, *param_shape]
-        # Returns: list of noised gradients [*param_shape]
+    def clip(self, per_sample_grads, step, epoch) -> tuple[Tensor | list[Tensor], float]:
+        # per_sample_grads: copy of the list of tensors [B, *param_shape]
+        # Returns (scale, clip_norm): per-sample multipliers, a [B] tensor
+        # (or a list of [B] tensors, one per parameter), and the L2 bound C_t
+        # that every scaled per-sample gradient satisfies
         ...
 
-    def get_effective_sigma(self, step, epoch) -> float:
-        # Returns current noise multiplier for privacy accounting
+    def get_noise_multiplier(self, step, epoch) -> float:
+        # Returns this step's noise multiplier sigma_t (called after clip);
+        # the harness adds N(0, (sigma_t * C_t / B)^2) noise and accounts it
         ...
 ```
 
 ## Constraints
-- The total privacy budget `(target_epsilon, target_delta)` is FIXED and checked externally.
-- The model architecture, data pipeline, optimizer, and training loop are FIXED.
+- The total privacy budget `(target_epsilon, target_delta)` is FIXED and checked externally: the harness composes the per-step `σ_t` it applied, and a run whose epsilon exceeds the target by more than 1% (the slack for the noise calibration's binary search), or whose clipped per-sample gradient exceeds its declared `C_t`, is aborted.
+- The model architecture, data pipeline, optimizer, and training loop are FIXED; the harness aborts a run that hooks or monkeypatches the functions it relies on (see `_check_harness` in the file).
 - Focus on algorithmic innovation in the DP mechanism: clipping strategies, noise schedules, gradient processing.
 - Available imports: `torch`, `math`, `numpy` (via the FIXED section), `scipy.optimize`.
 
@@ -40,7 +43,7 @@ Trained and evaluated on three datasets at `epsilon = 3.0`, `delta = 1e-5`:
 - **Fashion-MNIST** (28x28 grayscale clothing, 10 classes)
 - **CIFAR-10** (32x32 color images, 10 classes)
 
-Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded.
+Metric: **test accuracy** (higher is better) under the same privacy budget. Privacy budget consumed is also recorded but not scored: every run is held to the same budget, and a run that exceeds it by more than the 1% calibration slack is aborted.
 
 ## Baselines (paper-cited reference implementations)
 - **standard_dpsgd** — Abadi et al. (CCS 2016; arXiv:1607.00133): fixed `C` and constant `σ` calibrated up-front.

@@ -42,13 +42,15 @@ After training, models are evaluated on:
 - **Robust accuracy (FGSM)**: accuracy under one-step FGSM attack.
 - **Robust accuracy (PGD-50)**: accuracy under a 50-step PGD attack — primary metric.
 
+Each attack is run with two losses, cross-entropy and the Carlini-Wagner logit margin (`max_{j != y} z_j - z_y`, which does not depend on the logit scale), and a test image counts as robust only if it survives both. Evaluation runs in a separate process after training has exited: the harness builds a fresh model of the fixed architecture, loads only the trained `state_dict` into it (strict key and shape match), and evaluates it in eval mode, so anything other than the trained weights (hooks, patched methods or functions, wrapper modules) is not part of the evaluated model.
+
 Scenarios (model + dataset):
 - SmallCNN on MNIST (`eps = 0.3`)
 - PreActResNet-18 on CIFAR-10 (`eps = 8/255`)
 - VGG-11-BN on CIFAR-10 (`eps = 8/255`)
 - PreActResNet-18 on CIFAR-100 (`eps = 8/255`)
 
-Higher robust accuracy under PGD-50 across all scenarios is better.
+Higher robust accuracy under PGD-50 across all scenarios is better. A scenario whose PGD-50 robust accuracy falls below half that of the weakest reference baseline (MNIST 0.44, PreActResNet18-C10 0.21, VGG11BN-C10 0.19, PreActResNet18-C100 0.10) does not count as adversarially robust: its score is multiplied by `exp(-30 * shortfall)`.
 
 ## Baselines
 The baselines below run inside the same harness via edit ops; defaults follow the corresponding papers:

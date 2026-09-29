@@ -27,6 +27,8 @@ class CustomModel(Model):
 ```
 `predict` must return a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index. Available imports inside the class: `torch`, `numpy`, `pandas`, `lightgbm`, `sklearn`, `scipy`.
 
+Predictions must be causal: after `predict`, the harness rebuilds the dataset with the data ending at a randomly drawn test date t, predicts again with a copy of the fitted model, and rejects the run if the predictions for the last five dates up to t change beyond float noise, so the prediction for date t may only use data up to date t. The model is also constructed and fit with the data ending before the first test date: during that phase `qlib.data.D` cannot read the test period, and `dataset.prepare()` returns test-segment rows as NaN.
+
 ## Evaluation Metrics
 Reported per universe:
 - **Signal quality**: IC, ICIR, Rank IC, Rank ICIR — higher is better.

@@ -41,5 +41,11 @@ For each dataset the test split is intentionally shifted: a domain score selects
 Metrics:
 - **`worst_group_ece`** — worst-subgroup expected calibration error (lower is better).
 - **`brier`** — Brier score on test (lower is better).
-- **`max_subgroup_gap`** — max over subgroups of `|accuracy − mean confidence|` (lower is better).
+- **`max_subgroup_gap`** — spread of calibration error across subgroups: max minus min per-subgroup ECE (lower is better).
 - **`subgroup_auroc`** — subgroup-level AUROC (higher is better; reported diagnostically).
+
+The calibrated probabilities must keep the base classifier's ability to discriminate. Two constraints, measured on the test set by the fixed harness, multiply each dataset's score:
+- **`auroc_retention`** — `subgroup_auroc` divided by the base classifier's own subgroup AUROC; penalized below 0.9. A strictly increasing mapping keeps it at 1.
+- **`slope_retention`** — the discrimination slope `E[p | y=1] − E[p | y=0]` divided by the base classifier's; penalized below 0.5.
+
+A constant or near-constant predictor (for example, always the calibration base rate) therefore scores near zero.

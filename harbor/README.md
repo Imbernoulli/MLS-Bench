@@ -222,7 +222,8 @@ here, and tasks without an `h200` block are never scaled. Without the switch,
 H200 hardware runs the H100 profile, which is valid there.
 
 `mls-bench/agent-tool-reasoning` and `mls-bench/mas-topology` call DeepSeek /
-DashScope during evaluation and need those keys too; `DAYTONA_API_KEY` only
+DashScope during evaluation and need those keys too; agent-tool-reasoning
+also needs `OPENROUTER_API_KEY_NEW` for its SoPR judge. `DAYTONA_API_KEY` only
 authenticates the sandbox provider.
 
 ## What's in this directory

@@ -23,7 +23,7 @@ from deap import base, creator, tools
 # FIXED — Benchmark functions and infrastructure (do not modify)
 # ================================================================
 
-# --- Benchmark function definitions ---
+# --- Benchmark functions, unshifted (main() optimizes a randomly shifted copy) ---
 
 def rastrigin(individual: List[float]) -> Tuple[float]:
     """Rastrigin function. Global minimum: f(0,...,0) = 0. Domain: [-5.12, 5.12]."""
@@ -229,6 +229,118 @@ def run_evolution(
 # ================================================================
 
 
+def _fresh_math():
+    """A private instance of the math module, immune to monkeypatching of `math`."""
+    import importlib.util
+    spec = importlib.util.find_spec("math")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_M = _fresh_math()
+
+
+# Reference objectives for scoring: the same formulas as the benchmark
+# functions at the top of this file, bound here (after the editable section)
+# so that nothing the editable code does to `rastrigin`, `BENCHMARKS`,
+# `math`, or the returned individual's `.fitness` can change the score.
+def _ref_rastrigin(x):
+    A = 10.0
+    n = len(x)
+    return A * n + sum(v**2 - A * _M.cos(2 * _M.pi * v) for v in x)
+
+
+def _ref_rosenbrock(x):
+    return sum(
+        100.0 * (x[i + 1] - x[i]**2)**2 + (1 - x[i])**2
+        for i in range(len(x) - 1)
+    )
+
+
+def _ref_ackley(x):
+    n = len(x)
+    sum_sq = sum(v**2 for v in x) / n
+    sum_cos = sum(_M.cos(2 * _M.pi * v) for v in x) / n
+    return -20.0 * _M.exp(-0.2 * _M.sqrt(sum_sq)) - _M.exp(sum_cos) + 20.0 + _M.e
+
+
+# name -> (reference objective, domain, location of its unshifted minimum)
+_REFERENCE = {
+    "rastrigin": (_ref_rastrigin, (-5.12, 5.12), 0.0),
+    "rosenbrock": (_ref_rosenbrock, (-5.0, 10.0), 1.0),
+    "ackley": (_ref_ackley, (-32.768, 32.768), 0.0),
+}
+
+
+def _draw_optimum(lo: float, hi: float, dim: int) -> tuple:
+    """This run's optimum location, drawn fresh from OS entropy.
+
+    Every coordinate is uniform on the central 80% of [lo, hi] (as in BBOB and
+    the CEC suites), so the optimum always lies inside the domain. It comes
+    from os.urandom, not from `random`/`numpy.random`, which the editable code
+    seeds and may replace.
+    """
+    import os
+    import sys
+    urandom = os.urandom
+    if not (type(urandom) is type(len)
+            and getattr(urandom, "__self__", None) is sys.modules.get("posix")):
+        raise SystemExit("ERROR: os.urandom has been replaced; refusing to run")
+    raw = urandom(8 * dim)
+    center, half = (lo + hi) / 2.0, 0.4 * (hi - lo)
+    return tuple(
+        center + half * (2.0 * int.from_bytes(raw[8 * i:8 * i + 8], "little") / 2.0**64 - 1.0)
+        for i in range(dim)
+    )
+
+
+def _shifted(func, x_opt, base_opt: float):
+    """`func` moved so that its minimum (value 0) lies at `x_opt`: g(x) = func(x - x_opt + base_opt).
+
+    The input is first copied into plain Python floats, so no object supplied
+    by the caller (e.g. a float subclass with its own __add__) ever takes part
+    in arithmetic with the shift.
+    """
+    delta = tuple(base_opt - o for o in x_opt)
+
+    def objective(x):
+        xs = [float(v) for v in (list.__iter__(x) if isinstance(x, list) else x)]
+        if len(xs) != len(delta):
+            raise ValueError(f"expected {len(delta)} genes, got {len(xs)}")
+        if not all(type(v) is float for v in xs):
+            raise TypeError("genes must convert to plain floats")
+        return func([v + d for v, d in zip(xs, delta)])
+
+    return objective
+
+
+def _score_returned(best_ind, objective, lo: float, hi: float, dim: int) -> float:
+    """Re-evaluate the returned individual with this run's objective.
+
+    The reported best_fitness is the true (shifted) objective value at the
+    returned point, never the individual's self-reported `.fitness`. A point
+    with the wrong dimension, a non-finite coordinate, or a coordinate outside
+    the domain is rejected (no TEST_METRICS line is printed).
+    """
+    try:
+        x = [float(v) for v in (list.__iter__(best_ind) if isinstance(best_ind, list) else best_ind)]
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(f"ERROR: returned best_individual is not a vector of floats: {exc}")
+    if len(x) != dim:
+        raise SystemExit(f"ERROR: returned best_individual has {len(x)} genes, expected {dim}")
+    bad = [i for i, v in enumerate(x) if not (_M.isfinite(v) and lo <= v <= hi)]
+    if bad:
+        raise SystemExit(
+            f"ERROR: returned best_individual violates the domain [{lo}, {hi}] "
+            f"at {len(bad)} coordinate(s), e.g. index {bad[0]} = {x[bad[0]]!r}"
+        )
+    val = float(objective(x))
+    if not _M.isfinite(val):
+        raise SystemExit(f"ERROR: objective at returned best_individual is not finite: {val!r}")
+    return val
+
+
 def compute_convergence_gen(fitness_history: list, threshold_ratio: float = 0.01) -> int:
     """Compute the generation at which fitness first reaches within threshold of final best.
 
@@ -248,7 +360,7 @@ def compute_convergence_gen(fitness_history: list, threshold_ratio: float = 0.01
 def main():
     parser = argparse.ArgumentParser(description="Evolutionary Optimization Benchmark")
     parser.add_argument("--function", type=str, required=True,
-                        choices=list(BENCHMARKS.keys()),
+                        choices=list(_REFERENCE.keys()),
                         help="Benchmark function to optimize")
     parser.add_argument("--dim", type=int, default=30,
                         help="Dimensionality of the search space (default: 30)")
@@ -264,9 +376,27 @@ def main():
                         help="Random seed")
     args = parser.parse_args()
 
-    bench = BENCHMARKS[args.function]
-    evaluate_func = bench["func"]
-    lo, hi = bench["bounds"]
+    # The objective is evaluated in a shifted coordinate frame whose optimum
+    # location is drawn fresh for every run (the optimum value stays 0), so a
+    # hard-coded "known optimum" such as [0]*d or [1]*d is just a random point.
+    # evaluate_func and the final re-evaluation use the same shifted objective.
+    ref_func, (lo, hi), base_opt = _REFERENCE[args.function]
+    objective = _shifted(ref_func, _draw_optimum(lo, hi, args.dim), base_opt)
+    # Evaluation budget: the initial population plus one full population per
+    # generation. A call beyond it raises and evaluates nothing.
+    max_evals = args.pop_size * (args.n_generations + 1)
+    n_evals = [0]
+
+    def evaluate_func(individual):
+        if n_evals[0] >= max_evals:
+            raise RuntimeError(
+                f"evaluation budget exhausted: at most {max_evals} calls to evaluate_func "
+                f"(pop_size * (n_generations + 1)) are allowed per run"
+            )
+        n_evals[0] += 1
+        return (objective(individual),)
+
+    evaluate_func.__name__ = args.function
 
     print(f"=== {args.function.upper()} (dim={args.dim}) ===", flush=True)
     print(f"Bounds: [{lo}, {hi}], Pop: {args.pop_size}, Gens: {args.n_generations}", flush=True)
@@ -285,12 +415,21 @@ def main():
     )
     elapsed = time.time() - t0
 
-    best_fitness = best_ind.fitness.values[0]
+    best_fitness = _score_returned(best_ind, objective, lo, hi, args.dim)
+    try:
+        claimed = float(best_ind.fitness.values[0])
+    except Exception:  # noqa: BLE001
+        claimed = float("nan")
+    if not (abs(claimed - best_fitness) <= 1e-9 * max(1.0, abs(best_fitness))):
+        print(f"WARNING: self-reported best fitness {claimed!r} differs from the "
+              f"re-evaluated value {best_fitness!r}; the re-evaluated value is reported.",
+              flush=True)
     convergence_gen = compute_convergence_gen(fitness_history)
 
     print(f"\n=== Results ===", flush=True)
     print(f"Best fitness: {best_fitness:.6e}", flush=True)
     print(f"Convergence generation: {convergence_gen}/{args.n_generations}", flush=True)
+    print(f"Function evaluations: {n_evals[0]} (budget {max_evals})", flush=True)
     print(f"Wall time: {elapsed:.1f}s", flush=True)
     print(
         f"TEST_METRICS best_fitness={best_fitness:.6e} "

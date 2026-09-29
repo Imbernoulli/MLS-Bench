@@ -4,6 +4,9 @@ from mlsbench.scoring.dsl import *
 # success_rate: higher is better, bounded at 1.0
 # mean_dist: distance from goal, lower is better, bounded below by 0.
 # mean_steps_to_success: fewer steps to succeed, lower is better, bounded below by 0.
+#   Averaged over ALL episodes, an unsolved episode counting as the full 200-step
+#   budget (it used to average over successful episodes only, which rewarded a
+#   planner for giving up on hard episodes).
 term("success_rate_horizon_30",
     col("success_rate_horizon-30").higher().id()
     .bounded_power(bound=1.0))

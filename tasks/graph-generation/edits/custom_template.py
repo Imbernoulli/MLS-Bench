@@ -90,7 +90,7 @@ def generate_ego_small(n_max=200):
 def load_enzymes(n_max=587):
     """Load ENZYMES dataset from TUDataset.
 
-    Protein tertiary structure graphs, 587 graphs, 10-125 nodes.
+    Protein tertiary structure graphs, 587 graphs, up to 126 nodes.
     """
     try:
         import networkx as nx
@@ -322,7 +322,7 @@ def _gaussian(x, y, sigma=1.0):
     return float(np.exp(-d2 / (2.0 * sigma * sigma)))
 
 
-def compute_mmd(samples1, samples2, kernel="gaussian_emd", sigma=1.0, is_hist=True):
+def compute_mmd(samples1, samples2, kernel="gaussian_emd", sigma=1.0, is_hist=True, distance_scaling=1.0):
     """Compute MMD between two sets of graph statistics (biased estimator).
 
     Uses GDSS-style graph-statistic MMD conventions:
@@ -334,7 +334,7 @@ def compute_mmd(samples1, samples2, kernel="gaussian_emd", sigma=1.0, is_hist=Tr
     """
     # Pick kernel
     if kernel == "gaussian_emd":
-        kfn = lambda a, b: _gaussian_emd(a, b, sigma=sigma)
+        kfn = lambda a, b: _gaussian_emd(a, b, sigma=sigma, distance_scaling=distance_scaling)
     else:
         kfn = lambda a, b: _gaussian(a, b, sigma=sigma)
 
@@ -428,8 +428,8 @@ def evaluate_graphs(gen_graphs, ref_graphs, n_eval=None):
     # Compute MMD for each statistic (GDSS conventions)
     # degree: histogrammed integer degrees, gaussian_emd kernel, sigma=1.0
     mmd_deg = compute_mmd(ref_degree, gen_degree, kernel="gaussian_emd", sigma=1.0, is_hist=True)
-    # clustering: histogrammed over [0,1], gaussian_emd kernel, sigma=1.0 / bins=100
-    mmd_clus = compute_mmd(ref_cluster, gen_cluster, kernel="gaussian_emd", sigma=1.0 / 10.0, is_hist=True)
+    # clustering: 100 bins over [0,1], gaussian_emd, sigma=0.1, EMD in coefficient units (GraphRNN: distance_scaling=bins)
+    mmd_clus = compute_mmd(ref_cluster, gen_cluster, kernel="gaussian_emd", sigma=1.0 / 10.0, is_hist=True, distance_scaling=1.0 / 100)
     # orbit: raw per-graph orbit count vectors, gaussian kernel, sigma=30.0
     mmd_orb = compute_mmd(ref_orbit, gen_orbit, kernel="gaussian", sigma=30.0, is_hist=False)
 
@@ -594,6 +594,29 @@ class GraphGenerator(nn.Module):
 
 
 # ============================================================================
+# Dataset copy check (FIXED)
+# ============================================================================
+
+def dataset_matches(graphs, dataset_graphs):
+    """For each graph, the indices of the dataset graphs isomorphic to it.
+
+    Candidates are bucketed by (nodes, edges, WL hash); a bucket hit is
+    confirmed with an exact isomorphism test.
+    """
+    import networkx as nx
+
+    def key(G):
+        return (G.number_of_nodes(), G.number_of_edges(),
+                nx.weisfeiler_lehman_graph_hash(G, iterations=3))
+
+    buckets = defaultdict(list)
+    for i, H in enumerate(dataset_graphs):
+        buckets[key(H)].append(i)
+    return [[i for i in buckets.get(key(G), []) if nx.is_isomorphic(G, dataset_graphs[i])]
+            for G in graphs]
+
+
+# ============================================================================
 # Training & Evaluation Loop (FIXED)
 # ============================================================================
 
@@ -605,8 +628,6 @@ def main():
     parser.add_argument("--batch-size", type=int, default=32)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--output-dir", type=str, default=".")
-    parser.add_argument("--n-gen", type=int, default=None,
-                        help="Number of graphs to generate for evaluation (default: same as dataset)")
     args = parser.parse_args()
 
     # Seed everything
@@ -647,22 +668,22 @@ def main():
     print(f"Model parameters: {n_params:,}", flush=True)
 
     # ── Parameter Budget Check ──
-    # Budget = 1.05x largest baseline. Baselines include:
+    # Budget = 1.05x the largest baseline (GraphVAE, GRAN, DiGress), all
+    # parameters counted. The verifier enforces it before training
+    # (budget_check.py); a model over budget fails that dataset's evaluation.
     # - DiGress (graph transformer denoiser, scales with max_nodes linearly)
     # - GraphVAE (VAE with adjacency decoder, scales with max_nodes^2)
-    # - MoFlow (normalizing flow on adjacency, scales with max_nodes^2 via tri_size)
-    # On large-node datasets (enzymes, max_nodes=125), adjacency-based methods
-    # dominate: MoFlow ~20M params vs DiGress ~900K.
+    # - GRAN (~0.45M) is never the largest of the three.
+    # On enzymes (max_nodes=126) GraphVAE dominates: ~4.32M vs DiGress ~0.87M.
     _H_dg = 128
     _n_gt_layers = 4
     _gt_per_layer = 4 * (_H_dg * _H_dg + _H_dg) + 8 + 4 * _H_dg + 8 * _H_dg * _H_dg + 5 * _H_dg
     _digress_params = (
         max_nodes * _H_dg + _H_dg                          # node_embed
-        + _H_dg * _H_dg + 3 * _H_dg + 1                   # time_embed
+        + _H_dg * _H_dg + 3 * _H_dg                        # time_embed
         + _n_gt_layers * _gt_per_layer                      # transformer layers
         + (2 * _H_dg + 1) * _H_dg + _H_dg + _H_dg + 1     # edge_pred
         + _H_dg * (_H_dg // 2) + (_H_dg // 2) + (_H_dg // 2) + 1  # node_pred
-        + 5000                                              # optimizer states, misc
     )
     # GraphVAE: GCN encoder + VAE + MLP decoder to adj_size = max_nodes^2
     _gvae_h = 256
@@ -678,28 +699,13 @@ def main():
         + _gvae_lat * (_gvae_h // 2) + (_gvae_h // 2)      # node_pred L1
         + (_gvae_h // 2) * max_nodes + max_nodes            # node_pred L2
     )
-    # MoFlow: normalizing flow on upper-triangular adjacency (tri_size = N*(N-1)/2)
-    _tri_size = max_nodes * (max_nodes - 1) // 2
-    _mf_h = 256
-    _mf_half = _tri_size // 2
-    _mf_other = _tri_size - _mf_half
-    _mf_n_layers = 6
-    # Per AffineCoupling: Linear(half, H) + Linear(H, H) + Linear(H, 2*other)
-    _mf_coupling = (
-        _mf_half * _mf_h + _mf_h
-        + _mf_h * _mf_h + _mf_h
-        + _mf_h * 2 * _mf_other + 2 * _mf_other
-    )
-    # Per ActNorm: 2 * tri_size
-    _mf_per_block = _mf_coupling + 2 * _tri_size
-    _moflow_params = (
-        _mf_n_layers * _mf_per_block                        # flow blocks
-        + _tri_size * _mf_h + _mf_h                         # node_pred L1
-        + _mf_h * max_nodes + max_nodes                     # node_pred L2
-    )
-    _max_baseline = max(_digress_params, _graphvae_params, _moflow_params)
+    _max_baseline = max(_digress_params, _graphvae_params)
     _param_budget = int(_max_baseline * 1.05)
-    print(f"Parameter budget: {n_params:,} / {_param_budget:,} (1.05x largest baseline)", flush=True)
+    n_params_all = sum(p.numel() for p in model.parameters())
+    print(f"Parameter budget: {n_params_all:,} / {_param_budget:,} (1.05x largest baseline)", flush=True)
+    if n_params_all > _param_budget:
+        print(f"WARNING: {n_params_all:,} parameters exceed the budget of {_param_budget:,}; "
+              "the verifier will reject this model.", flush=True)
 
     # Training loop
     for epoch in range(1, args.epochs + 1):
@@ -718,20 +724,57 @@ def main():
             loss_str = " ".join(f"{k}={v:.6f}" for k, v in avg_losses.items())
             print(f"TRAIN_METRICS epoch={epoch} {loss_str}", flush=True)
 
-    # Generate and evaluate
-    n_gen = args.n_gen if args.n_gen is not None else len(test_graphs)
-    n_gen = max(n_gen, len(test_graphs))  # At least as many as test set
+    # Generate and evaluate: exactly one generated graph per reference graph.
+    # The MMD estimator is biased (its self-similarity terms shrink as 1/n),
+    # so the sample count is fixed here and never taken from sample().
+    n_gen = len(test_graphs)
     print(f"Generating {n_gen} graphs for evaluation...", flush=True)
 
     gen_adjs, gen_counts = model.sample(n_gen, device)
+    if len(gen_adjs) < n_gen or len(gen_counts) < n_gen:
+        raise RuntimeError(
+            f"sample({n_gen}) returned {len(gen_adjs)} adjacency matrices and "
+            f"{len(gen_counts)} node counts; expected {n_gen}")
+    gen_adjs, gen_counts = gen_adjs[:n_gen], gen_counts[:n_gen]
+    # The budget covers every parameter the model ends up with, including any
+    # created lazily in train_step() or sample() (budget_check.py counts them
+    # only at construction).
+    n_params_final = sum(p.numel() for p in model.parameters())
+    if n_params_final > _param_budget:
+        raise RuntimeError(
+            f"Parameter budget exceeded after training: {n_params_final:,} > "
+            f"{_param_budget:,} parameters (1.05x largest baseline)")
     gen_graphs = adj_to_graphs(gen_adjs, gen_counts)
 
+    # Memorisation check against the whole dataset (training AND held-out
+    # graphs): a generated graph isomorphic to a dataset graph is a copy of
+    # it. Held-out graphs themselves coincide with some other dataset graph
+    # (copy_frac_ref), so the generated set may reproduce as many distinct
+    # dataset graphs as the held-out split does (its most frequent ones are
+    # kept). Copies of any further dataset graph are excess copies: they are
+    # dropped before the MMD is computed, so replayed graphs beyond that
+    # allowance never enter it, and their fraction is reported as copy_excess.
+    dataset_graphs = train_graphs + test_graphs
+    gen_copies = {idx: min(m) for idx, m in enumerate(dataset_matches(gen_graphs, dataset_graphs)) if m}
+    ref_copies = [min(m) for j, m in enumerate(dataset_matches(test_graphs, dataset_graphs))
+                  if m != [n_train + j]]
+    counts = defaultdict(int)  # dataset graph -> generated copies, in sample order
+    for c in gen_copies.values():
+        counts[c] += 1
+    allowed = set(sorted(counts, key=lambda c: -counts[c])[:len(set(ref_copies))])
+    excess = {idx for idx, c in gen_copies.items() if c not in allowed}
+    if excess:
+        print(f"Dropping {len(excess)} of {n_gen} generated graphs as excess dataset copies", flush=True)
+
     # Compute metrics
-    metrics = evaluate_graphs(gen_graphs, test_graphs)
+    metrics = evaluate_graphs([G for idx, G in enumerate(gen_graphs) if idx not in excess], test_graphs)
 
     # Print final metrics
     mmd_avg = np.mean([metrics["mmd_degree"], metrics["mmd_clustering"], metrics["mmd_orbit"]])
     metrics["mmd_avg"] = float(mmd_avg)
+    metrics["copy_frac"] = float(len(gen_copies) / n_gen)
+    metrics["copy_frac_ref"] = float(len(ref_copies) / len(test_graphs))
+    metrics["copy_excess"] = float(len(excess) / n_gen)
 
     metrics_str = " ".join(f"{k}={v:.6f}" for k, v in metrics.items())
     print(f"TEST_METRICS {metrics_str}", flush=True)

@@ -43,7 +43,7 @@ class DPMechanism:
         self.clip_min = 0.01  # Minimum clipping threshold
         self.clip_max = 100.0  # Maximum clipping threshold
 
-    def clip_and_noise(self, per_sample_grads, step, epoch):
+    def clip(self, per_sample_grads, step, epoch):
         batch_size = per_sample_grads[0].shape[0]
 
         # Compute per-sample gradient norms
@@ -63,23 +63,10 @@ class DPMechanism:
         # Clip per-sample gradients using adaptive threshold
         clip_factor = (self.clip_norm / norms.clamp(min=1e-8)).clamp(max=1.0)
 
-        noised_grads = []
-        for g in per_sample_grads:
-            shape = [batch_size] + [1] * (g.dim() - 1)
-            clipped = g * clip_factor.reshape(shape)
+        # The harness adds noise calibrated to the current clip norm
+        return clip_factor, self.clip_norm
 
-            # Average over batch
-            avg = clipped.mean(dim=0)
-
-            # Add noise calibrated to current clip norm
-            noise = torch.randn_like(avg) * (
-                self.noise_multiplier * self.clip_norm / batch_size
-            )
-            noised_grads.append(avg + noise)
-
-        return noised_grads
-
-    def get_effective_sigma(self, step, epoch):
+    def get_noise_multiplier(self, step, epoch):
         return self.noise_multiplier
 """
 

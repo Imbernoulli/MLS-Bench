@@ -5,8 +5,12 @@ Pipeline:
   2. Split into retain set (all classes except forget_class) and forget set
   3. Pretrain model on FULL training set for --pretrain-epochs (SGD + CosineAnnealing)
   4. Run unlearning: agent method processes retain/forget batches for --unlearn-epochs
-  5. Evaluate: retain_acc, forget_acc, forget_mia_auc
-  6. Compute unlearn_score = (retain_acc + (1-forget_acc) + (1-forget_mia_auc)) / 3
+  5. Evaluate: retain_acc, forget_acc, forget_mia_auc (members = forget-class
+     train images, non-members = forget-class test images, both scored with
+     the un-augmented test transform)
+  6. Compute unlearn_score = (retain_acc + (1-forget_acc) + (1-2*|forget_mia_auc-0.5|)) / 3
+     (a model retrained without the forget class has MIA AUC ~0.5; an AUC
+     below 0.5 separates members from non-members just as well as one above)
 """
 
 import argparse
@@ -291,8 +295,12 @@ def get_datasets(dataset, data_root):
 
     train_set = Dataset(root=data_root, train=True, download=False, transform=train_transform)
     test_set = Dataset(root=data_root, train=False, download=False, transform=test_transform)
+    # The training images under the test transform: the membership probe must
+    # score members and non-members identically, or augmentation alone moves
+    # the AUC away from 0.5.
+    train_eval_set = Dataset(root=data_root, train=True, download=False, transform=test_transform)
 
-    return train_set, test_set, num_classes
+    return train_set, test_set, train_eval_set, num_classes
 
 
 # ============================================================================
@@ -377,12 +385,15 @@ def evaluate_accuracy(model, loader, device):
 
 
 def auc_from_scores(member_scores, nonmember_scores):
-    """Compute AUC via Mann-Whitney U statistic (no scipy needed)."""
-    scores = np.concatenate([member_scores, nonmember_scores])
+    """Compute AUC via Mann-Whitney U statistic (no scipy needed).
+
+    Tied scores get their average rank, so a model whose confidences tie
+    (e.g. a constant predictor) scores AUC 0.5 instead of an order-dependent value.
+    """
+    scores = np.concatenate([member_scores, nonmember_scores]).astype(np.float64)
     labels = np.concatenate([np.ones(len(member_scores)), np.zeros(len(nonmember_scores))])
-    order = np.argsort(scores)
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.arange(1, len(scores) + 1)
+    _, inverse, counts = np.unique(scores, return_inverse=True, return_counts=True)
+    ranks = (np.cumsum(counts) - (counts - 1) / 2.0)[inverse]
     pos_ranks = ranks[labels == 1].sum()
     n_pos = len(member_scores)
     n_neg = len(nonmember_scores)
@@ -417,7 +428,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # ---- Data ----
-    train_set, test_set, num_classes = get_datasets(args.dataset, args.data_root)
+    train_set, test_set, train_eval_set, num_classes = get_datasets(args.dataset, args.data_root)
 
     # Full training loader (pretrain on ALL classes)
     full_loader = DataLoader(
@@ -428,6 +439,7 @@ def main():
     # Split train and test by forget class
     retain_train, forget_train = split_by_class(train_set, args.forget_class)
     retain_test, forget_test = split_by_class(test_set, args.forget_class)
+    _, forget_train_eval = split_by_class(train_eval_set, args.forget_class)
 
     retain_loader = DataLoader(
         retain_train, batch_size=args.batch_size, shuffle=True,
@@ -481,12 +493,14 @@ def main():
         model, DataLoader(forget_test, batch_size=args.batch_size, num_workers=4), device,
     )
     _, forget_train_scores = evaluate_accuracy(
-        model, DataLoader(forget_train, batch_size=args.batch_size, num_workers=4), device,
+        model, DataLoader(forget_train_eval, batch_size=args.batch_size, num_workers=4), device,
     )
 
     # MIA: members = forget train (seen during original training), non-members = forget test
     forget_mia_auc = auc_from_scores(forget_train_scores, forget_test_scores)
-    unlearn_score = (retain_acc + (1.0 - forget_acc) + (1.0 - forget_mia_auc)) / 3.0
+    unlearn_score = (
+        retain_acc + (1.0 - forget_acc) + (1.0 - 2.0 * abs(forget_mia_auc - 0.5))
+    ) / 3.0
 
     print(
         f"TEST_METRICS retain_acc={retain_acc:.4f} forget_acc={forget_acc:.4f} "

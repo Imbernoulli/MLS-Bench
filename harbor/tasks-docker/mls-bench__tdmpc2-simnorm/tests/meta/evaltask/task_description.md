@@ -20,8 +20,8 @@ The `CustomSimNorm` class in `custom_simnorm.py`:
 
 ## Evaluation
 - **Metric**: episode reward (higher is better)
-- **Environments**: DMControl walker-walk and cheetah-run
-- **Model**: TD-MPC2 with 1M parameters, 200K training steps
+- **Environments**: DMControl walker-walk, cheetah-run, and cartpole-swingup
+- **Model**: TD-MPC2 with 1M parameters, 250K training steps
 
 ## Architecture Context
 The normalization is used in:

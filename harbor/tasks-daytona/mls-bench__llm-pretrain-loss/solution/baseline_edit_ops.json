@@ -4,6 +4,6 @@
     "file": "nanoGPT/custom_pretrain.py",
     "start_line": 188,
     "end_line": 191,
-    "content": "def compute_loss(logits, targets):\n    \"\"\"Cross-entropy with logit softcapping via sigmoid.\"\"\"\n    # Softcap: maps logits through A * sigmoid((logits + B) / C)\n    # Prevents extreme logit magnitudes while preserving ranking\n    # Constants from modded-nanogpt PR #199\n    A, B, C = 23.0, 5.0, 7.5\n    capped_logits = A * torch.sigmoid((logits.float() + B) / C)\n    return F.cross_entropy(\n        capped_logits.view(-1, capped_logits.size(-1)), targets.view(-1),\n        ignore_index=-1\n    )\n"
+    "content": "def compute_loss(logits, targets):\n    \"\"\"Cross-entropy with z-loss regularization.\"\"\"\n    flat_logits = logits.view(-1, logits.size(-1))\n    flat_targets = targets.view(-1)\n    ce_loss = F.cross_entropy(flat_logits, flat_targets, ignore_index=-1)\n    # Z-loss: penalize large log-partition values\n    log_z = torch.logsumexp(flat_logits, dim=-1)\n    # Only compute z-loss for non-ignored positions\n    mask = flat_targets != -1\n    z_loss = (log_z[mask] ** 2).mean()\n    return ce_loss + 1e-4 * z_loss\n"
   }
 ]

@@ -55,14 +55,14 @@ you may only edit the `# EDITABLE REGION START / END` block. It contains:
   the original weight.
 - `fake_quantize_activation(x, num_bits)`: optional (default identity for
   weight-only QAT).
-- `quantize_dequantize_weight(weight, num_bits, group_size)`: REAL
-  (no-grad) per-group symmetric QDQ used after training to materialize the
-  integer model for evaluation.
 - `class QATWrapper(nn.Module)`: wraps an `nn.Linear`; applies fake quant
   in `forward`; may hold extra learnable parameters (per-group scales for
   LSQ, EMA buffers for StableQAT, etc.). May expose an
   `aux_loss(step, total_steps)` method that the training loop adds to the
-  cross-entropy loss.
+  cross-entropy loss. May expose `quant_scale()` returning its learned
+  per-group quantization steps (one finite, nonzero step per row and
+  group of `group_size` columns) for the final quantizer; returning
+  `None` (the default) selects the max-abs RTN step.
 - `prepare_qat_model(model, num_bits, group_size)`: replace every
   `nn.Linear` (and HF GPT-2 `Conv1D`) in the model with `QATWrapper`,
   initializing any extra learnable parameters. The function must restore
@@ -105,7 +105,6 @@ CONFIG_OVERRIDES = {
 
 def fake_quantize_weight(weight, num_bits, group_size): ...   # differentiable
 def fake_quantize_activation(x, num_bits): ...                # optional, default id
-def quantize_dequantize_weight(weight, num_bits, group_size): # no-grad QDQ
 
 class QATWrapper(nn.Module):
     def __init__(self, linear, num_bits, group_size): ...
@@ -114,6 +113,7 @@ class QATWrapper(nn.Module):
     @property
     def bias(self): ...
     def forward(self, x): ...
+    def quant_scale(self): ...   # optional learned per-group steps, or None
 
 def prepare_qat_model(model, num_bits, group_size): ...
 ```
@@ -123,10 +123,23 @@ Constraints:
 - The forward path of every wrapped `nn.Linear` must use
   `fake_quantize_weight` (or an equivalent inside `QATWrapper.forward`)
   so the QAT signal actually trains the integer grid.
-- After training, `quantize_dequantize_weight` is applied to every
-  `linear.weight` of every `QATWrapper`, then perplexity is measured.
-  Your method must produce weights that, after this real QDQ roundtrip,
-  still give a low perplexity.
+- After training, fixed (non-editable) code applies the real
+  quantize-dequantize to every `linear.weight` of every `QATWrapper`:
+  symmetric signed `num_bits` codes `clamp(round(w / s), qmin, qmax)`
+  per row and group of `group_size` columns, with `s` taken from
+  `QATWrapper.quant_scale()` or the max-abs RTN step. Each wrapper is then
+  replaced by a plain `nn.Linear` holding the quantized weight (bias in
+  full precision) and perplexity is measured, so `QATWrapper.forward` and
+  the fake-quant functions only affect training. Your method must produce
+  weights that, after this real QDQ roundtrip, still give a low
+  perplexity. The run fails if any transformer-block `nn.Linear` was not
+  wrapped, or if, apart from parameter values, the evaluation model
+  differs from the pretrained one: every module must keep its name, stock
+  class and instance attributes (no per-instance method, callable or
+  config-object overrides), parameters their names and shapes, buffers
+  their values, and no forward hooks may remain. `quant_scale()` is
+  called for every wrapper before the first layer is swapped, and the
+  swapped-in weights must still hold the fixed QDQ output at evaluation.
 - Keep the LM head at full precision (the template already excludes
   `embed_out` / `lm_head`).
 - Available imports in the editable region: `torch`, `torch.nn` (as

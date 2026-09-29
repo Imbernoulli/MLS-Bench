@@ -8,7 +8,8 @@ Reference:
   https://arxiv.org/abs/1607.00133
 
 This matches the default template implementation — standard flat clipping
-to max_grad_norm, noise calibrated as sigma * max_grad_norm / batch_size.
+to max_grad_norm with the calibrated constant noise multiplier; the fixed
+harness adds noise of std sigma * max_grad_norm / batch_size.
 """
 
 _FILE = "opacus/custom_dpsgd.py"
@@ -31,33 +32,20 @@ class DPMechanism:
         self.target_epsilon = target_epsilon
         self.target_delta = target_delta
 
-    def clip_and_noise(self, per_sample_grads, step, epoch):
+    def clip(self, per_sample_grads, step, epoch):
         batch_size = per_sample_grads[0].shape[0]
 
         # Compute per-sample gradient norms (flat norm across all parameters)
         flat = torch.cat([g.reshape(batch_size, -1) for g in per_sample_grads], dim=1)
         norms = flat.norm(2, dim=1)  # [B]
 
-        # Clip per-sample gradients
+        # Clip per-sample gradients to the fixed threshold C
         clip_factor = (self.max_grad_norm / norms.clamp(min=1e-8)).clamp(max=1.0)  # [B]
 
-        noised_grads = []
-        for g in per_sample_grads:
-            shape = [batch_size] + [1] * (g.dim() - 1)
-            clipped = g * clip_factor.reshape(shape)
+        # The harness adds noise of std sigma * C / B
+        return clip_factor, self.max_grad_norm
 
-            # Average over batch
-            avg = clipped.mean(dim=0)
-
-            # Add calibrated Gaussian noise
-            noise = torch.randn_like(avg) * (
-                self.noise_multiplier * self.max_grad_norm / batch_size
-            )
-            noised_grads.append(avg + noise)
-
-        return noised_grads
-
-    def get_effective_sigma(self, step, epoch):
+    def get_noise_multiplier(self, step, epoch):
         return self.noise_multiplier
 """
 

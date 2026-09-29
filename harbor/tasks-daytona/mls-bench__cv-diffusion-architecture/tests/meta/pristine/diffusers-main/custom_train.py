@@ -59,6 +59,96 @@ def build_model(device):
 
 
 # ============================================================================
+# Fixed: per-tier parameter budget
+# ============================================================================
+
+# Each evaluation tier fixes the channel widths (BLOCK_OUT_CHANNELS) and with
+# them the model size. The cap is the parameter count of the largest baseline
+# (full-attn: self-attention at every resolution) at the tier's widths, plus
+# 5%. It is counted on the returned model (parameters + buffers), on the
+# parameters the fixed optimizer trains, and on the model FID is computed
+# from; a model above it is rejected.
+_PARAM_CAP_TOLERANCE = 1.05
+
+
+def _launch_env(name, default=""):
+    """An environment variable as the launch script set it.
+
+    Read from the process's initial environment, which later writes to
+    os.environ do not change.
+    """
+    try:
+        with open("/proc/self/environ", "rb") as f:
+            entries = f.read().split(b"\0")
+    except OSError:
+        return os.environ.get(name, default)
+    prefix = name.encode() + b"="
+    for entry in entries:
+        if entry.startswith(prefix):
+            return entry[len(prefix):].decode()
+    return default
+
+
+def _tier_param_cap():
+    """(cap, widths) for the tier this run was launched with."""
+    widths = _launch_env("BLOCK_OUT_CHANNELS").replace(" ", "")
+    if not widths:
+        return None, widths
+    channels = tuple(int(c) for c in widths.split(","))
+    layers = int(_launch_env("LAYERS_PER_BLOCK", "2"))
+    from diffusers.models.unets.unet_2d import UNet2DModel as _RefUNet
+    with torch.random.fork_rng(devices=[]), torch.device("meta"):
+        ref = _RefUNet(
+            sample_size=32, in_channels=3, out_channels=3,
+            block_out_channels=channels,
+            down_block_types=("AttnDownBlock2D",) * len(channels),
+            up_block_types=("AttnUpBlock2D",) * len(channels),
+            layers_per_block=layers, norm_num_groups=32, norm_eps=1e-6,
+            act_fn="silu", time_embedding_type="positional",
+            flip_sin_to_cos=False, freq_shift=1, downsample_padding=0,
+        )
+    return int(_model_size(ref) * _PARAM_CAP_TOLERANCE), widths
+
+
+def _model_size(model):
+    """Parameters + buffers of a module (shared tensors counted once)."""
+    n = 0
+    for p in model.parameters():
+        n += p.numel()
+    for b in model.buffers():
+        n += b.numel()
+    return n
+
+
+def _check_param_budget(what, n_params, cap, widths):
+    if cap is not None and n_params > cap:
+        raise RuntimeError(
+            f"PARAM_BUDGET_EXCEEDED: {what} has {n_params:,} parameters, above "
+            f"the {cap:,} cap for BLOCK_OUT_CHANNELS={widths} (full-attn UNet "
+            f"at these widths + 5%). The model must follow the given widths."
+        )
+
+
+def _untrained_grad_leaves(output, trained_ids):
+    """Numel of grad-requiring leaves feeding `output` that the fixed
+    optimizer does not train (weights hidden outside the registered module)."""
+    hidden = 0
+    seen = set()
+    stack = [output.grad_fn]
+    while stack:
+        fn = stack.pop()
+        if fn is None or fn in seen:
+            continue
+        seen.add(fn)
+        var = getattr(fn, "variable", None)
+        if var is not None and id(var) not in trained_ids:
+            hidden += var.numel()
+        for nxt, _ in fn.next_functions:
+            stack.append(nxt)
+    return hidden
+
+
+# ============================================================================
 # Fixed: epsilon prediction
 # ============================================================================
 
@@ -317,6 +407,31 @@ if __name__ == '__main__':
     if is_main:
         print(f"Model parameters: {num_params/1e6:.1f}M | GPUs: {world_size}", flush=True)
 
+    # ── Parameter budget (fixed) ────────────────────────────────────────────
+    if not isinstance(net_raw, nn.Module):
+        raise TypeError("build_model must return an nn.Module")
+    param_cap, budget_tier = _tier_param_cap()
+    trained_params = {}
+    for group in optimizer.param_groups:
+        for p in group["params"]:
+            trained_params[id(p)] = p
+    trained_ids = set(trained_params)
+    model_size = _model_size(net_raw)
+    _check_param_budget("the model returned by build_model", model_size,
+                        param_cap, budget_tier)
+    _check_param_budget("the trained parameter set",
+                        sum(p.numel() for p in trained_params.values()),
+                        param_cap, budget_tier)
+    _check_param_budget("the EMA model", _model_size(ema_net), param_cap,
+                        budget_tier)
+    if is_main:
+        if param_cap is None:
+            print(f"Parameter budget: {model_size:,} (no cap: "
+                  f"BLOCK_OUT_CHANNELS is not set)", flush=True)
+        else:
+            print(f"Parameter budget: {model_size:,} / {param_cap:,} "
+                  f"(BLOCK_OUT_CHANNELS={budget_tier})", flush=True)
+
     # ── Training loop ────────────────────────────────────────────────────────
     best_fid = float('inf')
     t0 = time.time()
@@ -345,6 +460,16 @@ if __name__ == '__main__':
             pred = net(x_t, t).sample
             loss = F.mse_loss(pred, target)
 
+        # The prediction must come from the registered, optimizer-trained
+        # weights only: checked on step 1 and on ~5% of steps at random.
+        if step == 1 or os.urandom(1)[0] < 13:
+            hidden = _untrained_grad_leaves(pred, trained_ids)
+            if hidden:
+                raise RuntimeError(
+                    f"PARAM_BUDGET_EXCEEDED: the prediction depends on {hidden:,} "
+                    f"trainable weights that are not registered parameters of "
+                    f"the model returned by build_model")
+
         optimizer.zero_grad()
         scaler.scale(loss).backward()
         scaler.unscale_(optimizer)
@@ -372,6 +497,8 @@ if __name__ == '__main__':
                                    num_steps=diffusion_steps, sample_steps=sample_steps,
                                    tag="ema")
             eval_model = ema_net if step >= 20000 else net_raw
+            _check_param_budget("the evaluated model", _model_size(eval_model),
+                                param_cap, budget_tier)
             fid = compute_fid(eval_model, schedule, device,
                               num_samples=num_fid_samples,
                               num_steps=diffusion_steps,
@@ -402,6 +529,8 @@ if __name__ == '__main__':
                            tag="ema_final")
 
     eval_model = ema_net if max_steps >= 20000 else net_raw
+    _check_param_budget("the evaluated model", _model_size(eval_model),
+                        param_cap, budget_tier)
     fid = compute_fid(eval_model, schedule, device,
                       num_samples=num_fid_samples,
                       num_steps=diffusion_steps,

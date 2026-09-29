@@ -380,140 +380,169 @@ stay unchanged.
    296:     return probs.argmax(axis=1)
    297: 
    298: 
-   299: def _selective_metrics(
-   300:     y_true: np.ndarray,
-   301:     y_pred: np.ndarray,
-   302:     accept: np.ndarray,
-   303:     scores: np.ndarray,
-   304:     groups: np.ndarray,
-   305: ) -> dict[str, float]:
-   306:     accept = accept.astype(bool)
-   307:     coverage = float(accept.mean())
-   308:     if accept.any():
-   309:         selective_risk = float(np.mean(y_pred[accept] != y_true[accept]))
-   310:     else:
-   311:         selective_risk = 1.0
-   312: 
-   313:     group_risks = []
-   314:     group_deferrals = []
-   315:     for group_id in np.unique(groups):
-   316:         group_mask = groups == group_id
-   317:         group_accept = accept[group_mask]
-   318:         group_y = y_true[group_mask]
-   319:         group_pred = y_pred[group_mask]
-   320:         if group_mask.sum() == 0:
-   321:             continue
-   322:         if group_accept.any():
-   323:             group_risk = float(np.mean(group_pred[group_accept] != group_y[group_accept]))
-   324:         else:
-   325:             group_risk = 1.0
-   326:         group_risks.append(group_risk)
-   327:         group_deferrals.append(float(1.0 - group_accept.mean()))
-   328: 
-   329:     worst_group_risk = float(max(group_risks)) if group_risks else selective_risk
-   330:     deferral_gap = float(max(group_deferrals) - min(group_deferrals)) if group_deferrals else 0.0
-   331:     correctness = (y_pred == y_true).astype(int)
-   332:     auroc = _safe_roc_auc(correctness, scores)
-   333:     return {
-   334:         "selective_risk_at80": selective_risk,
-   335:         "coverage_at80": coverage,
-   336:         "worst_group_selective_risk": worst_group_risk,
-   337:         "deferral_rate_gap": deferral_gap,
-   338:         "auroc": auroc,
-   339:     }
-   340: 
-   341: 
-   342: def _print_metrics(prefix: str, metrics: dict[str, float]) -> None:
-   343:     parts = [f"{key}={value:.6f}" for key, value in metrics.items()]
-   344:     print(f"{prefix}: " + " ".join(parts), flush=True)
-   345: 
-   346: 
-   347: def run_benchmark(dataset: str, seed: int, target_coverage: float, output_dir: str | None = None) -> dict[str, float]:
-   348:     if dataset not in BENCHMARKS:
-   349:         raise ValueError(f"Unknown dataset '{dataset}'. Expected one of: {sorted(BENCHMARKS)}")
-   350: 
-   351:     spec = BENCHMARKS[dataset]
-   352:     X, raw_y, raw_groups, is_regression = spec.load_raw()
-   353: 
-   354:     indices = np.arange(len(X))
-   355:     if is_regression:
-   356:         stratify_for_split = _quantile_bins(raw_y, n_bins=5)
-   357:     else:
-   358:         stratify_for_split = raw_y.astype(int)
-   359: 
-   360:     train_idx, test_idx = train_test_split(
-   361:         indices,
-   362:         test_size=0.2,
-   363:         random_state=seed,
-   364:         stratify=stratify_for_split,
-   365:     )
-   366:     y, label_threshold = _make_binary_targets(raw_y, train_idx, is_regression=is_regression)
-   367:     groups = np.asarray(raw_groups, dtype=int)
-   368:     group_threshold = -1.0
+   299: def _accept_at_coverage(accept: np.ndarray, scores: np.ndarray, coverage: float) -> np.ndarray:
+   300:     """Accept exactly round(coverage * n) test examples, so every policy is
+   301:     scored at the same operating point.
+   302: 
+   303:     Examples are ranked by the policy's own decision (accepted first), then by
+   304:     its acceptance score (highest first), then by test-set order; the top
+   305:     round(coverage * n) are accepted. Accepting more or fewer than the target
+   306:     only changes which examples this ranking trims or fills.
+   307:     """
+   308:     accept = np.asarray(accept).astype(bool).reshape(-1)
+   309:     scores = np.asarray(scores, dtype=float).reshape(-1)
+   310:     if accept.shape != scores.shape or np.isnan(scores).any():
+   311:         raise ValueError("predict_accept and acceptance_score must return one value per example (no NaN scores)")
+   312:     n = len(accept)
+   313:     order = np.lexsort((np.arange(n), -scores, ~accept))
+   314:     selected = np.zeros(n, dtype=bool)
+   315:     selected[order[: int(round(float(coverage) * n))]] = True
+   316:     return selected
+   317: 
+   318: 
+   319: def _selective_metrics(
+   320:     y_true: np.ndarray,
+   321:     y_pred: np.ndarray,
+   322:     accept: np.ndarray,
+   323:     scores: np.ndarray,
+   324:     groups: np.ndarray,
+   325: ) -> dict[str, float]:
+   326:     accept = accept.astype(bool)
+   327:     coverage = float(accept.mean())
+   328:     if accept.any():
+   329:         selective_risk = float(np.mean(y_pred[accept] != y_true[accept]))
+   330:     else:
+   331:         selective_risk = 1.0
+   332: 
+   333:     group_risks = []
+   334:     group_deferrals = []
+   335:     for group_id in np.unique(groups):
+   336:         group_mask = groups == group_id
+   337:         group_accept = accept[group_mask]
+   338:         group_y = y_true[group_mask]
+   339:         group_pred = y_pred[group_mask]
+   340:         if group_mask.sum() == 0:
+   341:             continue
+   342:         if group_accept.any():
+   343:             group_risk = float(np.mean(group_pred[group_accept] != group_y[group_accept]))
+   344:         else:
+   345:             group_risk = 1.0
+   346:         group_risks.append(group_risk)
+   347:         group_deferrals.append(float(1.0 - group_accept.mean()))
+   348: 
+   349:     worst_group_risk = float(max(group_risks)) if group_risks else selective_risk
+   350:     deferral_gap = float(max(group_deferrals) - min(group_deferrals)) if group_deferrals else 0.0
+   351:     correctness = (y_pred == y_true).astype(int)
+   352:     # AUROC depends only on the ordering. Scoring the ranks keeps +-inf
+   353:     # acceptance scores (e.g. -inf for 'never accept') in order, which
+   354:     # roc_auc_score would reject; NaN was already rejected above.
+   355:     from scipy.stats import rankdata
+   356:     auroc = _safe_roc_auc(correctness, rankdata(np.asarray(scores, dtype=float).reshape(-1)))
+   357:     return {
+   358:         "selective_risk_at80": selective_risk,
+   359:         "coverage_at80": coverage,
+   360:         "worst_group_selective_risk": worst_group_risk,
+   361:         "deferral_rate_gap": deferral_gap,
+   362:         "auroc": auroc,
+   363:     }
+   364: 
+   365: 
+   366: def _print_metrics(prefix: str, metrics: dict[str, float]) -> None:
+   367:     parts = [f"{key}={value:.6f}" for key, value in metrics.items()]
+   368:     print(f"{prefix}: " + " ".join(parts), flush=True)
    369: 
-   370:     split = _split_dataset(train_idx, test_idx, y, groups, seed)
-   371:     fit_idx = split["fit_idx"]
-   372:     cal_idx = split["cal_idx"]
-   373:     test_idx = split["test_idx"]
+   370: 
+   371: def run_benchmark(dataset: str, seed: int, target_coverage: float, output_dir: str | None = None) -> dict[str, float]:
+   372:     if dataset not in BENCHMARKS:
+   373:         raise ValueError(f"Unknown dataset '{dataset}'. Expected one of: {sorted(BENCHMARKS)}")
    374: 
-   375:     model = _build_base_model(seed)
-   376:     model.fit(X[fit_idx], y[fit_idx])
+   375:     spec = BENCHMARKS[dataset]
+   376:     X, raw_y, raw_groups, is_regression = spec.load_raw()
    377: 
-   378:     cal_probs = model.predict_proba(X[cal_idx])
-   379:     test_probs = model.predict_proba(X[test_idx])
-   380:     cal_pred = _predict_labels(cal_probs)
-   381:     test_pred = _predict_labels(test_probs)
-   382: 
-   383:     policy = SelectivePolicy(target_coverage=target_coverage, random_state=seed)
-   384:     policy.fit(cal_probs, y[cal_idx], groups[cal_idx], X=X[cal_idx])
-   385:     cal_accept = policy.predict_accept(cal_probs, groups[cal_idx], X=X[cal_idx])
-   386:     test_accept = policy.predict_accept(test_probs, groups[test_idx], X=X[test_idx])
-   387:     test_scores = policy.acceptance_score(test_probs, groups[test_idx], X=X[test_idx])
-   388: 
-   389:     train_acc = float(np.mean(model.predict(X[fit_idx]) == y[fit_idx]))
-   390:     cal_acc = float(np.mean(cal_pred == y[cal_idx]))
-   391:     train_summary = {
-   392:         "train_accuracy": train_acc,
-   393:         "cal_accuracy": cal_acc,
-   394:         "cal_coverage": float(cal_accept.mean()),
-   395:         "policy_threshold": float(getattr(policy, "threshold_", 0.0)),
-   396:     }
-   397:     _print_metrics("TRAIN_METRICS", train_summary)
+   378:     indices = np.arange(len(X))
+   379:     if is_regression:
+   380:         stratify_for_split = _quantile_bins(raw_y, n_bins=5)
+   381:     else:
+   382:         stratify_for_split = raw_y.astype(int)
+   383: 
+   384:     train_idx, test_idx = train_test_split(
+   385:         indices,
+   386:         test_size=0.2,
+   387:         random_state=seed,
+   388:         stratify=stratify_for_split,
+   389:     )
+   390:     y, label_threshold = _make_binary_targets(raw_y, train_idx, is_regression=is_regression)
+   391:     groups = np.asarray(raw_groups, dtype=int)
+   392:     group_threshold = -1.0
+   393: 
+   394:     split = _split_dataset(train_idx, test_idx, y, groups, seed)
+   395:     fit_idx = split["fit_idx"]
+   396:     cal_idx = split["cal_idx"]
+   397:     test_idx = split["test_idx"]
    398: 
-   399:     test_metrics = _selective_metrics(y[test_idx], test_pred, test_accept, test_scores, groups[test_idx])
-   400:     test_metrics["target_coverage"] = float(target_coverage)
-   401:     test_metrics["actual_coverage"] = float(test_accept.mean())
-   402:     test_metrics["label_threshold"] = float(label_threshold) if np.isfinite(label_threshold) else -1.0
-   403:     test_metrics["group_threshold"] = float(group_threshold)
-   404:     _print_metrics("TEST_METRICS", test_metrics)
-   405: 
-   406:     if output_dir:
-   407:         Path(output_dir).mkdir(parents=True, exist_ok=True)
-   408:         summary_path = Path(output_dir) / f"{dataset}_summary.json"
-   409:         with summary_path.open("w", encoding="utf-8") as f:
-   410:             json.dump({"train": train_summary, "test": test_metrics}, f, indent=2, sort_keys=True)
-   411: 
-   412:     return test_metrics
-   413: 
-   414: 
-   415: def main() -> None:
-   416:     parser = argparse.ArgumentParser(description="Selective prediction / deferral benchmark.")
-   417:     parser.add_argument(
-   418:         "--dataset",
-   419:         required=True,
-   420:         choices=sorted(BENCHMARKS),
-   421:         help="Benchmark dataset name.",
-   422:     )
-   423:     parser.add_argument("--seed", type=int, default=42)
-   424:     parser.add_argument("--target-coverage", type=float, default=TARGET_COVERAGE_DEFAULT)
-   425:     parser.add_argument("--output-dir", type=str, default=None)
-   426:     args = parser.parse_args()
-   427: 
-   428:     run_benchmark(args.dataset, args.seed, args.target_coverage, args.output_dir)
-   429: 
+   399:     model = _build_base_model(seed)
+   400:     model.fit(X[fit_idx], y[fit_idx])
+   401: 
+   402:     cal_probs = model.predict_proba(X[cal_idx])
+   403:     test_probs = model.predict_proba(X[test_idx])
+   404:     cal_pred = _predict_labels(cal_probs)
+   405:     test_pred = _predict_labels(test_probs)
+   406: 
+   407:     policy = SelectivePolicy(target_coverage=target_coverage, random_state=seed)
+   408:     policy.fit(cal_probs, y[cal_idx], groups[cal_idx], X=X[cal_idx])
+   409:     cal_accept = policy.predict_accept(cal_probs, groups[cal_idx], X=X[cal_idx])
+   410:     test_accept = policy.predict_accept(test_probs, groups[test_idx], X=X[test_idx])
+   411:     test_scores = policy.acceptance_score(test_probs, groups[test_idx], X=X[test_idx])
+   412: 
+   413:     train_acc = float(np.mean(model.predict(X[fit_idx]) == y[fit_idx]))
+   414:     cal_acc = float(np.mean(cal_pred == y[cal_idx]))
+   415:     train_summary = {
+   416:         "train_accuracy": train_acc,
+   417:         "cal_accuracy": cal_acc,
+   418:         "cal_coverage": float(cal_accept.mean()),
+   419:         "policy_threshold": float(getattr(policy, "threshold_", 0.0)),
+   420:     }
+   421:     _print_metrics("TRAIN_METRICS", train_summary)
+   422: 
+   423:     test_selected = _accept_at_coverage(test_accept, test_scores, target_coverage)
+   424:     test_metrics = _selective_metrics(y[test_idx], test_pred, test_selected, test_scores, groups[test_idx])
+   425:     test_metrics["target_coverage"] = float(target_coverage)
+   426:     test_metrics["actual_coverage"] = float(test_accept.mean())
+   427:     test_metrics["label_threshold"] = float(label_threshold) if np.isfinite(label_threshold) else -1.0
+   428:     test_metrics["group_threshold"] = float(group_threshold)
+   429:     _print_metrics("TEST_METRICS", test_metrics)
    430: 
-   431: if __name__ == "__main__":
-   432:     main()
+   431:     if output_dir:
+   432:         Path(output_dir).mkdir(parents=True, exist_ok=True)
+   433:         summary_path = Path(output_dir) / f"{dataset}_summary.json"
+   434:         with summary_path.open("w", encoding="utf-8") as f:
+   435:             json.dump({"train": train_summary, "test": test_metrics}, f, indent=2, sort_keys=True)
+   436: 
+   437:     return test_metrics
+   438: 
+   439: 
+   440: def main() -> None:
+   441:     parser = argparse.ArgumentParser(description="Selective prediction / deferral benchmark.")
+   442:     parser.add_argument(
+   443:         "--dataset",
+   444:         required=True,
+   445:         choices=sorted(BENCHMARKS),
+   446:         help="Benchmark dataset name.",
+   447:     )
+   448:     parser.add_argument("--seed", type=int, default=42)
+   449:     parser.add_argument("--target-coverage", type=float, default=TARGET_COVERAGE_DEFAULT)
+   450:     parser.add_argument("--output-dir", type=str, default=None)
+   451:     args = parser.parse_args()
+   452: 
+   453:     run_benchmark(args.dataset, args.seed, args.target_coverage, args.output_dir)
+   454: 
+   455: 
+   456: def _main():
+   457:     main()
+   458: 
+   459: 
+   460: if __name__ == "__main__":
+   461:     _main()
 ```
 
 ## Reference Baselines

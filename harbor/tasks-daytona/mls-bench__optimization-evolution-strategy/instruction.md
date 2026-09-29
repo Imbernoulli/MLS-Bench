@@ -28,6 +28,9 @@ The DEAP library (`deap.base`, `deap.creator`, `deap.tools`) is available. You m
 - **`run_evolution`** must return `(best_individual, fitness_history)` where `fitness_history` is a list of best fitness per generation.
 - **TRAIN_METRICS**: print `TRAIN_METRICS gen=G best_fitness=F avg_fitness=A` periodically (every 50 generations).
 - Respect the function signature and return types — the evaluation harness below the editable section is fixed.
+- The harness scores `best_individual` by re-evaluating it with the true objective; its `.fitness` attribute is not trusted. A returned individual with the wrong dimension, or with any coordinate that is non-finite or outside the domain, is rejected and the run gets no score.
+- Each run shifts the objective so that its optimum lies at a fresh random location (uniform in the central 80% of the domain in every coordinate; the optimum value stays 0); `evaluate_func` and the final re-evaluation use the same shifted objective.
+- Evaluation budget: `evaluate_func` may be called at most `pop_size * (n_generations + 1)` times per run (the initial population plus one full population per generation); a further call raises `RuntimeError` and evaluates nothing.
 
 ## Baselines (paper-cited reference implementations)
 - **ga_sbx** — Genetic Algorithm with Simulated Binary Crossover and Polynomial Mutation (Deb and Agrawal, 1995); paper-default `eta_c = eta_m = 20`, mutation probability `1/n`.
@@ -87,7 +90,7 @@ stay unchanged.
     23: # FIXED — Benchmark functions and infrastructure (do not modify)
     24: # ================================================================
     25: 
-    26: # --- Benchmark function definitions ---
+    26: # --- Benchmark functions, unshifted (main() optimizes a randomly shifted copy) ---
     27: 
     28: def rastrigin(individual: List[float]) -> Tuple[float]:
     29:     """Rastrigin function. Global minimum: f(0,...,0) = 0. Domain: [-5.12, 5.12]."""
@@ -293,78 +296,217 @@ stay unchanged.
    229: # ================================================================
    230: 
    231: 
-   232: def compute_convergence_gen(fitness_history: list, threshold_ratio: float = 0.01) -> int:
-   233:     """Compute the generation at which fitness first reaches within threshold of final best.
-   234: 
-   235:     Returns the 1-indexed generation number, or len(fitness_history) if never converged.
-   236:     """
-   237:     if not fitness_history:
-   238:         return 0
-   239:     final_best = fitness_history[-1]
-   240:     # threshold: within 1% of final best, or absolute 1e-6 for near-zero
-   241:     threshold = max(abs(final_best) * threshold_ratio, 1e-6)
-   242:     for i, f in enumerate(fitness_history):
-   243:         if abs(f - final_best) <= threshold:
-   244:             return i + 1
-   245:     return len(fitness_history)
-   246: 
-   247: 
-   248: def main():
-   249:     parser = argparse.ArgumentParser(description="Evolutionary Optimization Benchmark")
-   250:     parser.add_argument("--function", type=str, required=True,
-   251:                         choices=list(BENCHMARKS.keys()),
-   252:                         help="Benchmark function to optimize")
-   253:     parser.add_argument("--dim", type=int, default=30,
-   254:                         help="Dimensionality of the search space (default: 30)")
-   255:     parser.add_argument("--pop-size", type=int, default=200,
-   256:                         help="Population size (default: 200)")
-   257:     parser.add_argument("--n-generations", type=int, default=500,
-   258:                         help="Number of generations (default: 500)")
-   259:     parser.add_argument("--cx-prob", type=float, default=0.9,
-   260:                         help="Crossover probability (default: 0.9)")
-   261:     parser.add_argument("--mut-prob", type=float, default=0.2,
-   262:                         help="Mutation probability (default: 0.2)")
-   263:     parser.add_argument("--seed", type=int, default=42,
-   264:                         help="Random seed")
-   265:     args = parser.parse_args()
+   232: def _fresh_math():
+   233:     """A private instance of the math module, immune to monkeypatching of `math`."""
+   234:     import importlib.util
+   235:     spec = importlib.util.find_spec("math")
+   236:     mod = importlib.util.module_from_spec(spec)
+   237:     spec.loader.exec_module(mod)
+   238:     return mod
+   239: 
+   240: 
+   241: _M = _fresh_math()
+   242: 
+   243: 
+   244: # Reference objectives for scoring: the same formulas as the benchmark
+   245: # functions at the top of this file, bound here (after the editable section)
+   246: # so that nothing the editable code does to `rastrigin`, `BENCHMARKS`,
+   247: # `math`, or the returned individual's `.fitness` can change the score.
+   248: def _ref_rastrigin(x):
+   249:     A = 10.0
+   250:     n = len(x)
+   251:     return A * n + sum(v**2 - A * _M.cos(2 * _M.pi * v) for v in x)
+   252: 
+   253: 
+   254: def _ref_rosenbrock(x):
+   255:     return sum(
+   256:         100.0 * (x[i + 1] - x[i]**2)**2 + (1 - x[i])**2
+   257:         for i in range(len(x) - 1)
+   258:     )
+   259: 
+   260: 
+   261: def _ref_ackley(x):
+   262:     n = len(x)
+   263:     sum_sq = sum(v**2 for v in x) / n
+   264:     sum_cos = sum(_M.cos(2 * _M.pi * v) for v in x) / n
+   265:     return -20.0 * _M.exp(-0.2 * _M.sqrt(sum_sq)) - _M.exp(sum_cos) + 20.0 + _M.e
    266: 
-   267:     bench = BENCHMARKS[args.function]
-   268:     evaluate_func = bench["func"]
-   269:     lo, hi = bench["bounds"]
-   270: 
-   271:     print(f"=== {args.function.upper()} (dim={args.dim}) ===", flush=True)
-   272:     print(f"Bounds: [{lo}, {hi}], Pop: {args.pop_size}, Gens: {args.n_generations}", flush=True)
-   273: 
-   274:     t0 = time.time()
-   275:     best_ind, fitness_history = run_evolution(
-   276:         evaluate_func=evaluate_func,
-   277:         dim=args.dim,
-   278:         lo=lo,
-   279:         hi=hi,
-   280:         pop_size=args.pop_size,
-   281:         n_generations=args.n_generations,
-   282:         cx_prob=args.cx_prob,
-   283:         mut_prob=args.mut_prob,
-   284:         seed=args.seed,
-   285:     )
-   286:     elapsed = time.time() - t0
-   287: 
-   288:     best_fitness = best_ind.fitness.values[0]
-   289:     convergence_gen = compute_convergence_gen(fitness_history)
-   290: 
-   291:     print(f"\n=== Results ===", flush=True)
-   292:     print(f"Best fitness: {best_fitness:.6e}", flush=True)
-   293:     print(f"Convergence generation: {convergence_gen}/{args.n_generations}", flush=True)
-   294:     print(f"Wall time: {elapsed:.1f}s", flush=True)
-   295:     print(
-   296:         f"TEST_METRICS best_fitness={best_fitness:.6e} "
-   297:         f"convergence_gen={convergence_gen}",
-   298:         flush=True,
-   299:     )
+   267: 
+   268: # name -> (reference objective, domain, location of its unshifted minimum)
+   269: _REFERENCE = {
+   270:     "rastrigin": (_ref_rastrigin, (-5.12, 5.12), 0.0),
+   271:     "rosenbrock": (_ref_rosenbrock, (-5.0, 10.0), 1.0),
+   272:     "ackley": (_ref_ackley, (-32.768, 32.768), 0.0),
+   273: }
+   274: 
+   275: 
+   276: def _draw_optimum(lo: float, hi: float, dim: int) -> tuple:
+   277:     """This run's optimum location, drawn fresh from OS entropy.
+   278: 
+   279:     Every coordinate is uniform on the central 80% of [lo, hi] (as in BBOB and
+   280:     the CEC suites), so the optimum always lies inside the domain. It comes
+   281:     from os.urandom, not from `random`/`numpy.random`, which the editable code
+   282:     seeds and may replace.
+   283:     """
+   284:     import os
+   285:     import sys
+   286:     urandom = os.urandom
+   287:     if not (type(urandom) is type(len)
+   288:             and getattr(urandom, "__self__", None) is sys.modules.get("posix")):
+   289:         raise SystemExit("ERROR: os.urandom has been replaced; refusing to run")
+   290:     raw = urandom(8 * dim)
+   291:     center, half = (lo + hi) / 2.0, 0.4 * (hi - lo)
+   292:     return tuple(
+   293:         center + half * (2.0 * int.from_bytes(raw[8 * i:8 * i + 8], "little") / 2.0**64 - 1.0)
+   294:         for i in range(dim)
+   295:     )
+   296: 
+   297: 
+   298: def _shifted(func, x_opt, base_opt: float):
+   299:     """`func` moved so that its minimum (value 0) lies at `x_opt`: g(x) = func(x - x_opt + base_opt).
    300: 
-   301: 
-   302: if __name__ == "__main__":
-   303:     main()
+   301:     The input is first copied into plain Python floats, so no object supplied
+   302:     by the caller (e.g. a float subclass with its own __add__) ever takes part
+   303:     in arithmetic with the shift.
+   304:     """
+   305:     delta = tuple(base_opt - o for o in x_opt)
+   306: 
+   307:     def objective(x):
+   308:         xs = [float(v) for v in (list.__iter__(x) if isinstance(x, list) else x)]
+   309:         if len(xs) != len(delta):
+   310:             raise ValueError(f"expected {len(delta)} genes, got {len(xs)}")
+   311:         if not all(type(v) is float for v in xs):
+   312:             raise TypeError("genes must convert to plain floats")
+   313:         return func([v + d for v, d in zip(xs, delta)])
+   314: 
+   315:     return objective
+   316: 
+   317: 
+   318: def _score_returned(best_ind, objective, lo: float, hi: float, dim: int) -> float:
+   319:     """Re-evaluate the returned individual with this run's objective.
+   320: 
+   321:     The reported best_fitness is the true (shifted) objective value at the
+   322:     returned point, never the individual's self-reported `.fitness`. A point
+   323:     with the wrong dimension, a non-finite coordinate, or a coordinate outside
+   324:     the domain is rejected (no TEST_METRICS line is printed).
+   325:     """
+   326:     try:
+   327:         x = [float(v) for v in (list.__iter__(best_ind) if isinstance(best_ind, list) else best_ind)]
+   328:     except Exception as exc:  # noqa: BLE001
+   329:         raise SystemExit(f"ERROR: returned best_individual is not a vector of floats: {exc}")
+   330:     if len(x) != dim:
+   331:         raise SystemExit(f"ERROR: returned best_individual has {len(x)} genes, expected {dim}")
+   332:     bad = [i for i, v in enumerate(x) if not (_M.isfinite(v) and lo <= v <= hi)]
+   333:     if bad:
+   334:         raise SystemExit(
+   335:             f"ERROR: returned best_individual violates the domain [{lo}, {hi}] "
+   336:             f"at {len(bad)} coordinate(s), e.g. index {bad[0]} = {x[bad[0]]!r}"
+   337:         )
+   338:     val = float(objective(x))
+   339:     if not _M.isfinite(val):
+   340:         raise SystemExit(f"ERROR: objective at returned best_individual is not finite: {val!r}")
+   341:     return val
+   342: 
+   343: 
+   344: def compute_convergence_gen(fitness_history: list, threshold_ratio: float = 0.01) -> int:
+   345:     """Compute the generation at which fitness first reaches within threshold of final best.
+   346: 
+   347:     Returns the 1-indexed generation number, or len(fitness_history) if never converged.
+   348:     """
+   349:     if not fitness_history:
+   350:         return 0
+   351:     final_best = fitness_history[-1]
+   352:     # threshold: within 1% of final best, or absolute 1e-6 for near-zero
+   353:     threshold = max(abs(final_best) * threshold_ratio, 1e-6)
+   354:     for i, f in enumerate(fitness_history):
+   355:         if abs(f - final_best) <= threshold:
+   356:             return i + 1
+   357:     return len(fitness_history)
+   358: 
+   359: 
+   360: def main():
+   361:     parser = argparse.ArgumentParser(description="Evolutionary Optimization Benchmark")
+   362:     parser.add_argument("--function", type=str, required=True,
+   363:                         choices=list(_REFERENCE.keys()),
+   364:                         help="Benchmark function to optimize")
+   365:     parser.add_argument("--dim", type=int, default=30,
+   366:                         help="Dimensionality of the search space (default: 30)")
+   367:     parser.add_argument("--pop-size", type=int, default=200,
+   368:                         help="Population size (default: 200)")
+   369:     parser.add_argument("--n-generations", type=int, default=500,
+   370:                         help="Number of generations (default: 500)")
+   371:     parser.add_argument("--cx-prob", type=float, default=0.9,
+   372:                         help="Crossover probability (default: 0.9)")
+   373:     parser.add_argument("--mut-prob", type=float, default=0.2,
+   374:                         help="Mutation probability (default: 0.2)")
+   375:     parser.add_argument("--seed", type=int, default=42,
+   376:                         help="Random seed")
+   377:     args = parser.parse_args()
+   378: 
+   379:     # The objective is evaluated in a shifted coordinate frame whose optimum
+   380:     # location is drawn fresh for every run (the optimum value stays 0), so a
+   381:     # hard-coded "known optimum" such as [0]*d or [1]*d is just a random point.
+   382:     # evaluate_func and the final re-evaluation use the same shifted objective.
+   383:     ref_func, (lo, hi), base_opt = _REFERENCE[args.function]
+   384:     objective = _shifted(ref_func, _draw_optimum(lo, hi, args.dim), base_opt)
+   385:     # Evaluation budget: the initial population plus one full population per
+   386:     # generation. A call beyond it raises and evaluates nothing.
+   387:     max_evals = args.pop_size * (args.n_generations + 1)
+   388:     n_evals = [0]
+   389: 
+   390:     def evaluate_func(individual):
+   391:         if n_evals[0] >= max_evals:
+   392:             raise RuntimeError(
+   393:                 f"evaluation budget exhausted: at most {max_evals} calls to evaluate_func "
+   394:                 f"(pop_size * (n_generations + 1)) are allowed per run"
+   395:             )
+   396:         n_evals[0] += 1
+   397:         return (objective(individual),)
+   398: 
+   399:     evaluate_func.__name__ = args.function
+   400: 
+   401:     print(f"=== {args.function.upper()} (dim={args.dim}) ===", flush=True)
+   402:     print(f"Bounds: [{lo}, {hi}], Pop: {args.pop_size}, Gens: {args.n_generations}", flush=True)
+   403: 
+   404:     t0 = time.time()
+   405:     best_ind, fitness_history = run_evolution(
+   406:         evaluate_func=evaluate_func,
+   407:         dim=args.dim,
+   408:         lo=lo,
+   409:         hi=hi,
+   410:         pop_size=args.pop_size,
+   411:         n_generations=args.n_generations,
+   412:         cx_prob=args.cx_prob,
+   413:         mut_prob=args.mut_prob,
+   414:         seed=args.seed,
+   415:     )
+   416:     elapsed = time.time() - t0
+   417: 
+   418:     best_fitness = _score_returned(best_ind, objective, lo, hi, args.dim)
+   419:     try:
+   420:         claimed = float(best_ind.fitness.values[0])
+   421:     except Exception:  # noqa: BLE001
+   422:         claimed = float("nan")
+   423:     if not (abs(claimed - best_fitness) <= 1e-9 * max(1.0, abs(best_fitness))):
+   424:         print(f"WARNING: self-reported best fitness {claimed!r} differs from the "
+   425:               f"re-evaluated value {best_fitness!r}; the re-evaluated value is reported.",
+   426:               flush=True)
+   427:     convergence_gen = compute_convergence_gen(fitness_history)
+   428: 
+   429:     print(f"\n=== Results ===", flush=True)
+   430:     print(f"Best fitness: {best_fitness:.6e}", flush=True)
+   431:     print(f"Convergence generation: {convergence_gen}/{args.n_generations}", flush=True)
+   432:     print(f"Function evaluations: {n_evals[0]} (budget {max_evals})", flush=True)
+   433:     print(f"Wall time: {elapsed:.1f}s", flush=True)
+   434:     print(
+   435:         f"TEST_METRICS best_fitness={best_fitness:.6e} "
+   436:         f"convergence_gen={convergence_gen}",
+   437:         flush=True,
+   438:     )
+   439: 
+   440: 
+   441: if __name__ == "__main__":
+   442:     main()
 ```
 
 ## Reference Baselines

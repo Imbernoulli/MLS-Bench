@@ -1029,7 +1029,7 @@ def _generate_with_active_query_hooks(
 
     request_meta = {"workload": workload_name, "step_budget": regime_name}
     schedule = dict(policy.block_schedule(request_meta))
-    gen_length = _clamp_int(schedule.get("gen_length"), 1, WORKLOAD_CONFIGS[workload_name]["gen_length"])
+    gen_length = _require_reference_gen_length(schedule, workload_name)
     block_length = _clamp_int(schedule.get("block_length"), 1, WORKLOAD_CONFIGS[workload_name]["block_length"])
     # d2Cache's official LLaDA path transfers one token per step until the
     # current block has no mask tokens left; num_steps is not used as a quota.
@@ -1190,7 +1190,7 @@ def _generate_with_tracked_window_hooks(
 
     request_meta = {"workload": workload_name, "step_budget": regime_name}
     schedule = dict(policy.block_schedule(request_meta))
-    gen_length = _clamp_int(schedule.get("gen_length"), 1, WORKLOAD_CONFIGS[workload_name]["gen_length"])
+    gen_length = _require_reference_gen_length(schedule, workload_name)
     window_length = _clamp_int(schedule.get("window_length"), 1, 16)
     window_length = min(window_length, gen_length)
 
@@ -1355,7 +1355,7 @@ def _generate_with_shared_hooks(
 ) -> tuple[list[int], dict]:
     request_meta = {"workload": workload_name, "step_budget": regime_name}
     schedule = dict(policy.block_schedule(request_meta))
-    gen_length = _clamp_int(schedule.get("gen_length"), 1, WORKLOAD_CONFIGS[workload_name]["gen_length"])
+    gen_length = _require_reference_gen_length(schedule, workload_name)
     block_length = _clamp_int(schedule.get("block_length"), 1, WORKLOAD_CONFIGS[workload_name]["block_length"])
     num_steps = _clamp_int(schedule.get("num_steps"), 1, WORKLOAD_CONFIGS[workload_name]["num_steps"])
 
@@ -1512,6 +1512,78 @@ def _generate_with_shared_hooks(
     }
 
 
+# Reference rollout, fixed here (after the editable region) so the policy can
+# neither shrink the generation nor move the normalizer of the work metric.
+_REFERENCE_ROLLOUT = {
+    "math":      {"num_steps": 256, "gen_length": 256},
+    "humaneval": {"num_steps": 512, "gen_length": 512},
+    "lm_eval":   {"num_steps": 64,  "gen_length": 64},
+}
+
+
+def _require_reference_gen_length(schedule: dict, workload_name: str) -> int:
+    """The generation length is fixed per workload; a schedule may not change it."""
+
+    expected = _REFERENCE_ROLLOUT[workload_name]["gen_length"]
+    try:
+        gen_length = int(schedule.get("gen_length"))
+    except (TypeError, ValueError):
+        gen_length = None
+    if gen_length != expected:
+        raise ValueError(
+            f"block_schedule must return gen_length={expected} for workload={workload_name} "
+            f"(got {schedule.get('gen_length')!r}); the generation length is fixed."
+        )
+    return gen_length
+
+
+class _LinearWorkMeter:
+    """Counts the transformer-block linear work a rollout actually performs.
+
+    Every nn.Linear inside the LLaDA blocks (q/k/v/attn_out/ff_proj/up_proj/
+    ff_out) gets a forward pre-hook that adds rows x in_features x out_features
+    multiply-accumulates. Whatever path a policy takes (full forwards, feature
+    reuse, active query rows, tracked windows, layer resets), only rows that
+    are really recomputed are counted. The reference is the uncached rollout
+    of the same prompt: _REFERENCE_ROLLOUT num_steps full-sequence forwards.
+    """
+
+    def __init__(self, model):
+        blocks = model.model.transformer.blocks
+        self.macs = 0
+        self._handles = []
+        self.per_row_macs = 0
+        for block in blocks:
+            for module in block.modules():
+                if isinstance(module, torch.nn.Linear):
+                    self.per_row_macs += int(module.in_features) * int(module.out_features)
+                    self._handles.append(module.register_forward_pre_hook(self._count))
+        if self.per_row_macs <= 0:
+            raise RuntimeError("No transformer-block linear layers found to meter.")
+
+    def _count(self, module, inputs):
+        x = inputs[0]
+        self.macs += (x.numel() // max(int(x.shape[-1]), 1)) * int(module.in_features) * int(module.out_features)
+
+    def reset(self) -> None:
+        self.macs = 0
+
+    def reference_macs(self, workload_name: str, prompt_len: int) -> int:
+        ref = _REFERENCE_ROLLOUT[workload_name]
+        return int(ref["num_steps"]) * (int(prompt_len) + int(ref["gen_length"])) * self.per_row_macs
+
+    def close(self) -> None:
+        for handle in self._handles:
+            handle.remove()
+        self._handles = []
+
+
+def _decoded_token_count(token_ids: list[int]) -> int:
+    """Generated positions that were actually committed (not left as mask)."""
+
+    return sum(1 for tok in token_ids if int(tok) != MASK_ID)
+
+
 # ---------------------------------------------------------------------------
 # Main evaluation entry point
 # ---------------------------------------------------------------------------
@@ -1520,7 +1592,12 @@ def run_evaluation(workload_name: str, regime_name: str):
     policy = DLMRefreshPolicy()
     print(f'[INFO] Loading LLaDA model from {_resolve_model_dir(_MODEL_DIR)}')
     print(f'[INFO] Using shared DLM cache hook policy={getattr(policy, "policy_name", "custom")}')
+    for name, ref in _REFERENCE_ROLLOUT.items():
+        if WORKLOAD_CONFIGS.get(name, {}).get("gen_length") != ref["gen_length"] or \
+                WORKLOAD_CONFIGS.get(name, {}).get("num_steps") != ref["num_steps"]:
+            raise RuntimeError(f"WORKLOAD_CONFIGS[{name!r}] was modified; the reference rollout is fixed.")
     model, tokenizer, device = _load_model_and_tokenizer(policy)
+    meter = _LinearWorkMeter(model)
 
     print(f'[INFO] Loading final-score benchmark examples for workload={workload_name}')
     examples = _load_benchmark_examples(workload_name)
@@ -1532,10 +1609,21 @@ def run_evaluation(workload_name: str, regime_name: str):
     peak_mem_mb = 0.0
 
     print(f'[INFO] Evaluating policy on {len(examples)} examples...')
+    decoded_tokens = 0
     for i, example in enumerate(examples):
+        meter.reset()
         out, stats = _generate_with_shared_hooks(
             model, tokenizer, device, example['prompt'], policy, workload_name, regime_name,
         )
+        # Work is measured by the harness, not taken from the policy path's own
+        # bookkeeping: 1 - (block linear MACs performed) / (MACs of the uncached
+        # reference rollout of this prompt). Not clipped; more work than the
+        # reference gives a negative reuse.
+        prompt_len = int(_encode_prompt(tokenizer, example['prompt']).shape[1])
+        stats["reuse_ratio"] = 1.0 - meter.macs / meter.reference_macs(workload_name, prompt_len)
+        if len(out) != _REFERENCE_ROLLOUT[workload_name]["gen_length"]:
+            raise RuntimeError("Generated sequence length differs from the fixed gen_length.")
+        decoded_tokens += _decoded_token_count(out)
         prediction = _decode_output(tokenizer, out)
         score = _score_prediction(workload_name, prediction, example)
         final_scores.append(score)
@@ -1551,7 +1639,10 @@ def run_evaluation(workload_name: str, regime_name: str):
     reuse_ratio = sum(reuse_values) / max(len(reuse_values), 1)
     refresh_ratio = 1.0 - reuse_ratio
     total_s = sum(elapsed_values)
-    tokens_per_s = len(examples) * WORKLOAD_CONFIGS[workload_name]["gen_length"] / max(total_s, 1e-6)
+    meter.close()
+    # gen_length is enforced above, so this is the fixed per-example generation
+    # window over the measured decode time (inverse per-example latency).
+    tokens_per_s = len(examples) * _REFERENCE_ROLLOUT[workload_name]["gen_length"] / max(total_s, 1e-6)
     print(
         f'TEST_METRICS: '
         f'final_score={final_score:.4f} '
@@ -1560,6 +1651,7 @@ def run_evaluation(workload_name: str, regime_name: str):
         f'tokens_per_s={tokens_per_s:.2f} '
         f'peak_memory_mb={peak_mem_mb:.1f} '
         f'n_examples={len(examples)} '
+        f'decoded_tokens={decoded_tokens} '
         f'eval_mode=real_rollout '
         f'policy={getattr(policy, "policy_name", "custom")} '
         f'workload={workload_name} '

@@ -18,6 +18,7 @@ The `search(self, root_node)` method in `custom_search.py`. You have access to:
 - `self._add_diversity_prompt(node)` — encourages different actions when re-expanding.
 - `self._rank_nodes(candidates)` — LLM pairwise ranking (costs extra queries).
 - Tree state: `self.query_count`, `self.max_query_count`, `self.terminal_node`, etc.
+- How a query passes: it counts as passed only if a node you register in `self.terminal_node` was created by `_step` from a `Finish` call with `return_type: give_answer` that the environment accepted, and that node is not pruned. The fixed code recomputes `self.status` and `self.query_count` after `search()`. Every LLM call made through `self.llm` counts against the query budget, and `_step` enforces that budget itself (it returns `[]` once the budget is spent). Queries with no answer file count as failures. Redefining the fixed methods (or special methods) of `CustomSearch` in the editable region is rejected at import time.
 - Node properties: `node.is_terminal`, `node.pruned`, `node.observation_code`, `node.get_depth()`.
 
 ## Reference baselines (algorithmic templates)
@@ -30,5 +31,6 @@ Per-task feedback reports:
 - **pass_rate** — fraction of queries with a valid final answer (higher is better).
 - **avg_queries** — average LLM queries per task (lower is better, efficiency signal).
 - **give_up_rate** — fraction of queries where the agent gives up (lower is better).
+- **sopr** — Solvable Pass Rate: StableToolBench's answer judge (run with meta-llama/llama-3.3-70b-instruct) rates each of the fixed queries' final answer Solved (1), Unsure (0.5) or Unsolved (0); a query with no answer file scores 0 (higher is better).
 
-The score emphasizes answer quality (pass rate / Stable Pass Rate from the GPT-4 judge); query count and give-up rate serve as efficiency and diagnostic signals. The same `search()` policy is evaluated across multiple agent backbones on the I1-instruction subset.
+The score emphasizes answer quality (pass rate / Stable Pass Rate from the LLM judge); query count and give-up rate serve as efficiency and diagnostic signals. The same `search()` policy is evaluated across multiple agent backbones on the I1-instruction subset.

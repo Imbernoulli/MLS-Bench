@@ -523,6 +523,7 @@ class PrefillSelectionCompressor:
         self.compression_ratio = float(compression_ratio)
         self.request_meta = request_meta
         self.layer_retained_fractions: list[float] = []
+        self.layer_kept_lengths: dict[int, int] = {}
         self.rerotate_decode_positions = False
         self.method_names: list[str] = []
 
@@ -561,16 +562,28 @@ class PrefillSelectionCompressor:
         self.method_names.append(method_name)
         if bool(plan.get("disable_compression", False)) or self.compression_ratio == 0.0:
             self.layer_retained_fractions.append(1.0)
+            self.layer_kept_lengths[int(module.layer_idx)] = int(keys.shape[2])
             return output
         plan["compression_ratio"] = self.compression_ratio
-        scores = self.policy.score_tokens(module, hidden_states, keys, values, kwargs, plan)
+        # The policy never receives the live cache: the forward kwargs are handed over without any
+        # cache handle, so it cannot reach the object the decode loop reads.
+        from transformers.cache_utils import Cache
+
+        policy_kwargs = {
+            name: value
+            for name, value in kwargs.items()
+            if name not in ("past_key_values", "past_key_value") and not isinstance(value, Cache)
+        }
+        scores = self.policy.score_tokens(module, hidden_states, keys, values, policy_kwargs, plan)
         if scores is None:
             self.layer_retained_fractions.append(1.0)
+            self.layer_kept_lengths[int(module.layer_idx)] = int(keys.shape[2])
             return output
         if scores.shape[-1] != keys.shape[2]:
             raise RuntimeError(f"Score length {scores.shape[-1]} does not match cache length {keys.shape[2]}")
         n_kept = int(keys.shape[2] * (1.0 - self.compression_ratio))
         selected_keys, selected_values = self.policy.select_cache(module, keys, values, scores, n_kept)
+        self._check_selection(keys, values, selected_keys, selected_values, n_kept, int(module.layer_idx))
         self.rerotate_decode_positions = (
             self.rerotate_decode_positions or bool(getattr(self.policy, "rerotate_selected_keys", False))
         )
@@ -578,16 +591,120 @@ class PrefillSelectionCompressor:
         cache_layer.values = selected_values
         if hasattr(cache_layer, "cumulative_length"):
             cache_layer.cumulative_length = int(selected_keys.shape[2])
-        self.layer_retained_fractions.append(float(n_kept) / float(keys.shape[2]))
+        # Measured from the tensors the policy actually returned, not from the requested budget.
+        self.layer_retained_fractions.append(float(selected_keys.shape[2]) / float(keys.shape[2]))
+        self.layer_kept_lengths[int(module.layer_idx)] = int(selected_keys.shape[2])
         return output
 
-    @contextlib.contextmanager
-    def apply(self, model):
+    @staticmethod
+    def _check_selection(keys, values, selected_keys, selected_values, n_kept: int, layer_idx: int) -> None:
+        if type(selected_keys) is not torch.Tensor or type(selected_values) is not torch.Tensor:
+            raise TypeError(f"layer {layer_idx}: select_cache must return plain torch.Tensor (keys, values)")
+        if selected_keys.dim() != keys.dim() or selected_values.dim() != values.dim():
+            raise RuntimeError(f"layer {layer_idx}: select_cache changed the cache tensor rank")
+        for name, src, sel in (("keys", keys, selected_keys), ("values", values, selected_values)):
+            if sel.shape[:2] != src.shape[:2] or sel.shape[3:] != src.shape[3:]:
+                raise RuntimeError(
+                    f"layer {layer_idx}: selected {name} shape {tuple(sel.shape)} is incompatible with "
+                    f"cache shape {tuple(src.shape)}; only the sequence dimension may shrink"
+                )
+        if selected_keys.shape[2] != selected_values.shape[2]:
+            raise RuntimeError(
+                f"layer {layer_idx}: selected keys ({selected_keys.shape[2]}) and values "
+                f"({selected_values.shape[2]}) retain different token counts"
+            )
+        if selected_keys.shape[2] > n_kept:
+            raise RuntimeError(
+                f"layer {layer_idx}: select_cache retained {selected_keys.shape[2]} of {keys.shape[2]} "
+                f"tokens, exceeding the fixed budget n_kept={n_kept}"
+            )
+
+    def measured_retained_fraction(self, cache, prompt_len: int) -> float:
+        """Retained fraction of the post-prefill cache, cross-checked per layer against the hook's record."""
+        layers = self._cache_layers(cache)
+        if len(self.layer_kept_lengths) != len(layers):
+            raise RuntimeError(
+                f"Selection hook ran on {len(self.layer_kept_lengths)} of {len(layers)} cache layers"
+            )
+        fractions = []
+        for layer_idx, cache_layer in enumerate(layers):
+            keys, values = self._extract_kv(cache_layer)
+            expected = self.layer_kept_lengths.get(layer_idx)
+            if expected is None or int(keys.shape[2]) != expected or int(values.shape[2]) != expected:
+                raise RuntimeError(
+                    f"layer {layer_idx}: post-prefill cache holds {tuple(keys.shape)} keys / "
+                    f"{tuple(values.shape)} values, but the selection hook recorded {expected} tokens"
+                )
+            fractions.append(float(keys.shape[2]) / float(prompt_len))
+        return mean(fractions)
+
+    def check_decode_growth(self, cache, n_decode_steps: int) -> None:
+        for layer_idx, cache_layer in enumerate(self._cache_layers(cache)):
+            keys, values = self._extract_kv(cache_layer)
+            expected = self.layer_kept_lengths[layer_idx] + int(n_decode_steps)
+            if int(keys.shape[2]) != expected or int(values.shape[2]) != expected:
+                raise RuntimeError(
+                    f"layer {layer_idx}: cache length {keys.shape[2]}/{values.shape[2]} after decode, "
+                    f"expected {expected} (retained prefill + one entry per decode step)"
+                )
+
+    def _cache_layers(self, cache):
+        if not hasattr(cache, "layers"):
+            raise RuntimeError("Selection task expects the Transformers DynamicCache layer API.")
+        return list(cache.layers)
+
+    @staticmethod
+    def _decode_surface(model, cache) -> dict:
+        """{name: object} for everything that decides which K/V the decode attention reads: the
+        cache and its layers (identity, class, update method, instance-level method overrides), every
+        attention module and submodule (class forward, hooks, children, attributes), the shared
+        config, and the attention-function registry. Compared by identity after the prefill and after
+        the decode against the snapshot taken before any policy code ran."""
+        from transformers.modeling_utils import ALL_ATTENTION_FUNCTIONS
+
+        def attrs(prefix, obj):
+            out = [(f"{prefix}:type", type(obj))]
+            for key, value in vars(obj).items():
+                if isinstance(value, dict):
+                    out += [(f"{prefix}.{key}[{k!r}]", v) for k, v in value.items()]
+                else:
+                    out.append((f"{prefix}.{key}", value))
+            return out
+
+        def methods(prefix, obj):
+            out = [(prefix, obj), (f"{prefix}:type", type(obj)), (f"{prefix}:update", type(obj).update)]
+            return out + [(f"{prefix}.{key}", value) for key, value in vars(obj).items() if callable(value)]
+
+        surface = methods("cache", cache) + [("cache.layers", cache.layers)]
+        for idx, cache_layer in enumerate(cache.layers):
+            surface += methods(f"cache.layers[{idx}]", cache_layer)
         language_model = model.model.language_model if hasattr(model.model, "language_model") else model.model
+        for idx, layer in enumerate(language_model.layers):
+            for name, sub in layer.self_attn.named_modules():
+                prefix = f"layers[{idx}].self_attn{'.' + name if name else ''}"
+                surface += [(f"{prefix}:forward", type(sub).forward)] + attrs(prefix, sub)
+        surface += attrs("config", model.config)
+        surface += [(f"attention_functions[{k!r}]", v) for k, v in ALL_ATTENTION_FUNCTIONS.items()]
+        return dict(surface)
+
+    def check_decode_surface(self, model, cache, stage: str) -> None:
+        before, now, gone = self.decode_surface, self._decode_surface(model, cache), object()
+        changed = [name for name in {**before, **now} if before.get(name, gone) is not now.get(name, gone)]
+        if changed:
+            raise RuntimeError(
+                f"after {stage}: the cache or an attention module was altered while the policy ran "
+                f"({', '.join(changed[:5])}); the policy may only return the selected keys/values"
+            )
+
+    @contextlib.contextmanager
+    def apply(self, model, cache):
+        language_model = model.model.language_model if hasattr(model.model, "language_model") else model.model
+        for layer in language_model.layers:
+            layer.self_attn.rotary_emb = language_model.rotary_emb
+        self.decode_surface = self._decode_surface(model, cache)
         hooks = []
         try:
             for layer in language_model.layers:
-                layer.self_attn.rotary_emb = language_model.rotary_emb
                 hooks.append(layer.self_attn.register_forward_hook(self.forward_hook, with_kwargs=True))
             yield self
         finally:
@@ -665,11 +782,13 @@ def generate_with_selection(model, tokenizer, example, workload_name, max_new_to
     }
     compressor = PrefillSelectionCompressor(policy, compression_ratio, request_meta)
     maybe_sync()
-    with compressor.apply(model):
+    with compressor.apply(model, cache):
         with torch.inference_mode():
             outputs = model(**inputs, use_cache=True, past_key_values=cache, logits_to_keep=1)
     maybe_sync()
     current_cache = outputs.past_key_values
+    compressor.check_decode_surface(model, current_cache, "prefill")
+    retained_fraction = compressor.measured_retained_fraction(current_cache, prompt_len)
     decode_start_position = (
         int(current_cache.get_seq_length()) if compressor.rerotate_decode_positions else prompt_len
     )
@@ -696,13 +815,15 @@ def generate_with_selection(model, tokenizer, example, workload_name, max_new_to
         generated.append(step_input.detach().clone())
         del outputs
 
+    compressor.check_decode_surface(model, current_cache, "decode")
+    compressor.check_decode_growth(current_cache, len(generated) - 1)
     generated_tokens = torch.cat(generated, dim=-1)
     trace = {
         "prompt_tokens": prompt_len,
         "prompt_tokens_original": original_prompt_len,
         "prompt_truncated": prompt_truncated,
         "generated_tokens": int(generated_tokens.shape[-1]),
-        "retained_fraction": mean(compressor.layer_retained_fractions) if compressor.layer_retained_fractions else 1.0,
+        "retained_fraction": retained_fraction,
         "method": compressor.method_name(),
     }
     return decode_prediction(tokenizer, generated_tokens, workload_name), trace

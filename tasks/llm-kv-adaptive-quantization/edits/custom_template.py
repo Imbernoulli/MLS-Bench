@@ -43,9 +43,11 @@ class AdaptiveKVQuantizer:
 
     The fixed harness supplies real key/value tensors from a Hugging Face
     DynamicCache and calls this class for the actual algorithm. Participants
-    may rewrite the quantization math, residual policy, optional prefill
-    observation, and memory accounting here without changing the benchmark
-    datasets, model, or decode loop.
+    may rewrite the quantization math, residual policy, and optional prefill
+    observation here without changing the benchmark datasets, model, or decode
+    loop. Memory is not self-reported: `quantize_key` / `quantize_value` return
+    a storage layout (see `_group_layout`) that the fixed harness checks and
+    measures; a bare tensor (or a `None` layout) is charged at FP16.
     """
 
     def __init__(self):
@@ -88,6 +90,20 @@ class AdaptiveKVQuantizer:
             return residual_length
         raise ValueError(f"Unsupported residual_policy={residual_policy}")
 
+    def _group_layout(self, lead_shape, trailing: int, group_size: int, device) -> tuple[torch.Tensor, int]:
+        """(group ids, group count) for contiguous groups along the last dim.
+
+        A layout is `{"group_ids": int tensor shaped like the returned tensor,
+        "group_bits": 1-D int tensor}`: element -> group id (-1 = kept at
+        FP16), group id -> integer bit-width in [1, 16]. Each used group needs
+        >= 32 elements and at most 2**bits distinct stored values.
+        """
+        group_size = trailing if int(group_size) <= 0 else int(group_size)
+        per_row = math.ceil(trailing / group_size)
+        rows = torch.arange(math.prod(lead_shape), device=device, dtype=torch.long).reshape(*lead_shape, 1)
+        ids = rows * per_row + torch.arange(trailing, device=device, dtype=torch.long) // group_size
+        return ids, math.prod(lead_shape) * per_row
+
     def _minmax_quantize_last_dim(self, data: torch.Tensor, bits: int, group_size: int) -> torch.Tensor:
         if data.numel() == 0 or bits >= FP_BITS - 0.5:
             return data
@@ -115,61 +131,45 @@ class AdaptiveKVQuantizer:
         group_size: int,
         residual_length: int,
         residual_policy: str = "tail",
-    ) -> tuple[torch.Tensor, float]:
+    ) -> tuple[torch.Tensor, dict | None]:
         work = layer_tensor.float().clone()
         batch, heads, seq_len, head_dim = work.shape
         residual = self._residual_keep_length(seq_len, residual_length, residual_policy)
         quant_end = seq_len - residual
         if quant_end <= 0 or bits >= FP_BITS - 0.5:
-            return work.to(layer_tensor.dtype), FP_BITS
-
+            return work.to(layer_tensor.dtype), None
+        ids, count = torch.full(work.shape, -1, dtype=torch.long, device=work.device), 0
         quant_slice = work[:, :, :quant_end, :]
         if axis == "channel":
             quant_len = quant_slice.shape[-2]
             group_size = quant_len if int(group_size) <= 0 else int(group_size)
             usable = quant_len - (quant_len % group_size)
-            main = quant_slice[:, :, :usable, :]
-            tail = quant_slice[:, :, usable:, :]
             if usable > 0:
-                main = main.transpose(2, 3).reshape(batch, heads, head_dim, usable // group_size, group_size)
+                main = quant_slice[:, :, :usable, :].transpose(2, 3)
                 main = self._minmax_quantize_last_dim(main, bits, group_size)
-                work[:, :, :usable, :] = main.reshape(batch, heads, head_dim, usable).transpose(2, 3)
-            if tail.numel() > 0:
-                work[:, :, usable:quant_end, :] = tail
-            fp_tokens = residual + (quant_len - usable)
-            avg_bits = (usable * bits + fp_tokens * FP_BITS) / max(seq_len, 1)
+                work[:, :, :usable, :] = main.transpose(2, 3)
+                region, count = self._group_layout((batch, heads, head_dim), usable, group_size, work.device)
+                ids[:, :, :usable, :] = region.transpose(2, 3)
         else:
-            flat = quant_slice.transpose(1, 2).reshape(batch, quant_slice.shape[-2], heads * head_dim)
+            flat = quant_slice.transpose(1, 2).reshape(batch, quant_end, heads * head_dim)
             flat = self._minmax_quantize_last_dim(flat, bits, group_size)
-            work[:, :, :quant_end, :] = flat.reshape(batch, quant_slice.shape[-2], heads, head_dim).transpose(1, 2)
-            avg_bits = (quant_end * bits + residual * FP_BITS) / max(seq_len, 1)
-        return work.to(layer_tensor.dtype), float(avg_bits)
+            work[:, :, :quant_end, :] = flat.reshape(batch, quant_end, heads, head_dim).transpose(1, 2)
+            flat_ids, count = self._group_layout((batch, quant_end), heads * head_dim, group_size, work.device)
+            ids[:, :, :quant_end, :] = flat_ids.reshape(batch, quant_end, heads, head_dim).transpose(1, 2)
+        group_bits = torch.full((count,), int(bits), dtype=torch.long, device=work.device)
+        return work.to(layer_tensor.dtype), {"group_ids": ids, "group_bits": group_bits}
 
-    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
+    def quantize_key(self, layer_id: int, key_states: torch.Tensor, cache_meta: dict):
         return self._quantize_grouped_minmax(
-            key_states,
-            axis="channel",
-            bits=self.bits,
-            group_size=self.key_group_size,
-            residual_length=self.key_residual_length,
-            residual_policy="tail",
+            key_states, axis="channel", bits=self.bits, group_size=self.key_group_size,
+            residual_length=self.key_residual_length, residual_policy="tail",
         )
 
-    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict) -> tuple[torch.Tensor, float]:
+    def quantize_value(self, layer_id: int, value_states: torch.Tensor, cache_meta: dict):
         return self._quantize_grouped_minmax(
-            value_states,
-            axis="token",
-            bits=self.bits,
-            group_size=self.value_group_size,
-            residual_length=self.value_residual_length,
-            residual_policy="tail",
+            value_states, axis="token", bits=self.bits, group_size=self.value_group_size,
+            residual_length=self.value_residual_length, residual_policy="tail",
         )
-
-    def estimate_bits(self, layer_id: int, kv_kind: str, seq_len: int, head_dim: int, cache_meta: dict) -> float:
-        residual = self.key_residual_length if kv_kind == "key" else self.value_residual_length
-        residual = self._residual_keep_length(seq_len, residual, "tail")
-        quant_tokens = max(0, seq_len - residual)
-        return float((quant_tokens * self.bits + residual * FP_BITS) / max(seq_len, 1))
 
 
 def resolve_task_dir() -> Path:
@@ -706,21 +706,260 @@ def apply_rotary_to_query(query_states: torch.Tensor, position_embeddings) -> to
     return (query_states * cos) + (rotate_half(query_states) * sin)
 
 
-def normalize_quantizer_result(result, original_tensor: torch.Tensor) -> tuple[torch.Tensor, float]:
-    if isinstance(result, tuple) and len(result) == 2:
-        quantized, avg_bits = result
+def normalize_quantizer_result(result, original_tensor: torch.Tensor) -> tuple[torch.Tensor, dict | None]:
+    if isinstance(result, torch.Tensor):
+        quantized, layout = result, None
+    elif isinstance(result, tuple) and len(result) == 2:
+        quantized, layout = result
     else:
-        quantized, avg_bits = result, FP_BITS
+        raise TypeError("quantize_key/quantize_value must return a tensor or (tensor, layout)")
     if not isinstance(quantized, torch.Tensor):
-        raise TypeError("quantize_key/quantize_value must return a tensor or (tensor, avg_bits)")
+        raise TypeError("quantize_key/quantize_value must return a tensor or (tensor, layout)")
     if tuple(quantized.shape) != tuple(original_tensor.shape):
         raise ValueError(f"Quantized tensor shape {tuple(quantized.shape)} does not match {tuple(original_tensor.shape)}")
-    return quantized.to(original_tensor.dtype), float(avg_bits)
+    if layout is not None and not isinstance(layout, dict):
+        raise TypeError(
+            "The second element returned by quantize_key/quantize_value must be a storage layout "
+            "dict {'group_ids', 'group_bits'} or None; self-reported bit counts are not accepted, "
+            f"got {type(layout).__name__}"
+        )
+    # A private copy: the tensor that is measured is the tensor the next decode
+    # step reads, even if the quantizer keeps a reference and writes to it later.
+    return quantized.to(original_tensor.dtype).clone(memory_format=torch.contiguous_format), layout
 
 
-def quantize_snapshot(cache_snapshot, quantizer: AdaptiveKVQuantizer, request_meta: dict, budget_state: dict):
+# Effective KV bits are measured here, in fixed code, from what the quantizer
+# actually stored: every element is either kept at FP16 (group id -1) or belongs
+# to a quantization group that exactly fills an axis-aligned box of the tensor
+# (a run of tokens in one channel, a run of channels in one token, a tile, ...)
+# and holds at least MIN_QUANT_GROUP_ELEMENTS elements and at most 2**bits
+# distinct stored values. Scale/zero-point metadata is not charged (the
+# reference accounting of KIVI/KVTuner/SQuat); an arbitrary element->group map
+# would be uncharged side information, so a group that is not a box is rejected.
+MIN_QUANT_GROUP_ELEMENTS = 32
+MAX_GROUP_BITS = 16
+REFERENCE_KV_SPAN = 4096
+# Scored bits = the reference span's bits, except that its older tokens (all but
+# the most recent RECENT_WINDOW_TOKENS) are charged at the larger of their
+# reference bits and the older-token bits of the cache actually used for
+# generation at one uniformly random decode step per request. The window is
+# KIVI's 128-token residual plus one 32-token group that a per-channel grouping
+# may not have filled yet.
+RECENT_WINDOW_TOKENS = 160
+
+
+def stored_value_codes(tensor: torch.Tensor) -> torch.Tensor:
+    """Bit patterns of the stored values (with -0.0 folded into +0.0), as int64."""
+    values = tensor.detach()
+    if values.dtype not in (torch.float16, torch.bfloat16, torch.float32):
+        values = values.float()
+    values = (values + 0.0).contiguous()
+    if values.dtype == torch.float32:
+        return values.view(torch.int32).to(torch.int64) & 0xFFFFFFFF
+    return values.view(torch.int16).to(torch.int64) & 0xFFFF
+
+
+def layout_tensors(stored: torch.Tensor, layout: dict, where: str) -> tuple[torch.Tensor, torch.Tensor]:
+    group_ids, group_bits = layout.get("group_ids"), layout.get("group_bits")
+    if not isinstance(group_ids, torch.Tensor) or not isinstance(group_bits, torch.Tensor):
+        raise TypeError(f"{where}: layout needs tensor entries 'group_ids' and 'group_bits'")
+    if group_ids.is_floating_point() or group_ids.is_complex() or group_bits.is_floating_point() or group_bits.is_complex():
+        raise TypeError(f"{where}: layout 'group_ids' and 'group_bits' must be integer tensors")
+    if tuple(group_ids.shape) != tuple(stored.shape) or group_bits.dim() != 1:
+        raise ValueError(
+            f"{where}: layout group_ids shape {tuple(group_ids.shape)} must equal the returned tensor shape "
+            f"{tuple(stored.shape)} and group_bits must be 1-D (got {tuple(group_bits.shape)})"
+        )
+    ids = group_ids.detach().to(device=stored.device, dtype=torch.int64).reshape(-1)
+    bits = group_bits.detach().to(device=stored.device, dtype=torch.int64)
+    return ids, bits
+
+
+def group_box_volumes(slots: torch.Tensor, num_slots: int, local: torch.Tensor, shape) -> torch.Tensor:
+    """Per slot, the element count of the axis-aligned bounding box of its elements.
+
+    `slots[i]` is the group slot of element i and `local[i]` its row-major index
+    inside a tensor of `shape`. A group fills its box exactly when the box volume
+    equals the group size.
+    """
+    volume = torch.ones(num_slots, dtype=torch.int64, device=slots.device)
+    stride = 1
+    for dim in reversed([int(d) for d in shape]):
+        coord = torch.div(local, stride, rounding_mode="floor").remainder_(dim)
+        lo = torch.full((num_slots,), dim, dtype=torch.int64, device=slots.device).scatter_reduce_(0, slots, coord, "amin")
+        hi = torch.full((num_slots,), -1, dtype=torch.int64, device=slots.device).scatter_reduce_(0, slots, coord, "amax")
+        volume *= (hi - lo + 1).clamp(min=0)
+        stride *= dim
+    return volume
+
+
+def measure_stored_bits(stored: torch.Tensor, layout: dict | None, where: str) -> float:
+    """Exact per-tensor measurement; raises a descriptive error on an invalid layout."""
+    numel = stored.numel()
+    if layout is None or numel == 0:
+        return FP_BITS
+    ids, bits = layout_tensors(stored, layout, where)
+    num_groups = int(bits.numel())
+    if bool(((ids < -1) | (ids >= num_groups)).any()):
+        raise ValueError(f"{where}: layout group ids must be -1 (FP16) or in [0, {num_groups})")
+    quantized = ids >= 0
+    qids = ids[quantized]
+    if qids.numel() == 0:
+        return FP_BITS
+    sizes = torch.bincount(qids, minlength=num_groups)
+    codes = stored_value_codes(stored).reshape(-1)[quantized]
+    distinct_pairs = torch.unique(qids * (1 << 32) + codes)
+    distinct = torch.bincount(distinct_pairs >> 32, minlength=num_groups)
+    used = sizes > 0
+    levels = torch.pow(2, bits.clamp(0, MAX_GROUP_BITS))
+    slots = torch.where(quantized, ids, num_groups)
+    local = torch.arange(numel, device=ids.device)
+    volumes = group_box_volumes(slots, num_groups + 1, local, stored.shape)[:num_groups]
+    checks = torch.stack(
+        [
+            (used & ((bits < 1) | (bits > MAX_GROUP_BITS))).any(),
+            (used & (sizes < MIN_QUANT_GROUP_ELEMENTS)).any(),
+            (used & (bits < MAX_GROUP_BITS) & (distinct > levels)).any(),
+            (used & (volumes != sizes)).any(),
+        ]
+    ).tolist()
+    if checks[0]:
+        raise ValueError(f"{where}: every used group needs an integer bit-width in [1, {MAX_GROUP_BITS}]")
+    if checks[1]:
+        smallest = int(sizes[used].min().item())
+        raise ValueError(
+            f"{where}: every quantization group needs >= {MIN_QUANT_GROUP_ELEMENTS} elements "
+            f"(smallest has {smallest}); mark unquantized elements with group id -1"
+        )
+    if checks[2]:
+        bad = int(torch.nonzero(used & (bits < MAX_GROUP_BITS) & (distinct > levels))[0].item())
+        raise ValueError(
+            f"{where}: group {bad} declares {int(bits[bad].item())} bits but stores "
+            f"{int(distinct[bad].item())} distinct values (> {int(levels[bad].item())}); "
+            "the stored tensor does not fit the declared layout"
+        )
+    if checks[3]:
+        bad = int(torch.nonzero(used & (volumes != sizes))[0].item())
+        raise ValueError(
+            f"{where}: group {bad} is not an axis-aligned box of the tensor: its {int(sizes[bad].item())} "
+            f"elements span a bounding box of {int(volumes[bad].item())}; a group must be a contiguous run "
+            "or tile (e.g. consecutive tokens of one channel, or consecutive channels of one token)"
+        )
+    stored_bits = bits.clamp(max=MAX_GROUP_BITS).to(torch.float64)[qids].sum().item()
+    stored_bits += float(numel - qids.numel()) * FP_BITS
+    return float(stored_bits / numel)
+
+
+class StoredBitsMeter:
+    """Batched form of `measure_stored_bits`: the same checks and the same
+    numbers, but many tensors share one sort and one device sync. Any flagged
+    batch is re-measured tensor by tensor so the error names the culprit.
+    With `prefix_tokens`, it also measures the bits of the older tokens (token
+    index, dim -2, below `prefix_tokens`) of each tensor."""
+
+    MAX_BATCH_ELEMENTS = 1 << 24
+
+    def __init__(self, prefix_tokens: int | None = None):
+        self.bits: dict = {}
+        self.prefix_bits: dict = {}
+        self.prefix_tokens = prefix_tokens
+        self.pending: list = []
+        self.pending_elements = 0
+
+    def add(self, key, stored: torch.Tensor, layout: dict | None, where: str) -> None:
+        if layout is None or stored.numel() == 0:
+            self.bits[key] = FP_BITS
+            self.prefix_bits[key] = FP_BITS
+            return
+        ids, bits = layout_tensors(stored, layout, where)
+        num_groups = int(bits.numel())
+        prefix = None
+        if self.prefix_tokens is not None:
+            tokens = int(stored.shape[-2])
+            kept = max(0, min(int(self.prefix_tokens), tokens))
+            ext_bits = torch.nn.functional.pad(bits.clamp(max=MAX_GROUP_BITS), (0, 1), value=int(FP_BITS))
+            elem_bits = ext_bits[torch.where((ids >= 0) & (ids < num_groups), ids, num_groups)]
+            prefix_sum = elem_bits.reshape(-1, tokens, int(stored.shape[-1]))[:, :kept, :].sum()
+            prefix = (prefix_sum, stored.numel() // tokens * kept)
+        self.pending.append((key, stored, layout, where, ids, bits, prefix))
+        self.pending_elements += stored.numel()
+        if self.pending_elements >= self.MAX_BATCH_ELEMENTS:
+            self.flush()
+
+    def flush(self) -> None:
+        batch, self.pending, self.pending_elements = self.pending, [], 0
+        if not batch:
+            return
+        device = batch[0][1].device
+        numels = [item[1].numel() for item in batch]
+        counts = [int(item[5].numel()) for item in batch]
+        offsets = [0]
+        for count in counts[:-1]:
+            offsets.append(offsets[-1] + count)
+        sentinel = offsets[-1] + counts[-1]
+        ends = torch.tensor(numels, device=device).cumsum(0)
+        total = sum(numels)
+        elem_tensor = torch.searchsorted(ends, torch.arange(total, device=device), right=True)
+        elem_offset = torch.tensor(offsets, device=device)[elem_tensor]
+        elem_count = torch.tensor(counts, device=device)[elem_tensor]
+        ids = torch.cat([item[4] for item in batch])
+        codes = torch.cat([stored_value_codes(item[1]).reshape(-1) for item in batch])
+        bits_all = torch.cat([item[5] for item in batch])
+        valid = (ids >= -1) & (ids < elem_count)
+        gid = torch.where((ids >= 0) & valid, ids + elem_offset, sentinel)
+        ext_bits = torch.cat([bits_all.clamp(max=MAX_GROUP_BITS), bits_all.new_tensor([int(FP_BITS)])])
+        running = torch.cat([ext_bits.new_zeros(1), ext_bits[gid].cumsum(0)])
+        sums = (running[ends] - running[ends - torch.tensor(numels, device=device)]).to(torch.float64)
+        sizes = torch.bincount(gid, minlength=sentinel + 1)[:sentinel]
+        distinct = torch.bincount(torch.unique(gid * (1 << 32) + codes) >> 32, minlength=sentinel + 1)[:sentinel]
+        shapes = [tuple(item[1].shape) for item in batch]
+        if len(set(shapes)) == 1:
+            local = torch.arange(total, device=device) % numels[0]
+            volumes = group_box_volumes(gid, sentinel + 1, local, shapes[0])[:sentinel]
+        else:
+            volumes = torch.cat(
+                [
+                    group_box_volumes(
+                        torch.where((item[4] >= 0) & (item[4] < count), item[4], count),
+                        count + 1,
+                        torch.arange(item[1].numel(), device=device),
+                        item[1].shape,
+                    )[:count]
+                    for item, count in zip(batch, counts)
+                ]
+            )
+        used = sizes > 0
+        levels = torch.pow(2, bits_all.clamp(0, MAX_GROUP_BITS))
+        bad = (
+            (~valid).any()
+            | (used & ((bits_all < 1) | (bits_all > MAX_GROUP_BITS))).any()
+            | (used & (sizes < MIN_QUANT_GROUP_ELEMENTS)).any()
+            | (used & (bits_all < MAX_GROUP_BITS) & (distinct > levels)).any()
+            | (used & (volumes != sizes)).any()
+        )
+        prefix_sums = [item[6][0].to(torch.float64).reshape(1) for item in batch if item[6] is not None]
+        values = torch.cat([bad.to(torch.float64).reshape(1), sums, *prefix_sums]).tolist()
+        if values[0]:
+            for key, stored, layout, where, *_ in batch:
+                measure_stored_bits(stored, layout, where)
+            raise RuntimeError("stored-bits batch flagged an invalid layout that the per-tensor check accepted")
+        prefix_values = iter(values[1 + len(batch):])
+        for (key, stored, *_, prefix), stored_bits in zip(batch, values[1:1 + len(batch)]):
+            self.bits[key] = float(stored_bits / stored.numel())
+            if prefix is not None:
+                self.prefix_bits[key] = float(next(prefix_values) / max(prefix[1], 1))
+
+
+def quantize_snapshot(
+    cache_snapshot,
+    quantizer: AdaptiveKVQuantizer,
+    request_meta: dict,
+    budget_state: dict,
+    measure: bool = True,
+    prefix_tokens: int | None = None,
+):
     quantized_snapshot = list(cache_snapshot)
-    kv_bits = []
+    meter = StoredBitsMeter(prefix_tokens) if measure else None
 
     for kv_kind in ("key", "value"):
         tensor_index = 0 if kv_kind == "key" else 1
@@ -736,45 +975,57 @@ def quantize_snapshot(cache_snapshot, quantizer: AdaptiveKVQuantizer, request_me
                 "budget_state": budget_state,
             }
             if tensor_index == 0:
-                result = quantizer.quantize_key(layer_id, layer_tensor, cache_meta)
+                result = quantizer.quantize_key(layer_id, layer_tensor.clone(), cache_meta)
             else:
-                result = quantizer.quantize_value(layer_id, layer_tensor, cache_meta)
-            quantized_layer, avg_bits = normalize_quantizer_result(result, layer_tensor)
-            kv_bits.append(float(avg_bits))
+                result = quantizer.quantize_value(layer_id, layer_tensor.clone(), cache_meta)
+            quantized_layer, layout = normalize_quantizer_result(result, layer_tensor)
+            quantized_layer = quantized_layer.contiguous()
+            if meter is not None:
+                meter.add((kv_kind, layer_id), quantized_layer, layout, f"layer {layer_id} {kv_kind}")
+            del layout, result
             if tensor_index == 0:
-                quantized_snapshot[layer_id] = (quantized_layer.contiguous(), values, sliding)
+                quantized_snapshot[layer_id] = (quantized_layer, values, sliding)
             else:
-                quantized_snapshot[layer_id] = (keys, quantized_layer.contiguous(), sliding)
+                quantized_snapshot[layer_id] = (keys, quantized_layer, sliding)
 
-    effective_bits = safe_mean(kv_bits)
-    return quantized_snapshot, {
+    if meter is None:
+        return quantized_snapshot, None
+    meter.flush()
+    effective_bits = safe_mean(list(meter.bits.values()))
+    efficiency = {
         "effective_kv_bits": effective_bits,
         "kv_compression_ratio": FP_BITS / max(effective_bits, 1e-6),
     }
+    if prefix_tokens is not None:
+        efficiency["prefix_kv_bits"] = safe_mean([meter.prefix_bits[key] for key in meter.bits])
+    return quantized_snapshot, efficiency
 
 
-def estimate_policy_efficiency(quantizer: AdaptiveKVQuantizer, workload_name: str, budget_bits: int, num_layers: int) -> dict:
-    budget_state = {"budget_bits": budget_bits}
-    request_meta = {"workload": workload_name}
-    quantizer.reset_request(request_meta, budget_state)
-    kv_bits = []
-    reference_span = 4096
-    for layer_id in range(num_layers):
-        for kv_kind in ("key", "value"):
-            cache_meta = {
-                "kv_kind": kv_kind,
-                "seq_len": reference_span,
-                "heads": 8,
-                "head_dim": 128,
-                "request_meta": request_meta,
-                "budget_state": budget_state,
-            }
-            kv_bits.append(float(quantizer.estimate_bits(layer_id, kv_kind, reference_span, 128, cache_meta)))
-    effective_bits = safe_mean(kv_bits)
-    return {
-        "effective_kv_bits": effective_bits,
-        "kv_compression_ratio": FP_BITS / max(effective_bits, 1e-6),
-    }
+def reference_span_snapshot(cache_snapshot, span: int = REFERENCE_KV_SPAN):
+    """Real cache tensors cropped or tiled along the token axis to the reference span."""
+
+    def fit(tensor: torch.Tensor) -> torch.Tensor:
+        seq_len = int(tensor.shape[-2])
+        if seq_len >= span:
+            return tensor[:, :, :span, :].contiguous()
+        repeats = math.ceil(span / max(seq_len, 1))
+        return tensor.repeat(1, 1, repeats, 1)[:, :, :span, :].contiguous()
+
+    return [(fit(keys), fit(values), sliding) for keys, values, sliding in cache_snapshot]
+
+
+def measure_policy_efficiency(
+    quantizer: AdaptiveKVQuantizer, cache_snapshot, request_meta: dict, budget_state: dict
+) -> dict:
+    """Measured effective bits of the quantizer on this request's real KV at the reference span."""
+    _, efficiency = quantize_snapshot(
+        reference_span_snapshot(cache_snapshot),
+        quantizer,
+        request_meta,
+        budget_state,
+        prefix_tokens=REFERENCE_KV_SPAN - RECENT_WINDOW_TOKENS,
+    )
+    return efficiency
 
 
 def register_prefill_observation_hooks(model, quantizer: AdaptiveKVQuantizer):
@@ -874,14 +1125,24 @@ def generate_with_quantized_cache(
     quantizer.reset_request(request_meta, budget_state)
     step_input, current_cache = prefill_prompt(model, tokenizer, prompt, device, quantizer)
     generated = [step_input.detach().clone()]
-    effective_kv_bits = []
-    kv_compression_ratios = []
+    decode_audit = None
+    audit_candidates = 0
 
-    for _ in range(max_new_tokens - 1):
+    for step in range(max_new_tokens - 1):
         cache_snapshot = snapshot_cache(current_cache)
-        quantized_snapshot, efficiency = quantize_snapshot(cache_snapshot, quantizer, request_meta, budget_state)
-        effective_kv_bits.append(efficiency["effective_kv_bits"])
-        kv_compression_ratios.append(efficiency["kv_compression_ratio"])
+        # Reservoir sampling (os.urandom) over the decode steps that hold older
+        # tokens: the step whose cache is scored is uniformly random, and the
+        # quantizer cannot tell which it is.
+        prefix_tokens = int(cache_snapshot[0][0].shape[-2]) - RECENT_WINDOW_TOKENS
+        audit = False
+        if prefix_tokens > 0:
+            audit_candidates += 1
+            audit = int.from_bytes(os.urandom(8), "little") % audit_candidates == 0
+        quantized_snapshot, efficiency = quantize_snapshot(
+            cache_snapshot, quantizer, request_meta, budget_state, audit, prefix_tokens if audit else None
+        )
+        if efficiency is not None:
+            decode_audit = efficiency
         quantized_cache = restore_cache(model, quantized_snapshot)
         del cache_snapshot, quantized_snapshot
         maybe_sync()
@@ -900,22 +1161,27 @@ def generate_with_quantized_cache(
         if tokenizer.eos_token_id is not None and int(step_input.item()) == int(tokenizer.eos_token_id):
             break
 
+    cache_snapshot = snapshot_cache(current_cache)
+    del current_cache
+    reference = measure_policy_efficiency(quantizer, cache_snapshot, request_meta, budget_state)
+    del cache_snapshot
+    # The reference span's older tokens are charged at the larger of their own
+    # bits and the older-token bits of the cache that generation actually used.
+    older_share = 1.0 - RECENT_WINDOW_TOKENS / REFERENCE_KV_SPAN
+    excess = 0.0
+    if decode_audit is not None:
+        excess = older_share * max(0.0, decode_audit["prefix_kv_bits"] - reference["prefix_kv_bits"])
     generated_tokens = torch.cat(generated, dim=-1)
     return decode_prediction(tokenizer, generated_tokens, workload_name), {
-        "effective_kv_bits": safe_mean(effective_kv_bits),
-        "kv_compression_ratio": safe_mean(kv_compression_ratios),
+        "scored_kv_bits": reference["effective_kv_bits"] + excess,
+        "decode_excess_bits": excess,
+        "decode_kv_bits": decode_audit["effective_kv_bits"] if decode_audit is not None else None,
     }
 
 
 def maybe_sync():
     if torch.cuda.is_available():
         torch.cuda.synchronize()
-
-
-def simulate_metrics(quantizer: AdaptiveKVQuantizer, workload_name: str, budget_bits: int) -> dict:
-    efficiency = estimate_policy_efficiency(quantizer, workload_name, budget_bits, num_layers=36)
-    compression_gain = 1.0 - efficiency["effective_kv_bits"] / FP_BITS
-    return {"final_score": 50.0 + 10.0 * compression_gain, **efficiency}
 
 
 def run_real_eval(args):
@@ -940,8 +1206,9 @@ def run_real_eval(args):
     model.eval()
 
     final_scores = []
-    effective_kv_bits = []
-    kv_compression_ratios = []
+    scored_kv_bits = []
+    decode_excess_bits = []
+    decode_kv_bits = []
 
     for example in workload.examples:
         prediction, efficiency = generate_with_quantized_cache(
@@ -955,17 +1222,33 @@ def run_real_eval(args):
             device,
         )
         final_scores.append(score_prediction(args.workload, example, prediction))
-        if efficiency["effective_kv_bits"] > 0:
-            effective_kv_bits.append(efficiency["effective_kv_bits"])
-            kv_compression_ratios.append(efficiency["kv_compression_ratio"])
+        scored_kv_bits.append(efficiency["scored_kv_bits"])
+        decode_excess_bits.append(efficiency["decode_excess_bits"])
+        if efficiency["decode_kv_bits"] is not None:
+            decode_kv_bits.append(efficiency["decode_kv_bits"])
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    num_layers = int(getattr(model.config, "num_hidden_layers", 36))
-    efficiency = estimate_policy_efficiency(quantizer, args.workload, args.budget_bits, num_layers)
-
-    metrics = {"final_score": safe_mean(final_scores), **efficiency, "runtime_seconds": time.perf_counter() - runtime_start}
-    maybe_write_output_artifacts(args.workload, {}, metrics)
+    # Scored efficiency: bits measured by the fixed harness from the stored
+    # tensors at the 4096-token reference span, with the older tokens charged at
+    # no less than the decode-time cache used, averaged over requests.
+    effective_bits = safe_mean(scored_kv_bits)
+    metrics = {
+        "final_score": safe_mean(final_scores),
+        "effective_kv_bits": effective_bits,
+        "kv_compression_ratio": FP_BITS / max(effective_bits, 1e-6),
+        "runtime_seconds": time.perf_counter() - runtime_start,
+    }
+    audit = {
+        "decode_effective_kv_bits": safe_mean(decode_kv_bits),
+        "decode_older_token_excess_bits": safe_mean(decode_excess_bits),
+    }
+    maybe_write_output_artifacts(args.workload, {}, {**metrics, **audit})
+    print(
+        f"KV_BITS_AUDIT: decode_effective_kv_bits={audit['decode_effective_kv_bits']:.6f} "
+        f"decode_older_token_excess_bits={audit['decode_older_token_excess_bits']:.6f} "
+        "(one random decode step per request; the excess is included in effective_kv_bits)"
+    )
     print(
         "TEST_METRICS: "
         f"final_score={metrics['final_score']:.6f} "
@@ -982,26 +1265,8 @@ def main():
     parser.add_argument("--model-id", default=os.environ.get("MODEL_ID", "Qwen/Qwen2.5-3B-Instruct"))
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--cpu", action="store_true")
-    parser.add_argument("--mock", action="store_true")
     parser.add_argument("--max-examples", type=int, default=DEFAULT_MAX_EXAMPLES)
     args = parser.parse_args()
-
-    quantizer = AdaptiveKVQuantizer()
-    if args.mock:
-        import time
-
-        runtime_start = time.perf_counter()
-        metrics = simulate_metrics(quantizer, args.workload, args.budget_bits)
-        metrics["runtime_seconds"] = time.perf_counter() - runtime_start
-        maybe_write_output_artifacts(args.workload, {}, metrics)
-        print(
-            "TEST_METRICS: "
-            f"final_score={metrics['final_score']:.6f} "
-            f"effective_kv_bits={metrics['effective_kv_bits']:.6f} "
-            f"kv_compression_ratio={metrics['kv_compression_ratio']:.6f} "
-            f"runtime_seconds={metrics['runtime_seconds']:.6f}"
-        )
-        return
 
     run_real_eval(args)
 

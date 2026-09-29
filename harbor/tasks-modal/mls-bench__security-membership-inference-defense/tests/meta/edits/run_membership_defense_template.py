@@ -306,33 +306,56 @@ def get_dataset(dataset, data_root, augment=False):
 # ============================================================================
 
 def auc_from_scores(member_scores, nonmember_scores):
-    """Compute AUC via Mann-Whitney U statistic (no sklearn needed)."""
-    scores = np.concatenate([member_scores, nonmember_scores])
-    labels = np.concatenate([np.ones(len(member_scores)), np.zeros(len(nonmember_scores))])
-    order = np.argsort(scores)
-    ranks = np.empty_like(order, dtype=np.float64)
-    ranks[order] = np.arange(1, len(scores) + 1)
-    pos_ranks = ranks[labels == 1].sum()
+    """Compute AUC via the Mann-Whitney U statistic (no sklearn needed).
+
+    Tied scores get their average rank, so a tie between a member and a
+    non-member counts 1/2 and a constant score gives exactly 0.5. A plain
+    argsort would break ties by array position, which put every member below
+    every non-member and turned a constant (collapsed) predictor into AUC 0.
+    Non-finite scores (a diverged model) give NaN.
+    """
+    scores = np.concatenate([member_scores, nonmember_scores]).astype(np.float64)
+    if not np.all(np.isfinite(scores)):
+        return float("nan")
     n_pos = len(member_scores)
     n_neg = len(nonmember_scores)
+    _, inverse, counts = np.unique(scores, return_inverse=True, return_counts=True)
+    avg_rank = np.cumsum(counts) - (counts - 1) / 2.0
+    ranks = avg_rank[inverse.reshape(-1)]
+    pos_ranks = ranks[:n_pos].sum()
     return float((pos_ranks - n_pos * (n_pos + 1) / 2.0) / max(n_pos * n_neg, 1))
 
 
 @torch.no_grad()
 def confidence_scores(model, loader, device):
-    """Compute max softmax probability (membership signal) and accuracy."""
-    scores = []
+    """Compute the membership signal, max softmax probability, and accuracy.
+
+    The attack ranks examples by max softmax confidence. It uses the exact
+    log-odds of that confidence, log(p_max / (1 - p_max)) = z_max -
+    logsumexp_{j != max} z_j, computed from the logits in float64: it orders
+    examples exactly as p_max does, but does not saturate. A float32 softmax
+    rounds p_max to exactly 1.0 once the logit margin passes ~17, so a loss
+    that merely inflates the logit scale would otherwise turn most examples
+    into ties and hide the train/held-out gap from the attack.
+    """
+    signals = []
+    confs = []
     correct = 0
     total = 0
     for images, labels in loader:
         images = images.to(device)
         labels = labels.to(device)
-        probs = torch.softmax(model(images), dim=1)
-        scores.append(probs.max(dim=1).values.cpu().numpy())
+        logits = model(images)
+        probs = torch.softmax(logits, dim=1)
+        confs.append(probs.max(dim=1).values.cpu().numpy())
         preds = probs.argmax(dim=1)
         correct += preds.eq(labels).sum().item()
         total += labels.size(0)
-    return np.concatenate(scores), correct / max(total, 1)
+        z = logits.double()
+        top = z.argmax(dim=1, keepdim=True)
+        rest = z.scatter(1, top, float("-inf"))
+        signals.append((z.gather(1, top).squeeze(1) - torch.logsumexp(rest, dim=1)).cpu().numpy())
+    return np.concatenate(signals), np.concatenate(confs), correct / max(total, 1)
 
 
 # ============================================================================
@@ -355,6 +378,9 @@ def main():
                         default=[150, 225],
                         help='Step-LR decay milestones (paper: 150,225 for 300-epoch run).')
     parser.add_argument('--schedule-gamma', type=float, default=0.1)
+    parser.add_argument('--warmup-epochs', type=int, default=0,
+                        help='Linear LR warmup over the first N epochs, stepped per '
+                             'iteration (0 = off).')
     parser.add_argument('--augment', action='store_true',
                         help='Enable train-time augmentation (OFF by default to match paper).')
     parser.add_argument('--seed', type=int, default=42)
@@ -417,12 +443,23 @@ def main():
         optimizer, milestones=args.schedule_milestones, gamma=args.schedule_gamma,
     )
 
+    # Optional linear warmup: over the first warmup_epochs * len(train_loader)
+    # iterations the lr rises linearly to --lr, then the step schedule above
+    # runs unchanged. VGG-16-BN on CIFAR-100 needs it: at lr 0.1 from the first
+    # step, the early updates can kill every ReLU of its classifier head, and
+    # the model then stays at chance for the rest of the run.
+    warmup_iters = args.warmup_epochs * len(train_loader)
+    step = 0
     for epoch in range(args.epochs):
         model.train()
         total_loss = 0.0
         correct = 0
         total = 0
         for images, targets in train_loader:
+            if step < warmup_iters:
+                for group in optimizer.param_groups:
+                    group['lr'] = args.lr * (step + 1) / warmup_iters
+            step += 1
             images, targets = images.to(device), targets.to(device)
             optimizer.zero_grad()
             logits = model(images)
@@ -446,16 +483,20 @@ def main():
 
     # ── 4. Evaluate: test accuracy ──
     model.eval()
-    _, test_acc = confidence_scores(model, test_loader, device)
+    _, _, test_acc = confidence_scores(model, test_loader, device)
 
     # ── 5. MIA: confidence-based membership inference ──
-    member_scores, _ = confidence_scores(model, member_eval_loader, device)
-    nonmember_scores, _ = confidence_scores(model, nonmember_eval_loader, device)
-    mia_auc = auc_from_scores(member_scores, nonmember_scores)
+    member_signal, member_conf, _ = confidence_scores(model, member_eval_loader, device)
+    nonmember_signal, nonmember_conf, _ = confidence_scores(model, nonmember_eval_loader, device)
+    mia_auc = auc_from_scores(member_signal, nonmember_signal)
 
     # ── 6. Compute privacy metrics ──
-    privacy_gap = float(member_scores.mean() - nonmember_scores.mean())
-    privacy_score = test_acc - max(mia_auc - 0.5, 0.0)
+    # privacy_gap (mean max-softmax gap) is a diagnostic only: it depends on
+    # the logit scale, not just on how separable members are.
+    privacy_gap = float(member_conf.mean() - nonmember_conf.mean())
+    # An AUC below 0.5 leaks as much as one above it (the attacker flips its
+    # decision rule), so the advantage is |mia_auc - 0.5|.
+    privacy_score = test_acc - abs(mia_auc - 0.5)
 
     print(
         f"TEST_METRICS test_acc={test_acc:.4f} mia_auc={mia_auc:.4f} "

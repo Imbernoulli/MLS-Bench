@@ -13,12 +13,16 @@ import clip
 import numpy as np
 from pathlib import Path
 from PIL import Image
+from types import SimpleNamespace
+from diffusers import StableDiffusionPipeline, StableDiffusionXLPipeline
 from munch import munchify
 from torchvision.utils import save_image
 from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
 from pytorch_fid.inception import InceptionV3
 
+import latent_diffusion
+import latent_sdxl
 from latent_diffusion import get_solver
 from latent_sdxl import get_solver as get_solver_sdxl
 from utils.log_util import set_seed
@@ -106,6 +110,89 @@ def compute_fid(gen_dir, ref_stats_path, device, batch_size=50):
     return fid
 
 
+# ── NFE accounting (fixed; do not modify) ────────────────────────────
+# The sampler is scored under a fixed budget of --NFE denoiser evaluations per
+# image, so the budget is measured here rather than taken on trust. The fixed
+# StableDiffusion / SDXL base-class __init__ loads its pipeline through the
+# module-level StableDiffusionPipeline / StableDiffusionXLPipeline name; both
+# names are pointed at a loader that returns the pipeline's components with
+# the UNet already swapped for a counting facade, so `self.unet = pipe.unet`
+# stores the facade and the solver never receives the raw network, which the
+# facade holds only in a closure. Every evaluation the sampler can make,
+# whether through predict_noise() or a direct self.unet(...) call, goes
+# through the counter, which lives in this file and nowhere the sampler can
+# reach.
+#
+# One NFE is one UNet forward over at most two latent rows, i.e. one
+# denoiser evaluation of the (single) image being generated: the batched
+# unconditional+conditional pair of classifier-free guidance counts as 1, and
+# so does a single-branch (conditional-only or unconditional-only) call. A
+# call over more rows counts ceil(rows / 2), so batching extra latents or
+# timesteps into one call spends budget like separate calls would.
+def _counted_unet(net, nfe):
+    """self.unet as the sampler sees it: callable like the UNet, and counted."""
+    config = net.config
+    add_embedding = getattr(net, "add_embedding", None)
+
+    class CountedUNet:
+        __slots__ = ()
+
+        def __call__(self, sample, *args, **kwargs):
+            rows = int(sample.shape[0]) if sample.dim() > 3 else 1
+            nfe[0] += max(1, (rows + 1) // 2)
+            return net(sample, *args, **kwargs)
+
+        @property
+        def config(self):
+            return config
+
+        @property
+        def add_embedding(self):  # read by SDXL._get_add_time_ids
+            return add_embedding
+
+        @property
+        def dtype(self):
+            return net.dtype
+
+        @property
+        def device(self):
+            return net.device
+
+    return CountedUNet()
+
+
+def install_nfe_counter():
+    """Make the fixed base classes load a counted UNet; return (nfe, check).
+
+    nfe[0] counts evaluations; check(solver) rejects a solver whose self.unet
+    is not the facade its base-class __init__ was given.
+    """
+    nfe, facades = [0], []
+
+    def counting(pipeline_cls):
+        def from_pretrained(*args, **kwargs):
+            loaded = pipeline_cls.from_pretrained(*args, **kwargs)
+
+            def to(*to_args, **to_kwargs):
+                pipe = loaded.to(*to_args, **to_kwargs)
+                parts = {k: v for k, v in pipe.components.items() if k != "unet"}
+                facades.append(_counted_unet(pipe.unet, nfe))
+                return SimpleNamespace(unet=facades[-1], **parts)
+            return SimpleNamespace(to=to)
+        return SimpleNamespace(from_pretrained=from_pretrained)
+
+    latent_diffusion.StableDiffusionPipeline = counting(StableDiffusionPipeline)
+    latent_sdxl.StableDiffusionXLPipeline = counting(StableDiffusionXLPipeline)
+
+    def check(solver):
+        if not any(getattr(solver, "unet", None) is f for f in facades):
+            raise RuntimeError("NFE accounting: solver.unet is not the counted UNet the fixed "
+                               "StableDiffusion/SDXL __init__ loaded; the solver must call "
+                               "super().__init__() and evaluate the denoiser only through "
+                               "self.unet / self.predict_noise().")
+    return nfe, check
+
+
 def main():
     rank, world_size = setup_ddp()
     device = torch.device(f"cuda:{rank}")
@@ -146,6 +233,7 @@ def main():
     # Load diffusion model on this rank's device
     if rank == 0:
         print(f"[{args.model}] Loading model...", flush=True)
+    nfe, check_counted = install_nfe_counter()
     if args.model == "sdxl":
         solver = get_solver_sdxl(
             args.method, solver_config=solver_config, device=device)
@@ -159,6 +247,8 @@ def main():
             model_key=model_keys[args.model], device=device)
     if rank == 0:
         print(f"[{args.model}] Model loaded on {world_size} GPUs.", flush=True)
+    check_counted(solver)
+    nfe_max = 0
 
     # Load CLIP model
     clip_model, preprocess = clip.load("ViT-B/32", device=device,
@@ -167,6 +257,7 @@ def main():
     # Generate images and compute CLIP scores
     clip_scores = []
     for count, (global_idx, prompt) in enumerate(zip(my_indices, my_prompts)):
+        nfe[0] = 0
         if args.model == "sdxl":
             result = solver.sample(
                 prompt1=["", prompt],
@@ -177,6 +268,16 @@ def main():
             result = solver.sample(
                 prompt=["", prompt],
                 cfg_guidance=args.cfg_guidance)
+        if nfe[0] > args.NFE:
+            raise RuntimeError(
+                f"NFE_BUDGET_EXCEEDED: the sampler spent {nfe[0]} denoiser evaluations "
+                f"on image {global_idx} (budget NFE={args.NFE}; the batched cond+uncond "
+                f"CFG pair counts as 1). The run is rejected.")
+        if nfe[0] == 0:
+            raise RuntimeError(
+                f"NFE accounting: the sampler made no denoiser evaluation for image "
+                f"{global_idx}; images must be generated by the diffusion UNet.")
+        nfe_max = max(nfe_max, nfe[0])
 
         img_path = args.workdir / f"{str(global_idx).zfill(5)}.png"
         save_image(result, img_path, normalize=True)
@@ -199,9 +300,11 @@ def main():
     # Gather CLIP scores from all ranks
     local_clip_sum = torch.tensor(sum(clip_scores), device=device)
     local_clip_cnt = torch.tensor(len(clip_scores), device=device)
+    local_nfe_max = torch.tensor(nfe_max, device=device)
     if world_size > 1:
         dist.all_reduce(local_clip_sum, op=dist.ReduceOp.SUM)
         dist.all_reduce(local_clip_cnt, op=dist.ReduceOp.SUM)
+        dist.all_reduce(local_nfe_max, op=dist.ReduceOp.MAX)
         dist.barrier()
 
     # Only rank 0 computes FID and prints final metrics
@@ -214,7 +317,8 @@ def main():
 
         avg_clip = (local_clip_sum / local_clip_cnt).item()
         print(f"GENERATION_METRICS model={args.model} method={args.method} "
-              f"cfg_guidance={args.cfg_guidance} NFE={args.NFE} seed={args.seed} "
+              f"cfg_guidance={args.cfg_guidance} NFE={args.NFE} "
+              f"nfe_used={int(local_nfe_max.item())} seed={args.seed} "
               f"fid={fid:.4f} clip_score={avg_clip:.4f}",
               flush=True)
 

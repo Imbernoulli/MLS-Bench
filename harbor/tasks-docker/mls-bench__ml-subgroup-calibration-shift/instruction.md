@@ -35,6 +35,8 @@ The method must produce valid probabilities; `groups` may be ignored by group-ag
 ## Fixed Pipeline
 The datasets, the (intentionally shifted) train/calibration/test splits, the base classifier, the subgroup definitions, and the metric computation are fixed by the harness and not editable. Calibration is fit on the calibration set and evaluated on the shifted test set; worst-subgroup calibration error is the primary metric.
 
+The scored metrics are `worst_group_ece`, `brier`, and `max_subgroup_gap` (max minus min per-subgroup ECE), all lower-is-better; `subgroup_auroc` is reported diagnostically. The calibrated probabilities must keep the base classifier's ability to discriminate: two constraints multiply each dataset's score. `auroc_retention` (`subgroup_auroc` over the base classifier's own subgroup AUROC) is penalized below 0.9, and `slope_retention` (the discrimination slope `E[p | y=1] − E[p | y=0]` over the base classifier's) is penalized below 0.5. A constant or near-constant predictor, such as always predicting the calibration base rate, therefore scores near zero.
+
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -339,72 +341,94 @@ stay unchanged.
    275:     return model
    276: 
    277: 
-   278: def _evaluate(probs, labels, groups):
-   279:     probs = np.asarray(probs).reshape(-1)
-   280:     labels = np.asarray(labels).reshape(-1).astype(int)
-   281:     groups = np.asarray(groups).reshape(-1).astype(int)
-   282: 
-   283:     group_ece = []
-   284:     group_auc = []
-   285:     for g in np.unique(groups):
-   286:         mask = groups == g
-   287:         if mask.sum() < 5:
-   288:             continue
-   289:         group_ece.append(expected_calibration_error(probs[mask], labels[mask]))
-   290:         group_auc.append(_safe_auc(labels[mask], probs[mask]))
-   291: 
-   292:     worst_group_ece = float(np.max(group_ece)) if group_ece else float("nan")
-   293:     subgroup_auroc = float(np.nanmean(group_auc)) if group_auc else float("nan")
-   294:     max_subgroup_gap = float(np.max(group_ece) - np.min(group_ece)) if len(group_ece) > 1 else float("nan")
-   295:     brier = float(brier_score_loss(labels, probs))
-   296:     return {
-   297:         "worst_group_ece": worst_group_ece,
-   298:         "brier": brier,
-   299:         "subgroup_auroc": subgroup_auroc,
-   300:         "max_subgroup_gap": max_subgroup_gap,
-   301:     }
-   302: 
-   303: 
-   304: def main():
-   305:     parser = argparse.ArgumentParser()
-   306:     parser.add_argument("--dataset", choices=["adult", "compas", "law_school"], required=True)
-   307:     parser.add_argument("--seed", type=int, default=42)
-   308:     parser.add_argument("--output-dir", default="./output")
-   309:     args = parser.parse_args()
-   310: 
-   311:     os.makedirs(args.output_dir, exist_ok=True)
-   312: 
-   313:     X, y, domain_score, groups = _load_dataset(args.dataset)
-   314:     train_idx, calib_idx, test_idx = _shifted_split(y, domain_score, seed=args.seed)
-   315: 
-   316:     model = _fit_base_classifier(X[train_idx], y[train_idx], seed=args.seed)
-   317:     cal_probs = model.predict_proba(X[calib_idx])[:, 1]
-   318:     test_probs = model.predict_proba(X[test_idx])[:, 1]
-   319: 
-   320:     method = CalibrationMethod().fit(cal_probs, y[calib_idx], groups=groups[calib_idx])
-   321:     cal_probs_hat = method.predict_proba(cal_probs, groups=groups[calib_idx])
-   322:     test_probs_hat = method.predict_proba(test_probs, groups=groups[test_idx])
+   278: def _discrimination_slope(probs, labels):
+   279:     # Tjur's coefficient of discrimination: E[p | y=1] - E[p | y=0].
+   280:     if np.unique(labels).size < 2:
+   281:         return float("nan")
+   282:     return float(probs[labels == 1].mean() - probs[labels == 0].mean())
+   283: 
+   284: 
+   285: def _evaluate(probs, labels, groups, base_probs):
+   286:     probs = np.asarray(probs).reshape(-1)
+   287:     labels = np.asarray(labels).reshape(-1).astype(int)
+   288:     groups = np.asarray(groups).reshape(-1).astype(int)
+   289:     base_probs = np.asarray(base_probs).reshape(-1)
+   290: 
+   291:     group_ece = []
+   292:     group_auc = []
+   293:     base_group_auc = []
+   294:     for g in np.unique(groups):
+   295:         mask = groups == g
+   296:         if mask.sum() < 5:
+   297:             continue
+   298:         group_ece.append(expected_calibration_error(probs[mask], labels[mask]))
+   299:         group_auc.append(_safe_auc(labels[mask], probs[mask]))
+   300:         base_group_auc.append(_safe_auc(labels[mask], base_probs[mask]))
+   301: 
+   302:     worst_group_ece = float(np.max(group_ece)) if group_ece else float("nan")
+   303:     subgroup_auroc = float(np.nanmean(group_auc)) if group_auc else float("nan")
+   304:     base_subgroup_auroc = float(np.nanmean(base_group_auc)) if base_group_auc else float("nan")
+   305:     # Disparity of calibration across subgroups: max - min per-subgroup ECE.
+   306:     max_subgroup_gap = float(np.max(group_ece) - np.min(group_ece)) if len(group_ece) > 1 else float("nan")
+   307:     brier = float(brier_score_loss(labels, probs))
+   308:     # Discrimination kept relative to the fixed base classifier. A monotonic
+   309:     # recalibration keeps auroc_retention near 1, while a constant or
+   310:     # rank-destroying map lowers it to 0.5 / base AUROC. slope_retention
+   311:     # (clipped at 0) also catches a near-constant map that keeps the ranking
+   312:     # but spreads its probabilities over almost nothing.
+   313:     auroc_retention = subgroup_auroc / base_subgroup_auroc
+   314:     slope_retention = max(0.0, _discrimination_slope(probs, labels) / _discrimination_slope(base_probs, labels))
+   315:     return {
+   316:         "worst_group_ece": worst_group_ece,
+   317:         "brier": brier,
+   318:         "subgroup_auroc": subgroup_auroc,
+   319:         "max_subgroup_gap": max_subgroup_gap,
+   320:         "auroc_retention": auroc_retention,
+   321:         "slope_retention": slope_retention,
+   322:     }
    323: 
-   324:     print(
-   325:         "TRAIN_METRICS: "
-   326:         f"dataset={args.dataset} "
-   327:         f"cal_ece_before={expected_calibration_error(cal_probs, y[calib_idx]):.6f} "
-   328:         f"cal_ece_after={expected_calibration_error(cal_probs_hat, y[calib_idx]):.6f} "
-   329:         f"cal_brier_before={brier_score_loss(y[calib_idx], cal_probs):.6f} "
-   330:         f"cal_brier_after={brier_score_loss(y[calib_idx], cal_probs_hat):.6f}",
-   331:         flush=True,
-   332:     )
+   324: 
+   325: def main():
+   326:     parser = argparse.ArgumentParser()
+   327:     parser.add_argument("--dataset", choices=["adult", "compas", "law_school"], required=True)
+   328:     parser.add_argument("--seed", type=int, default=42)
+   329:     parser.add_argument("--output-dir", default="./output")
+   330:     args = parser.parse_args()
+   331: 
+   332:     os.makedirs(args.output_dir, exist_ok=True)
    333: 
-   334:     test_metrics = _evaluate(test_probs_hat, y[test_idx], groups[test_idx])
-   335:     print(
-   336:         "TEST_METRICS: "
-   337:         + " ".join(f"{k}={v:.6f}" for k, v in test_metrics.items()),
-   338:         flush=True,
-   339:     )
-   340: 
+   334:     X, y, domain_score, groups = _load_dataset(args.dataset)
+   335:     train_idx, calib_idx, test_idx = _shifted_split(y, domain_score, seed=args.seed)
+   336: 
+   337:     model = _fit_base_classifier(X[train_idx], y[train_idx], seed=args.seed)
+   338:     cal_probs = model.predict_proba(X[calib_idx])[:, 1]
+   339:     test_probs = model.predict_proba(X[test_idx])[:, 1]
+   340:     base_test_probs = test_probs.copy()  # private reference; the method never sees it
    341: 
-   342: if __name__ == "__main__":
-   343:     main()
+   342:     method = CalibrationMethod().fit(cal_probs, y[calib_idx], groups=groups[calib_idx])
+   343:     cal_probs_hat = method.predict_proba(cal_probs, groups=groups[calib_idx])
+   344:     test_probs_hat = method.predict_proba(test_probs, groups=groups[test_idx])
+   345: 
+   346:     print(
+   347:         "TRAIN_METRICS: "
+   348:         f"dataset={args.dataset} "
+   349:         f"cal_ece_before={expected_calibration_error(cal_probs, y[calib_idx]):.6f} "
+   350:         f"cal_ece_after={expected_calibration_error(cal_probs_hat, y[calib_idx]):.6f} "
+   351:         f"cal_brier_before={brier_score_loss(y[calib_idx], cal_probs):.6f} "
+   352:         f"cal_brier_after={brier_score_loss(y[calib_idx], cal_probs_hat):.6f}",
+   353:         flush=True,
+   354:     )
+   355: 
+   356:     test_metrics = _evaluate(test_probs_hat, y[test_idx], groups[test_idx], base_test_probs)
+   357:     print(
+   358:         "TEST_METRICS: "
+   359:         + " ".join(f"{k}={v:.6f}" for k, v in test_metrics.items()),
+   360:         flush=True,
+   361:     )
+   362: 
+   363: 
+   364: if __name__ == "__main__":
+   365:     main()
 ```
 
 ## Reference Baselines

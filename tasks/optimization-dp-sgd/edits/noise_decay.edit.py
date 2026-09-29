@@ -30,10 +30,10 @@ class DPMechanism:
     Decays noise multiplier and clipping threshold over training epochs
     to allocate more privacy budget to later (more useful) training steps.
 
-    Privacy accounting: tracks cumulative RDP per-step using the actual
-    sigma at each step, then returns an equivalent uniform sigma so
-    that the external ``compute_epsilon(steps, sigma, q, delta)`` call
-    produces the correct (tight) epsilon.
+    Privacy accounting: sigma_0 is calibrated so that the full decayed
+    schedule spends the target budget under the harness's accountant
+    (compute_epsilon_schedule); the fixed harness composes the per-step
+    sigma it actually applied.
     \"\"\"
 
     def __init__(self, max_grad_norm, noise_multiplier, n_params,
@@ -53,36 +53,36 @@ class DPMechanism:
         self.noise_decay_factor = 0.8  # Reduce noise by 20% at each stage
         self.clip_decay_factor = 0.85  # Reduce clip norm by 15% at each stage
 
-        # Pre-compute the per-epoch sigma schedule so we can do accurate
-        # RDP accounting.  Steps per epoch = dataset_size // batch_size
-        # (drop_last=True in DataLoader).
+        # Per-epoch sigma schedule for the RDP accounting. Steps per epoch =
+        # dataset_size // batch_size (drop_last=True in DataLoader).
         self.steps_per_epoch = dataset_size // batch_size
+        q = batch_size / dataset_size
 
-        # Compute sigma_0: scale the calibrated (uniform) sigma up so that
-        # the harmonic-mean-equivalent sigma across all steps equals the
-        # calibrated value.  This keeps the total privacy spend equal to
-        # the budget even though individual steps have different noise.
-        total_steps = self.steps_per_epoch * epochs
-        inv_sq_sum = 0.0
-        for e in range(1, epochs + 1):
-            stage = (e - 1) // self.decay_interval
-            factor = self.noise_decay_factor ** stage
-            # Each epoch contributes steps_per_epoch steps at sigma_0*factor
-            # 1/sigma_t^2 = 1/(sigma_0*factor)^2 = 1/(sigma_0^2 * factor^2)
-            inv_sq_sum += self.steps_per_epoch / (factor * factor)
-        # sigma_eff = sqrt(total_steps / inv_sq_sum) * sigma_0
-        # We want sigma_eff == noise_multiplier (the calibrated value), so:
-        #   noise_multiplier = sigma_0 * sqrt(total_steps / inv_sq_sum)
-        #   sigma_0 = noise_multiplier / sqrt(total_steps / inv_sq_sum)
-        #           = noise_multiplier * sqrt(inv_sq_sum / total_steps)
-        self.sigma_0 = noise_multiplier * (inv_sq_sum / total_steps) ** 0.5
+        def schedule(sigma_0):
+            return [(sigma_0 * (self.noise_decay_factor ** ((e - 1) // self.decay_interval)),
+                     self.steps_per_epoch) for e in range(1, epochs + 1)]
+
+        # Calibrate sigma_0 by bisection: the smallest sigma_0 whose decayed
+        # schedule stays within the budget. sigma_0 = noise_multiplier (the
+        # calibrated uniform sigma) over-spends once sigma decays; at the upper
+        # end every step's sigma is >= noise_multiplier.
+        lo = noise_multiplier
+        hi = noise_multiplier / self.noise_decay_factor ** ((epochs - 1) // self.decay_interval)
+        while hi - lo > 1e-4 * hi:
+            mid = (lo + hi) / 2
+            eps, _ = compute_epsilon_schedule(schedule(mid), q, target_delta)
+            if eps > target_epsilon:
+                lo = mid
+            else:
+                hi = mid
+        self.sigma_0 = hi
         self.clip_0 = max_grad_norm
 
         # Current values
         self._current_sigma = self.sigma_0
         self._current_clip = self.clip_0
 
-    def clip_and_noise(self, per_sample_grads, step, epoch):
+    def clip(self, per_sample_grads, step, epoch):
         batch_size = per_sample_grads[0].shape[0]
 
         # Update schedule based on epoch
@@ -97,50 +97,13 @@ class DPMechanism:
         # Clip per-sample gradients using current (decayed) threshold
         clip_factor = (self._current_clip / norms.clamp(min=1e-8)).clamp(max=1.0)
 
-        noised_grads = []
-        for g in per_sample_grads:
-            shape = [batch_size] + [1] * (g.dim() - 1)
-            clipped = g * clip_factor.reshape(shape)
+        # The harness adds noise calibrated to the current clip norm and sigma
+        return clip_factor, self._current_clip
 
-            # Average over batch
-            avg = clipped.mean(dim=0)
-
-            # Add noise calibrated to current clip norm and sigma
-            noise = torch.randn_like(avg) * (
-                self._current_sigma * self._current_clip / batch_size
-            )
-            noised_grads.append(avg + noise)
-
-        return noised_grads
-
-    def get_effective_sigma(self, step, epoch):
-        \"\"\"Return equivalent uniform sigma for accurate RDP accounting.
-
-        Computes the harmonic-mean-equivalent sigma over all steps up to
-        the current point, so that the external call
-        ``compute_epsilon(step, sigma_eff, q, delta)`` which assumes a
-        uniform sigma gives the same epsilon as step-by-step RDP
-        accounting with the actual per-step sigma values.
-
-        sigma_eff = sqrt(steps / sum_{t=1}^{steps} 1/sigma_t^2)
-        \"\"\"
-        if step <= 0:
-            return self.sigma_0
-        # Accumulate 1/sigma_t^2 across completed steps
-        inv_sq_sum = 0.0
-        steps_counted = 0
-        for e in range(1, self.epochs + 1):
-            stage = (e - 1) // self.decay_interval
-            sigma_e = self.sigma_0 * (self.noise_decay_factor ** stage)
-            inv_sq_e = 1.0 / (sigma_e * sigma_e)
-            epoch_steps = min(self.steps_per_epoch, step - steps_counted)
-            if epoch_steps <= 0:
-                break
-            inv_sq_sum += epoch_steps * inv_sq_e
-            steps_counted += epoch_steps
-        if inv_sq_sum == 0:
-            return self.sigma_0
-        return (steps_counted / inv_sq_sum) ** 0.5
+    def get_noise_multiplier(self, step, epoch):
+        \"\"\"Current (decayed) noise multiplier; the harness accounts each
+        step with the sigma it actually applied.\"\"\"
+        return self._current_sigma
 """
 
 OPS = [

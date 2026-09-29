@@ -108,7 +108,6 @@ _LGBM_HANDLER = """\
             - class: CSRankNorm
               kwargs:
                 fields_group: label
-          label: ["Ref($close, -2) / Ref($close, -1) - 1"]
 """
 
 OPS = [
@@ -116,7 +115,7 @@ OPS = [
         "op": "replace",
         "file": _WORKFLOW_FILE,
         "start_line": 32,
-        "end_line": 45,
+        "end_line": 44,
         "content": _LGBM_HANDLER,
     },
     {

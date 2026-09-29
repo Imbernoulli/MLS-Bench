@@ -36,11 +36,13 @@ Available utilities (in the FIXED section):
 ## Evaluation
 Evaluated on three bandit settings (lower regret is better):
 
-1. **Stochastic MAB**: 10-armed Bernoulli bandit, T = 10,000 rounds. Arms have fixed reward probabilities.
-2. **Contextual**: 5-armed linear contextual bandit with `d = 10` features, T = 10,000 rounds. Expected reward is a linear function of the context.
-3. **Non-stationary**: 5-armed piece-wise stationary Bernoulli bandit with 4 abrupt changepoints, T = 10,000 rounds. The best arm changes over time.
+1. **Stochastic MAB**: 10-armed Bernoulli bandit, T = 10,000 rounds. Arms have fixed reward probabilities: the best mean is drawn from U[0.7, 0.9] and the other nine from U[0.1, best - 0.1].
+2. **Contextual**: 5-armed linear contextual bandit with `d = 10` features, T = 10,000 rounds. Expected reward is a linear function of the context (`x^T theta_a`, with `||theta_a|| = 0.5` in a random direction and `x` uniform on the unit sphere).
+3. **Non-stationary**: 5-armed piece-wise stationary Bernoulli bandit with 4 abrupt changepoints (near t = 2000, 4000, 6000, 8000, each jittered by up to ±400 rounds), T = 10,000 rounds. The best arm changes at every changepoint.
 
-Metric: normalized cumulative regret = `(cumulative regret) / T`.
+The environments live in the read-only harness `SMPyBandits/mlsb_bandit_harness.py`, which runs your `custom_bandit.py` as a separate process and drives `BanditPolicy` over a pipe. Every problem instance (arm means, parameters, changepoints, noise, contexts) is drawn from fresh OS entropy on each run and is never visible to your code; `SEED` seeds only your policy's `np.random`.
+
+Metric: normalized cumulative regret = `(cumulative regret) / T`, averaged over 10 independent instances per setting.
 
 ## Baselines (paper-cited reference implementations from SMPyBandits)
 - **ucb1** — Auer, Cesa-Bianchi, and Fischer (*Machine Learning* 2002); paper-default exploration constant `c = 2` in the `sqrt(c log t / n_a)` term.

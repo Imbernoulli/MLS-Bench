@@ -41,6 +41,17 @@ Modify only the `SelectionPolicy` class in
 - `score_tokens(module, hidden_states, keys, values, kwargs, plan)`
 - `select_cache(module, keys, values, scores, n_kept)`
 
+`module` is the layer's attention module (projections, rotary embedding,
+config) and `kwargs` are its forward keyword arguments (position
+embeddings, attention mask, position ids, cache position) with the
+KV-cache handle removed, so the policy never holds the cache the decode
+loop reads. The policy affects decoding only through the
+`(keys, values)` pair that `select_cache` returns: the harness snapshots
+the cache and its layers, every attention module (hooks, submodules,
+attributes, `forward`), the model config and the attention-function
+registry before the prefill, and aborts the run if any of them differs
+after the prefill or after decoding.
+
 The harness owns the model, datasets, prompt templates, cache budget,
 decode loop, and scoring. The editable policy owns the retention metadata
 and the per-token scoring rule used to rank prefill KV entries. The shared
@@ -93,6 +104,7 @@ cache state:
 | Field | Status | Notes |
 |---|---|---|
 | `compression_ratio` | enforced | Harness force-overrides to its own value at the call site (`PrefillSelectionCompressor.forward_hook`). Policies cannot lie about the budget. |
+| `n_kept` | enforced | `select_cache` must return plain `torch.Tensor` keys and values that keep at most `n_kept` tokens along the sequence dimension and leave every other dimension unchanged; a larger or malformed selection aborts the run. The retained fraction is measured from the returned tensors. The cap applies to every layer separately, so budgets that shift tokens between layers cannot be expressed; a layer may keep fewer than `n_kept`. |
 | `disable_compression` | enforced | If `True`, harness skips `score_tokens`/`select_cache` entirely and retains all tokens. Used by the `full_attention` anchor. |
 | `method` | logged only | Recorded for provenance. |
 | `sink_tokens`, `lag_size`, `n_future_positions`, `subspace_dim`, etc. | advisory | Used internally by the policy's own `score_tokens`. The harness does not verify that declared "sinks" are actually preserved by `select_cache`'s top-K output. |

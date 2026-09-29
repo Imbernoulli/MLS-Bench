@@ -56,8 +56,9 @@ Reported metrics:
 - `eval_return` — mean evaluation episodic return at the fixed training
   budget.
 - `auc` — area under the evaluation-return curve across training.
-- `nonzero_rate` — fraction of evaluation episodes with non-zero
-  episodic return.
+- `nonzero_rate` — fraction of evaluation episodes with a positive
+  episodic return (a negative return, e.g. from hitting hazards, does
+  not count).
 
 Evaluation uses deterministic rollouts with a fixed per-episode step
 cap so that non-terminating Atari behavior cannot stall the benchmark.

@@ -62,8 +62,10 @@ class CausalSelfAttention(nn.Module):
         )
         k, v = kv.chunk(2, dim=2)
         q = q.view(bsz, seq_len, self.n_head, self.head_dim).transpose(1, 2)
-        k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
-        v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim).transpose(1, 2)
+        k = k.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+        v = v.view(bsz, seq_len, self.n_kv_head, self.head_dim)
+        k, v = kv_cache(k, v)  # the per-token KV state this layer caches
+        k, v = k.transpose(1, 2), v.transpose(1, 2)
         repeat_factor = self.n_head // self.n_kv_head
         k = k.repeat_interleave(repeat_factor, dim=1)
         v = v.repeat_interleave(repeat_factor, dim=1)

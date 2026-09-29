@@ -31,7 +31,9 @@ The bound can be further tightened through:
 Implement the `BoundOptimizer` class in `custom_pac_bayes.py`. You must implement:
 1. `compute_bound(empirical_risk, kl, n, delta)` — the PAC-Bayes bound formula.
 2. `train_step(model, data, target, device, n_bound, delta)` — training objective.
-3. `compute_risk_certificate(model, bound_loader, device, delta, mc_samples)` — final certificate evaluation.
+3. `compute_risk_certificate(model, bound_loader, device, delta, mc_samples)` — your own certificate evaluation, printed for reference only.
+
+The scored metrics (`risk_certificate`, `test_error`, `ce_bound`, `empirical_01_risk`; `kl_divergence` is reported and enters both bounds but is not scored on its own) are computed by fixed code (`evaluate_certificate` in `custom_pac_bayes.py`) from the trained posterior's parameters and the prior fixed before posterior training: the MC majority-vote 0-1 risk on the bound set, the closed-form `KL(Q || P)`, the PAC-Bayes-kl inversion `kl^-1(risk, (KL + log(2 sqrt(n) / delta)) / n)` as `risk_certificate`, and the McAllester bound on the cross-entropy scaled to `[0, 1]` (log-probabilities floored at `log(1e-5)`), `nll / log(1e5) + sqrt((KL + log(2 sqrt(n) / delta)) / (2n))`, as `ce_bound`. Nothing `compute_risk_certificate` or `compute_bound` returns enters the score. The prior (its mean and `prior_sigma`) must not be modified; a run that modifies it fails.
 
 ## Interface
 - `model(x, sample=True/False)`: stochastic forward pass (`sample=True`) or posterior mean (`sample=False`).
@@ -84,10 +86,10 @@ Other files you may **read** for context (do not modify):
      6: The agent edits the EDITABLE section (BoundOptimizer class) which controls:
      7:   1. How the PAC-Bayes bound is computed from empirical risk + KL divergence
      8:   2. How the posterior distribution is optimized (training objective)
-     9:   3. How the final risk certificate is evaluated
+     9:   3. A reference risk certificate (printed, not scored)
     10: 
     11: Fixed sections handle data loading, model architecture, stochastic layers,
-    12: and the outer training loop.
+    12: the outer training loop and the scored risk certificate.
     13: """
     14: 
     15: import argparse

@@ -41,16 +41,30 @@ calls the editable class:
 - `needs_prefill_qkv_observer() -> bool`
 - `query_observation_position() -> str`
 - `observe_prefill_qkv(layer_id, query_states, key_states, value_states, attention_meta)`
-- `quantize_key(layer_id, key_states, cache_meta) -> tensor | (tensor, avg_bits)`
-- `quantize_value(layer_id, value_states, cache_meta) -> tensor | (tensor, avg_bits)`
-- `estimate_bits(layer_id, kv_kind, seq_len, head_dim, cache_meta) -> float`
+- `quantize_key(layer_id, key_states, cache_meta) -> tensor | (tensor, layout)`
+- `quantize_value(layer_id, value_states, cache_meta) -> tensor | (tensor, layout)`
 
 `key_states` and `value_states` have shape
 `[batch, heads, seq_len, head_dim]`. The class implements the actual tensor
 algorithm: grouping, asymmetric ranges, zero-points, per-layer bit presets,
-residual retention, query-subspace transforms, and memory accounting all
-belong inside this class. The task does not expose a fixed algorithm enum
-or a backend selector.
+residual retention, and query-subspace transforms all belong inside this
+class. The task does not expose a fixed algorithm enum or a backend selector.
+
+KV memory is measured by the fixed harness, not self-reported. `layout` is
+`{"group_ids": ..., "group_bits": ...}`: `group_ids` is an integer tensor
+with the returned tensor's shape that maps every element to a quantization
+group (`-1` = kept at FP16), and `group_bits` is a 1-D integer tensor of
+per-group bit-widths in `[1, 16]`. Every used group must exactly fill an
+axis-aligned box of the returned tensor (for example a run of tokens in one
+channel, a run of channels in one token, or a tile), hold at least 32
+elements, and hold at most `2**bits` distinct stored values, otherwise the
+run aborts; an arbitrary element-to-group map would be uncharged side
+information. Returning a bare tensor (or a `None` layout) charges every
+element at FP16. Scale/zero-point metadata is not charged. Bits are counted
+on the returned tensor in its own coordinates, the values attention reads: a
+transform-domain quantizer (for example a rotation) whose inverse-transformed
+values are not `2**bits` distinct values per group must declare more bits,
+and a 32-element group of arbitrary values needs 5.
 
 ## What You Cannot Modify
 
@@ -81,13 +95,24 @@ For NIAH the canonical needle is:
 The parser expects one `TEST_METRICS:` line per workload with:
 
 - `final_score`: benchmark-native quality on a 0-100 scale
-- `effective_kv_bits`: quantizer-level effective KV bits per cached element
+- `effective_kv_bits`: effective KV bits per cached element, measured by the
+  harness from the stored tensors and their layouts
 - `kv_compression_ratio`: `16 / effective_kv_bits`, using FP16 KV as the
   reference footprint
 - `runtime_seconds`: task-level wall-clock runtime for the workload command
 
-`effective_kv_bits` is computed from the submitted quantizer at a 4096-token
-reference KV span so the efficiency term is hardware-independent.
+`effective_kv_bits` is measured at a 4096-token reference KV span so the
+efficiency term is hardware-independent: after each request the harness
+quantizes that request's real KV cache, cropped or tiled to 4096 tokens,
+with the submitted quantizer and measures the bits. The cache used for
+generation is measured too: at one uniformly random decode step per
+request (the quantizer cannot tell which), the harness measures the bits the
+returned tensors store on their older tokens, all but the most recent 160.
+The reference span's older tokens (its first 3936) are charged at the larger
+of their own bits and these decode-time bits, so storing less at the
+reference length than during decoding gains nothing; only the most recent
+160 tokens are accounted at the reference span alone. The per-request bits
+are averaged over requests.
 
 ## Baselines
 
@@ -127,7 +152,10 @@ The leaderboard uses the standard mature MLS-Bench text-task pattern:
   the final score (this tensor-replay harness is not a runtime-native
   packed-cache speed benchmark)
 - each workload score is a weighted mean with quality weight `6` and KV
-  efficiency weight `4`
+  efficiency weight `4`, multiplied by a quality gate: below 90% of the
+  worst current baseline's quality on that workload the score is scaled by
+  `exp(-s * (target - quality))`, with `s` set so that quality 0 gives
+  `x0.01`, so compression cannot score when output quality collapses
 - the task score is the geometric mean across the LongBench-E workloads,
   NIAH, and GSM8K
 

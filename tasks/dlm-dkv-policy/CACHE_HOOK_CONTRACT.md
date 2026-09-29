@@ -27,7 +27,7 @@ The union of the audited implementations opens these hook points:
 
 | Hook | Purpose | Required by |
 |---|---|---|
-| `block_schedule(request_meta)` | Generation length, block length, and per-block step count. | dLLM-Cache, d2Cache |
+| `block_schedule(request_meta)` | Block length and per-block step count (the generation length is fixed per workload). | dLLM-Cache, d2Cache |
 | `query_plan(step_meta, mask_state, cache_state)` | Which token positions are forwarded this step; supports full sequence, active query rows, tracked tokens, and sliding masked windows. | d2Cache, Elastic-Cache |
 | `cache_refresh_plan(layer_meta, step_meta, token_stats, cache_state)` | Per-layer/per-segment recompute vs reuse; supports prompt/gen interval refresh, selected-row refresh, cached-row update, and layer reset. | dLLM-Cache, d2Cache, Elastic-Cache |
 | `attention_probe_plan(layer_meta, step_meta)` | Whether attention weights or similarity probes are needed, and the parameters used by those probes. | d2Cache, Elastic-Cache |

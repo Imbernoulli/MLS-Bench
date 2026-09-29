@@ -1,14 +1,15 @@
 """Task-specific output parser for optimization-nas.
 
-The search program reports the architecture it selected:
+The fixed oracle wrapper (scripts/nas_oracle_entry.py) reports the
+architecture the search selected, mapped through the run's hidden op
+relabeling to its NAS-Bench-201 cell:
     FINAL_ARCH arch=<arch_str> queries=<n>
 and the held-out TEST accuracy is looked up HERE — host-side natively,
 verifier-side in Harbor — from the NAS-Bench-201 table provider in
 ``holdout/optimization-nas/dgp.py``. The test split never exists in the
-agent's process. Reporting a fabricated FINAL_ARCH is not an exploit: naming
-an architecture is exactly the ``get_best_architecture()`` contract, and the
-accuracy is always taken from the held-out table, never from the program's
-own output.
+agent's process. The wrapper relays the search's own output with any
+FINAL_ARCH line of the search prefixed, so exactly one line of the log may
+start with FINAL_ARCH; a log with none or several carries no metric.
 
 Metrics are keyed by dataset label, e.g. test_accuracy_CIFAR-10.
 """
@@ -55,7 +56,7 @@ _LABEL_TO_ENV = {
     "ImageNet16-120": "imagenet16",
 }
 
-_FINAL_RE = re.compile(r"FINAL_ARCH\s+arch=(\S+)(?:\s+queries=(\d+))?")
+_FINAL_RE = re.compile(r"FINAL_ARCH arch=(\S+) queries=(\d+)")
 
 
 class Parser(OutputParser):
@@ -69,10 +70,15 @@ class Parser(OutputParser):
         if train_feedback:
             feedback_parts.append(train_feedback)
 
-        # Last report wins — same semantics as get_best_architecture().
-        match = None
-        for m in _FINAL_RE.finditer(raw_output):
-            match = m
+        # Exactly one authoritative report, written by the oracle wrapper.
+        finals = [ln.strip() for ln in raw_output.splitlines()
+                  if ln.strip().startswith("FINAL_ARCH")]
+        match = _FINAL_RE.fullmatch(finals[0]) if len(finals) == 1 else None
+        if len(finals) > 1:
+            feedback_parts.append(
+                f"Rejected ({cmd_label}): expected exactly one FINAL_ARCH "
+                f"line, found {len(finals)}; no test accuracy recorded."
+            )
         if match:
             arch_str = match.group(1)
             env = _LABEL_TO_ENV.get(cmd_label)

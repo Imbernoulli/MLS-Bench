@@ -330,11 +330,55 @@ class CustomHPOStrategy:
 # ================================================================
 
 
+def _auc_reference(benchmark_name: str) -> Tuple[float, float]:
+    """Fixed (worst, best) reference scores for convergence_auc.
+
+    worst: validation score of a constant predictor -- the target mean for
+           the regression benchmarks (neg. MSE = -Var(y)), the majority class
+           for the classification benchmark.
+    best:  a perfect predictor (neg. MSE 0, accuracy 1).
+    The references depend only on the dataset, never on the run.
+    """
+    if benchmark_name == "xgboost":
+        y = fetch_california_housing(
+            data_home=os.environ.get("SKLEARN_DATA_HOME")).target
+        return -float(np.var(y)), 0.0
+    if benchmark_name == "svm":
+        y = load_breast_cancer().target
+        p = float(np.mean(y))
+        return max(p, 1.0 - p), 1.0
+    if benchmark_name == "nn":
+        y = load_diabetes().target
+        return -float(np.var(y)), 0.0
+    raise ValueError(f"no AUC reference for benchmark {benchmark_name!r}")
+
+
+def _convergence_auc(curve: List[Tuple[float, float]], budget: int,
+                     worst: float, best: float) -> float:
+    """Anytime performance: mean over the cost axis [0, budget] of the
+    normalized incumbent score.
+
+    The incumbent is a step function of spent cost: 0 until the first
+    evaluation completes, then (best_so_far - worst) / (best - worst),
+    clipped to [0, 1]. Cost spent past the budget is not integrated.
+    """
+    auc, prev_cost, prev_q = 0.0, 0.0, 0.0
+    for cost, best_so_far in curve:
+        cost = min(cost, float(budget))
+        auc += prev_q * (cost - prev_cost)
+        prev_cost = cost
+        prev_q = float(np.clip((best_so_far - worst) / (best - worst),
+                               0.0, 1.0))
+    auc += prev_q * (float(budget) - prev_cost)
+    return auc / float(budget)
+
+
 def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
                  output_dir: str):
     """Run full HPO loop and report metrics."""
     cfg = BENCHMARKS[benchmark_name]
     space, objective = cfg["make_fn"]()
+    auc_worst, auc_best = _auc_reference(benchmark_name)
 
     strategy = CustomHPOStrategy(seed=seed)
     history: List[Trial] = []
@@ -342,10 +386,7 @@ def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
     best_config = None
     total_cost = 0.0
     convergence_curve = []
-    convergence_threshold_reached = budget  # default: never reached early
-
-    # Determine convergence threshold (90% of budget's potential)
-    # We'll compute this after seeing some results
+    auc_points: List[Tuple[float, float]] = []
 
     start_time = time.time()
 
@@ -356,10 +397,13 @@ def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
             break
 
         config, fidelity = strategy.suggest(space, history, int(budget_left))
+        fidelity = float(fidelity)
+        if not math.isfinite(fidelity):
+            raise ValueError(f"fidelity must be a finite number, got {fidelity}")
         fidelity = float(np.clip(fidelity, 0.1, 1.0))
         config = space.clip(config)
 
-        score = objective(config, budget=fidelity)
+        score = float(objective(config, budget=fidelity))
         trial = Trial(config=config, score=score, budget=fidelity)
         history.append(trial)
 
@@ -375,6 +419,7 @@ def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
             "cost": total_cost,
             "best_score": best_score,
         })
+        auc_points.append((total_cost, best_score))
 
         if eval_count % 5 == 0 or total_cost >= budget - 0.1:
             elapsed = time.time() - start_time
@@ -386,21 +431,10 @@ def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
 
     elapsed = time.time() - start_time
 
-    # Compute convergence speed: area under the normalized curve (AUC)
-    # Higher AUC = faster convergence (found good configs earlier)
-    if len(convergence_curve) > 1:
-        costs = [c["cost"] / budget for c in convergence_curve]
-        scores = [c["best_score"] for c in convergence_curve]
-        # Normalize scores to [0, 1] range
-        s_min, s_max = min(scores), max(scores)
-        if s_max > s_min:
-            norm_scores = [(s - s_min) / (s_max - s_min) for s in scores]
-        else:
-            norm_scores = [1.0] * len(scores)
-        # Trapezoidal AUC
-        auc = float(np.trapezoid(norm_scores, costs)) if hasattr(np, 'trapezoid') else float(np.trapz(norm_scores, costs))
-    else:
-        auc = 0.0
+    # Convergence speed: area under the incumbent curve over [0, budget],
+    # normalized with fixed per-benchmark references (not the run's own
+    # min/max). Higher AUC = good configurations found earlier.
+    auc = _convergence_auc(auc_points, budget, auc_worst, auc_best)
 
     # Print final metrics
     print(f"TEST_METRICS best_val_score={best_score:.6f}", flush=True)
@@ -418,6 +452,7 @@ def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
         "best_score": best_score,
         "best_config": best_config,
         "convergence_auc": auc,
+        "auc_reference": {"worst": auc_worst, "best": auc_best},
         "elapsed_seconds": elapsed,
         "convergence_curve": convergence_curve,
     }

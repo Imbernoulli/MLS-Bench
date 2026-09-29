@@ -2,7 +2,11 @@
 # Adversarial training: VGG-11-BN on CIFAR-10 (eps=8/255)
 # Working directory is /workspace (torchattacks package root).
 
-python -u bench/run_adv_train.py \
+# A stale or planted bytecode cache must not stand in for the read-only
+# harness modules the evaluator imports.
+rm -rf bench/__pycache__
+
+python -I -B -u bench/run_adv_train.py \
   --arch vgg11_bn \
   --dataset cifar10 \
   --data-dir /data/cifar10 \

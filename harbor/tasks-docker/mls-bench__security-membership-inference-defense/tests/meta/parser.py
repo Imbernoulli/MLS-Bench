@@ -39,9 +39,22 @@ class Parser(OutputParser):
             metrics[f"mia_auc_{suffix}"] = mia_auc
             metrics[f"privacy_gap_{suffix}"] = privacy_gap
             metrics[f"privacy_score_{suffix}"] = privacy_score
+            # Attack advantage: an AUC below 0.5 leaks as much as one above it.
+            metrics[f"mia_adv_{suffix}"] = round(abs(mia_auc - 0.5), 4)
             feedback_parts.append(
                 f"{cmd_label}: test_acc={test_acc:.4f}, mia_auc={mia_auc:.4f}, "
                 f"privacy_gap={privacy_gap:.4f}, privacy_score={privacy_score:.4f}"
+            )
+
+        # The fixed harness prints exactly one TEST_METRICS line. A second one
+        # can only come from the defense module (e.g. an atexit print), so the
+        # run is rejected rather than trusting either line.
+        n_test = sum(1 for line in raw_output.splitlines() if self._TEST_PATTERN.search(line))
+        if n_test > 1:
+            metrics = {}
+            feedback_parts.append(
+                f"{cmd_label}: {n_test} TEST_METRICS lines; the harness prints one, "
+                "so the metrics were rejected"
             )
 
         feedback = "\n".join(feedback_parts) if feedback_parts else raw_output[-3000:]

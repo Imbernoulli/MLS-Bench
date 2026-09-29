@@ -306,13 +306,44 @@ class CustomMOEA:
 # ================================================================
 
 
+def _draw_frame(n_var: int, bounds):
+    """This run's hidden coordinate frame, drawn fresh from OS entropy.
+
+    Returns ``to_problem(individual)``: the individual's decision variables in
+    a random order, each one reflected (x -> lo + hi - x) with probability 1/2.
+    This maps the box onto itself, so the problem, its Pareto front and the
+    metrics are unchanged, but where the Pareto-optimal decision vectors lie
+    changes from run to run. The frame comes from os.urandom, not from
+    `random`/`numpy.random`, which the strategy seeds and may replace.
+    """
+    import sys
+    urandom = os.urandom
+    if not (type(urandom) is type(len)
+            and getattr(urandom, "__self__", None) is sys.modules.get("posix")):
+        raise SystemExit("ERROR: os.urandom has been replaced; refusing to run")
+    lo, hi = float(bounds[0]), float(bounds[1])
+    raw = urandom(9 * n_var)
+    order = sorted(range(n_var), key=lambda i: raw[8 * i:8 * i + 8])
+    flip = [b & 1 for b in raw[8 * n_var:]]
+
+    def to_problem(individual):
+        x = [float(v) for v in (list.__iter__(individual) if isinstance(individual, list) else individual)]
+        if len(x) != n_var:
+            raise ValueError(f"expected {n_var} decision variables, got {len(x)}")
+        return [lo + hi - x[i] if f else x[i] for i, f in zip(order, flip)]
+
+    return to_problem
+
+
 def run_moea(env_key: str, seed: int, output_dir: str):
     """Run the custom MOEA on the held-out benchmark problem.
 
     Loads the pre-generated problem spec for ``env_key``, runs the strategy, and
-    emits the final non-dominated population's objective values for the host-side
-    scorer. The true Pareto front and the metrics are computed host-side; this
-    process never sees them.
+    emits the final non-dominated population (objective values and decision
+    vectors in the problem's own coordinates) for the host-side scorer, which
+    re-evaluates the decision vectors.
+    The true Pareto front and the metrics are computed host-side; this process
+    never sees them.
     """
     spec = _load_spec(env_key, seed)
     n_var = int(spec["n_var"])
@@ -321,8 +352,14 @@ def run_moea(env_key: str, seed: int, output_dir: str):
     pop_size = int(spec["pop_size"])
     n_gen = int(spec["n_gen"])
 
-    # Black-box objective evaluator (legitimate: evaluating candidates is the task)
+    # Black-box objective evaluator (legitimate: evaluating candidates is the task),
+    # applied in this run's hidden coordinate frame (see _draw_frame), so a
+    # hard-coded "known Pareto set" is just a set of arbitrary points.
     func = _build_objective(spec)
+    to_problem = _draw_frame(n_var, bounds)
+
+    def objective(individual):
+        return func(to_problem(individual))
 
     # Set seeds
     random.seed(seed)
@@ -344,22 +381,29 @@ def run_moea(env_key: str, seed: int, output_dir: str):
 
     # Evaluate initial population
     for ind in population:
-        ind.fitness.values = evaluate(ind, func)
+        ind.fitness.values = evaluate(ind, objective)
 
     for gen in range(1, n_gen + 1):
         # Parent selection
         parents = moea.select(population, pop_size)
 
-        # Variation (crossover + mutation)
-        offspring = moea.vary(parents)
+        # Variation (crossover + mutation); at most pop_size offspring (and so
+        # at most pop_size evaluations) per generation
+        offspring = list(moea.vary(parents))
+        if len(offspring) > pop_size:
+            raise SystemExit(f"ERROR: vary() returned {len(offspring)} offspring; "
+                             f"at most pop_size={pop_size} are allowed")
 
         # Evaluate offspring
         for ind in offspring:
             if not ind.fitness.valid:
-                ind.fitness.values = evaluate(ind, func)
+                ind.fitness.values = evaluate(ind, objective)
 
-        # Environmental selection (survival)
-        population = moea.survive(population, offspring)
+        # Environmental selection (survival); at most pop_size survivors
+        population = list(moea.survive(population, offspring))
+        if not 0 < len(population) <= pop_size:
+            raise SystemExit(f"ERROR: survive() returned {len(population)} individuals; "
+                             f"between 1 and pop_size={pop_size} are allowed")
 
         # Optional per-generation callback
         moea.on_generation(gen, population)
@@ -378,15 +422,25 @@ def run_moea(env_key: str, seed: int, output_dir: str):
     # Final non-dominated front
     nd_front = get_nondominated(population)
     front_values = np.array([ind.fitness.values for ind in nd_front], dtype=np.float64)
+    # Decision vectors of the same individuals, in the problem's own coordinates
+    # (the points the objective was evaluated at). The host-side scorer
+    # re-evaluates them with the true objective functions and checks the bounds,
+    # so the scored objective values never come from fitness values assigned by
+    # the strategy.
+    front_x = np.array([to_problem(ind) for ind in nd_front], dtype=np.float64)
 
-    # Emit the final population's objective values for the host-side scorer. We do
-    # NOT have the true Pareto front, so we cannot (and do not) compute metrics.
+    # Emit the final population's objective values and decision vectors for the
+    # host-side scorer. We do NOT have the true Pareto front, so we cannot (and
+    # do not) compute metrics.
     payload = base64.b64encode(
         np.ascontiguousarray(front_values, dtype=np.float64).tobytes()
     ).decode("ascii")
+    x_payload = base64.b64encode(
+        np.ascontiguousarray(front_x, dtype=np.float64).tobytes()
+    ).decode("ascii")
     print(
         f"MOEA_PRED env={env_key} seed={seed} shape={front_values.shape[0]},{front_values.shape[1]} "
-        f"objs={payload}",
+        f"objs={payload} nvar={n_var} xs={x_payload}",
         flush=True,
     )
 

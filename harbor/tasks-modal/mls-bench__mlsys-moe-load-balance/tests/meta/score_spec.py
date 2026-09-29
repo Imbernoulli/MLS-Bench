@@ -1,106 +1,54 @@
 """Score spec for mlsys-moe-load-balance.
 
-Four metrics per MoE config (deepseek-v3, qwen3-moe, deepseek-v2, stress-skew):
-  balance       — per-GPU load balance, higher better, bounded at 1.0
-  balance_node  — per-node load balance, higher better, bounded at 1.0
-  locality      — traffic-weighted node locality of expert replicas, higher
-                  better, bounded at 1.0. Hierarchical placements that keep
-                  every expert's replicas on a single node score ≈1.0; flat
-                  placements that scatter replicas across all nodes score
-                  ≈1/num_nodes. Captures the inter-node communication cost
-                  pure load-balance metrics ignore.
-  runtime_ms    — algorithm runtime (median over timing iters), lower better
+Four metrics per MoE config (deepseek-v3, qwen3-moe, deepseek-v2, stress-skew),
+all measured by the fixed harness in eplb/custom_eplb.py:
+  balance       -- mean/max per-GPU load, higher better, bounded at 1.0
+  balance_node  -- mean/max per-node load, higher better, bounded at 1.0
+  locality      -- traffic-weighted 1/nodes_per_expert, 1.0 when every
+                   expert's replicas sit on a single node
+  runtime_ms    -- wall time of rebalance_experts() per call
 
-Per-config score = weighted_mean of the four terms (equal weight). Including
-both balance metrics and locality forces methods to balance load AND respect
-node hierarchy: a flat scheme that ignores topology will saturate balance
-but lose on locality, and vice versa. *_std columns are within-run variance
-and ignored.
+Load balance is the objective. Each balance term is linear between the
+`static` baseline (a load-oblivious placement: contiguous expert blocks per
+node, round-robin spare replicas) at 0 and perfect balance (1.0) at 1, i.e.
+the fraction of the naive placement's imbalance that a method removes.
+(ref=1.0 puts the reference at the bound, which makes the power curve
+linear, gamma = 1.) The floor is the worst baseline, which is `static`.
 
-Task score = geometric mean across the four configs (three real-model
-deployments plus the hidden stress-skew stress test).
+Locality and runtime are constraints that multiply the per-config score:
+  locality   -- target 1.0 (hierarchical placement); the score decays as
+                exp(-3.0 * (1 - locality)), e.g. x0.77 at locality 0.915.
+  runtime_ms -- a 100 ms budget per call (EPLB reruns periodically, so any
+                placement computed well within it is equally usable); the
+                score decays as exp(-0.01 * (runtime_ms - 100)) above it.
+
+Per-config score = mean(balance, balance_node) * locality_penalty *
+runtime_penalty. Task score = geometric mean across the four configs (three
+real-model deployments plus the hidden stress-skew stress test). *_std
+columns are within-run variance and ignored.
 """
 from mlsbench.scoring.dsl import *
 
-# ---- per-config terms -------------------------------------------------------
+CONFIGS = ["deepseek-v3", "qwen3-moe", "deepseek-v2", "stress-skew"]
 
-term("balance_deepseek_v3",
-    col("balance_deepseek-v3").higher().id()
-    .bounded_power(bound=1.0))
-term("balance_node_deepseek_v3",
-    col("balance_node_deepseek-v3").higher().id()
-    .bounded_power(bound=1.0))
-term("locality_deepseek_v3",
-    col("locality_deepseek-v3").higher().id()
-    .bounded_power(bound=1.0))
-term("runtime_ms_deepseek_v3",
-    col("runtime_ms_deepseek-v3").lower().id()
-    .sigmoid())
+for cfg in CONFIGS:
+    slug = cfg.replace("-", "_")
+    term(f"balance_{slug}",
+        col(f"balance_{cfg}").higher().id()
+        .bounded_power(bound=1.0, ref=const(1.0)))
+    term(f"balance_node_{slug}",
+        col(f"balance_node_{cfg}").higher().id()
+        .bounded_power(bound=1.0, ref=const(1.0)))
+    term(f"locality_{slug}",
+        penalty_lower(col(f"locality_{cfg}").higher().id(),
+                      target=1.0, sharpness=3.0))
+    term(f"runtime_ms_{slug}",
+        penalty_upper(col(f"runtime_ms_{cfg}").lower().id(),
+                      target=100.0, sharpness=0.01))
+    setting(cfg, weighted_mean(
+        (f"balance_{slug}", 1.0),
+        (f"balance_node_{slug}", 1.0),
+    ), constraints=[f"locality_{slug}", f"runtime_ms_{slug}"])
 
-term("balance_qwen3_moe",
-    col("balance_qwen3-moe").higher().id()
-    .bounded_power(bound=1.0))
-term("balance_node_qwen3_moe",
-    col("balance_node_qwen3-moe").higher().id()
-    .bounded_power(bound=1.0))
-term("locality_qwen3_moe",
-    col("locality_qwen3-moe").higher().id()
-    .bounded_power(bound=1.0))
-term("runtime_ms_qwen3_moe",
-    col("runtime_ms_qwen3-moe").lower().id()
-    .sigmoid())
+task(gmean(*CONFIGS))
 
-term("balance_deepseek_v2",
-    col("balance_deepseek-v2").higher().id()
-    .bounded_power(bound=1.0))
-term("balance_node_deepseek_v2",
-    col("balance_node_deepseek-v2").higher().id()
-    .bounded_power(bound=1.0))
-term("locality_deepseek_v2",
-    col("locality_deepseek-v2").higher().id()
-    .bounded_power(bound=1.0))
-term("runtime_ms_deepseek_v2",
-    col("runtime_ms_deepseek-v2").lower().id()
-    .sigmoid())
-
-term("balance_stress_skew",
-    col("balance_stress-skew").higher().id()
-    .bounded_power(bound=1.0))
-term("balance_node_stress_skew",
-    col("balance_node_stress-skew").higher().id()
-    .bounded_power(bound=1.0))
-term("locality_stress_skew",
-    col("locality_stress-skew").higher().id()
-    .bounded_power(bound=1.0))
-term("runtime_ms_stress_skew",
-    col("runtime_ms_stress-skew").lower().id()
-    .sigmoid())
-
-# ---- per-config combined scores --------------------------------------------
-
-setting("deepseek-v3", weighted_mean(
-    ("balance_deepseek_v3", 1.0),
-    ("balance_node_deepseek_v3", 1.0),
-    ("locality_deepseek_v3", 1.0),
-    ("runtime_ms_deepseek_v3", 1.0),
-))
-setting("qwen3-moe", weighted_mean(
-    ("balance_qwen3_moe", 1.0),
-    ("balance_node_qwen3_moe", 1.0),
-    ("locality_qwen3_moe", 1.0),
-    ("runtime_ms_qwen3_moe", 1.0),
-))
-setting("deepseek-v2", weighted_mean(
-    ("balance_deepseek_v2", 1.0),
-    ("balance_node_deepseek_v2", 1.0),
-    ("locality_deepseek_v2", 1.0),
-    ("runtime_ms_deepseek_v2", 1.0),
-))
-setting("stress-skew", weighted_mean(
-    ("balance_stress_skew", 1.0),
-    ("balance_node_stress_skew", 1.0),
-    ("locality_stress_skew", 1.0),
-    ("runtime_ms_stress_skew", 1.0),
-))
-
-task(gmean("deepseek-v3", "qwen3-moe", "deepseek-v2", "stress-skew"))

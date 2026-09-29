@@ -15,23 +15,25 @@ A key challenge is that naive compression introduces bias or variance that degra
 
 ## Task
 Modify the `Compressor` class in `custom_compressor.py`. Your compressor must implement:
-- `__init__(self, compress_ratio)`: initialize with a target compression ratio (`0.01` = 100x compression).
-- `compress(self, tensor, name)`: compress a gradient tensor, returning `(compressed_tensors, ctx)`.
-- `decompress(self, compressed_tensors, ctx)`: reconstruct the gradient.
+- `__init__(self, compress_ratio, param_numels, budget_bits)`: `param_numels` maps every parameter name to its number of entries; `budget_bits` is the communication budget of one training step.
+- `compress(self, tensor, name)`: encode a gradient tensor into a packet (format below).
 
-The compressor may maintain internal state (e.g., error feedback residuals) across calls. The `name` parameter identifies parameters for per-parameter state tracking.
+The compressor may maintain internal state (e.g., error feedback residuals) across calls. The `name` parameter identifies parameters for per-parameter state tracking. Decoding is fixed: the harness reconstructs each gradient from its packet alone, and only that reconstruction reaches the optimizer.
 
 ## Interface
 ```python
 class Compressor:
-    def __init__(self, compress_ratio=0.01): ...
-    def compress(self, tensor, name) -> (list[Tensor], ctx): ...
-    def decompress(self, compressed_tensors, ctx) -> Tensor: ...
+    def __init__(self, compress_ratio, param_numels, budget_bits): ...
+    def compress(self, tensor, name) -> packet: ...  # or a list of packets, whose decodings are summed
 ```
-- `compress_ratio`: fraction of gradient elements/information to retain (`0.01` = keep 1%).
-- `compressed_tensors`: list of tensors that would be communicated over the network.
-- `ctx`: local context (not communicated) needed for decompression.
-- The decompressed tensor must have the same shape as the original input.
+A packet is one of:
+- `{"values": V, "bits": b}`: dense, one value per gradient entry;
+- `{"values": V, "bits": b, "indices": I}`: sparse, `I` the distinct flat positions of the values `V`;
+- `{"factors": (P, Q)}`: low rank, `P @ Q.T` viewed as `(shape[0], numel / shape[0])`.
+
+A packet is a plain `dict` (a list of them a plain `list` or `tuple`), `b` a plain `int`, and `V`, `I`, `P`, `Q` plain `torch.Tensor`s, not subclasses. Values are transmitted as float32. The harness charges each packet in bits: `len(V) * b`; plus 32 bits per distinct value when `b < 32` (the codebook, which may hold at most `2**b` values); plus the Elias-gamma code of the sorted gaps between sparse positions; plus 32 bits per low-rank factor entry. The helpers `packet_cost(packet, shape)` and `elias_gamma_bound(k, numel)` compute these charges.
+
+**Budget.** One training step may transmit at most `budget_bits = compress_ratio × 32 × (total parameter entries)` bits over all parameters together, i.e. 100x less than the dense float32 gradient at `compress_ratio = 0.01`. A step over the budget, a malformed packet (non-finite values, repeated or out-of-range indices, more distinct values than `2**b`, subclassed containers, ints or tensors), or compressor code that rebinds the harness's names or registers a global optimizer or module hook stops the run, and the run is invalid.
 
 ## Evaluation
 Trained and evaluated on three settings with 100x compression (`compress_ratio = 0.01`):
@@ -41,9 +43,9 @@ Trained and evaluated on three settings with 100x compression (`compress_ratio =
 
 Metric: **best test accuracy** (higher is better). All settings use SGD with momentum, cosine LR schedule, and 200 training epochs.
 
-## Baselines (paper-cited reference implementations)
-- **topk_ef** — Top-K sparsification with error feedback (Stich et al., "Sparsified SGD with Memory", NeurIPS 2018; Karimireddy et al., "Error Feedback Fixes SignSGD and Other Gradient Compression Schemes", ICML 2019; arXiv:1901.09847). Keeps the `k = compress_ratio * d` largest-magnitude entries.
-- **qsgd** — Quantized SGD with stochastic uniform quantization (Alistarh, Grubic, Li, Tomioka, and Vojnovic, "QSGD: Communication-Efficient SGD via Gradient Quantization and Encoding", NeurIPS 2017; arXiv:1610.02132).
-- **signsgd** — Sign-only gradient compression (Bernstein, Wang, Azizzadenesheli, and Anandkumar, "signSGD: Compressed Optimisation for Non-Convex Problems", ICML 2018; arXiv:1802.04434), typically combined with majority-vote aggregation.
+## Baselines (paper-cited reference implementations, each sized to the budget)
+- **topk_ef** — Top-K sparsification with error feedback (Stich et al., "Sparsified SGD with Memory", NeurIPS 2018; Karimireddy et al., "Error Feedback Fixes SignSGD and Other Gradient Compression Schemes", ICML 2019; arXiv:1901.09847). Sends the largest-magnitude entries as float32 values at Elias-gamma coded positions (about 0.65% of the entries at this budget).
+- **qsgd** — Quantized SGD with stochastic uniform quantization (Alistarh, Grubic, Li, Tomioka, and Vojnovic, "QSGD: Communication-Efficient SGD via Gradient Quantization and Encoding", NeurIPS 2017; arXiv:1610.02132), in the paper's Elias-coded sparse encoding with the largest number of levels that fits the budget.
+- **signsgd** — Scaled sign compression with error feedback (Bernstein, Wang, Azizzadenesheli, and Anandkumar, "signSGD: Compressed Optimisation for Non-Convex Problems", ICML 2018; arXiv:1802.04434; Karimireddy et al. 2019). One bit for every entry is only 32x, so it sends the signs of the largest-magnitude entries the budget can carry (about 2.5%), scaled by their mean magnitude.
 
 A reference low-rank method (Vogels, Karimireddy, and Jaggi, "PowerSGD: Practical Low-Rank Gradient Compression for Distributed Optimization", NeurIPS 2019; arXiv:1905.13727) is a useful design point even though it is not run as a baseline here.

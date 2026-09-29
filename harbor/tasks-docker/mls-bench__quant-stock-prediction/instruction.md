@@ -32,6 +32,8 @@ class CustomModel(Model):
 ```
 `predict` must return a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index. Available imports inside the class: `torch`, `numpy`, `pandas`, `lightgbm`, `sklearn`, `scipy`.
 
+Predictions must be causal: after `predict`, the harness rebuilds the dataset with the data ending at a randomly drawn test date t, predicts again with a copy of the fitted model, and rejects the run if the predictions for the last five dates up to t change beyond float noise, so the prediction for date t may only use data up to date t. The model is also constructed and fit with the data ending before the first test date: during that phase `qlib.data.D` cannot read the test period, and `dataset.prepare()` returns test-segment rows as NaN.
+
 ## Reference Implementations (read-only)
 Three reference models ship with qlib's `examples/benchmarks/` and are available as read-only context. Defaults are taken from each method's qlib example config.
 
@@ -61,7 +63,7 @@ stay unchanged.
 - editable lines **16–103**
 - `qlib/workflow_config.yaml`
 - editable lines **13–25**
-- editable lines **31–44**
+- editable lines **31–43**
 
 
 Other files you may **read** for context (do not modify):
@@ -179,7 +181,7 @@ Other files you may **read** for context (do not modify):
    103:         return pd.Series(preds, index=index, name="score")
 ```
 
-### `qlib/workflow_config.yaml`  [EDITABLE — lines 13–25, lines 31–44 only]
+### `qlib/workflow_config.yaml`  [EDITABLE — lines 13–25, lines 31–43 only]
 
 ```yaml
      1: # Qlib workflow configuration for CSI300 stock prediction benchmark.
@@ -938,7 +940,7 @@ Lines 13–25:
     27:           end_time: "2020-08-01"
     28:           fit_start_time: "2008-01-01"
 
-Lines 31–37:
+Lines 31–36:
     28:           fit_start_time: "2008-01-01"
     29:           fit_end_time: "2014-12-31"
     30:           instruments: csi300
@@ -951,7 +953,6 @@ Lines 31–37:
     37:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
     38:       segments:
     39:         train: ["2008-01-01", "2014-12-31"]
-    40:         valid: ["2015-01-01", "2016-12-31"]
 ```
 
 

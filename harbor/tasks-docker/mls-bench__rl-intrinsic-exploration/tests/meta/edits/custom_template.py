@@ -256,7 +256,7 @@ def evaluate_policy(args: Args, agent: Agent, device: torch.device, seed: int) -
 
     envs.close()
     returns_np = np.asarray(returns, dtype=np.float32)
-    return float(returns_np.mean()), float((returns_np != 0.0).mean())
+    return float(returns_np.mean()), float((returns_np > 0.0).mean())  # nonzero_rate counts positive returns only; a negative return (Private Eye hazards) is not progress
 
 
 if __name__ == "__main__":

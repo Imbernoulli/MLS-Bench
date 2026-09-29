@@ -69,8 +69,18 @@ class Parser(OutputParser):
         metrics: dict = {}
         feedback_parts: list[str] = []
 
-        for line in output.splitlines():
-            line = line.strip()
+        # The eval script prints exactly one TEST_METRICS line, after the
+        # harness has exited.  Any other count means something else wrote into
+        # the log, so the run carries no metrics.
+        test_lines = [ln.strip() for ln in output.splitlines()
+                      if ln.strip().startswith("TEST_METRICS")]
+        if len(test_lines) != 1:
+            if test_lines:
+                return (f"Rejected ({cmd_label}): expected exactly one "
+                        f"TEST_METRICS line, found {len(test_lines)}"), {}
+            return "", {}
+
+        for line in test_lines:
             if line.startswith("TEST_METRICS"):
                 for match in re.finditer(r"(\w+)=([\d.eE+-]+)", line):
                     key, val = match.group(1), float(match.group(2))

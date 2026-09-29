@@ -15,8 +15,11 @@ answer_ts is the UTC start timestamp of the specific test invocation
 locate the exact answer-file directory that produced these metrics
 for post-hoc SoPR judging.
 
-SoPR is computed post-hoc by scripts/compute_sopr.sh and written
-directly into leaderboard.csv, not extracted here.
+After inference, train.sh runs StableToolBench's judge (scripts/judge_sopr.py)
+on the same answer files and prints
+    TEST_METRICS: sopr=X sopr_n_scored=N
+which becomes sopr<suffix> / sopr_n_scored<suffix>. scripts/compute_sopr.sh
+runs the same judge to backfill rows written into leaderboard.csv directly.
 """
 
 import re
@@ -91,5 +94,18 @@ class Parser(OutputParser):
                     f"  Avg queries: {avg_queries:.1f}\n"
                     f"  Give-up rate: {give_up_rate:.4f}"
                 )
+
+        sopr_feedback = ""
+        for line in output.splitlines():
+            match = re.search(
+                r"TEST_METRICS:\s+sopr=([\d.]+)\s+sopr_n_scored=(\d+)", line
+            )
+            if match:
+                sopr = float(match.group(1))
+                metrics[f"sopr{suffix}"] = sopr
+                metrics[f"sopr_n_scored{suffix}"] = int(match.group(2))
+                sopr_feedback = f"  Stable pass rate (SoPR): {sopr:.4f}"
+        if sopr_feedback:
+            feedback = f"{feedback}\n{sopr_feedback}" if feedback else sopr_feedback
 
         return feedback, metrics

@@ -57,7 +57,7 @@ Available imports inside the editable region: `torch`, `torch.nn`,
 Datasets:
 - `community_small`: 100 synthetic 2-community graphs (12-20 nodes).
 - `ego_small`: 200 ego graphs from Citeseer (4-18 nodes).
-- `enzymes`: 587 protein structure graphs from BRENDA (10-125 nodes).
+- `enzymes`: 587 protein structure graphs from BRENDA (up to 126 nodes).
 
 Fixed pipeline (shared by all baselines and the agent):
 - 500 epochs, batch size 32, single GPU. (This is reduced from the 3000 epochs
@@ -71,7 +71,18 @@ Metrics (all lower is better):
 - `mmd_orbit`: MMD of 4-orbit count distributions.
 - `mmd_avg`: average of the three MMD metrics.
 
+The harness draws exactly as many graphs as the held-out reference split
+(20 / 40 / 118 graphs) and discards any extra graphs `sample()` returns.
+A generated graph isomorphic to any dataset graph (training or held-out) is a
+copy. The generated set may reproduce as many distinct dataset graphs as the
+held-out graphs themselves do; copies of any further dataset graph are
+dropped before the MMD is computed, and their fraction of the generated
+graphs is reported as `copy_excess`. A dataset's score is penalized when
+`copy_excess` exceeds 0.1 (0.2 on `ego_small`).
+
 Suitable contributions may be autoregressive, latent-variable, diffusion-like,
 energy-based, score-based, or otherwise structured, provided they can train
 within the fixed budget and sample valid undirected graphs without relying on
-the evaluation labels.
+the evaluation labels. Samples must come from the learned model: replaying
+stored training graphs, or calling or re-implementing the harness's dataset
+generators, is not a valid submission.

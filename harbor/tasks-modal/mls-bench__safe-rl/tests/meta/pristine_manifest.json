@@ -167,7 +167,7 @@
   "omnisafe/omnisafe/algorithms/on_policy/first_order/cup.py": "d579d22a721a6f18a0ed7b91cc6207ce61da176e73d8b02be482754de1aac2c3",
   "omnisafe/omnisafe/algorithms/on_policy/first_order/focops.py": "4485f0b42cd4000c48d7072794ec59cd7e20cba4e97f9d42a8b9eabb15551d46",
   "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/__init__.py": "e50e6d3afd788aca66fa3d3dde9268c19a3bd9ed7b213488d811dc0247877a9d",
-  "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/custom_lag.py": "e641fdd978a61efbf5e11659f0b01f2fa75177807d67b517c3993752bbb1dceb",
+  "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/custom_lag.py": "19afc19232a0ecb60b8e34e320c3b84d1eb73f8c065711bc04e10a5516cd7384",
   "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/pdo.py": "bd655b648711f15d00bd6264b0a0045a700d823f87fc4806aea33f647471cb41",
   "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/ppo_lag.py": "74dafd200ed8494b2653c32882d659369d58414e7d4987da774716eb2d7a3670",
   "omnisafe/omnisafe/algorithms/on_policy/naive_lagrange/rcpo.py": "7a387c5371a3b73c94d87de1306e567538d0dff35c5958cd60711a0fa2ebdf16",

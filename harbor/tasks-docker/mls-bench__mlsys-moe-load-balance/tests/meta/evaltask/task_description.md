@@ -69,7 +69,13 @@ Constraints:
 - Each GPU must receive exactly `num_replicas // num_gpus` physical
   experts
 - Every logical expert must have at least one replica
-- `logcnt.sum(-1)` must equal `num_replicas` for every layer
+- `logcnt.sum(-1)` must equal `num_replicas` for every layer, and
+  `logcnt` must match the replica counts in `phy2log`
+- `log2phy[l, e]` must list exactly the physical slots holding expert `e`
+  (padded with -1)
+
+The fixed harness checks all of these on every trial; an invalid placement
+aborts the run for that configuration.
 
 ## Evaluation
 
@@ -102,14 +108,20 @@ Per configuration, four metrics are reported:
   a flat scheme that scatters replicas across all nodes uniformly scores
   `1 / num_nodes`. This metric directly captures the inter-node
   communication cost that pure load-balance metrics ignore.
-- `runtime_ms` — median wall time of the placement algorithm over 20
-  timed iterations, averaged across 10 workload trials. Lower is better.
+- `runtime_ms` — wall time of one `rebalance_experts` call: per trial,
+  the larger of the median over 20 calls on fresh random workloads and
+  the time of the scored call, averaged across 10 workload trials. Lower
+  is better.
 
-The combined per-config score weights all four terms equally; the task
-score is the geometric mean across the four configs. All three
-balance/locality metrics are required: a flat scheme that scatters
-replicas to maximize per-GPU balance will lose `locality`; a method that
-co-locates replicas without addressing skew will lose `balance`.
+Scoring. Load balance is the objective: per config, the mean of the
+`balance` and `balance_node` terms, each linear between the `static`
+baseline (score 0) and perfect balance 1.0 (score 1). Locality and runtime
+are constraints that multiply that score: locality below 1.0 costs a
+factor `exp(-3 * (1 - locality))` (x0.77 at 0.915), and runtime above a
+100 ms budget costs `exp(-0.01 * (runtime_ms - 100))`. The task score is
+the geometric mean across the four configs. A flat scheme that scatters
+replicas to maximize per-GPU balance pays for lost `locality`; a method
+that co-locates replicas without addressing skew gains little `balance`.
 
 ## Reference baselines
 
@@ -129,3 +141,9 @@ Flat (non-hierarchical) zigzag: skips the group-to-node Stage 1 entirely
 and does a single global zigzag assignment of all replicas to all GPUs
 directly. Faster than the hierarchical approach but may lose `locality`
 in multi-node settings because it ignores inter-node topology.
+
+### static
+Load-oblivious static placement: each node hosts a contiguous block of
+experts, spare slots hold round-robin copies of the node's own experts.
+Not a load balancer; it is the naive reference that anchors the zero
+point of the balance terms.

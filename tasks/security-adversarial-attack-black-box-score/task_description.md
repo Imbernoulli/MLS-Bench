@@ -35,6 +35,7 @@ Output:
 The evaluation logic in `bench/run_eval.py` is fixed and not editable.
 
 - It tracks all model queries through a wrapper.
+- `run_attack` runs in a separate worker process that holds no copy of the classifier. `model` there is a stub: each call sends the batch to the evaluation process, which counts the queries and returns a fresh logits tensor (no gradients). The classifier, the query counter and the metrics line are out of the attack's reach.
 - If a batch exceeds query budget (`batch_size * n_queries`), the entire batch is marked as attack failure.
 - `L_inf` and `[0, 1]` validity are checked per sample; only invalid samples are marked as attack failure.
 

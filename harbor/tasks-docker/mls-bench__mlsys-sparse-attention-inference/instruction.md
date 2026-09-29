@@ -56,19 +56,37 @@ class SparseAttention(nn.Module):
 for the causal LLM. Return the attention output in the same shape and
 dtype.
 
-After every forward, set `self.last_density` to the fraction of (q, k)
-pairs that received non-zero attention (causal-adjusted: divide by
-`N(N+1)/2` when `is_causal=True`). The harness aggregates `last_density`
-across all attention layers and aborts the run if the mean exceeds the
-density budget (`0.25 + 0.02 slack`) for any non-`dense` baseline.
-Missing, NaN, infinite, negative, or `>1` density reports are treated as
-harness errors, not as zero density.
+After every forward, set `self.last_mask` to the boolean mask of the
+(q, k) pairs the forward actually attended (`True` = attended), shaped
+`(N, N)` or broadcastable to `(B, H, N, N)`; leaving it `None` means
+dense. The harness computes the density itself from this mask: the
+fraction of causal (q, k) pairs attended (entries above the diagonal are
+ignored; each head is divided by `N(N+1)/2`). On randomly sampled query
+rows (always including the last one) it also recomputes, from its own
+copies of q/k/v, the attention restricted to the mask and the full
+causal attention, and aborts the run if the module's output differs
+from the former by more than the head's RMS output norm, or has moved
+from the former toward the latter (by more than 0.1 of that norm and
+more than 25% of the way). So the output must be attention over the
+mask, and the mask must include every pair the module attends.
+Low-precision arithmetic inside the mask is not penalized: rows with a
+logit above 1024 in magnitude, which fp16 cannot resolve (only layer 0
+of this model has them), are not checked, and on the rest fused SDPA
+on the fp16 inputs or fp32 attention stays well inside the limits.
+Logits from a plain fp16/bf16 matmul, and fused SDPA on inputs cast to
+bf16, are too coarse and can fail, so keep the fp16 inputs for fused SDPA
+and compute hand-written logits in fp32. Any `last_density` the module
+sets is ignored. The
+harness aggregates the density across all attention layers and aborts
+the run if the mean exceeds the density budget (`0.25 + 0.02 slack`)
+for any non-`dense` baseline. A mask of the wrong dtype or shape is a
+harness error.
 
 ## Sparsity Budget
 
 - `density_budget = 0.25`.
-- Only the reference `dense` baseline is allowed to exceed it: it reports
-  the true `last_density = 1.0`, and the dense run is invoked with
+- Only the reference `dense` baseline is allowed to exceed it: it leaves
+  `last_mask = None` (dense, density 1.0), and the dense run is invoked with
   `ALLOW_DENSE_FLAG=1` (set as a baseline-level env var in `config.json`)
   which forwards `--allow-dense` to `run_llm.py` so
   `harness.enforce_budget(allow_dense=True)` skips the budget check.
@@ -139,8 +157,8 @@ Other files you may **read** for context (do not modify):
      3: Single class ``SparseAttention`` is monkey-patched into Qwen2.5-1.5B-Instruct
      4: by the harness, which calls ``forward(q, k, v, is_causal=True, scale=...)``
      5: once per attention layer (q/k/v already shaped (B, H, N, D), GQA replicated).
-     6: The harness reads ``self.last_density`` after every forward and aborts if
-     7: density > 0.25 (small slack), except for the dense reference baseline.
+     6: The harness reads the mask in ``self.last_mask`` after every forward, computes
+     7: the density from it, checks the output against it, and aborts if density > 0.25.
      8: 
      9: PERFORMANCE — read this before redesigning forward(). At N=8192 a naïve
     10: ``einsum + softmax + einsum`` materializes a 3 GB bf16 attention matrix per
@@ -153,7 +171,7 @@ Other files you may **read** for context (do not modify):
     17:   3. For low density (≤ 10%), use ``torch.nn.attention.flex_attention`` with
     18:      ``create_block_mask`` — it compiles a true block-sparse kernel that
     19:      skips entire blocks (PyTorch-native, no Triton-by-hand needed).
-    20:   4. Stay in bf16 — fused SDPA handles numerics safely; fp32 upcast 2×s memory.
+    20:   4. Keep the fp16 inputs for fused SDPA (bf16 is too coarse for the output check); hand-written logits in fp32.
     21: """
     22: 
     23: import math
@@ -189,8 +207,8 @@ Other files you may **read** for context (do not modify):
     53:         self.window = 1024      # local window radius (tokens per side)
     54:         self.num_sinks = 4      # number of "always attended" sink tokens
     55: 
-    56:         # Diagnostic: harness reads this after each forward to validate budget.
-    57:         self.last_density = None
+    56:         # The harness reads this mask after each forward (density + output check).
+    57:         self.last_mask = None
     58: 
     59:         # (N, is_causal, device) -> (mask BoolTensor, density float).
     60:         # Reused across the 24 layers for the same prompt — built once per N.
@@ -225,9 +243,9 @@ Other files you may **read** for context (do not modify):
     89:         B, H, N, D = q.shape
     90:         scale = scale if scale is not None else 1.0 / math.sqrt(D)
     91: 
-    92:         mask, self.last_density = self._get_mask(N, q.device, is_causal)
-    93:         # SDPA accepts a bool attn_mask: True = attend. Stay in bf16/fp16 —
-    94:         # fused SDPA handles numerics safely.
+    92:         mask, _density = self._get_mask(N, q.device, is_causal)
+    93:         self.last_mask = mask  # the harness derives density from this mask
+    94:         # SDPA bool attn_mask: True = attend. Keep the fp16 inputs (not bf16).
     95:         out = F.scaled_dot_product_attention(
     96:             q, k, v, attn_mask=mask.view(1, 1, N, N),
     97:             dropout_p=0.0, is_causal=False, scale=scale,
@@ -291,7 +309,7 @@ Lines 31–55:
 In `sparse-attn-eval/custom_sparse_attn.py`:
 
 ```python
-Lines 31–84:
+Lines 31–85:
     28: 
     29: 
     30: # ═══════════════════════════════════════════════════════════════════════════════
@@ -341,15 +359,16 @@ Lines 31–84:
     74:         mask = self._build_mask(N, q.device, is_causal)  # (N, N)
     75:         denom = (N * (N + 1) / 2.0) if is_causal else float(N * N)
     76:         self.last_density = float(mask.sum().item()) / max(denom, 1.0)
-    77: 
-    78:         # Broadcast (N,N) mask across (B,H).
-    79:         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
-    80:         attn = attn.masked_fill(~mask, float('-inf'))
-    81:         attn = torch.softmax(attn, dim=-1)
-    82:         attn = torch.nan_to_num(attn, nan=0.0)
-    83:         out = torch.matmul(attn, v.float())
-    84:         return out.to(q.dtype)
-    85: # ═══════════════════════════════════════════════════════════════════════════════
+    77:         self.last_mask = mask  # harness computes density from this mask
+    78: 
+    79:         # Broadcast (N,N) mask across (B,H).
+    80:         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
+    81:         attn = attn.masked_fill(~mask, float('-inf'))
+    82:         attn = torch.softmax(attn, dim=-1)
+    83:         attn = torch.nan_to_num(attn, nan=0.0)
+    84:         out = torch.matmul(attn, v.float())
+    85:         return out.to(q.dtype)
+    86: # ═══════════════════════════════════════════════════════════════════════════════
 ```
 
 ### `bigbird` baseline — editable region  [READ-ONLY — reference implementation]
@@ -357,7 +376,7 @@ Lines 31–84:
 In `sparse-attn-eval/custom_sparse_attn.py`:
 
 ```python
-Lines 31–121:
+Lines 31–122:
     28: 
     29: 
     30: # ═══════════════════════════════════════════════════════════════════════════════
@@ -445,14 +464,15 @@ Lines 31–121:
    112: 
    113:         denom = (N * (N + 1) / 2.0) if is_causal else float(N * N)
    114:         self.last_density = float(token_keep.sum().item()) / max(denom, 1.0)
-   115: 
-   116:         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
-   117:         attn = attn.masked_fill(~token_keep, float('-inf'))
-   118:         attn = torch.softmax(attn, dim=-1)
-   119:         attn = torch.nan_to_num(attn, nan=0.0)
-   120:         out = torch.matmul(attn, v.float())
-   121:         return out.to(q.dtype)
-   122: # ═══════════════════════════════════════════════════════════════════════════════
+   115:         self.last_mask = token_keep  # harness computes density from this mask
+   116: 
+   117:         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
+   118:         attn = attn.masked_fill(~token_keep, float('-inf'))
+   119:         attn = torch.softmax(attn, dim=-1)
+   120:         attn = torch.nan_to_num(attn, nan=0.0)
+   121:         out = torch.matmul(attn, v.float())
+   122:         return out.to(q.dtype)
+   123: # ═══════════════════════════════════════════════════════════════════════════════
 ```
 
 ### `block_topk` baseline — editable region  [READ-ONLY — reference implementation]
@@ -460,7 +480,7 @@ Lines 31–121:
 In `sparse-attn-eval/custom_sparse_attn.py`:
 
 ```python
-Lines 31–122:
+Lines 31–123:
     28: 
     29: 
     30: # ═══════════════════════════════════════════════════════════════════════════════
@@ -549,14 +569,15 @@ Lines 31–122:
    113:         denom = (N * (N + 1) / 2.0) if is_causal else float(N * N)
    114:         # Take per-(b,h) mean for reporting; harness aggregates further.
    115:         self.last_density = float(token_keep[0, 0].sum().item()) / max(denom, 1.0)
-   116: 
-   117:         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
-   118:         attn = attn.masked_fill(~token_keep, float('-inf'))
-   119:         attn = torch.softmax(attn, dim=-1)
-   120:         attn = torch.nan_to_num(attn, nan=0.0)
-   121:         out = torch.matmul(attn, v.float())
-   122:         return out.to(q.dtype)
-   123: # ═══════════════════════════════════════════════════════════════════════════════
+   116:         self.last_mask = token_keep  # harness computes density from this mask
+   117: 
+   118:         attn = torch.matmul(q.float(), k.float().transpose(-2, -1)) * scale
+   119:         attn = attn.masked_fill(~token_keep, float('-inf'))
+   120:         attn = torch.softmax(attn, dim=-1)
+   121:         attn = torch.nan_to_num(attn, nan=0.0)
+   122:         out = torch.matmul(attn, v.float())
+   123:         return out.to(q.dtype)
+   124: # ═══════════════════════════════════════════════════════════════════════════════
 ```
 
 

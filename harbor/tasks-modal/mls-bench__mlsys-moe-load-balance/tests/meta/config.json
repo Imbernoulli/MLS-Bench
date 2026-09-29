@@ -44,6 +44,9 @@
     },
     "flat_zigzag": {
       "edit_ops": "edits/full_tensor.edit.py"
+    },
+    "static": {
+      "edit_ops": "edits/static.edit.py"
     }
   },
   "files": [

@@ -24,12 +24,12 @@ class CustomSampling(Strategy):
         super().__init__(X, Y, idxs_lb, net, handler, args)
 
     def query(self, n) -> np.ndarray:
-        # Return n indices into self.X of currently-unlabeled samples to label.
+        # Return exactly n distinct indices into self.X of currently-unlabeled samples to label.
         ...
 ```
 
 Available from the `Strategy` base class:
-- `self.X`, `self.Y`, `self.idxs_lb` — pool features (numpy `[n_pool, n_features]`), labels (LongTensor `[n_pool]`), boolean labeled mask.
+- `self.X`, `self.Y`, `self.idxs_lb` — pool features (numpy `[n_pool, n_features]`), labels (LongTensor `[n_pool]`; only labeled rows carry their true label, unlabeled rows hold an uninformative placeholder), boolean labeled mask (a copy; the harness keeps the authoritative one and rejects a query that is not exactly `n` distinct currently-unlabeled indices).
 - `self.n_pool` — total pool size.
 - `self.predict_prob(X, Y)` — softmax probabilities `[len(X), n_classes]`.
 - `self.predict_prob_dropout_split(X, Y, n_drop)` — MC dropout probabilities `[n_drop, len(X), n_classes]`.
@@ -79,7 +79,7 @@ Other files you may **read** for context (do not modify):
      6: 
      7: Interface contract:
      8:   - self.X: numpy array of all pool features, shape (n_pool, n_features)
-     9:   - self.Y: torch LongTensor of all pool labels, shape (n_pool,)
+     9:   - self.Y: torch LongTensor of pool labels, shape (n_pool,); true labels only for labeled rows (unlabeled rows: placeholder)
     10:   - self.idxs_lb: boolean array, True for labeled samples
     11:   - self.n_pool: total number of pool samples
     12:   - self.clf: the trained neural network model
@@ -88,7 +88,7 @@ Other files you may **read** for context (do not modify):
     15:   - self.get_embedding(X, Y): returns penultimate-layer embeddings, shape (len(X), emb_dim)
     16:   - self.get_grad_embedding(X, Y): returns gradient embeddings (for BADGE), shape (len(X), emb_dim * n_classes)
     17:   - self.get_exp_grad_embedding(X, Y): returns expected Fisher embeddings (for BAIT), shape (len(X), n_classes, emb_dim)
-    18:   - query(n) must return an array of n indices into self.X (indices of the UNLABELED pool)
+    18:   - query(n) must return exactly n distinct indices into self.X of currently UNLABELED samples (anything else fails the run)
     19: """
     20: 
     21: import numpy as np

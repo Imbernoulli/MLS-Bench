@@ -22,6 +22,8 @@ class CustomModel(qlib.model.base.Model):
 ```
 `predict` returns a `pd.Series` indexed by `(datetime, instrument)` matching the requested segment's index.
 
+Predictions must be causal: after `predict`, the harness rebuilds the dataset with the data ending at a randomly drawn test date t, predicts again with a copy of the fitted model, and rejects the run if the predictions for the last five dates up to t change beyond float noise, so the prediction for date t may only use data up to date t. The model is also constructed and fit with the data ending before the first test date: during that phase `qlib.data.D` cannot read the test period, and `dataset.prepare()` returns test-segment rows as NaN.
+
 ## Reference Implementations (read-only)
 Three reference models ship with qlib and are available as read-only context.
 
@@ -51,7 +53,7 @@ stay unchanged.
 - editable lines **58–156**
 - `qlib/workflow_config.yaml`
 - editable lines **14–26**
-- editable lines **32–45**
+- editable lines **32–44**
 
 
 Other files you may **read** for context (do not modify):
@@ -222,7 +224,7 @@ Other files you may **read** for context (do not modify):
    156:         return pd.Series(preds, index=index, name="score")
 ```
 
-### `qlib/workflow_config.yaml`  [EDITABLE — lines 14–26, lines 32–45 only]
+### `qlib/workflow_config.yaml`  [EDITABLE — lines 14–26, lines 32–44 only]
 
 ```yaml
      1: # Qlib workflow configuration for CSI300 graph-based stock prediction benchmark.
@@ -1216,7 +1218,7 @@ Lines 14–26:
     28:           end_time: "2020-08-01"
     29:           fit_start_time: "2008-01-01"
 
-Lines 32–38:
+Lines 32–37:
     29:           fit_start_time: "2008-01-01"
     30:           fit_end_time: "2014-12-31"
     31:           instruments: csi300
@@ -1229,7 +1231,6 @@ Lines 32–38:
     38:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
     39:       segments:
     40:         train: ["2008-01-01", "2014-12-31"]
-    41:         valid: ["2015-01-01", "2016-12-31"]
 ```
 
 

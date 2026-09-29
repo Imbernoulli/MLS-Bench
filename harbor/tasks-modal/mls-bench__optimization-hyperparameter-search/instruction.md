@@ -429,129 +429,164 @@ stay unchanged.
    330: # ================================================================
    331: 
    332: 
-   333: def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
-   334:                  output_dir: str):
-   335:     """Run full HPO loop and report metrics."""
-   336:     cfg = BENCHMARKS[benchmark_name]
-   337:     space, objective = cfg["make_fn"]()
-   338: 
-   339:     strategy = CustomHPOStrategy(seed=seed)
-   340:     history: List[Trial] = []
-   341:     best_score = -np.inf
-   342:     best_config = None
-   343:     total_cost = 0.0
-   344:     convergence_curve = []
-   345:     convergence_threshold_reached = budget  # default: never reached early
-   346: 
-   347:     # Determine convergence threshold (90% of budget's potential)
-   348:     # We'll compute this after seeing some results
-   349: 
-   350:     start_time = time.time()
-   351: 
-   352:     eval_count = 0
-   353:     while total_cost < budget:
-   354:         budget_left = budget - total_cost
-   355:         if budget_left < 0.1:
-   356:             break
-   357: 
-   358:         config, fidelity = strategy.suggest(space, history, int(budget_left))
-   359:         fidelity = float(np.clip(fidelity, 0.1, 1.0))
-   360:         config = space.clip(config)
-   361: 
-   362:         score = objective(config, budget=fidelity)
-   363:         trial = Trial(config=config, score=score, budget=fidelity)
-   364:         history.append(trial)
-   365: 
-   366:         total_cost += fidelity
-   367:         eval_count += 1
-   368: 
-   369:         if score > best_score:
-   370:             best_score = score
-   371:             best_config = config.copy()
-   372: 
-   373:         convergence_curve.append({
-   374:             "eval": eval_count,
-   375:             "cost": total_cost,
-   376:             "best_score": best_score,
-   377:         })
-   378: 
-   379:         if eval_count % 5 == 0 or total_cost >= budget - 0.1:
-   380:             elapsed = time.time() - start_time
-   381:             print(
-   382:                 f"TRAIN_METRICS eval={eval_count} cost={total_cost:.1f}/{budget} "
-   383:                 f"best_score={best_score:.6f} elapsed={elapsed:.1f}s",
-   384:                 flush=True,
-   385:             )
-   386: 
-   387:     elapsed = time.time() - start_time
-   388: 
-   389:     # Compute convergence speed: area under the normalized curve (AUC)
-   390:     # Higher AUC = faster convergence (found good configs earlier)
-   391:     if len(convergence_curve) > 1:
-   392:         costs = [c["cost"] / budget for c in convergence_curve]
-   393:         scores = [c["best_score"] for c in convergence_curve]
-   394:         # Normalize scores to [0, 1] range
-   395:         s_min, s_max = min(scores), max(scores)
-   396:         if s_max > s_min:
-   397:             norm_scores = [(s - s_min) / (s_max - s_min) for s in scores]
-   398:         else:
-   399:             norm_scores = [1.0] * len(scores)
-   400:         # Trapezoidal AUC
-   401:         auc = float(np.trapezoid(norm_scores, costs)) if hasattr(np, 'trapezoid') else float(np.trapz(norm_scores, costs))
-   402:     else:
-   403:         auc = 0.0
-   404: 
-   405:     # Print final metrics
-   406:     print(f"TEST_METRICS best_val_score={best_score:.6f}", flush=True)
-   407:     print(f"TEST_METRICS convergence_auc={auc:.6f}", flush=True)
-   408:     print(f"TEST_METRICS total_evals={eval_count}", flush=True)
+   333: def _auc_reference(benchmark_name: str) -> Tuple[float, float]:
+   334:     """Fixed (worst, best) reference scores for convergence_auc.
+   335: 
+   336:     worst: validation score of a constant predictor -- the target mean for
+   337:            the regression benchmarks (neg. MSE = -Var(y)), the majority class
+   338:            for the classification benchmark.
+   339:     best:  a perfect predictor (neg. MSE 0, accuracy 1).
+   340:     The references depend only on the dataset, never on the run.
+   341:     """
+   342:     if benchmark_name == "xgboost":
+   343:         y = fetch_california_housing(
+   344:             data_home=os.environ.get("SKLEARN_DATA_HOME")).target
+   345:         return -float(np.var(y)), 0.0
+   346:     if benchmark_name == "svm":
+   347:         y = load_breast_cancer().target
+   348:         p = float(np.mean(y))
+   349:         return max(p, 1.0 - p), 1.0
+   350:     if benchmark_name == "nn":
+   351:         y = load_diabetes().target
+   352:         return -float(np.var(y)), 0.0
+   353:     raise ValueError(f"no AUC reference for benchmark {benchmark_name!r}")
+   354: 
+   355: 
+   356: def _convergence_auc(curve: List[Tuple[float, float]], budget: int,
+   357:                      worst: float, best: float) -> float:
+   358:     """Anytime performance: mean over the cost axis [0, budget] of the
+   359:     normalized incumbent score.
+   360: 
+   361:     The incumbent is a step function of spent cost: 0 until the first
+   362:     evaluation completes, then (best_so_far - worst) / (best - worst),
+   363:     clipped to [0, 1]. Cost spent past the budget is not integrated.
+   364:     """
+   365:     auc, prev_cost, prev_q = 0.0, 0.0, 0.0
+   366:     for cost, best_so_far in curve:
+   367:         cost = min(cost, float(budget))
+   368:         auc += prev_q * (cost - prev_cost)
+   369:         prev_cost = cost
+   370:         prev_q = float(np.clip((best_so_far - worst) / (best - worst),
+   371:                                0.0, 1.0))
+   372:     auc += prev_q * (float(budget) - prev_cost)
+   373:     return auc / float(budget)
+   374: 
+   375: 
+   376: def run_hpo_loop(benchmark_name: str, seed: int, budget: int,
+   377:                  output_dir: str):
+   378:     """Run full HPO loop and report metrics."""
+   379:     cfg = BENCHMARKS[benchmark_name]
+   380:     space, objective = cfg["make_fn"]()
+   381:     auc_worst, auc_best = _auc_reference(benchmark_name)
+   382: 
+   383:     strategy = CustomHPOStrategy(seed=seed)
+   384:     history: List[Trial] = []
+   385:     best_score = -np.inf
+   386:     best_config = None
+   387:     total_cost = 0.0
+   388:     convergence_curve = []
+   389:     auc_points: List[Tuple[float, float]] = []
+   390: 
+   391:     start_time = time.time()
+   392: 
+   393:     eval_count = 0
+   394:     while total_cost < budget:
+   395:         budget_left = budget - total_cost
+   396:         if budget_left < 0.1:
+   397:             break
+   398: 
+   399:         config, fidelity = strategy.suggest(space, history, int(budget_left))
+   400:         fidelity = float(fidelity)
+   401:         if not math.isfinite(fidelity):
+   402:             raise ValueError(f"fidelity must be a finite number, got {fidelity}")
+   403:         fidelity = float(np.clip(fidelity, 0.1, 1.0))
+   404:         config = space.clip(config)
+   405: 
+   406:         score = float(objective(config, budget=fidelity))
+   407:         trial = Trial(config=config, score=score, budget=fidelity)
+   408:         history.append(trial)
    409: 
-   410:     # Save results
-   411:     os.makedirs(output_dir, exist_ok=True)
-   412:     results = {
-   413:         "benchmark": benchmark_name,
-   414:         "seed": seed,
-   415:         "budget": budget,
-   416:         "total_cost": total_cost,
-   417:         "total_evals": eval_count,
-   418:         "best_score": best_score,
-   419:         "best_config": best_config,
-   420:         "convergence_auc": auc,
-   421:         "elapsed_seconds": elapsed,
-   422:         "convergence_curve": convergence_curve,
-   423:     }
-   424:     with open(os.path.join(output_dir,
-   425:                            f"{benchmark_name}_results.json"), "w") as f:
-   426:         json.dump(results, f, indent=2)
-   427: 
-   428:     return best_score, auc
-   429: 
-   430: 
-   431: def main():
-   432:     parser = argparse.ArgumentParser(
-   433:         description="Hyperparameter Optimization Strategy Benchmark")
-   434:     parser.add_argument("--benchmark", type=str, required=True,
-   435:                         choices=list(BENCHMARKS.keys()))
-   436:     parser.add_argument("--seed", type=int,
-   437:                         default=int(os.environ.get("SEED", 42)))
-   438:     parser.add_argument("--budget", type=int, default=None,
-   439:                         help="Override default budget for this benchmark")
-   440:     parser.add_argument("--output-dir", type=str,
-   441:                         default=os.environ.get("OUTPUT_DIR", "./output"))
-   442:     args = parser.parse_args()
+   410:         total_cost += fidelity
+   411:         eval_count += 1
+   412: 
+   413:         if score > best_score:
+   414:             best_score = score
+   415:             best_config = config.copy()
+   416: 
+   417:         convergence_curve.append({
+   418:             "eval": eval_count,
+   419:             "cost": total_cost,
+   420:             "best_score": best_score,
+   421:         })
+   422:         auc_points.append((total_cost, best_score))
+   423: 
+   424:         if eval_count % 5 == 0 or total_cost >= budget - 0.1:
+   425:             elapsed = time.time() - start_time
+   426:             print(
+   427:                 f"TRAIN_METRICS eval={eval_count} cost={total_cost:.1f}/{budget} "
+   428:                 f"best_score={best_score:.6f} elapsed={elapsed:.1f}s",
+   429:                 flush=True,
+   430:             )
+   431: 
+   432:     elapsed = time.time() - start_time
+   433: 
+   434:     # Convergence speed: area under the incumbent curve over [0, budget],
+   435:     # normalized with fixed per-benchmark references (not the run's own
+   436:     # min/max). Higher AUC = good configurations found earlier.
+   437:     auc = _convergence_auc(auc_points, budget, auc_worst, auc_best)
+   438: 
+   439:     # Print final metrics
+   440:     print(f"TEST_METRICS best_val_score={best_score:.6f}", flush=True)
+   441:     print(f"TEST_METRICS convergence_auc={auc:.6f}", flush=True)
+   442:     print(f"TEST_METRICS total_evals={eval_count}", flush=True)
    443: 
-   444:     benchmark_budget = args.budget or BENCHMARKS[args.benchmark]["budget"]
-   445: 
-   446:     print(f"Running HPO benchmark: {args.benchmark} "
-   447:           f"(seed={args.seed}, budget={benchmark_budget})", flush=True)
-   448:     best_score, auc = run_hpo_loop(
-   449:         args.benchmark, args.seed, benchmark_budget, args.output_dir)
-   450:     print(f"Final best score on {args.benchmark}: {best_score:.6f} "
-   451:           f"(convergence AUC: {auc:.4f})", flush=True)
-   452: 
-   453: 
-   454: if __name__ == "__main__":
-   455:     main()
+   444:     # Save results
+   445:     os.makedirs(output_dir, exist_ok=True)
+   446:     results = {
+   447:         "benchmark": benchmark_name,
+   448:         "seed": seed,
+   449:         "budget": budget,
+   450:         "total_cost": total_cost,
+   451:         "total_evals": eval_count,
+   452:         "best_score": best_score,
+   453:         "best_config": best_config,
+   454:         "convergence_auc": auc,
+   455:         "auc_reference": {"worst": auc_worst, "best": auc_best},
+   456:         "elapsed_seconds": elapsed,
+   457:         "convergence_curve": convergence_curve,
+   458:     }
+   459:     with open(os.path.join(output_dir,
+   460:                            f"{benchmark_name}_results.json"), "w") as f:
+   461:         json.dump(results, f, indent=2)
+   462: 
+   463:     return best_score, auc
+   464: 
+   465: 
+   466: def main():
+   467:     parser = argparse.ArgumentParser(
+   468:         description="Hyperparameter Optimization Strategy Benchmark")
+   469:     parser.add_argument("--benchmark", type=str, required=True,
+   470:                         choices=list(BENCHMARKS.keys()))
+   471:     parser.add_argument("--seed", type=int,
+   472:                         default=int(os.environ.get("SEED", 42)))
+   473:     parser.add_argument("--budget", type=int, default=None,
+   474:                         help="Override default budget for this benchmark")
+   475:     parser.add_argument("--output-dir", type=str,
+   476:                         default=os.environ.get("OUTPUT_DIR", "./output"))
+   477:     args = parser.parse_args()
+   478: 
+   479:     benchmark_budget = args.budget or BENCHMARKS[args.benchmark]["budget"]
+   480: 
+   481:     print(f"Running HPO benchmark: {args.benchmark} "
+   482:           f"(seed={args.seed}, budget={benchmark_budget})", flush=True)
+   483:     best_score, auc = run_hpo_loop(
+   484:         args.benchmark, args.seed, benchmark_budget, args.output_dir)
+   485:     print(f"Final best score on {args.benchmark}: {best_score:.6f} "
+   486:           f"(convergence AUC: {auc:.4f})", flush=True)
+   487: 
+   488: 
+   489: if __name__ == "__main__":
+   490:     main()
 ```
 
 ## Reference Baselines

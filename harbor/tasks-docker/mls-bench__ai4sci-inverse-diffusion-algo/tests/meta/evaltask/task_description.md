@@ -28,10 +28,10 @@ The pretrained denoiser, the forward-operator definitions, and the evaluation pr
 ## Evaluation
 The algorithm is tested on three scientific inverse problems:
 1. **Inverse Scattering** (optical tomography): Recover permittivity from scattered EM fields. Metrics: PSNR, SSIM.
-2. **Black Hole Imaging** (radio astronomy): Reconstruct black hole images from sparse interferometric observations (EHT data). Metrics: PSNR, blur-PSNR (f=15), closure-phase chi-squared.
+2. **Black Hole Imaging** (radio astronomy): Reconstruct black hole images from sparse interferometric observations (EHT data). Metrics: PSNR, closure-phase and log-closure-amplitude reduced chi-squared. PSNR is the score; the chi-squared values (reported folded, so values below 1 count as 1/chi², and 1 is ideal) are a data-consistency constraint: each one above 2 multiplies the setting score by exp(-0.15·(chi² − 2)).
 3. **FFHQ256 Image Inpainting** (computer vision): Recover an FFHQ-256 face image from a masked observation (box mask) with additive Gaussian noise (σ=0.05). The forward operator is a fixed pixel-wise mask. Metrics: PSNR, SSIM, LPIPS.
 
-Higher PSNR/SSIM is better; lower LPIPS and chi-squared are better.
+Higher PSNR/SSIM is better; lower LPIPS is better.
 
 ## Editable Region
 The entire `InverseBench/algo/custom.py` file is editable. You may define any helper classes/functions within this file.

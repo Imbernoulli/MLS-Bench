@@ -280,7 +280,8 @@ harbor run -c run-daytona.yaml --path tasks-daytona/mls-bench__TASK \
 ```
 
 `--agent nop --disable-verification` checks only that the image builds and the sandbox
-starts. The two tasks whose evaluators call DeepSeek/DashScope need those keys;
+starts. The two tasks whose evaluators call DeepSeek/DashScope need those keys
+(agent-tool-reasoning also needs `OPENROUTER_API_KEY_NEW` for its SoPR judge);
 the other 138 do not.
 
 `run-daytona.yaml` defaults to `gpu_type: H100` and `spot: false`; any `--ek`
