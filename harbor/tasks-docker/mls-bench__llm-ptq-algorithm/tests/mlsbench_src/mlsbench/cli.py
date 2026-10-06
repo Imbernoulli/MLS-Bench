@@ -28,6 +28,7 @@ import copy
 import hashlib
 from importlib import metadata
 import json
+from datetime import datetime, timezone
 import logging
 import os
 import re
@@ -494,6 +495,26 @@ def _conda_env_exists(conda_exe: str, env_name: str) -> bool:
         return False
 
 
+def _conda_envs_root(global_config: dict | None) -> Path | None:
+    """Resolve ``conda_envs_root`` from config, if set.
+
+    When present, per-package conda envs are created as an explicit
+    ``--prefix <root>/<env_name>`` instead of a bare ``-n <env_name>``, so
+    they land under a caller-chosen disk (e.g. a large data volume) instead
+    of conda's default ``envs_dirs`` location. This never touches the
+    user's existing conda installation or its default envs.
+    """
+    raw = str((global_config or {}).get("conda_envs_root", "") or "").strip()
+    if not raw:
+        return None
+    return Path(raw).expanduser()
+
+
+def _conda_env_prefix_exists(env_path: Path) -> bool:
+    """Check whether a conda env prefix directory is a valid env."""
+    return (env_path / "conda-meta").is_dir()
+
+
 def _parse_base_image(base_image: str) -> dict:
     """Parse a Docker base_image string into structured info.
 
@@ -584,8 +605,16 @@ def _prefer_env_python_for_pip(cmd: str, *, use_conda: bool) -> str:
     return f"{leading}python -m {stripped}"
 
 
-def _remove_conda_env(conda_exe: str, env_name: str) -> None:
-    """Delete a named conda env if it exists."""
+def _remove_conda_env(conda_exe: str, env_name: str, env_path: Path | None = None) -> None:
+    """Delete a named (or prefix-based) conda env if it exists."""
+    if env_path is not None:
+        logger.info("Removing conda env at '%s'", env_path)
+        subprocess.run(
+            [conda_exe, "remove", "--prefix", str(env_path), "--all", "-y"],
+            check=True,
+        )
+        shutil.rmtree(env_path, ignore_errors=True)
+        return
     logger.info("Removing conda env '%s'", env_name)
     subprocess.run(
         [conda_exe, "remove", "-n", env_name, "--all", "-y"],
@@ -599,12 +628,14 @@ def ensure_conda_env(
     *,
     force: bool = False,
     env: dict[str, str] | None = None,
+    global_config: dict | None = None,
 ) -> str:
     """Create the per-package conda env if it doesn't exist.
 
     Mirrors Docker ``base_image``: creates a conda env with the right
     Python version and installs PyTorch + CUDA matching the base image.
-    Returns the conda env name.
+    Returns the conda env name (or, when ``conda_envs_root`` is configured,
+    the ``--prefix`` path as a string — see ``wrap_with_conda``).
     """
     env_name = conda_env_for_pkg(pkg_name)
     conda_exe = find_conda_exe()
@@ -613,23 +644,32 @@ def ensure_conda_env(
             "Local runtime requires conda but 'conda' is not on PATH. "
             "Install miniconda or set conda_prefix in config."
         )
-    if _conda_env_exists(conda_exe, env_name):
-        if force:
-            _remove_conda_env(conda_exe, env_name)
-        else:
-            logger.info("Conda env '%s' already exists", env_name)
-            return env_name
 
-    if _conda_env_exists(conda_exe, env_name):
-        logger.info("Conda env '%s' already exists", env_name)
-        return env_name
+    envs_root = _conda_envs_root(global_config)
+    env_path = (envs_root / env_name) if envs_root else None
+    create_flags = ["--prefix", str(env_path)] if env_path else ["-n", env_name]
+    run_flags = ["--prefix", str(env_path)] if env_path else ["-n", env_name]
+
+    def _exists() -> bool:
+        if env_path is not None:
+            return _conda_env_prefix_exists(env_path)
+        return _conda_env_exists(conda_exe, env_name)
+
+    if _exists():
+        if force:
+            _remove_conda_env(conda_exe, env_name, env_path=env_path)
+        else:
+            logger.info("Conda env '%s' already exists", env_path or env_name)
+            return str(env_path) if env_path else env_name
 
     base_image = pkg_config.get("base_image", "")
     info = _parse_base_image(base_image)
     py_ver = info["python"]
-    logger.info("Creating conda env '%s' (python=%s) for package '%s'", env_name, py_ver, pkg_name)
+    logger.info("Creating conda env '%s' (python=%s) for package '%s'", env_path or env_name, py_ver, pkg_name)
+    if env_path is not None:
+        env_path.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        [conda_exe, "create", "-n", env_name, f"python={py_ver}", "-y"],
+        [conda_exe, "create", *create_flags, f"python={py_ver}", "-y"],
         check=True,
     )
 
@@ -638,13 +678,13 @@ def ensure_conda_env(
     for cmd_str in base_cmds:
         logger.info("[conda-base] %s", cmd_str)
         subprocess.run(
-            [conda_exe, "run", "--no-capture-output", "-n", env_name,
+            [conda_exe, "run", "--no-capture-output", *run_flags,
              "bash", "-c", cmd_str],
             check=True,
             env=env,
         )
 
-    return env_name
+    return str(env_path) if env_path else env_name
 
 
 def wrap_with_conda(cmd: list[str], global_config: dict | None, *, pkg_name: str | None = None) -> list[str]:
@@ -664,7 +704,11 @@ def wrap_with_conda(cmd: list[str], global_config: dict | None, *, pkg_name: str
         conda_exe = find_conda_exe()
         if not conda_exe:
             return cmd
-        conda_env = conda_env_for_pkg(pkg_name)
+        envs_root = _conda_envs_root(global_config)
+        if envs_root:
+            conda_prefix = str(envs_root / conda_env_for_pkg(pkg_name))
+        else:
+            conda_env = conda_env_for_pkg(pkg_name)
 
     if not conda_prefix and not conda_env:
         return cmd
@@ -750,14 +794,22 @@ def _translate_local_string(
     base_env: dict[str, str],
 ) -> str:
     translated = _expand_env_vars(value, base_env)
-    for container_path, host_path in sorted(path_map.items(), key=lambda item: len(item[0]), reverse=True):
-        # Only rewrite standalone path segments, not incidental substrings
-        # inside URLs like ".../datasets/...".
-        pattern = re.compile(
-            rf"(?<![A-Za-z0-9._-]){re.escape(container_path)}(?=$|\s|['\"=:/])"
-        )
-        translated = pattern.sub(host_path, translated)
-    return translated
+    if not path_map:
+        return translated
+    # Single combined pass: applying each container_path -> host_path
+    # substitution as its own sequential .sub() call is NOT idempotent
+    # when a host_path itself textually contains another (typically
+    # shorter/more generic, e.g. "/data") container_path as a prefix or
+    # segment -- which happens whenever data_root resolves under a
+    # literal "/data"-prefixed mount. A later pass would then re-match
+    # and re-substitute inside text a previous pass already produced,
+    # duplicating the prefix. Matching all keys in one alternation and
+    # substituting in a single sweep avoids re-scanning generated text.
+    ordered = sorted(path_map.items(), key=lambda item: len(item[0]), reverse=True)
+    combined = "|".join(re.escape(container_path) for container_path, _ in ordered)
+    pattern = re.compile(rf"(?<![A-Za-z0-9._-])(?:{combined})(?=$|\s|['\"=:/])")
+    lookup = dict(ordered)
+    return pattern.sub(lambda m: lookup[m.group(0)], translated)
 
 
 def _resolve_local_path_map(
@@ -919,6 +971,17 @@ def build_local_package(
     build_env.setdefault("PYTHONNOUSERSITE", "1")
     build_env.setdefault("PIP_NO_USER_CONFIG", "1")
 
+    envs_root = _conda_envs_root(global_config)
+    if envs_root is not None:
+        # Keep pip's download cache/tmp off the (possibly near-full) home
+        # filesystem, alongside the redirected conda envs themselves.
+        cache_root = envs_root.parent / "pip_cache"
+        tmp_root = envs_root.parent / "tmp"
+        cache_root.mkdir(parents=True, exist_ok=True)
+        tmp_root.mkdir(parents=True, exist_ok=True)
+        build_env.setdefault("PIP_CACHE_DIR", str(cache_root))
+        build_env.setdefault("TMPDIR", str(tmp_root))
+
     use_conda = _has_conda_support(global_config)
     if pkg_config.get("local_requires_conda", False) and not use_conda:
         raise RuntimeError(
@@ -928,7 +991,7 @@ def build_local_package(
         )
     if use_conda:
         # Create per-package conda env (like building a Docker image)
-        ensure_conda_env(pkg_name, pkg_config, force=force, env=build_env)
+        ensure_conda_env(pkg_name, pkg_config, force=force, env=build_env, global_config=global_config)
     else:
         local_site = local_python_target_dir(pkg_name)
         if force and local_site.exists():
@@ -1057,6 +1120,35 @@ def _ensure_local_package_stub(pkg_name: str) -> Path:
     return pkg_dir
 
 
+def _assemble_registry_package(info: dict, pkg_dir: Path) -> bool:
+    """Materialize a composite package via its checked-in, pinned assembler."""
+    relative = info.get("assembler")
+    if not relative:
+        return False
+    script = (PROJECT_ROOT / relative).resolve()
+    if not script.is_relative_to(PROJECT_ROOT.resolve()) or not script.is_file():
+        raise ValueError(f"Invalid package assembler: {relative!r}")
+    run_cmd([sys.executable, str(script), "--package-dir", str(pkg_dir)])
+    if not pkg_dir.is_dir():
+        raise RuntimeError(f"Package assembler did not create {pkg_dir}")
+    # Leave a uniform stamp. Each assembler already writes its own completion
+    # artefact -- SOURCE_MANIFEST.json, SOURCE_CLOSURE.json, or for
+    # realesrgan-cv100 nothing at all -- so there is no single file that means
+    # "the assembler ran here". That matters because a package directory left
+    # over from a plain clone made before its `assembler:` key existed is never
+    # re-fetched (a fetch sweep skips directories that are already there), and
+    # the incomplete tree renders into a bundle that fails at eval time with a
+    # hash mismatch that reads like corruption. So the stamp is written here
+    # unconditionally: its presence is the one uniform signal that the assembler
+    # ran, and its absence is what a re-fetch acts on.
+    stamp = pkg_dir / ".mlsb_assembled.json"
+    stamp.write_text(json.dumps({
+        "assembler": relative,
+        "assembled_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }, indent=2) + "\n")
+    return True
+
+
 def _fetch_single_package(pkg_name: str) -> Path | None:
     """Auto-fetch a single package from vendor/packages.yaml."""
     import yaml as _yaml
@@ -1077,6 +1169,8 @@ def _fetch_single_package(pkg_name: str) -> Path | None:
             return None
     info = packages[pkg_name]
     EXT_PKG_DIR.mkdir(parents=True, exist_ok=True)
+    if _assemble_registry_package(info, EXT_PKG_DIR / pkg_name):
+        return EXT_PKG_DIR / pkg_name
     if _is_local_registry_package(info):
         logger.info("[auto-fetch] Creating local package stub for %s", pkg_name)
         return _ensure_local_package_stub(pkg_name)
@@ -1220,7 +1314,10 @@ def generate_dockerfile(
         lines.extend(docker_run_instruction_lines(cmd))
     for k, v in env.items():
         lines.append(f"ENV {k}={v}")
-    lines.append('ENTRYPOINT ["bash"]')
+    # No ENTRYPOINT: every invocation path in this repo already runs the script
+    # as `bash <script>`, so an `ENTRYPOINT ["bash"]` makes docker execute
+    # `bash bash <script>` and the run dies with "cannot execute binary file".
+    # Published bohanlyu2022/mlsbench-harbor-* images carry no entrypoint.
     return "\n".join(lines) + "\n"
 
 
@@ -1864,6 +1961,7 @@ def _run_single_baseline(
         use_cuda=use_cuda_override,
         platform=run_config.get("platform", ""),
         gpu_devices=run_config.get("gpu_devices", ""),
+        compute_scale=run_config.get("compute_scale", 1.0),
         global_config=run_config,
         allow_web_search=run_config.get("allow_web_search", False),
         tavily_api_key=(run_config.get("providers", {}).get("tavily", {}) or {}).get("api_key", ""),
@@ -2172,6 +2270,8 @@ def cmd_fetch(args):
     for pkg_name, info in packages.items():
         pkg_dir = EXT_PKG_DIR / pkg_name
 
+        if _assemble_registry_package(info, pkg_dir):
+            continue
         if _is_local_registry_package(info):
             if pkg_dir.exists():
                 logger.info("[fetch] %s is a local scaffold package, keeping %s", pkg_name, pkg_dir)
@@ -2213,10 +2313,26 @@ def _path_has_content(path: Path) -> bool:
 
 
 def _data_dep_exists(host_path: str, dep: dict | None = None, data_root: str = "") -> bool:
+    """Is this data dep already prepared?
+
+    ``ready_files`` may be absolute, a ``{data_root}`` template, or a name
+    relative to the dep's own directory -- the last is what 15 deps across 12
+    packages actually declare (``"spot.obj"``, ``"kodak/kodim01.png"``). A
+    relative name used to be resolved against the *process* working directory,
+    so the dep read as never-prepared however complete it was, and every
+    `mlsbench data` re-ran the download. Resolve it against ``host_path``, which
+    is what the name plainly means. The rendered Harbor bundle applies the
+    mirror-image rule against ``container_path``; see
+    ``scripts/harbor/selfcontained.py``.
+    """
     ready_files = (dep or {}).get("ready_files", [])
     if ready_files:
+        base = Path(expand_path_template(str(host_path), data_root))
         return all(
-            _path_has_content(Path(expand_path_template(str(path), data_root)))
+            _path_has_content(
+                p if (p := Path(expand_path_template(str(path), data_root))).is_absolute()
+                else base / p
+            )
             for path in ready_files
         )
     path = Path(host_path)
@@ -2291,9 +2407,15 @@ def _prepare_data_command(
     script_path: Path,
     data_root: str,
     global_config: dict | None,
+    prepare_args: tuple = (),
 ) -> tuple[list[str], dict[str, str] | None]:
     def cmd_base(python_exe: str) -> list[str]:
         cmd = [python_exe, str(script_path), "--data-root", str(data_root)]
+        # A package whose data_deps split one prepare script into named
+        # subsets (Neural-Solver-Library: design / fno-* / pdebench-*) passes
+        # the selector here, so a task that needs one subset does not pull the
+        # whole ~90 GB corpus.
+        cmd.extend(str(a) for a in prepare_args)
         # Provide vendored LIBERO root to OpenVLA-OFT data scripts so they can
         # initialize a stable LIBERO config without host-specific paths.
         if script_path.name == "prepare_data.py" and "openvla-oft" in str(script_path):
@@ -2351,6 +2473,7 @@ def prepare_data_for_package(
             str(dep.get("name", "")),
             expand_path_template(str(dep.get("host_path", "")), data_root),
             str(dep.get("prepare", "")),
+            repr(tuple(dep.get("prepare_args") or ())),
         )
         for dep in deps
     )
@@ -2368,7 +2491,7 @@ def prepare_data_for_package(
     print(f"{'=' * 50}")
 
     missing_without_prepare = []
-    prepare_groups: dict[str, list[tuple[dict, bool, str]]] = defaultdict(list)
+    prepare_groups: dict[tuple, list[tuple[dict, bool, str]]] = defaultdict(list)
 
     for dep in deps:
         name = dep.get("name", "?")
@@ -2397,7 +2520,8 @@ def prepare_data_for_package(
             continue
 
         if prepare:
-            prepare_groups[prepare].append((dep, exists, host_path))
+            key = (prepare, tuple(dep.get("prepare_args") or ()))
+            prepare_groups[key].append((dep, exists, host_path))
 
     if list_only:
         return
@@ -2409,7 +2533,7 @@ def prepare_data_for_package(
             f"prepare script: {details}"
         )
 
-    for prepare, dep_states in prepare_groups.items():
+    for (prepare, prepare_args), dep_states in prepare_groups.items():
         missing = [(dep, host_path) for dep, exists, host_path in dep_states if not exists]
         verify_existing = bool(pkg_config.get("verify_existing_data")) or any(
             bool(dep.get("verify_existing")) for dep, _exists, _host_path in dep_states
@@ -2444,6 +2568,7 @@ def prepare_data_for_package(
             script_path,
             data_root,
             global_config,
+            prepare_args,
         )
         result = subprocess.run(cmd, check=False, env=run_env, cwd=str(PROJECT_ROOT))
         if result.returncode != 0:
@@ -2547,7 +2672,13 @@ def cmd_agent(args):
     global_config["allow_web_search"] = getattr(args, "allow_web_search", False)
     global_config["max_web_credits"] = getattr(args, "max_web_credits", 20)
     global_config["extra_context"] = getattr(args, "extra_context", None)
-    global_config["hide_hidden"] = getattr(args, "hide_hidden", False)
+    # store-true flags cannot distinguish "absent" from "false", so an
+    # unconditional assignment would clobber a config file that sets this.
+    # The flag turns it ON; the config can too. Neither can turn it off.
+    global_config["hide_hidden"] = bool(
+        getattr(args, "hide_hidden", False) or global_config.get("hide_hidden", False))
+    global_config["allow_reset"] = getattr(args, "allow_reset", False)
+    global_config["use_replace"] = getattr(args, "use_replace", False)
 
     # Collect OpenEvolve-specific runtime knobs if the user provided them
     oe_knobs = dict(global_config.get("openevolve") or {})
@@ -2658,8 +2789,7 @@ def main():
     )
     p_agent.add_argument(
         "--discover-tasks", default=None,
-        help="Comma-separated additional task ids for multi-task training "
-             "(v1.1 — not yet implemented)",
+        help="Comma-separated additional task ids for multi-task training",
     )
     p_agent.add_argument(
         "--discover-val-tasks", type=parse_csv_list, default=[],
@@ -2698,6 +2828,20 @@ def main():
              "from the initial prompt, and their per-setting metrics are "
              "stripped from the [Leaderboard] feedback line on every test. "
              "Leaderboard CSV writes are unchanged.",
+    )
+    p_agent.add_argument(
+        "--allow-reset", action="store_true",
+        help="Expose a reset() tool to the agent that discards ALL its edits and "
+             "restores every editable file to the original pre-edit template "
+             "state, letting it start over. Reverts files only — it does not undo "
+             "test() calls or refund the test budget. Off by default.",
+    )
+    p_agent.add_argument(
+        "--use-replace", action="store_true",
+        help="Swap the line-range edit tool for an exact string-replacement edit tool. "
+             "The agent's edit() then supports op='str_replace' (replace the unique "
+             "occurrence of old_str with new_str) and op='create', instead of the "
+             "line-numbered replace/insert ops. Off by default.",
     )
     p_agent.set_defaults(func=cmd_agent)
 

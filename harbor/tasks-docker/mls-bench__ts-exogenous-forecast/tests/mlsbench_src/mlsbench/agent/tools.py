@@ -14,12 +14,15 @@ import math
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import threading
 import time as _time
+import uuid
 from collections import defaultdict
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -115,6 +118,72 @@ TOOL_SCHEMAS = [
         },
     },
 ]
+
+
+# Opt-in tool — SWAPPED IN for the line-range `edit` schema when --use-replace is set.
+# Same tool name ("edit") so dispatch, logging, and step counters are unchanged; only the
+# operation set differs (exact string replacement instead of line-range replacement).
+EDIT_REPLACE_SCHEMA = {
+    "name": "edit",
+    "description": (
+        "Edit files in the workspace by exact string replacement. Two operations:\n"
+        "  create: Create a new file with the given `content`. Only available if allow_create=true.\n"
+        "  str_replace: Replace the SINGLE, UNIQUE occurrence of `old_str` with `new_str`.\n"
+        "    `old_str` must match the file exactly (including whitespace and indentation) and must\n"
+        "    be unique — include enough surrounding context to pin it down. Pass an empty `new_str`\n"
+        "    to delete `old_str`.\n"
+        "File paths are relative to the package root (e.g. 'LLaMA-Factory/src/...').\n"
+        "Lines within protected ranges must NOT be modified."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "op": {
+                "type": "string",
+                "enum": ["create", "str_replace"],
+                "description": "The edit operation to perform.",
+            },
+            "filename": {
+                "type": "string",
+                "description": "Package-relative path to the file (e.g. 'pytorch-vision/custom_loss.py').",
+            },
+            "old_str": {
+                "type": "string",
+                "description": (
+                    "Exact text to replace (required for op='str_replace'). Must match the file "
+                    "byte-for-byte, including whitespace/indentation, and occur exactly once."
+                ),
+            },
+            "new_str": {
+                "type": "string",
+                "description": (
+                    "Replacement text (for op='str_replace'). An empty string deletes `old_str`."
+                ),
+            },
+            "content": {
+                "type": "string",
+                "description": "Content to write (required for op='create').",
+            },
+        },
+        "required": ["op", "filename"],
+    },
+}
+
+
+# Opt-in tool — appended to TOOL_SCHEMAS only when --allow-reset is set.
+RESET_SCHEMA = {
+    "name": "reset",
+    "description": (
+        "Discard ALL of your edits and restore every editable file to its "
+        "original pre-edit template state (the code exactly as shown to you "
+        "at the start). Use this to start over from scratch. This reverts "
+        "files only — it does NOT undo test() calls or change your test budget."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {},
+    },
+}
 
 
 # Opt-in tools — appended to TOOL_SCHEMAS only when --allow-web-search is set.
@@ -308,6 +377,97 @@ def scale_test_cmd_entries(
 # WorkspaceTools
 # ---------------------------------------------------------------------------
 
+
+def _atomic_write_text(dst: "Path", text: str, mode: int | None = None) -> None:
+    """Write ``text`` to ``dst`` atomically (temp file + rename).
+
+    Concurrent test_cmds of the same group stage scripts into one shared
+    ``.local_scripts`` tree; a plain ``write_text`` there can be observed
+    half-written (or clobbered) by a sibling thread.
+    """
+    import tempfile
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=f".{dst.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+        if mode is not None:
+            os.chmod(tmp, mode)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _atomic_copy(src: "Path", dst: "Path") -> None:
+    """Copy ``src`` onto ``dst`` atomically, preserving metadata."""
+    import shutil as _shutil
+    import tempfile
+    dst = Path(dst)
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(dst.parent), prefix=f".{dst.name}.", suffix=".tmp")
+    os.close(fd)
+    try:
+        _shutil.copy2(src, tmp)
+        os.replace(tmp, dst)
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise
+
+
+def _claim_output_dir(output_dir: str, task: str, exp_name: str) -> None:
+    """Refuse to share an OUTPUT_DIR with another live run.
+
+    `cli.py` passes `exp_name=baseline_name` verbatim, so every run of a given
+    (task, baseline) resolves to the SAME
+    ``save_path/<task>/<baseline>/seed_<n>``. The code here already knew the
+    name was not unique -- `_run_token` exists because SLURM job names collided
+    for exactly this reason -- but OUTPUT_DIR kept using the bare name.
+
+    Two concurrent runs of one baseline therefore share a directory, and a task
+    script that clears its run dir at start deletes the other's checkpoints.
+    Two concurrent sets of baseline runs launched close together can silently
+    invalidate each other -- both produce plausible logs and neither is
+    trustworthy.
+
+    Renaming the directory would break resume for tasks that continue from a
+    previous OUTPUT_DIR, so instead we claim it: write a lockfile naming the
+    owning pid, and abort if a *live* process already holds it. A stale lock
+    (owner gone) is taken over silently, which keeps ordinary re-runs working.
+    """
+    d = Path(output_dir)
+    d.mkdir(parents=True, exist_ok=True)
+    lock = d / ".mlsbench_owner"
+    if lock.exists():
+        try:
+            prev = int((lock.read_text().split("\n", 1)[0] or "0").strip())
+        except (ValueError, OSError):
+            prev = 0
+        if prev and prev != os.getpid():
+            try:
+                os.kill(prev, 0)
+            except (ProcessLookupError, PermissionError):
+                pass  # stale: owner is gone (PermissionError = alive but not ours)
+            else:
+                raise RuntimeError(
+                    f"OUTPUT_DIR {output_dir} is already held by live pid {prev}. "
+                    f"Another run of {task}/{exp_name} is using it, and sharing it "
+                    f"silently corrupts both. Wait for it, or run this one with a "
+                    f"different save_path."
+                )
+    try:
+        lock.write_text(f"{os.getpid()}\n{task}/{exp_name}\n")
+    except OSError:
+        pass  # a read-only or racing FS must not break the run
+
+
 class WorkspaceTools:
     """Tools for editing workspace files and running experiments."""
 
@@ -343,6 +503,7 @@ class WorkspaceTools:
         extra_context: str | None = None,
         hide_hidden: bool = False,
         extra_env: dict | None = None,
+        allow_reset: bool = False,
     ):
         self.task_name = task_name
         self.config_task = config_task
@@ -355,6 +516,37 @@ class WorkspaceTools:
         self.save_path = save_path
         self.seeds = seeds or [42]
         self.container_runtime = container_runtime
+        if container_runtime == "local" and self.config_task.get("ephemeral_inputs"):
+            # Fail fast at setup, BEFORE anything is staged. Tasks with
+            # ephemeral_inputs withhold data (labels / held-out targets /
+            # oracle tables) by staging blobs immediately before each
+            # serialized evaluation and unlinking them right after. Under
+            # container_runtime: local the agent-editable code executes
+            # directly on the host as the harness user, so it can spawn a
+            # detached process that OUTLIVES its own evaluation and reads the
+            # NEXT evaluation's blobs while they are staged — serialization
+            # and unlinking cannot withhold anything from a peer host process.
+            # (The stager's --no-cache flag alone does not close this; the
+            # only sound boundary is a container.)
+            raise RuntimeError(
+                f"Task '{task_name}' declares ephemeral_inputs (withheld "
+                "input blobs) and cannot be evaluated with "
+                "container_runtime: local — agent code running as the "
+                "harness user on the host could read the staged blobs of "
+                "subsequent evaluations. Use container_runtime: docker or "
+                "apptainer for this task."
+            )
+        # Trusted, agent-inaccessible snapshot of the task dir for the host-
+        # side input stager (ephemeral tasks only). The live task dir is
+        # bind-mounted read-WRITE into the eval container (docker/apptainer)
+        # and the package images run as root, so an editable module in a
+        # serialized eval could overwrite edits/mid_edit.py — which the NEXT
+        # entry's stager re-executes host-side (host RCE + attacker-chosen
+        # inputs). We snapshot the task dir to a private temp BEFORE any eval
+        # runs and point the stager there; the mount is also made read-only
+        # for these tasks (defense in depth). Created lazily on first stage
+        # (still before the first launch); see _ensure_ephemeral_task_snapshot.
+        self._ephemeral_snapshot_tasks_dir: Path | None = None
         self._use_cuda_override = use_cuda   # None = defer to pkg config
         self._platform = platform             # e.g. "linux/amd64" for Rosetta
         self.gpu_devices = gpu_devices
@@ -365,6 +557,9 @@ class WorkspaceTools:
         self.compute_scale = float(compute_scale or 1.0)
         self.global_config = dict(global_config or {})
         self.allow_web_search = bool(allow_web_search)
+        # Opt-in `reset` tool (gated by --allow-reset). When off, the schema is
+        # never shown to the model and reset() refuses if somehow called.
+        self.allow_reset = bool(allow_reset)
         self.tavily_api_key = tavily_api_key or ""
         # 0 = unlimited; otherwise hard cap on Tavily credits per run.
         # Pricing: basic search = 1, advanced search = 2,
@@ -396,6 +591,14 @@ class WorkspaceTools:
             ts = datetime.now().strftime("%Y%m%d_%H%M%S")
             self.exp_name = f"{sanitized}_{ts}" if sanitized else ts
 
+        # Per-run token embedded in SLURM job NAMES so name-based cancellation
+        # (cancel_job_by_name on an id-less uncertain submission) can only ever
+        # target THIS run's own job — never a co-located agent/baseline or a
+        # parallel experiment that happens to share (task, group). exp_name is
+        # NOT reliably unique (baselines pass a bare exp_name with no
+        # timestamp), so we mint an explicit random token (R11-2).
+        self._run_token = uuid.uuid4().hex[:8]
+
         # Job scheduler executor (None = direct execution)
         self._recover_pending_slurm = False  # set by resume to recover orphaned SLURM jobs
         self.slurm_executor = None
@@ -407,7 +610,11 @@ class WorkspaceTools:
             # Skip if we're already inside a scheduler-managed job (baseline via scheduler).
             try:
                 from mlsbench.scheduler import is_scheduler_running
-                if is_scheduler_running():
+                is_docker_baseline = (
+                    self.container_runtime == "docker"
+                    and str(self.model_name).startswith("baseline:")
+                )
+                if not is_docker_baseline and is_scheduler_running():
                     from mlsbench.agent.local_executor import LocalSchedulerExecutor
                     self.slurm_executor = LocalSchedulerExecutor(self.project_root, self.global_config)
                     print("[info] Local GPU scheduler detected — test jobs will be submitted for GPU allocation")
@@ -425,12 +632,18 @@ class WorkspaceTools:
                 seen[self._normalize_pkg_name(pkg)] = pkg
         self.all_external_packages: list[str] = list(seen.values())
 
-        # Load parser (task-specific if available)
+        # Load parser (task-specific if available). Wrapped so that a run which
+        # produced no metrics still reports WHY: hardened run scripts print a
+        # failtail block before their INVALID marker, and task parsers build
+        # feedback from a whitelist of progress prefixes that the block does not
+        # match, so the diagnosis was being dropped on all 44 such tasks.
+        from mlsbench.agent.parsers import with_failure_diagnostics
         if parser is not None:
-            self.parser = parser
+            self.parser = with_failure_diagnostics(parser)
         else:
             from mlsbench.agent.parsers import load_parser
-            self.parser = load_parser(task_name, self.project_root)
+            self.parser = with_failure_diagnostics(
+                load_parser(task_name, self.project_root))
 
         # Live protected ranges: filename -> list of [start, end] (non-editable zones)
         # Computed as the complement of the allowed edit ranges from config.
@@ -445,6 +658,17 @@ class WorkspaceTools:
 
         # Snapshot history for undo: each entry is {filename, path, content, ranges}
         self._history: list[dict] = []
+
+        # Pre-edit template snapshot for `reset`: captured once after workspace
+        # setup (pre_edit + mid_edit), before any agent/baseline edits. Maps each
+        # editable filename -> its template content (None if absent), plus a deep
+        # copy of the initial protected ranges. None until capture_template_state()
+        # runs; reset() falls back to undoing the full history if never captured.
+        self._template_files: dict[str, str | None] | None = None
+        self._template_ranges: dict[str, list[list[int]]] | None = None
+        # Files the agent created during this run (op='create'); reset() deletes
+        # any that are not part of the captured template.
+        self._created_files: set[str] = set()
 
         # Instance-level lock kept for backward compat (single-instance parallel cmds)
         self._build_lock = self._class_build_lock
@@ -586,6 +810,10 @@ class WorkspaceTools:
                 "use_cuda": self.config_task.get("use_cuda", False),
                 "workdir": self.config_task.get("workdir", "/app"),
             }]
+        return self._apply_compute_scale(entries)
+
+    def _apply_compute_scale(self, entries: list[dict]) -> list[dict]:
+        """Scale `compute` / apply `h200` overrides for the host hardware."""
         return scale_test_cmd_entries(entries, self.compute_scale, task_name=self.task_name)
 
     # ------------------------------------------------------------------
@@ -923,10 +1151,12 @@ class WorkspaceTools:
         self,
         op: str,
         filename: str,
-        content: str,
+        content: str = "",
         after_line: int | None = None,
         start_line: int | None = None,
         end_line: int | None = None,
+        old_str: str | None = None,
+        new_str: str | None = None,
     ) -> str:
         """Unified file editing tool."""
         # Accept package-relative / basename paths (as written in the task body
@@ -934,7 +1164,9 @@ class WorkspaceTools:
         # file before validation, so a correct edit isn't rejected on a prefix
         # mismatch.
         filename = self._canonicalize_filename(filename)
-        result = self._edit_impl(op, filename, content, after_line, start_line, end_line)
+        result = self._edit_impl(
+            op, filename, content, after_line, start_line, end_line, old_str, new_str
+        )
 
         # Always append the current file snapshot so the model sees the live state
         if filename in self.live_protected_ranges:
@@ -952,6 +1184,8 @@ class WorkspaceTools:
         after_line: int | None,
         start_line: int | None,
         end_line: int | None,
+        old_str: str | None = None,
+        new_str: str | None = None,
     ) -> str:
         """Core edit logic (without snapshot appending)."""
         # Validate package
@@ -971,6 +1205,7 @@ class WorkspaceTools:
             self._save_snapshot(filename)
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content)
+            self._created_files.add(filename)
             return f"Created: {filename}"
 
         elif op == "insert":
@@ -1042,8 +1277,55 @@ class WorkspaceTools:
                 f"Editable range: {self._editable_range_str(filename)}."
             )
 
+        elif op == "str_replace":
+            if old_str is None:
+                return "ERROR: 'old_str' is required for op='str_replace'"
+            if old_str == "":
+                return "ERROR: 'old_str' must not be empty for op='str_replace'"
+            if new_str is None:
+                new_str = ""
+            if filename not in self.live_protected_ranges:
+                return f"ERROR: File not editable: {filename}"
+            path = self._resolve_workspace_path(filename)
+            if not path.exists():
+                return f"ERROR: File not found in workspace: {filename}"
+
+            text = path.read_text()
+            count = text.count(old_str)
+            if count == 0:
+                return (
+                    f"ERROR: old_str not found in {filename}. It must match the file exactly, "
+                    f"including whitespace and indentation."
+                )
+            if count > 1:
+                return (
+                    f"ERROR: old_str is not unique in {filename} ({count} matches). "
+                    f"Add more surrounding context so it matches exactly one location."
+                )
+
+            idx = text.index(old_str)
+            start_line = text.count("\n", 0, idx) + 1
+            end_line = start_line + old_str.count("\n")
+            if not self._check_edit_permission(filename, start_line, end_line):
+                return (
+                    f"ERROR: the match spans lines {start_line}..{end_line}, which exceed the "
+                    f"editable range. You may only edit lines {self._editable_range_str(filename)}."
+                )
+
+            new_text = text[:idx] + new_str + text[idx + len(old_str):]
+            self._save_snapshot(filename)
+            path.write_text(new_text)
+            num_old_lines = end_line - start_line + 1
+            num_new_lines = num_old_lines + (new_str.count("\n") - old_str.count("\n"))
+            self._update_ranges_after_replace(filename, start_line, end_line, num_new_lines)
+            return (
+                f"OK: Replaced 1 occurrence in {filename} (lines {start_line}..{end_line}). "
+                f"Editable range: {self._editable_range_str(filename)}."
+            )
+
         else:
-            return f"ERROR: Unknown op '{op}'. Use 'create', 'insert', or 'replace'."
+            ops = "'create' or 'str_replace'" if old_str is not None or new_str is not None else "'create', 'insert', or 'replace'"
+            return f"ERROR: Unknown op '{op}'. Use {ops}."
 
     # ------------------------------------------------------------------
     # Package config helpers
@@ -1070,7 +1352,14 @@ class WorkspaceTools:
         workdir = pkg_config.get("workdir", "/app")
         install_cmds = pkg_config.get("install_cmds", [])
 
-        files_section = f"    {pkg_dir.resolve()} {workdir}"
+        files_section = f"    {pkg_dir.resolve()} {workdir}/{pkg_dir.name}\n"
+        for extra_pkg in pkg_config.get("extra_packages", []):
+            extra_src = self._find_ext_pkg_dir(extra_pkg).resolve()
+            files_section += f"    {extra_src} {workdir}/{extra_pkg}\n"
+        for ef in pkg_config.get("extra_files", []):
+            src = Path(str(ef["src"]).replace("{project_root}", str(self.project_root))).expanduser().resolve()
+            if src.exists():
+                files_section += f"    {src} {ef['dst']}\n"
         post_section = "\n".join(f"    {line}" for line in install_cmds)
         env_section = "\n".join(
             f"    export {k}={v}" for k, v in pkg_config.get("env", {}).items()
@@ -1112,6 +1401,8 @@ class WorkspaceTools:
 
         lines = ["# syntax=docker/dockerfile:1.4", f"FROM {base_image}"]
         lines.append(f"COPY {pkg_dir.name} {pkg_workdir}")
+        for extra_pkg in pkg_config.get("extra_packages", []):
+            lines.append(f"COPY --from=mls_pkg_{self._normalize_pkg_name(extra_pkg)} {extra_pkg} /workspace/{extra_pkg}")
         for ef in docker_extra_files:
             lines.append(f"COPY --from={ef['context_name']} {ef['copy_src']} {ef['dst']}")
         lines.append(f"WORKDIR {pkg_workdir}")
@@ -1124,7 +1415,13 @@ class WorkspaceTools:
             lines.extend(docker_run_instruction_lines(cmd))
         for k, v in env.items():
             lines.append(f"ENV {k}={v}")
-        lines.append('ENTRYPOINT ["bash"]')
+        # No ENTRYPOINT: every invocation path in this repo already runs the
+        # script as `bash <script>` (tools.py `_build_docker_cmd` /
+        # `_build_apptainer_cmd`, cli.py `mlsbench run`), so an
+        # `ENTRYPOINT ["bash"]` makes docker execute `bash bash <script>` and
+        # the run dies with "cannot execute binary file". Every published
+        # bohanlyu2022/mlsbench-harbor-* image has no entrypoint, which is why
+        # only freshly built packages hit this.
         return "\n".join(lines) + "\n"
 
     def _build_image(self, pkg_config: dict, pkg_dir: Path, image_path: Path) -> None:
@@ -1240,6 +1537,14 @@ class WorkspaceTools:
             global_config=global_cfg,
         )
 
+    def _ensure_local_runtime_ready(self, pkg_name: str, pkg_config: dict) -> None:
+        """Ensure local runtime dependencies are prepared for a package."""
+        from mlsbench.cli import build_local_package
+        global_cfg = self._effective_global_config()
+        pkg_dir = self._find_ext_pkg_dir(pkg_name)
+        # Reuses local build fingerprint; no-op when already prepared.
+        build_local_package(pkg_name, pkg_config, pkg_dir, global_cfg, force=False)
+
     def _effective_global_config(self) -> dict:
         """Return the active run config, falling back to configs/config.yaml."""
         if self.global_config:
@@ -1269,6 +1574,7 @@ class WorkspaceTools:
         if self.container_runtime == "local":
             with self._build_lock:
                 self._ensure_data(pkg_dir.name, pkg_config)
+                self._ensure_local_runtime_ready(pkg_dir.name, pkg_config)
             return pkg_dir, pkg_config
 
         if self.container_runtime == "docker":
@@ -1333,12 +1639,43 @@ class WorkspaceTools:
     ) -> str:
         """Expand env templates and translate container paths to host paths."""
         translated = WorkspaceTools._expand_env_template(value, base_env)
-        for container_path, host_path in sorted(path_map.items(), key=lambda item: len(item[0]), reverse=True):
-            pattern = re.compile(
-                rf"(?<![A-Za-z0-9._-]){re.escape(container_path)}(?=$|\s|['\"=:/])"
-            )
-            translated = pattern.sub(host_path, translated)
-        return translated
+        if not path_map:
+            return translated
+        # Single combined pass: applying each container_path -> host_path
+        # substitution as its own sequential .sub() call is NOT idempotent
+        # when a host_path itself textually contains another (typically
+        # shorter/more generic, e.g. "/data") container_path as a prefix or
+        # segment -- which happens whenever data_root resolves under a
+        # literal "/data"-prefixed mount. A later pass would then re-match
+        # and re-substitute inside text a previous pass already produced,
+        # duplicating the prefix. Matching all keys in one alternation and
+        # substituting in a single sweep avoids re-scanning generated text.
+        ordered = sorted(path_map.items(), key=lambda item: len(item[0]), reverse=True)
+        combined = "|".join(re.escape(container_path) for container_path, _ in ordered)
+        pattern = re.compile(rf"(?<![A-Za-z0-9._-])(?:{combined})(?=$|\s|['\"=:/])")
+        lookup = dict(ordered)
+        return pattern.sub(lambda m: lookup[m.group(0)], translated)
+
+    @staticmethod
+    def _translate_local_script_text(text: str, path_map: dict[str, str]) -> str:
+        """Translate container paths inside a test script's TEXT (no env expansion).
+
+        Same single-pass alternation as ``_translate_local_env_value``: a
+        sequential per-key ``.sub()`` loop re-scans text it has just produced,
+        so on a deployment whose host root itself starts with a mapped
+        container prefix (a host root under ``/data/...`` while ``/data`` is
+        itself the data_root key) ``cd /workspace`` became
+        ``cd /data/.../vendor/data/.../workspace`` and every test_cmd died at
+        its first line. One sweep over all keys cannot re-match its own
+        output.
+        """
+        if not path_map:
+            return text
+        ordered = sorted(path_map.items(), key=lambda item: len(item[0]), reverse=True)
+        combined = "|".join(re.escape(container_path) for container_path, _ in ordered)
+        pattern = re.compile(rf"(?<![A-Za-z0-9._-])(?:{combined})(?=$|\s|['\"=:/])")
+        lookup = dict(ordered)
+        return pattern.sub(lambda m: lookup[m.group(0)], text)
 
     @staticmethod
     def _wrap_local_command(cmd: list[str], global_cfg: dict, *, pkg_name: str | None = None) -> list[str]:
@@ -1380,7 +1717,7 @@ class WorkspaceTools:
             # `python pkg/script.py` work correctly in local mode.
             path_map.setdefault(workdir.rstrip("/"), str(pkg_host_dir.parent.resolve()))
 
-        from mlsbench.cli import resolve_data_binds
+        from mlsbench.cli import expand_path_template, find_ext_pkg_dir, resolve_data_binds
         global_cfg = self._effective_global_config()
         data_root = global_cfg.get("data_root", str(self.project_root / "vendor" / "data"))
         resolved_data_root = str(Path(data_root).expanduser().resolve())
@@ -1391,6 +1728,26 @@ class WorkspaceTools:
         for bind in resolve_data_binds(pkg_config, data_root):
             host_path, container_path = bind.split(":", 1)
             path_map[container_path] = str(Path(host_path).expanduser())
+        # Package-level extra mounts (extra_packages / extra_files). These are
+        # present in container runtimes but not automatically copied into local
+        # workspaces, so map them explicitly to host sources.
+        for extra_pkg in pkg_config.get("extra_packages", []):
+            try:
+                extra_src = find_ext_pkg_dir(extra_pkg).resolve()
+            except FileNotFoundError:
+                print(f"[local] warning: extra_packages source not found: {extra_pkg}")
+                continue
+            path_map[f"{workdir.rstrip('/')}/{extra_pkg}"] = str(extra_src)
+        for ef in pkg_config.get("extra_files", []):
+            dst = str(ef.get("dst", "")).strip()
+            if not dst:
+                continue
+            src_str = expand_path_template(str(ef.get("src", "")), data_root)
+            src = Path(src_str).expanduser().resolve()
+            if not src.exists():
+                print(f"[local] warning: extra_files source not found: {src}")
+                continue
+            path_map[dst] = str(src)
         # Task-level data_deps (same format as pkg config data_deps)
         if self.config_task.get("data_deps"):
             task_data_cfg = {"data_deps": self.config_task["data_deps"]}
@@ -1405,6 +1762,15 @@ class WorkspaceTools:
 
         run_env = os.environ.copy()
         run_env["DATA_ROOT"] = resolved_data_root
+        conda_envs_root_cfg = str(global_cfg.get("conda_envs_root", "") or "").strip()
+        if conda_envs_root_cfg:
+            # Keep worker-process scratch (torch DataLoader multiprocessing,
+            # inductor cache, etc.) off the shared/possibly-full system /tmp.
+            # Must stay short: AF_UNIX socket paths used by multiprocessing's
+            # resource_sharer have a ~108-byte sun_path limit.
+            tmp_root = Path(conda_envs_root_cfg).expanduser().parent / "tmp"
+            tmp_root.mkdir(parents=True, exist_ok=True)
+            run_env.setdefault("TMPDIR", str(tmp_root))
         merged_env = dict(pkg_config.get("env", {}))
         merged_env.update(pkg_config.get("local_env", {}))
         # Per-baseline / per-run env (e.g. ALLOW_DENSE_FLAG=1 for dense oracle)
@@ -1419,6 +1785,7 @@ class WorkspaceTools:
         if self.save_path:
             run_env["SAVE_PATH"] = self.save_path
             output_dir = f"{self.save_path}/{self.task_name}/{self.exp_name}/seed_{seed}"
+            _claim_output_dir(output_dir, self.task_name, self.exp_name)
             run_env["OUTPUT_DIR"] = output_dir
         run_env["SEED"] = str(seed)
         label = cmd_entry.get("label", "")
@@ -1474,21 +1841,39 @@ class WorkspaceTools:
 
         # Mirror sibling files (e.g. run_workflow.py) so $(dirname "$0")/foo.py
         # works the same as it would when bash-running task_dir/scripts/foo.sh.
+        #
+        # A sibling that is itself a declared test_cmd script must be mirrored
+        # *path-translated*, not verbatim: it gets its own translated write when
+        # that command runs, and when two commands of the same group run
+        # concurrently a verbatim mirror races that write. The loser then
+        # executes an untranslated script whose `cd /workspace` fails, and the
+        # setting silently records a blank metric cell instead of an error.
+        # Translating makes both writers produce identical bytes, so the race
+        # is harmless -- and it also fixes the case where one test_cmd script
+        # chains into another via $(dirname "$0")/other.sh (ai4sci-sbdd).
         import shutil
+
+        def _translate(text: str) -> str:
+            return WorkspaceTools._translate_local_script_text(text, path_map)
+
+        own_scripts = {
+            (task_dir / tc["cmd"]).resolve()
+            for tc in self.config_task.get("test_cmds", [])
+            if tc.get("cmd")
+        }
         for sibling in script_src.parent.iterdir():
             if sibling.is_file() and sibling != script_src:
                 dst = script_dst.parent / sibling.name
-                if not dst.exists() or dst.stat().st_mtime < sibling.stat().st_mtime:
-                    shutil.copy2(sibling, dst)
+                if sibling.resolve() in own_scripts:
+                    _atomic_write_text(
+                        dst, _translate(sibling.read_text()), sibling.stat().st_mode
+                    )
+                elif not dst.exists() or dst.stat().st_mtime < sibling.stat().st_mtime:
+                    _atomic_copy(sibling, dst)
 
-        translated_script = script_src.read_text()
-        for container_path, host_path in sorted(path_map.items(), key=lambda item: len(item[0]), reverse=True):
-            pattern = re.compile(
-                rf"(?<![A-Za-z0-9._-]){re.escape(container_path)}(?=$|\s|['\"=:/])"
-            )
-            translated_script = pattern.sub(host_path, translated_script)
-        script_dst.write_text(translated_script)
-        os.chmod(script_dst, script_src.stat().st_mode)
+        _atomic_write_text(
+            script_dst, _translate(script_src.read_text()), script_src.stat().st_mode
+        )
 
         local_cmd = self._wrap_local_command(
             ["bash", str(script_dst.resolve())],
@@ -1541,6 +1926,7 @@ class WorkspaceTools:
         if self.save_path:
             env_vars.append(f"SAVE_PATH={self.save_path}")
             output_dir = f"{self.save_path}/{self.task_name}/{self.exp_name}/seed_{seed}"
+            _claim_output_dir(output_dir, self.task_name, self.exp_name)
             env_vars.append(f"OUTPUT_DIR={output_dir}")
         env_vars.append(f"SEED={seed}")
         if gpu_devices:
@@ -1571,7 +1957,22 @@ class WorkspaceTools:
                     binds.append(f"{d.resolve()}:{pkg_workdir}")
                     pkg_dir = d
                     break
-        binds.append(f"{task_dir.resolve()}:{task_mount}")
+        # The task dir is bound READ-ONLY, always. It carries parser.py,
+        # score_spec.py and leaderboard.csv -- tracked source files on the HOST
+        # -- and the eval runs the submission's own code as root, so a writable
+        # bind let an editable module rewrite its own scorer in the repository
+        # (not just for this run: the change persists). Nothing legitimately
+        # writes there from inside the container: the leaderboard is written by
+        # the host process (WorkspaceTools._write_leaderboard_records), logs go
+        # to OUTPUT_DIR/SAVE_PATH, and a grep over tasks/*/scripts, edits/ and
+        # budget_check.py finds no write under $MLSBENCH_TASK_DIR. Bytecode is
+        # the one thing that used to land here, and CPython silently skips
+        # writing __pycache__ into a read-only directory. This is also what
+        # Harbor already does -- there the eval sees a throwaway COPY, so a task
+        # that depended on persisting a write here would already be broken.
+        # ephemeral_inputs tasks have run this way since R10-1 (their
+        # mid_edit.py is re-executed host-side by the stager before every eval).
+        binds.append(f"{task_dir.resolve()}:{task_mount}:ro")
 
         # Config-level data bind (with template expansion)
         from mlsbench.cli import resolve_data_binds
@@ -1656,6 +2057,7 @@ class WorkspaceTools:
         if self.save_path:
             docker_cmd.extend(["-e", f"SAVE_PATH={self.save_path}"])
             output_dir = f"{self.save_path}/{self.task_name}/{self.exp_name}/seed_{seed}"
+            _claim_output_dir(output_dir, self.task_name, self.exp_name)
             docker_cmd.extend(["-e", f"OUTPUT_DIR={output_dir}"])
         docker_cmd.extend(["-e", f"SEED={seed}"])
         label = cmd_entry.get("label", "")
@@ -1676,7 +2078,8 @@ class WorkspaceTools:
                     pkg_workdir = f"{workdir}/{d.name}"
                     docker_cmd.extend(["-v", f"{d.resolve()}:{pkg_workdir}"])
                     break
-        docker_cmd.extend(["-v", f"{task_dir.resolve()}:{task_mount}"])
+        # Always read-only -- see the matching comment in the apptainer builder.
+        docker_cmd.extend(["-v", f"{task_dir.resolve()}:{task_mount}:ro"])
         docker_cmd.extend(["-e", f"MLSBENCH_TASK_DIR={task_mount}"])
         if pkg:
             docker_cmd.extend(["-e", f"MLSBENCH_PKG_DIR={pkg_workdir}"])
@@ -1807,6 +2210,154 @@ class WorkspaceTools:
         status, _ = self._docker_container_state(container_name, run_env)
         return status is not None
 
+    def _configured_timeout_seconds(self, cmd_entry: dict) -> int:
+        """Return the hard timeout for one test command."""
+        for key in ("test_timeout_seconds", "hard_timeout_seconds", "container_timeout_seconds"):
+            value = self.global_config.get(key)
+            if value not in (None, ""):
+                return max(1, self._parse_time_to_seconds(str(value)))
+
+        if "time" in cmd_entry:
+            return max(1, self._parse_time_to_seconds(str(cmd_entry["time"])))
+
+        return max(1, min(int(self.global_config.get("default_test_timeout_seconds", 1800)), 1800))
+
+    @staticmethod
+    def _timeout_feedback(timeout_secs: int | float) -> str:
+        return (
+            f"[TIMEOUT] Command timed out after {int(timeout_secs)} seconds. "
+            f"This result is INVALID and will not count. "
+            f"Your algorithm is too slow — reduce model size or computational complexity."
+        )
+
+    @staticmethod
+    def _read_output_file(output_path: str | Path) -> str:
+        try:
+            return Path(output_path).read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _unlink_output_file(output_path: str | Path) -> None:
+        try:
+            Path(output_path).unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    def _start_subprocess_to_file(
+        self,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+    ) -> tuple[subprocess.Popen, object, str]:
+        """Start a subprocess with stdout/stderr redirected to a temp file."""
+        output_file = tempfile.NamedTemporaryFile(
+            mode="w+b",
+            prefix="mlsbench-subprocess-",
+            suffix=".log",
+            delete=False,
+        )
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=output_file,
+                stderr=subprocess.STDOUT,
+                cwd=cwd,
+                env=env,
+                start_new_session=True,
+                close_fds=True,
+            )
+        except Exception:
+            output_path = output_file.name
+            output_file.close()
+            self._unlink_output_file(output_path)
+            raise
+        return proc, output_file, output_file.name
+
+    def _collect_subprocess_output(self, output_file, output_path: str) -> str:
+        try:
+            output_file.flush()
+        except Exception:
+            pass
+        try:
+            output_file.close()
+        except Exception:
+            pass
+        raw_output = self._read_output_file(output_path)
+        self._unlink_output_file(output_path)
+        return raw_output
+
+    @staticmethod
+    def _terminate_process_group(proc: subprocess.Popen, grace_secs: float = 5.0) -> None:
+        """Best-effort process-group termination for timed-out subprocesses."""
+        if proc.poll() is not None:
+            return
+        try:
+            os.killpg(proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            return
+        except Exception:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=grace_secs)
+            return
+        except subprocess.TimeoutExpired:
+            pass
+        except Exception:
+            return
+
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            return
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+        try:
+            proc.wait(timeout=grace_secs)
+        except Exception:
+            pass
+
+    def _run_subprocess_to_file(
+        self,
+        cmd: list[str],
+        *,
+        cwd: str | None = None,
+        env: dict[str, str] | None = None,
+        timeout_secs: int | float | None = None,
+    ) -> tuple[subprocess.CompletedProcess[str], str, bool]:
+        """Run a subprocess without PIPEs and return captured combined output."""
+        proc, output_file, output_path = self._start_subprocess_to_file(
+            cmd,
+            cwd=cwd,
+            env=env,
+        )
+        timed_out = False
+        deadline = None if timeout_secs is None else _time.time() + float(timeout_secs)
+        try:
+            while True:
+                if proc.poll() is not None:
+                    break
+                if deadline is not None and _time.time() >= deadline:
+                    timed_out = True
+                    self._terminate_process_group(proc)
+                    break
+                _time.sleep(0.2)
+        except Exception:
+            self._terminate_process_group(proc)
+            raise
+
+        raw_output = self._collect_subprocess_output(output_file, output_path)
+        returncode = proc.returncode if proc.returncode is not None else 124
+        return subprocess.CompletedProcess(cmd, returncode, stdout=raw_output, stderr=""), raw_output, timed_out
+
     def _wait_for_docker_create(
         self,
         create_cmd: list[str],
@@ -1814,45 +2365,52 @@ class WorkspaceTools:
         run_env: dict[str, str],
         deadline: float,
     ) -> tuple[subprocess.CompletedProcess[str], str] | None:
-        """Wait for a ``docker create`` client or the container object to materialize."""
-        create_deadline = min(deadline, _time.time() + 60)
-        proc = subprocess.Popen(
+        """Wait for a ``docker create`` client or the container object to materialize.
+
+        The create phase gets its own cap (default 60s) on top of the caller's
+        deadline. On a heavily loaded daemon a single ``docker create`` can take
+        far longer than that, and blowing the cap silently costs an evaluation:
+        the client is killed, the daemon materializes the container anyway, and
+        the run is reported as a launch timeout with no metrics. Set
+        ``MLSBENCH_DOCKER_CREATE_TIMEOUT`` (seconds) to widen the cap on such a
+        host; the default is unchanged.
+        """
+        try:
+            create_budget = float(
+                os.environ.get("MLSBENCH_DOCKER_CREATE_TIMEOUT", "") or 60
+            )
+        except ValueError:
+            create_budget = 60.0
+        create_deadline = min(deadline, _time.time() + create_budget)
+        proc, output_file, output_path = self._start_subprocess_to_file(
             create_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        while _time.time() < create_deadline:
-            ret = proc.poll()
-            if ret is not None:
-                stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                result = subprocess.CompletedProcess(create_cmd, ret, stdout=stdout, stderr=stderr)
-                if ret == 0 or self._docker_container_exists(container_name, run_env):
-                    return result, raw_output
-                return result, raw_output
-            if self._docker_container_exists(container_name, run_env):
-                try:
-                    proc.terminate()
-                    stdout, stderr = proc.communicate(timeout=5)
-                except Exception:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                return subprocess.CompletedProcess(create_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-            _time.sleep(0.2)
-
         try:
-            proc.kill()
+            while _time.time() < create_deadline:
+                ret = proc.poll()
+                if ret is not None:
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    result = subprocess.CompletedProcess(create_cmd, ret, stdout=raw_output, stderr="")
+                    if ret == 0 or self._docker_container_exists(container_name, run_env):
+                        return result, raw_output
+                    return result, raw_output
+                if self._docker_container_exists(container_name, run_env):
+                    self._terminate_process_group(proc)
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    return subprocess.CompletedProcess(create_cmd, 0, stdout=raw_output, stderr=""), raw_output
+                _time.sleep(0.2)
+
+            self._terminate_process_group(proc)
+            raw_output = self._collect_subprocess_output(output_file, output_path)
+            if self._docker_container_exists(container_name, run_env):
+                return subprocess.CompletedProcess(create_cmd, 0, stdout=raw_output, stderr=""), raw_output
+            return None
         except Exception:
-            pass
-        stdout, stderr = proc.communicate()
-        raw_output = (stdout or "") + (stderr or "")
-        if self._docker_container_exists(container_name, run_env):
-            return subprocess.CompletedProcess(create_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-        return None
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            raise
 
     def _wait_for_docker_start_attempt(
         self,
@@ -1862,47 +2420,40 @@ class WorkspaceTools:
         attempt_deadline: float,
     ) -> tuple[subprocess.CompletedProcess[str], str] | None:
         """Wait for one ``docker start`` attempt to move the container beyond ``Created``."""
-        proc = subprocess.Popen(
+        proc, output_file, output_path = self._start_subprocess_to_file(
             start_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        while _time.time() < attempt_deadline:
-            ret = proc.poll()
-            if ret is not None:
-                stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                result = subprocess.CompletedProcess(start_cmd, ret, stdout=stdout, stderr=stderr)
-                status, _ = self._docker_container_state(container_name, run_env)
-                if ret == 0 or status in ("running", "exited", "dead"):
+        try:
+            while _time.time() < attempt_deadline:
+                ret = proc.poll()
+                if ret is not None:
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    result = subprocess.CompletedProcess(start_cmd, ret, stdout=raw_output, stderr="")
+                    status, _ = self._docker_container_state(container_name, run_env)
+                    if ret == 0 or status in ("running", "exited", "dead"):
+                        return result, raw_output
                     return result, raw_output
-                return result, raw_output
+                status, _ = self._docker_container_state(container_name, run_env)
+                if status in ("running", "exited", "dead"):
+                    self._terminate_process_group(proc)
+                    raw_output = self._collect_subprocess_output(output_file, output_path)
+                    return subprocess.CompletedProcess(start_cmd, 0, stdout=raw_output, stderr=""), raw_output
+                _time.sleep(0.2)
+
             status, _ = self._docker_container_state(container_name, run_env)
             if status in ("running", "exited", "dead"):
-                try:
-                    proc.terminate()
-                    stdout, stderr = proc.communicate(timeout=5)
-                except Exception:
-                    proc.kill()
-                    stdout, stderr = proc.communicate()
-                raw_output = (stdout or "") + (stderr or "")
-                return subprocess.CompletedProcess(start_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-            _time.sleep(0.2)
-
-        status, _ = self._docker_container_state(container_name, run_env)
-        if status in ("running", "exited", "dead"):
-            try:
-                proc.terminate()
-                stdout, stderr = proc.communicate(timeout=5)
-            except Exception:
-                proc.kill()
-                stdout, stderr = proc.communicate()
-            raw_output = (stdout or "") + (stderr or "")
-            return subprocess.CompletedProcess(start_cmd, 0, stdout=stdout, stderr=stderr), raw_output
-        return None
+                self._terminate_process_group(proc)
+                raw_output = self._collect_subprocess_output(output_file, output_path)
+                return subprocess.CompletedProcess(start_cmd, 0, stdout=raw_output, stderr=""), raw_output
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            return None
+        except Exception:
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            raise
 
     def _start_docker_container(
         self,
@@ -1912,8 +2463,15 @@ class WorkspaceTools:
     ) -> tuple[subprocess.CompletedProcess[str], str] | None:
         """Retry ``docker start`` until the container is running/exited or timeout."""
         start_cmd = ["docker", "start", container_name]
-        attempt_budget = min(5.0, max(1.0, deadline - _time.time()))
-        for _attempt in range(3):
+        # Each attempt kills its `docker start` if the container has not left
+        # Created by the attempt deadline and re-issues it. On a loaded box a
+        # GPU container with large bind mounts routinely needs 10-30 s to start,
+        # and 3 x 5 s gave up while the daemon-side start was still succeeding:
+        # the harness reported [TIMEOUT] and `docker stop`ped a container that
+        # was actually still starting. Wait up to 6 x 30 s, still bounded by
+        # the overall launch deadline.
+        attempt_budget = min(30.0, max(1.0, deadline - _time.time()))
+        for _attempt in range(6):
             started = self._wait_for_docker_start_attempt(
                 start_cmd,
                 container_name,
@@ -1935,12 +2493,17 @@ class WorkspaceTools:
         timeout_secs: int,
     ) -> tuple[subprocess.CompletedProcess[str] | None, str, bool]:
         """Create and start a Docker container, returning ``(result, output, timed_out)``."""
-        deadline = _time.time() + timeout_secs
         create_cmd = self._as_docker_create_cmd(container_cmd)
         launch_lock_path = self.project_root / ".docker-launch.lock"
 
         with open(launch_lock_path, "a+", encoding="utf-8") as lock_file:
             fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+            # The launch budget starts once we actually hold the global launch
+            # lock. Time spent queued behind a co-located run is our own
+            # serialization, not the container's, and charging it here made
+            # every launch past a busy queue expire before `docker create` was
+            # even issued.
+            deadline = _time.time() + timeout_secs
             waited = self._wait_for_docker_create(create_cmd, container_name, run_env, deadline)
             if waited is None:
                 return None, "[TIMEOUT] docker create did not materialize a container before timeout.", True
@@ -1950,22 +2513,13 @@ class WorkspaceTools:
 
             started = self._start_docker_container(container_name, run_env, deadline)
             if started is None:
-                subprocess.run(
+                self._run_subprocess_to_file(
                     ["docker", "stop", container_name],
-                    capture_output=True,
-                    timeout=30,
+                    cwd=str(self.project_root),
+                    env=run_env,
+                    timeout_secs=30,
                 )
-                raw_output = ""
-                try:
-                    logs_result = subprocess.run(
-                        ["docker", "logs", container_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
-                except Exception:
-                    pass
+                raw_output = self._docker_logs(container_name, run_env)
                 raw_output = (
                     f"[TIMEOUT] docker start did not move '{container_name}' out of Created before timeout.\n"
                     f"{raw_output}"
@@ -1984,33 +2538,41 @@ class WorkspaceTools:
         """Best-effort removal that tolerates hanging rootless Docker clients."""
         remove_cmd = ["docker", "rm", "-f", container_name]
         remove_deadline = _time.time() + 30
-        proc = subprocess.Popen(
+        proc, output_file, output_path = self._start_subprocess_to_file(
             remove_cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
             cwd=str(self.project_root),
             env=run_env,
         )
-        while _time.time() < remove_deadline:
-            ret = proc.poll()
-            if ret is not None:
-                proc.communicate()
-                return
-            if not self._docker_container_exists(container_name, run_env):
-                try:
-                    proc.terminate()
-                    proc.communicate(timeout=5)
-                except Exception:
-                    proc.kill()
-                    proc.communicate()
-                return
-            _time.sleep(0.2)
         try:
-            proc.kill()
+            while _time.time() < remove_deadline:
+                ret = proc.poll()
+                if ret is not None:
+                    self._collect_subprocess_output(output_file, output_path)
+                    return
+                if not self._docker_container_exists(container_name, run_env):
+                    self._terminate_process_group(proc)
+                    self._collect_subprocess_output(output_file, output_path)
+                    return
+                _time.sleep(0.2)
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
         except Exception:
-            pass
-        proc.communicate()
+            self._terminate_process_group(proc)
+            self._collect_subprocess_output(output_file, output_path)
+            raise
+
+    def _docker_logs(self, container_name: str, run_env: dict[str, str], timeout_secs: int = 30) -> str:
+        """Read Docker logs without routing large output through a PIPE."""
+        try:
+            _result, raw_output, _timed_out = self._run_subprocess_to_file(
+                ["docker", "logs", container_name],
+                cwd=str(self.project_root),
+                env=run_env,
+                timeout_secs=timeout_secs,
+            )
+            return raw_output
+        except Exception:
+            return ""
 
     def _run_docker_container(
         self,
@@ -2039,55 +2601,31 @@ class WorkspaceTools:
             if launch_result is None or launch_result.returncode != 0:
                 return launch_result, start_output, False
             created = True
+            # The run budget starts once the container is actually running: a
+            # slow create/start on a loaded daemon must not be charged against
+            # the container's own execution time (it left short-timeout runs
+            # such as budget_check with a ~1s `docker wait` window).
+            deadline = _time.time() + timeout_secs
 
-            try:
-                wait_result = subprocess.run(
-                    ["docker", "wait", container_name],
-                    capture_output=True,
-                    text=True,
-                    cwd=str(self.project_root),
-                    timeout=max(1.0, deadline - _time.time()),
-                    env=run_env,
-                )
-            except subprocess.TimeoutExpired:
-                subprocess.run(
-                    ["docker", "stop", container_name],
-                    capture_output=True,
-                    timeout=30,
-                )
-                raw_output = ""
+            wait_result, wait_output, wait_timed_out = self._run_subprocess_to_file(
+                ["docker", "wait", container_name],
+                cwd=str(self.project_root),
+                env=run_env,
+                timeout_secs=max(1.0, deadline - _time.time()),
+            )
+            if wait_timed_out:
+                raw_output = self._docker_logs(container_name, run_env)
                 try:
-                    logs_result = subprocess.run(
-                        ["docker", "logs", container_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
+                    self._remove_docker_container(container_name, run_env)
                 except Exception:
                     pass
-                raw_output = (
-                    f"[TIMEOUT] Command timed out after {timeout_secs}s. "
-                    f"This result is INVALID and will not count. "
-                    f"Your algorithm is too slow — reduce model size or computational complexity.\n{raw_output}"
-                )
+                raw_output = f"{self._timeout_feedback(timeout_secs)}\n{raw_output}"
                 return None, raw_output, True
 
-            raw_output = ""
-            if not raw_output:
-                try:
-                    logs_result = subprocess.run(
-                        ["docker", "logs", container_name],
-                        capture_output=True,
-                        text=True,
-                        timeout=30,
-                    )
-                    raw_output = (logs_result.stdout or "") + (logs_result.stderr or "")
-                except Exception:
-                    pass
+            raw_output = self._docker_logs(container_name, run_env)
             if not raw_output:
                 raw_output = start_output
-            exit_code_str = (wait_result.stdout or "").strip().splitlines()
+            exit_code_str = (wait_output or wait_result.stdout or "").strip().splitlines()
             try:
                 exit_code = int(exit_code_str[-1]) if exit_code_str else wait_result.returncode
             except ValueError:
@@ -2097,7 +2635,7 @@ class WorkspaceTools:
                     ["docker", "wait", container_name],
                     exit_code,
                     stdout=raw_output,
-                    stderr=wait_result.stderr or "",
+                    stderr="",
                 ),
                 raw_output,
                 False,
@@ -2221,15 +2759,15 @@ class WorkspaceTools:
             if path_map:
                 budget_dst = self.workspace_task_dir / ".local_scripts" / "budget_check.py"
                 budget_dst.parent.mkdir(parents=True, exist_ok=True)
-                translated_budget = budget_script.read_text()
-                for container_path, host_path in sorted(
-                    path_map.items(), key=lambda item: len(item[0]), reverse=True
-                ):
-                    pattern = re.compile(
-                        rf"(?<![A-Za-z0-9._-]){re.escape(container_path)}(?=$|\s|['\"=:/])"
-                    )
-                    translated_budget = pattern.sub(host_path, translated_budget)
-                budget_dst.write_text(translated_budget)
+                # Single combined pass (see _translate_local_script_text): the
+                # former per-key loop re-scanned its own output and, on a host whose
+                # data_root sits under /data, turned every literal /workspace or
+                # /data path in budget_check.py into /data/.../vendor/data/...
+                # -- failing every budget check.
+                translated_budget = self._translate_local_script_text(
+                    budget_script.read_text(), path_map
+                )
+                _atomic_write_text(budget_dst, translated_budget)
                 budget_to_run = budget_dst.resolve()
         budget_cmd = self._wrap_local_command(
             ["python", str(budget_to_run)],
@@ -2264,6 +2802,199 @@ class WorkspaceTools:
             if arg == "bash":
                 return container_cmd[:i] + ["bash", "-c", check_cmd]
         return container_cmd + ["bash", "-c", check_cmd]
+
+    def _ensure_ephemeral_task_snapshot(self) -> Path:
+        """Return a trusted tasks_dir the host-side stager can safely exec.
+
+        The live ``project_root/tasks/<task>`` is bind-mounted read-write into
+        the eval container as root, so an editable module could overwrite
+        ``edits/mid_edit.py`` (and anything it reads) between serialized
+        evals; the stager re-executes mid_edit host-side, which would then be
+        agent-authored code with attacker-chosen inputs. We copy the task dir
+        into a private temp (0700, system temp — never bind-mounted) ONCE,
+        before any eval runs, and hand the stager THAT copy. The holdout
+        generator lives outside the task dir and is never mounted, so it stays
+        trusted; we expose it to the snapshot via a sibling symlink so
+        mid_edit's ``parents[3]/holdout/<task>`` resolution still finds it.
+
+        Idempotent: the snapshot is captured on the first call (which happens
+        before the first launch) and reused for the life of this instance.
+        """
+        if self._ephemeral_snapshot_tasks_dir is not None:
+            return self._ephemeral_snapshot_tasks_dir
+        import tempfile as _tempfile
+
+        live_task_dir = self.project_root / "tasks" / self.task_name
+        priv_root = Path(_tempfile.mkdtemp(prefix="mlsb-tasksnap-"))
+        try:
+            os.chmod(priv_root, 0o700)
+        except OSError:
+            pass
+        snap_tasks = priv_root / "tasks"
+        snap_tasks.mkdir(parents=True, exist_ok=True)
+        # Copy the whole task dir (mid_edit + templates + config + scripts +
+        # anything else it reads), skipping caches. This is the pristine,
+        # host-only source of truth for staging.
+        shutil.copytree(
+            live_task_dir,
+            snap_tasks / self.task_name,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
+        # Expose the (already agent-inaccessible) holdout provider at the
+        # relative location mid_edit resolves it from the snapshot:
+        # <priv_root>/holdout/<task>. A symlink to the real holdout keeps a
+        # single trusted source; if holdout is absent (self-contained
+        # mid_edit), nothing to link.
+        real_holdout = self.project_root / "holdout"
+        if real_holdout.is_dir():
+            try:
+                os.symlink(real_holdout.resolve(), priv_root / "holdout")
+            except OSError:
+                # Fall back to a copy if symlinks are unavailable.
+                shutil.copytree(
+                    real_holdout, priv_root / "holdout",
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+        self._ephemeral_snapshot_tasks_dir = snap_tasks
+        print(
+            f"[input-stager] snapshotted task '{self.task_name}' to a private "
+            "trusted copy for host-side staging (live task dir is a writable "
+            "container mount)"
+        )
+        return snap_tasks
+
+    def _restage_task_inputs(
+        self, cmd_entry: dict, seed: int, dry_run: bool = False
+    ) -> tuple[bool, list[str]]:
+        """Re-materialize this run's pre-generated input blobs before a test.
+
+        Tasks opt in via ``"ephemeral_inputs": true`` in config.json. Their
+        eval scripts export MLSBENCH_EPHEMERAL_INPUTS=1, so the FIXED runner
+        deletes the staged blobs right after loading them into memory — BEFORE
+        any agent-editable hook executes — keeping the withheld data (held-out
+        targets / hidden labels / lookup tables) unreadable from editable
+        code. Each evaluation therefore consumes its inputs, and they must be
+        re-staged immediately before every test command (the Harbor verifier
+        does the same via tests/eval/_inputgen/apply.py). Ephemeral entries
+        are additionally scheduled strictly one-at-a-time (see
+        _run_all_cmds_direct / _run_all_seeds_slurm), so a sibling entry's
+        blobs are never on disk while another entry's evaluation runs.
+
+        Runs host-side in a subprocess with ENV/SEED set: mid_edit needs the
+        non-published ``holdout/<task>/`` generator — the same precondition as
+        workspace setup — and, with ENV/SEED set, materializes only the active
+        run's blobs. Failures are logged rather than fatal; a missing input
+        then surfaces in the evaluation output itself.
+
+        Returns ``(ok, staged_paths)``. ``staged_paths`` is the stager's
+        incrementally-recorded superset of everything it (partially) installed
+        — the caller MUST pass it to _cleanup_staged_inputs after the run (or
+        immediately, when ``ok`` is False: a failed staging is fatal for the
+        entry and the evaluation must be skipped). This is the host-side
+        backstop scrub for evaluations that crash before their in-container
+        scrub, and for stager crashes that leave partial installs behind.
+
+        With ``dry_run=True`` the stager installs NOTHING and only records the
+        workspace destinations the entry's blobs resolve to — used to derive
+        the backstop-scrub scope for a recovered SLURM job whose blobs were
+        staged by a previous harness process (no recorded list exists).
+        """
+        if not self.config_task.get("ephemeral_inputs"):
+            return True, []
+        label = str(cmd_entry.get("label", "") or "")
+        run_env = os.environ.copy()
+        if label:
+            run_env["ENV"] = label
+        run_env["SEED"] = str(seed)
+        import mlsbench
+
+        src_root = str(Path(mlsbench.__file__).resolve().parent.parent)
+        existing = run_env.get("PYTHONPATH")
+        run_env["PYTHONPATH"] = (
+            src_root + os.pathsep + existing if existing else src_root
+        )
+        import tempfile as _tempfile
+
+        list_fd, list_path = _tempfile.mkstemp(prefix="mlsb-staged-", suffix=".txt")
+        os.close(list_fd)
+        # Stage from the trusted private snapshot, NOT the live (writable,
+        # container-mounted) task dir — an eval could have rewritten
+        # mid_edit.py there (R10-1).
+        trusted_tasks_dir = self._ensure_ephemeral_task_snapshot()
+        stager_cmd = [
+            sys.executable,
+            "-m",
+            "mlsbench.agent.input_stager",
+            self.task_name,
+            str(trusted_tasks_dir),
+            str(self.workspace_task_dir),
+            "--list-out",
+            list_path,
+        ]
+        if dry_run:
+            stager_cmd.append("--dry-run")
+        # container_runtime: local never reaches this point: the constructor
+        # rejects local + ephemeral_inputs outright (host-side agent code
+        # could read a later evaluation's staged blobs), and this method
+        # returns early for non-ephemeral tasks. Container modes keep the
+        # persistent .input_cache: it lives at
+        # <workspace_task_dir>/.input_cache, a sibling of the bind-mounted
+        # package dir, and the workspace_task_dir itself is never
+        # bind-mounted (verified: the three ephemeral tasks' pkg/task configs
+        # declare no data binds). The stager's --no-cache flag remains
+        # available as a standalone/defensive CLI option.
+        staged: list[str] = []
+        ok = False
+        try:
+            result = subprocess.run(
+                stager_cmd,
+                capture_output=True,
+                text=True,
+                timeout=1800,
+                env=run_env,
+            )
+            ok = result.returncode == 0
+            if not ok:
+                tail = ((result.stdout or "") + (result.stderr or ""))[-1500:]
+                print(
+                    f"[input-stager] ERROR: re-staging failed for "
+                    f"{label or cmd_entry.get('cmd', '?')} seed {seed} "
+                    f"(rc={result.returncode}) — evaluation will be skipped:\n{tail}"
+                )
+        except Exception as exc:
+            print(
+                f"[input-stager] ERROR: re-staging error for "
+                f"{label or cmd_entry.get('cmd', '?')} seed {seed}: {exc}"
+            )
+        finally:
+            # The stager appends+flushes each path BEFORE installing it, so
+            # even after a crash/kill the list is the authoritative superset
+            # of everything (partially) installed.
+            try:
+                with open(list_path) as fh:
+                    staged = [ln.strip() for ln in fh if ln.strip()]
+            except OSError:
+                staged = []
+            try:
+                os.unlink(list_path)
+            except OSError:
+                pass
+        return ok, staged
+
+    @staticmethod
+    def _cleanup_staged_inputs(staged_files: list[str]) -> None:
+        """Host-side backstop scrub of exactly the files the stager wrote.
+
+        The in-container runner normally deletes its blobs right after loading
+        them (MLSBENCH_EPHEMERAL_INPUTS=1), so this is usually a no-op; it
+        guarantees removal when the evaluation crashed or timed out before its
+        own scrub. Scoped to the stager's recorded file list — never a glob.
+        """
+        for path in staged_files:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
 
     def _run_budget_check(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> str | None:
         """Run budget_check.py before training. Returns error msg or None.
@@ -2333,21 +3064,18 @@ class WorkspaceTools:
                 if timed_out:
                     return _finalize(output, None, output)
             else:
-                result = subprocess.run(
+                result, output, timed_out = self._run_subprocess_to_file(
                     container_cmd,
-                    capture_output=True,
-                    text=True,
                     cwd=str(self.project_root),
-                    timeout=120,
                     env=run_env,
+                    timeout_secs=120,
                 )
-                output = (result.stdout or "") + (result.stderr or "")
+                if timed_out:
+                    return _finalize(output, None, "[BUDGET CHECK TIMEOUT] budget_check.py took >120s")
             if result is None or result.returncode != 0:
                 return _finalize(output, getattr(result, "returncode", None),
                                  f"[BUDGET CHECK FAILED]\n{output}")
             return _finalize(output, result.returncode, None)
-        except subprocess.TimeoutExpired:
-            return _finalize("", None, "[BUDGET CHECK TIMEOUT] budget_check.py took >120s")
         except Exception as e:
             return _finalize("", None, f"[BUDGET CHECK ERROR] {e}")
 
@@ -2478,6 +3206,7 @@ class WorkspaceTools:
         seed: int,
         label: str,
         gpu_devices: str | None = None,
+        session_gpu_devices: str | None = None,
         env: dict | None = None,
     ) -> list[str]:
         """Build ``docker exec`` environment arguments for one command."""
@@ -2485,17 +3214,41 @@ class WorkspaceTools:
         if self.save_path:
             args.extend(["-e", f"SAVE_PATH={self.save_path}"])
             output_dir = f"{self.save_path}/{self.task_name}/{self.exp_name}/seed_{seed}"
+            _claim_output_dir(output_dir, self.task_name, self.exp_name)
             args.extend(["-e", f"OUTPUT_DIR={output_dir}"])
         args.extend(["-e", f"SEED={seed}"])
         if label:
             args.extend(["-e", f"ENV={label}"])
         if gpu_devices:
-            args.extend(["-e", f"CUDA_VISIBLE_DEVICES={gpu_devices}"])
-            args.extend(["-e", f"NVIDIA_VISIBLE_DEVICES={gpu_devices}"])
+            args.extend([
+                "-e",
+                f"CUDA_VISIBLE_DEVICES={self._docker_exec_cuda_visible_devices(gpu_devices, session_gpu_devices)}",
+            ])
         # Per-entry env (e.g. H200 BATCH_SIZE/GRAD_ACCUM override); wins last.
         for k, v in (env or {}).items():
             args.extend(["-e", f"{k}={v}"])
         return args
+
+    @staticmethod
+    def _docker_exec_cuda_visible_devices(
+        gpu_devices: str,
+        session_gpu_devices: str | None,
+    ) -> str:
+        """Map host GPU ids to logical ids visible inside a restricted Docker container."""
+        if not session_gpu_devices:
+            return gpu_devices
+
+        session = [d.strip() for d in session_gpu_devices.split(",") if d.strip()]
+        if not session:
+            return gpu_devices
+
+        logical: list[str] = []
+        for device in [d.strip() for d in gpu_devices.split(",") if d.strip()]:
+            if device in session:
+                logical.append(str(session.index(device)))
+            else:
+                logical.append(device)
+        return ",".join(logical)
 
     def _run_docker_exec(
         self,
@@ -2508,23 +3261,22 @@ class WorkspaceTools:
     ) -> tuple[subprocess.CompletedProcess[str] | None, str, bool]:
         """Run one command inside an existing Docker container."""
         cmd = ["docker", "exec", *exec_env_args, "-w", pkg_workdir, container_name, *exec_cmd]
-        try:
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                cwd=str(self.project_root),
-                timeout=timeout_secs,
-                env=run_env,
-            )
-            raw_output = (result.stdout or "") + (result.stderr or "")
-            return result, raw_output, False
-        except subprocess.TimeoutExpired:
-            return None, (
-                f"[TIMEOUT] Command timed out after {timeout_secs}s. "
-                f"This result is INVALID and will not count. "
-                f"Your algorithm is too slow — reduce model size or computational complexity."
-            ), True
+        result, raw_output, timed_out = self._run_subprocess_to_file(
+            cmd,
+            cwd=str(self.project_root),
+            env=run_env,
+            timeout_secs=timeout_secs,
+        )
+        if timed_out:
+            try:
+                self._remove_docker_container(container_name, run_env)
+            except Exception:
+                pass
+            timeout_output = self._timeout_feedback(timeout_secs)
+            if raw_output:
+                timeout_output = f"{timeout_output}\n{raw_output}"
+            return None, timeout_output, True
+        return result, raw_output, False
 
     def _run_docker_entries_in_session(
         self,
@@ -2595,7 +3347,13 @@ class WorkspaceTools:
                 label = entry.get("label", "test")
                 cmd = entry["cmd"]
                 entry_gpu = session_devices[idx] if idx < len(session_devices) else None
-                exec_env_args = self._docker_exec_env_args(seed, label, gpu_devices=entry_gpu, env=entry.get("env"))
+                exec_env_args = self._docker_exec_env_args(
+                    seed,
+                    label,
+                    gpu_devices=entry_gpu,
+                    session_gpu_devices=session_gpu_devices,
+                    env=entry.get("env"),
+                )
 
                 budget_script = self.project_root / "tasks" / self.task_name / "budget_check.py"
                 if budget_script.exists():
@@ -2618,8 +3376,7 @@ class WorkspaceTools:
                         results[idx] = (f"### {label} ({cmd})\n[BUDGET CHECK FAILED]\n{output}", {}, _time.time() - budget_start)
                         continue
 
-                time_str = entry.get("time", "1:00:00")
-                timeout_secs = self._parse_time_to_seconds(time_str) + 300
+                timeout_secs = self._configured_timeout_seconds(entry)
                 runnable.append((idx, entry, exec_env_args, timeout_secs))
 
             def _run_one_session_entry(
@@ -2640,6 +3397,7 @@ class WorkspaceTools:
                 elapsed = _time.time() - t_start
 
                 if cmd_timed_out:
+                    self._current_test_had_failures = True
                     parse_result = self.parser.parse(label, raw_output)
                     return idx, (f"### {label} ({cmd})\n{raw_output}", parse_result.metrics or {}, elapsed)
 
@@ -2665,12 +3423,15 @@ class WorkspaceTools:
                 idx, result = _run_one_session_entry(runnable[0])
                 results[idx] = result
             elif runnable:
-                with ThreadPoolExecutor(max_workers=len(runnable)) as executor:
-                    future_to_idx = {
-                        executor.submit(_run_one_session_entry, item): item[0]
-                        for item in runnable
-                    }
-                    for future in as_completed(future_to_idx):
+                timeout_by_idx = {item[0]: item[3] for item in runnable}
+                max_wait = max(timeout_by_idx.values()) + 30
+                executor = ThreadPoolExecutor(max_workers=len(runnable))
+                future_to_idx = {
+                    executor.submit(_run_one_session_entry, item): item[0]
+                    for item in runnable
+                }
+                try:
+                    for future in as_completed(future_to_idx, timeout=max_wait):
                         idx = future_to_idx[future]
                         try:
                             result_idx, result_tuple = future.result()
@@ -2685,6 +3446,29 @@ class WorkspaceTools:
                                 0.0,
                             )
                         results[result_idx] = result_tuple
+                except FuturesTimeoutError:
+                    self._current_test_had_failures = True
+                    try:
+                        self._remove_docker_container(container_name, run_env)
+                    except Exception:
+                        pass
+                    for future, idx in future_to_idx.items():
+                        if future.done():
+                            continue
+                        future.cancel()
+                        entry = cmd_entries[idx]
+                        label = entry.get("label", "test")
+                        cmd = entry.get("cmd", "unknown")
+                        timeout_secs = timeout_by_idx.get(idx, max_wait)
+                        timeout_output = self._timeout_feedback(timeout_secs)
+                        parse_result = self.parser.parse(label, timeout_output)
+                        results[idx] = (
+                            f"### {label} ({cmd})\n{timeout_output}",
+                            parse_result.metrics or {},
+                            float(timeout_secs),
+                        )
+                finally:
+                    executor.shutdown(wait=False, cancel_futures=True)
         finally:
             try:
                 self._remove_docker_container(container_name, run_env)
@@ -2694,11 +3478,19 @@ class WorkspaceTools:
         return [result if result is not None else ("", {}, 0.0) for result in results]
 
     def _get_visible_gpu_devices(self) -> list[str]:
-        """Return the GPU ids visible to this process, if constrained."""
+        """Return the GPU ids visible to this process, if constrained.
+
+        ``gpu_devices`` is documented as a comma-separated string
+        ("0,1,2,3"), but a YAML list ([0, 1, 2, 3]) is the natural thing to
+        write and used to die with an AttributeError deep in the scheduler;
+        both spellings are accepted.
+        """
         devices = self.gpu_devices or os.environ.get("CUDA_VISIBLE_DEVICES", "")
         if not devices:
             return []
-        return [d.strip() for d in devices.split(",") if d.strip()]
+        if isinstance(devices, (list, tuple)):
+            return [str(d).strip() for d in devices if str(d).strip()]
+        return [d.strip() for d in str(devices).split(",") if d.strip()]
 
     def _default_gpu_assignment(self, cmd_entry: dict) -> str | None:
         """Return a best-effort GPU assignment for a single command."""
@@ -2804,11 +3596,25 @@ class WorkspaceTools:
         return batches
 
     def _run_single_cmd(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> tuple[str, dict, float]:
-        """Run a single test_cmd entry and return (feedback_str, metrics_dict, elapsed_sec)."""
-        label = cmd_entry.get("label", "test")
-        cmd = cmd_entry["cmd"]
+        """Run a single test_cmd entry and return (feedback_str, metrics_dict, elapsed_sec).
 
-        # Run budget check before training (fail fast)
+        Ordering matters for ephemeral-input tasks:
+          1. budget check FIRST — it executes agent-editable code (e.g. the
+             nas budget_check imports custom_nas_search.py and runs
+             search_step() twice against a MOCK API; it never needs the real
+             blobs), so no withheld blob may be on disk while it runs;
+          2. THEN stage this entry's blobs, immediately before the evaluation
+             launch itself (nothing that executes agent code sits between —
+             _run_single_cmd_impl only builds the command and launches it);
+          3. ALWAYS delete the staged blobs afterwards (host-side backstop for
+             an evaluation that crashed/timed out before its in-container
+             scrub). A failed staging is fatal for the entry: the evaluation
+             is skipped and whatever partial list the stager recorded is
+             scrubbed.
+        """
+        label = cmd_entry.get("label", "test")
+        cmd = cmd_entry.get("cmd", "")
+        # Budget check (executes agent code) BEFORE any blobs are staged.
         budget_err = self._run_budget_check(cmd_entry, seed, gpu_devices=gpu_devices)
         if budget_err:
             self._current_test_had_failures = True
@@ -2817,11 +3623,29 @@ class WorkspaceTools:
                 {},
                 0.0,
             )
+        stage_ok, staged_files = self._restage_task_inputs(cmd_entry, seed)
+        if not stage_ok:
+            self._cleanup_staged_inputs(staged_files)
+            self._current_test_had_failures = True
+            return (
+                f"### {label} ({cmd})\n[INPUT STAGING FAILED] could not "
+                "re-materialize this run's input blobs — evaluation skipped "
+                "(see harness console for the stager error)",
+                {},
+                0.0,
+            )
+        try:
+            return self._run_single_cmd_impl(cmd_entry, seed, gpu_devices=gpu_devices)
+        finally:
+            self._cleanup_staged_inputs(staged_files)
+
+    def _run_single_cmd_impl(self, cmd_entry: dict, seed: int, gpu_devices: str | None = None) -> tuple[str, dict, float]:
+        label = cmd_entry.get("label", "test")
+        cmd = cmd_entry["cmd"]
 
         if self.container_runtime == "local":
             local_cmd, cwd, run_env = self._build_local_exec_spec(cmd_entry, seed, gpu_devices=gpu_devices)
-            time_str = cmd_entry.get("time", "1:00:00")
-            timeout_secs = self._parse_time_to_seconds(time_str) + 300
+            timeout_secs = self._configured_timeout_seconds(cmd_entry)
             t_start = _time.time()
             result, raw_output, timed_out = self._run_local_command(
                 local_cmd,
@@ -2831,11 +3655,7 @@ class WorkspaceTools:
             )
             if timed_out:
                 self._current_test_had_failures = True
-                raw_output = (
-                    f"[TIMEOUT] Command timed out after {timeout_secs} seconds. "
-                    f"This result is INVALID and will not count. "
-                    f"Your algorithm is too slow — reduce model size or computational complexity."
-                )
+                raw_output = self._timeout_feedback(timeout_secs)
                 elapsed = _time.time() - t_start
                 parse_result = self.parser.parse(label, raw_output)
                 feedback_str = f"### {label} ({cmd})\n{raw_output}"
@@ -2871,9 +3691,7 @@ class WorkspaceTools:
         else:
             container_cmd, container_name = container_result, None
 
-        # Use config time field for timeout (+ 5min buffer), default 1hr
-        time_str = cmd_entry.get("time", "1:00:00")
-        timeout_secs = self._parse_time_to_seconds(time_str) + 300
+        timeout_secs = self._configured_timeout_seconds(cmd_entry)
 
         t_start = _time.time()
         run_env = os.environ.copy()
@@ -2895,21 +3713,23 @@ class WorkspaceTools:
                     feedback_str = f"### {label} ({cmd})\n{raw_output}"
                     return feedback_str, parse_result.metrics or {}, elapsed
             else:
-                result = subprocess.run(
+                result, raw_output, timed_out = self._run_subprocess_to_file(
                     container_cmd,
-                    capture_output=True,
-                    text=True,
                     cwd=str(self.project_root),
-                    timeout=timeout_secs,
                     env=run_env,
+                    timeout_secs=timeout_secs,
                 )
-                raw_output = (result.stdout or "") + (result.stderr or "")
+                if timed_out:
+                    self._current_test_had_failures = True
+                    elapsed = _time.time() - t_start
+                    timeout_output = self._timeout_feedback(timeout_secs)
+                    if raw_output:
+                        timeout_output = f"{timeout_output}\n{raw_output}"
+                    parse_result = self.parser.parse(label, timeout_output)
+                    feedback_str = f"### {label} ({cmd})\n{timeout_output}"
+                    return feedback_str, parse_result.metrics or {}, elapsed
         except subprocess.TimeoutExpired:
-            raw_output = (
-                f"[TIMEOUT] Command timed out after {timeout_secs} seconds. "
-                f"This result is INVALID and will not count. "
-                f"Your algorithm is too slow — reduce model size or computational complexity."
-            )
+            raw_output = self._timeout_feedback(timeout_secs)
             self._current_test_had_failures = True
             elapsed = _time.time() - t_start
             parse_result = self.parser.parse(label, raw_output)
@@ -3031,6 +3851,29 @@ class WorkspaceTools:
 
         for group_key in sorted(grouped.keys()):
             entries = grouped[group_key]
+            if self.config_task.get("ephemeral_inputs") and len(entries) > 1:
+                # Ephemeral-input tasks execute strictly ONE-AT-A-TIME even
+                # within a parallel group: while an evaluation runs (its own
+                # blobs already loaded and scrubbed), no sibling entry's
+                # secret blobs may sit staged in the shared workspace where
+                # agent-editable code could read them. _run_single_cmd stages
+                # each entry's blobs immediately before launch and always
+                # deletes them afterwards.
+                results = [
+                    self._run_single_cmd(
+                        entry,
+                        seed,
+                        self._default_gpu_assignment(entry),
+                    )
+                    for entry in entries
+                ]
+                for (fb, met, elapsed), entry in zip(results, entries):
+                    feedback_parts.append(fb)
+                    hidden_flags.append(entry.get("hidden", False))
+                    all_metrics.update(met)
+                    label = entry.get("label", "test")
+                    all_metrics[f"elapsed_{label}"] = round(elapsed, 1)
+                continue
             if len(entries) == 1:
                 fb, met, elapsed = self._run_single_cmd(
                     entries[0],
@@ -3168,42 +4011,66 @@ class WorkspaceTools:
 
         return sub_jobs
 
-    def _find_recoverable_group_dir(self, group_key: int, suffix: str = "") -> Path | None:
-        """Find the latest group dir with a recoverable SLURM job (has job_id.txt).
+    def _probe_recoverability(self, candidate: Path) -> str:
+        """Classify a candidate group dir's SLURM job: "recoverable" (active or
+        COMPLETED), "not_recoverable" (confirmed terminal-other, or confirmed
+        gone from the queue), or "indeterminate" (queries FAILED so we could
+        neither confirm it stopped nor confirm it is recoverable).
 
-        First searches under the current ``exp_name``.  If nothing is found
-        (e.g. the exp_name changed on resume), falls back to scanning ALL
-        exp dirs for this task that share the same model prefix.
-
-        Only returns dirs whose SLURM job is still active (PENDING/RUNNING)
-        or already COMPLETED.  CANCELLED/FAILED jobs are skipped.
+        The indeterminate case is the R10-3 hazard: it must NOT be collapsed
+        into "no prior job" — a prior job may still be running agent code.
         """
+        try:
+            job_id = (candidate / "job_id.txt").read_text().strip()
+        except OSError:
+            return "indeterminate"
+        from mlsbench.agent.slurm import (
+            _is_terminal_slurm_state,
+            _normalize_slurm_state,
+            _run_slurm_query,
+        )
+        sq = _run_slurm_query(["squeue", "-j", job_id, "--noheader", "-o", "%T"])
+        if sq.returncode == 0:
+            # squeue SUCCEEDED — authoritative for active jobs.
+            if sq.stdout.strip():
+                # A job present in squeue with ANY non-terminal state
+                # (PENDING, RUNNING, CONFIGURING, COMPLETING, SUSPENDED,
+                # RESIZING, REQUEUED, unknown, ...) is STILL LIVE — it must be
+                # drained, never treated as absent (R11-3). Only a terminal
+                # state falls through to sacct.
+                state = sq.stdout.strip().splitlines()[0]
+                if not _is_terminal_slurm_state(state):
+                    return "recoverable"
+            # Not live per squeue (empty or terminal). Staging is safe;
+            # decide recoverable (COMPLETED — collect its output) vs
+            # not_recoverable.
+            sa = _run_slurm_query(
+                ["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
+            if sa.returncode == 0 and sa.stdout.strip():
+                st = _normalize_slurm_state(sa.stdout.strip().splitlines()[0])
+                if st == "COMPLETED":
+                    return "recoverable"
+            return "not_recoverable"
+        # squeue query FAILED — fall back to sacct to try to resolve.
+        sa = _run_slurm_query(
+            ["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
+        if sa.returncode == 0 and sa.stdout.strip():
+            raw = sa.stdout.strip().splitlines()[0]
+            if not _is_terminal_slurm_state(raw):
+                return "recoverable"      # sacct shows a LIVE (non-terminal) state — drain it
+            if _normalize_slurm_state(raw) == "COMPLETED":
+                return "recoverable"      # done, output collectable
+            return "not_recoverable"      # confirmed terminal-other
+        # Both squeue and sacct failed to resolve — liveness unknown.
+        return "indeterminate"
+
+    def _iter_recovery_candidates(self, group_key: int, suffix: str = ""):
+        """Yield candidate group dirs (newest-first) that hold a job_id.txt,
+        under the current exp_name then the model-prefix fallback."""
         if not self.slurm_executor:
-            return None
+            return
         target_name = f"group_{group_key}{suffix}"
         task_logs = self.slurm_executor.logs_dir / self.task_name
-
-        def _is_recoverable(candidate: Path) -> bool:
-            """Check that the SLURM job is still usable (not cancelled/failed)."""
-            job_id = (candidate / "job_id.txt").read_text().strip()
-            from mlsbench.agent.slurm import _run_slurm_query
-            # Quick squeue check (fast for active jobs)
-            sq = _run_slurm_query(["squeue", "-j", job_id, "--noheader", "-o", "%T"])
-            if sq.returncode == 0 and sq.stdout.strip():
-                state = sq.stdout.strip().split()[0].rstrip("+")
-                if state in ("PENDING", "RUNNING"):
-                    return True
-            # sacct check (for completed jobs) — use -X to get job-level
-            # state only; without -X, substeps like ".extern" may show
-            # COMPLETED even when the overall job was CANCELLED.
-            sa = _run_slurm_query(["sacct", "-j", job_id, "--format=State", "--noheader", "-P", "-X"])
-            if sa.returncode == 0 and sa.stdout.strip():
-                state = sa.stdout.strip().splitlines()[0].strip().split()[0].rstrip("+")
-                if state == "COMPLETED":
-                    return True
-            return False
-
-        # Phase 1: search under the current exp_name
         base = task_logs / self.exp_name
         if base.exists():
             for ts_dir in sorted(base.iterdir(), reverse=True):
@@ -3211,10 +4078,7 @@ class WorkspaceTools:
                     continue
                 candidate = ts_dir / target_name
                 if candidate.is_dir() and (candidate / "job_id.txt").exists():
-                    if _is_recoverable(candidate):
-                        return candidate
-
-        # Phase 2 (fallback): search all exp dirs sharing the model prefix
+                    yield candidate
         if task_logs.exists():
             model_prefix = self.exp_name.rsplit("_", 2)[0] if "_" in self.exp_name else self.exp_name
             for exp_dir in sorted(task_logs.iterdir(), reverse=True):
@@ -3227,10 +4091,49 @@ class WorkspaceTools:
                         continue
                     candidate = ts_dir / target_name
                     if candidate.is_dir() and (candidate / "job_id.txt").exists():
-                        if _is_recoverable(candidate):
-                            print(f"[slurm-resume] Found job in older exp dir: {exp_dir.name}")
-                            return candidate
+                        yield candidate
 
+    def _discover_recoverable(
+        self, group_key: int, suffix: str = ""
+    ) -> tuple[str, Path | None]:
+        """Tri-state recovery discovery for ephemeral scheduling.
+
+        Returns ("recoverable", dir) for the newest active/COMPLETED job,
+        ("indeterminate", dir) when a candidate exists but its liveness could
+        not be resolved (queries failing — a prior job may still be running),
+        or ("absent", None) when no candidate dir exists or all are confirmed
+        not-recoverable. The caller must treat "indeterminate" as a possible
+        running job (confirm terminal or abort), never as "no prior job".
+        """
+        first_indeterminate: Path | None = None
+        for candidate in self._iter_recovery_candidates(group_key, suffix):
+            state = self._probe_recoverability(candidate)
+            if state == "recoverable":
+                return "recoverable", candidate
+            if state == "indeterminate" and first_indeterminate is None:
+                first_indeterminate = candidate
+        if first_indeterminate is not None:
+            return "indeterminate", first_indeterminate
+        return "absent", None
+
+    def _find_recoverable_group_dir(self, group_key: int, suffix: str = "") -> Path | None:
+        """Find the latest group dir with a recoverable SLURM job (has job_id.txt).
+
+        First searches under the current ``exp_name``.  If nothing is found
+        (e.g. the exp_name changed on resume), falls back to scanning ALL
+        exp dirs for this task that share the same model prefix.
+
+        Only returns dirs whose SLURM job is still active (PENDING/RUNNING)
+        or already COMPLETED.  CANCELLED/FAILED jobs are skipped. Retained for
+        the NON-ephemeral path (ephemeral scheduling uses the tri-state
+        _discover_recoverable). An indeterminate probe maps to None here —
+        same as the pre-R10-3 behavior for that path.
+        """
+        if not self.slurm_executor:
+            return None
+        for candidate in self._iter_recovery_candidates(group_key, suffix):
+            if self._probe_recoverability(candidate) == "recoverable":
+                return candidate
         return None
 
     def _run_all_cmds_slurm(self, seed: int) -> tuple[list[str], dict, list[bool]]:
@@ -3249,13 +4152,209 @@ class WorkspaceTools:
         test_cmd entry.
         """
         grouped = self._group_entries()
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        # Microseconds + pid, matching the workspace-root convention in cli.py.
+        # Second granularity alone collides: two drivers for the SAME task and
+        # baseline started in the same second (the shape of a per-seed shell
+        # loop, `for s in 42 123 456; do mlsbench baseline T --seed $s & done`)
+        # resolve to the same logs/<task>/<baseline>/<ts>/group_N/run.sh, so the
+        # second driver OVERWRITES the first's script. Both drivers then execute
+        # the survivor: one seed runs twice, the other never runs, and the losing
+        # driver records blank metric cells. Silent -- nothing errors.
+        timestamp = f"{datetime.now():%Y%m%d_%H%M%S_%f}_{os.getpid()}"
 
         seed_feedback: dict[int, list[str]] = {s: [] for s in seeds}
         seed_hidden: dict[int, list[bool]] = {s: [] for s in seeds}
         seed_metrics: dict[int, dict] = {s: {} for s in seeds}
         budget_script = self.project_root / "tasks" / self.task_name / "budget_check.py"
         budget_enabled = budget_script.exists()
+        # Ephemeral-input tasks: every (entry, seed) becomes its own single-
+        # command job, jobs are submitted-and-awaited strictly one-at-a-time,
+        # blobs are staged host-side immediately before each submission and
+        # backstop-scrubbed right after the job finishes. While one evaluation
+        # runs, no sibling (entry, seed)'s secret blobs exist in the shared
+        # workspace.
+        ephemeral = bool(self.config_task.get("ephemeral_inputs"))
+
+        # Wait results that do NOT establish the job actually stopped:
+        # FAILED_UNCONFIRMED = scheduler queries kept failing during the wait;
+        # TIMEOUT = the wait itself expired (local scheduler) — in both cases
+        # the job may still be pending or RUNNING agent code. For ephemeral
+        # tasks such a result must never unlock the next staging step.
+        unconfirmed_wait_states = {"FAILED_UNCONFIRMED", "TIMEOUT"}
+        # Submission failures that happen AFTER the scheduler command ran are
+        # the same liveness-uncertainty class at SUBMIT time: the job may
+        # have been accepted (an id-less orphan in the worst case) even
+        # though submit_group raised. Local-scheduler submission is atomic
+        # (queue transaction commits or nothing; the id is returned after),
+        # so only the SLURM executor raises this.
+        from mlsbench.agent.slurm import SubmitUncertainError
+        # Once set, no further ephemeral staging happens for this task in this
+        # call — every remaining fresh entry is recorded as failed instead.
+        ephemeral_abort: str | None = None
+
+        def _settle_uncertain_submit(exc: "SubmitUncertainError") -> bool:
+            """A submit failed post-acceptance. Cancel the possibly-accepted
+            job (by id when known, else best-effort by its unique-enough job
+            name) and CONFIRM nothing by that identity is still alive.
+            Returns True when liveness was resolved (safe to keep staging)."""
+            if exc.job_id:
+                return _settle_unconfirmed_wait(
+                    str(exc.job_id), "SUBMIT-UNCERTAIN"
+                ) is not None
+            if not exc.job_name:
+                return False
+            print(
+                f"[slurm] uncertain submission (no job id): cancelling by "
+                f"name '{exc.job_name}' and re-verifying"
+            )
+            cancel_n = getattr(self.slurm_executor, "cancel_job_by_name", None)
+            if cancel_n is not None:
+                try:
+                    cancel_n(exc.job_name)
+                except Exception as e:
+                    print(f"[slurm] cancel-by-name raised: {e}")
+            confirm_n = getattr(self.slurm_executor, "confirm_no_job_named", None)
+            if confirm_n is None:
+                return False
+            try:
+                return bool(confirm_n(exc.job_name))
+            except Exception as e:
+                print(f"[slurm] confirm-by-name raised: {e}")
+                return False
+
+        def _settle_unconfirmed_wait(job_id: str, status: str) -> str | None:
+            """A wait ended without confirming the job stopped. Cancel it and
+            re-verify termination with fresh queries. Returns the confirmed
+            terminal status, or None when liveness is still unknown."""
+            print(
+                f"[slurm] ephemeral job {job_id}: wait returned '{status}' "
+                "without confirming termination — cancelling and re-verifying"
+            )
+            cancel = getattr(self.slurm_executor, "cancel_job", None)
+            if cancel is not None:
+                try:
+                    cancel(job_id)
+                except Exception as exc:
+                    print(f"[slurm] cancel of job {job_id} raised: {exc}")
+            confirm = getattr(self.slurm_executor, "confirm_job_terminal", None)
+            if confirm is None:
+                return None
+            try:
+                return confirm(job_id)
+            except Exception as exc:
+                print(f"[slurm] confirmation probe for job {job_id} raised: {exc}")
+                return None
+
+        # TASK-WIDE recovery drain BEFORE any staging. Groups run
+        # sequentially, so a recovered job of a LATER group (e.g.
+        # optimization-diagonal-net keeps ephemeral entries in groups 1 AND
+        # 2) may still be running agent code from a previous harness process
+        # while an earlier group stages fresh blobs — which that job could
+        # read. Discover every recoverable job across ALL groups first, wait
+        # them ALL to termination, backstop-scrub their blobs, and only then
+        # enter the normal per-group stage->submit->wait sequence. Draining a
+        # later group's job "early" is correct: it is ALREADY running from
+        # the original submission; group ordering only sequences NEW work.
+        # Maps (group_key, suffix) -> (job_id, status, out_dir); status None
+        # means termination could not be confirmed (entry is failed and all
+        # remaining ephemeral staging aborts).
+        drained_recovered: dict[tuple[int, str], tuple[str, str | None, Path]] = {}
+        if ephemeral and self._recover_pending_slurm:
+            for g_key in sorted(grouped.keys()):
+                # One (entry, seed) per sub-job in ephemeral mode; this
+                # enumeration MUST mirror the all_tasks construction below
+                # (entry-first, then seeds) so the suffix indices line up.
+                combos = [(e, s) for e in grouped[g_key] for s in seeds]
+                for sub_idx, (r_entry, r_seed) in enumerate(combos):
+                    suffix = f"_{sub_idx}" if len(combos) > 1 else ""
+                    disc_state, rd = self._discover_recoverable(g_key, suffix)
+                    if disc_state == "absent":
+                        continue
+                    if disc_state == "indeterminate":
+                        # R10-3: a candidate prior job exists but its liveness
+                        # could NOT be resolved (queries failing) — it may
+                        # still be running agent code. NEVER assume "no prior
+                        # job" and stage fresh. Try a fresh confirmation; if
+                        # still unresolved, abort all fresh ephemeral staging.
+                        job_id = (rd / "job_id.txt").read_text().strip()
+                        print(
+                            f"[slurm-resume] INDETERMINATE recovery for group "
+                            f"{g_key}{suffix} (job {job_id}): discovery probes "
+                            "failed — confirming termination before any staging"
+                        )
+                        confirm = getattr(
+                            self.slurm_executor, "confirm_job_terminal", None)
+                        confirmed = None
+                        if confirm is not None:
+                            try:
+                                confirmed = confirm(job_id)
+                            except Exception as e:
+                                print(f"[slurm] confirmation probe raised: {e}")
+                        # Backstop-scrub the candidate's blobs either way
+                        # (denying a possibly-alive job its data is safe).
+                        try:
+                            _ok, _names = self._restage_task_inputs(
+                                r_entry, r_seed, dry_run=True)
+                            self._cleanup_staged_inputs(_names)
+                        except Exception:
+                            pass
+                        if confirmed is None:
+                            ephemeral_abort = (
+                                f"recovery discovery for group {g_key}{suffix} "
+                                f"(job {job_id}) was indeterminate and "
+                                "termination could not be confirmed — a prior "
+                                "job may still be running agent code"
+                            )
+                        # A confirmed-terminal indeterminate candidate is just
+                        # a dead prior job: NOT added to drained_recovered (no
+                        # result to collect), so the per-group loop stages a
+                        # fresh eval for this (entry, seed) — safe now.
+                        continue
+                    # disc_state == "recoverable"
+                    job_id = (rd / "job_id.txt").read_text().strip()
+                    print(
+                        f"[slurm-resume] Draining recovered job {job_id} "
+                        f"(group {g_key}{suffix}) task-wide before any staging"
+                    )
+                    try:
+                        status: str | None = self.slurm_executor.wait_for_job(job_id)
+                    except Exception as wait_exc:
+                        # The drain wait itself RAISED (scheduler-query /
+                        # filesystem fault) — the recovered job's liveness is
+                        # unknown. Settle via cancel + confirm exactly like an
+                        # unconfirmed wait status instead of letting the
+                        # exception tear down the whole run (R12).
+                        print(
+                            f"[slurm-resume] drain wait for recovered job "
+                            f"{job_id} RAISED ({wait_exc}) — treating liveness "
+                            "as unconfirmed"
+                        )
+                        status = None
+                    if status is None or status in unconfirmed_wait_states:
+                        status = _settle_unconfirmed_wait(
+                            job_id,
+                            status if status is not None else "WAIT-RAISED",
+                        )
+                        if status is None:
+                            ephemeral_abort = (
+                                f"recovered job {job_id} (group {g_key}{suffix}) "
+                                "may still be alive: wait unconfirmed and "
+                                "cancellation could not be verified"
+                            )
+                    # Backstop-scrub the recovered job's blobs (staged by the
+                    # previous, dead harness process — no recorded list
+                    # exists): dry-run the stager to enumerate the entry's
+                    # destinations, then unlink them. Also done when the
+                    # status is unconfirmed: denying the (possibly alive) job
+                    # its data is the safe direction.
+                    try:
+                        _ok, _names = self._restage_task_inputs(
+                            r_entry, r_seed, dry_run=True
+                        )
+                        self._cleanup_staged_inputs(_names)
+                    except Exception:
+                        pass
+                    drained_recovered[(g_key, suffix)] = (job_id, status, rd)
 
         for group_key in sorted(grouped.keys()):
             entries = grouped[group_key]
@@ -3281,12 +4380,19 @@ class WorkspaceTools:
                         "time": entry.get("time", "1:00:00"),
                         "use_cuda": entry_use_cuda,
                     }
+                    # Ephemeral-input tasks run their budget check HOST-side,
+                    # right before staging (see the submission loop below) —
+                    # NOT inside the job script. The in-job budget command
+                    # would execute agent-editable code (e.g. nas's
+                    # budget_check imports custom_nas_search.py and calls
+                    # search_step()) on the compute node AFTER the blobs were
+                    # staged at submit time, letting agent code read them.
                     if self.container_runtime == "local":
                         local_cmd, local_cwd, local_env = self._build_local_exec_spec(entry, seed)
                         task_info["local_cmd"] = local_cmd
                         task_info["local_cwd"] = local_cwd
                         task_info["local_env"] = local_env
-                        if budget_enabled:
+                        if budget_enabled and not ephemeral:
                             budget_cmd, budget_cwd, budget_env = self._build_local_budget_exec_spec(entry, seed)
                             task_info["budget_local_cmd"] = budget_cmd
                             task_info["budget_local_cwd"] = budget_cwd
@@ -3299,20 +4405,29 @@ class WorkspaceTools:
                             task_info["docker_container_name"] = container_result[1]
                         else:
                             task_info["apptainer_cmd"] = container_result
-                        if budget_enabled:
+                        if budget_enabled and not ephemeral:
                             task_info["budget_apptainer_cmd"] = self._build_container_budget_cmd(entry, seed)
                     if "mem" in entry:
                         task_info["mem"] = entry["mem"]
                     all_tasks.append(task_info)
 
             # Global bin-packing across all seeds
-            sub_jobs = self._split_into_sub_jobs(all_tasks)
+            if ephemeral:
+                # One (entry, seed) per job — serialized below, never packed.
+                sub_jobs = [[t] for t in all_tasks]
+            else:
+                sub_jobs = self._split_into_sub_jobs(all_tasks)
 
             # Submit all sub-jobs (or recover existing ones)
             submitted: list[tuple] = []
-            for sub_idx, sub_tasks in enumerate(sub_jobs):
-                suffix = f"_{sub_idx}" if len(sub_jobs) > 1 else ""
+            # Ephemeral jobs are waited to completion inline (serialization);
+            # their terminal status is preserved here so the collection loop
+            # below consumes it instead of re-polling (wait_for_job sleeps
+            # before its first query — re-waiting every finished job would add
+            # a guaranteed delay per job). Non-ephemeral jobs never enter it.
+            prewaited: dict[str, str] = {}
 
+            def _build_group_cmds(sub_tasks: list[dict]) -> list[dict]:
                 group_cmds = []
                 for t in sub_tasks:
                     cmd_dict = {
@@ -3335,26 +4450,239 @@ class WorkspaceTools:
                         if "budget_apptainer_cmd" in t:
                             cmd_dict["budget_apptainer_cmd"] = t["budget_apptainer_cmd"]
                     group_cmds.append(cmd_dict)
+                return group_cmds
 
-                # Recovery: reuse existing SLURM job instead of submitting
+            # Recovery resolution: in ephemeral mode every recoverable job —
+            # across ALL groups — was already discovered, waited to
+            # termination and backstop-scrubbed by the TASK-WIDE drain
+            # prepass above (a recovered job of a later group may be running
+            # agent code while an earlier group would otherwise stage). Here
+            # we only look its result up; nothing is waited or scrubbed
+            # again. Non-ephemeral groups keep the per-group discovery.
+            prepared = []
+            for sub_idx, sub_tasks in enumerate(sub_jobs):
+                suffix = f"_{sub_idx}" if len(sub_jobs) > 1 else ""
                 recovered_dir = None
                 if self._recover_pending_slurm:
-                    recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
+                    if ephemeral:
+                        rec = drained_recovered.get((group_key, suffix))
+                        recovered_dir = rec[2] if rec else None
+                    else:
+                        recovered_dir = self._find_recoverable_group_dir(group_key, suffix)
+                prepared.append(
+                    (suffix, sub_tasks, _build_group_cmds(sub_tasks), recovered_dir)
+                )
+            # Pre-drained recovered jobs are consumed instantly below, so the
+            # old recovered-first ordering no longer matters.
+            ordered = prepared
 
-                if recovered_dir:
-                    out_dir = recovered_dir
-                    job_id = (recovered_dir / "job_id.txt").read_text().strip()
-                    print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
-                else:
-                    out_dir = (
-                        self.slurm_executor.logs_dir
-                        / self.task_name
-                        / self.exp_name
-                        / timestamp
-                        / f"group_{group_key}{suffix}"
+            for suffix, sub_tasks, group_cmds, recovered_dir in ordered:
+                # Ephemeral inputs (fresh submission only): budget check FIRST
+                # (it executes agent code and must never see staged blobs),
+                # then stage this single job's blobs host-side immediately
+                # before submission (each sub_job holds exactly one
+                # (entry, seed) in ephemeral mode). A failed check/staging is
+                # fatal for the entry: it is recorded as a failure and never
+                # submitted. Recovered jobs stage NOTHING here.
+                staged_files: list[str] = []
+                if ephemeral:
+                    _t0 = sub_tasks[0]
+
+                    def _record_entry_failure(message: str, _t0: dict = _t0) -> None:
+                        self._current_test_had_failures = True
+                        seed_feedback[_t0["seed"]].append(
+                            f"### {_t0['orig_label']} "
+                            f"({_t0['entry'].get('cmd', '?')})\n{message}"
+                        )
+                        seed_hidden[_t0["seed"]].append(
+                            _t0["entry"].get("hidden", False)
+                        )
+
+                if ephemeral and recovered_dir is not None:
+                    # Consumed from the TASK-WIDE drain prepass: this job was
+                    # already waited to termination and its blobs backstop-
+                    # scrubbed BEFORE any group staged anything. Hand its
+                    # terminal status to the collection loop (prewaited) so
+                    # it is never re-polled, and slot it into THIS group's
+                    # submitted list so its results are collected in place.
+                    job_id, drained_status, out_dir = drained_recovered[
+                        (group_key, suffix)
+                    ]
+                    if drained_status is None:
+                        _record_entry_failure(
+                            f"[SUBMIT/WAIT FAILED] recovered job {job_id}: "
+                            "termination could not be confirmed (scheduler "
+                            "queries failing; cancellation unverified) — "
+                            "evaluation skipped"
+                        )
+                        continue
+                    print(
+                        f"[slurm-resume] Recovering job {job_id} from {out_dir} "
+                        "(drained task-wide before staging)"
                     )
-                    job_name = f"mls-{self.task_name}-g{group_key}{suffix}"
-                    job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
+                    prewaited[job_id] = drained_status
+                    submitted.append((job_id, sub_tasks, group_cmds, out_dir))
+                    continue
+
+                if ephemeral:
+                    # A previous job's liveness is unknown (wait unconfirmed,
+                    # cancellation unverified) — never stage while an
+                    # unaccounted-for agent process may still be running.
+                    if ephemeral_abort:
+                        _record_entry_failure(
+                            "[EPHEMERAL ABORT] staging suspended for the "
+                            f"remaining entries: {ephemeral_abort}"
+                        )
+                        continue
+                    if budget_enabled:
+                        budget_err = self._run_budget_check(
+                            _t0["entry"], _t0["seed"]
+                        )
+                        if budget_err:
+                            _record_entry_failure(budget_err)
+                            continue
+                    stage_ok, staged_files = self._restage_task_inputs(
+                        _t0["entry"], _t0["seed"]
+                    )
+                    if not stage_ok:
+                        self._cleanup_staged_inputs(staged_files)
+                        _record_entry_failure(
+                            "[INPUT STAGING FAILED] could not re-materialize "
+                            "this run's input blobs — evaluation skipped "
+                            "(see harness console for the stager error)"
+                        )
+                        continue
+                    # Serialized stage->submit->wait->scrub lifecycle (fresh
+                    # submissions only — recovered jobs were consumed above).
+                    # The backstop scrub runs on EVERY exit path (finally):
+                    # a raising submit_group (controller outage, bad resource
+                    # request) or wait_for_job must not leave this entry's
+                    # freshly staged secrets in the shared workspace. Such
+                    # failures are contained per entry: recorded as a failure,
+                    # remaining entries proceed. The first wait's status is
+                    # preserved so the collection loop never re-polls a
+                    # finished job (SlurmExecutor.wait_for_job sleeps before
+                    # its first query). An UNCONFIRMED wait result (the job
+                    # may still be alive) is settled via cancel + fresh
+                    # confirmation probes; if termination still cannot be
+                    # confirmed, ALL remaining ephemeral staging is aborted.
+                    try:
+                        out_dir = (
+                            self.slurm_executor.logs_dir
+                            / self.task_name
+                            / self.exp_name
+                            / timestamp
+                            / f"group_{group_key}{suffix}"
+                        )
+                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}{suffix}"
+                        job_id = self.slurm_executor.submit_group(
+                            group_cmds, job_name, out_dir
+                        )
+                        # Serialize: block until THIS job finished before
+                        # staging / submitting the next one. While the job
+                        # queues, no sibling evaluation of this task runs.
+                        try:
+                            status: str | None = self.slurm_executor.wait_for_job(job_id)
+                        except Exception as wait_exc:
+                            # The job WAS accepted (its ID is known) but the
+                            # WAIT itself raised — an unexpected scheduler-
+                            # query / filesystem exception, NOT an
+                            # unconfirmed-status return. Same liveness-
+                            # uncertainty class as the round-9 status path:
+                            # settle via cancel + confirm below; never just
+                            # record-and-continue while the accepted job may
+                            # still be running agent code (R12).
+                            print(
+                                f"[slurm] ephemeral job {job_id}: wait_for_job "
+                                f"RAISED ({wait_exc}) — treating liveness as "
+                                "unconfirmed"
+                            )
+                            status = None
+                        if status is None or status in unconfirmed_wait_states:
+                            settled = _settle_unconfirmed_wait(
+                                job_id,
+                                status if status is not None else "WAIT-RAISED",
+                            )
+                            if settled is None:
+                                ephemeral_abort = (
+                                    f"job {job_id} ({_t0['orig_label']} seed "
+                                    f"{_t0['seed']}) may still be alive: wait "
+                                    "unconfirmed and cancellation could not "
+                                    "be verified"
+                                )
+                                _record_entry_failure(
+                                    f"[SUBMIT/WAIT FAILED] job {job_id}: "
+                                    + (
+                                        "wait_for_job raised an exception"
+                                        if status is None
+                                        else f"wait returned '{status}'"
+                                    )
+                                    + " without confirming the job stopped, "
+                                    "and cancellation could not be verified — "
+                                    "evaluation skipped; remaining ephemeral "
+                                    "staging aborted"
+                                )
+                                continue
+                            status = settled
+                        prewaited[job_id] = status
+                    except SubmitUncertainError as exc:
+                        # The scheduler command RAN before this failure: the
+                        # job may have been ACCEPTED and may start running
+                        # agent code. Cancel + confirm (by id when known,
+                        # else by job name); only a CONFIRMED stop lets
+                        # staging continue.
+                        if _settle_uncertain_submit(exc):
+                            _record_entry_failure(
+                                f"[SUBMIT/WAIT FAILED] {exc} — the possibly-"
+                                "accepted job was cancelled and confirmed "
+                                "stopped; evaluation skipped"
+                            )
+                            continue
+                        ephemeral_abort = (
+                            f"submission of {_t0['orig_label']} seed "
+                            f"{_t0['seed']} failed after the scheduler "
+                            f"command ran ({exc}) — an accepted job may be "
+                            "running "
+                            + ("and its termination could not be confirmed"
+                               if exc.job_id else "with no known job id")
+                        )
+                        _record_entry_failure(
+                            f"[SUBMIT/WAIT FAILED] {exc} — the job may have "
+                            "been ACCEPTED and could still run agent code "
+                            "(orphan risk); cancellation could not be "
+                            "confirmed — evaluation skipped; remaining "
+                            "ephemeral staging aborted"
+                        )
+                        continue
+                    except Exception as exc:
+                        _record_entry_failure(
+                            f"[SUBMIT/WAIT FAILED] {exc} — evaluation skipped"
+                        )
+                        continue
+                    finally:
+                        # No-op when the runner already scrubbed them
+                        # in-container; guarantees removal after a
+                        # crash/timeout, a raising submit/wait, or an
+                        # unconfirmed wait (denying the possibly-alive job
+                        # its data is the safe direction).
+                        self._cleanup_staged_inputs(staged_files)
+                else:
+                    if recovered_dir:
+                        out_dir = recovered_dir
+                        job_id = (recovered_dir / "job_id.txt").read_text().strip()
+                        print(f"[slurm-resume] Recovering job {job_id} from {out_dir}")
+                    else:
+                        out_dir = (
+                            self.slurm_executor.logs_dir
+                            / self.task_name
+                            / self.exp_name
+                            / timestamp
+                            / f"group_{group_key}{suffix}"
+                        )
+                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}{suffix}"
+                        job_id = self.slurm_executor.submit_group(
+                            group_cmds, job_name, out_dir
+                        )
 
                 submitted.append((job_id, sub_tasks, group_cmds, out_dir))
 
@@ -3362,9 +4690,13 @@ class WorkspaceTools:
             # groups (e.g. group_2) may also have recoverable jobs from a
             # previous resume attempt.  The flag is cleared after ALL groups.
 
-            # Wait for all sub-jobs and collect results
+            # Wait for all sub-jobs and collect results (ephemeral jobs were
+            # already waited inline — consume the preserved status).
             for job_id, sub_tasks, group_cmds, out_dir in submitted:
-                status = self.slurm_executor.wait_for_job(job_id)
+                if job_id in prewaited:
+                    status = prewaited.pop(job_id)
+                else:
+                    status = self.slurm_executor.wait_for_job(job_id)
 
                 # Auto-resubmit if job was externally cancelled
                 max_resubmit = 3 if getattr(
@@ -3372,12 +4704,90 @@ class WorkspaceTools:
                 ) else 0
                 resubmit_count = 0
                 while status == "CANCELLED" and resubmit_count < max_resubmit:
+                    if ephemeral and ephemeral_abort:
+                        # Resubmitting would STAGE — forbidden once a prior
+                        # job's liveness is unknown.
+                        print("[slurm] resubmit skipped: ephemeral staging "
+                              f"aborted ({ephemeral_abort})")
+                        break
                     resubmit_count += 1
                     print(f"[slurm] Job {job_id} was CANCELLED externally — "
                           f"resubmitting (attempt {resubmit_count}/{max_resubmit})")
-                    job_name = f"mls-{self.task_name}-g{group_key}"
-                    job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
-                    status = self.slurm_executor.wait_for_job(job_id)
+                    # The cancelled attempt may already have consumed its
+                    # ephemeral input blobs — re-stage just before resubmitting
+                    # and backstop-scrub once the retry finished. (No-op for
+                    # non-ephemeral tasks; in ephemeral mode all sibling jobs
+                    # have already completed, so nothing runs concurrently,
+                    # and the budget check already passed before the original
+                    # submission.) A failed re-staging aborts the retry.
+                    _staged_retry: list[str] = []
+                    _retry_ok = True
+                    for _t in sub_tasks:
+                        _ok, _paths = self._restage_task_inputs(_t["entry"], _t["seed"])
+                        _staged_retry.extend(_paths)
+                        _retry_ok = _retry_ok and _ok
+                    if not _retry_ok:
+                        self._cleanup_staged_inputs(_staged_retry)
+                        print("[slurm] resubmit aborted: input re-staging failed")
+                        break
+                    try:
+                        job_name = f"mls-{self.task_name}-{self._run_token}-g{group_key}"
+                        try:
+                            job_id = self.slurm_executor.submit_group(group_cmds, job_name, out_dir)
+                        except SubmitUncertainError as exc:
+                            if not ephemeral:
+                                raise  # non-ephemeral: propagate as before
+                            # Post-acceptance resubmit failure: same orphan
+                            # risk as the fresh path. Confirmed stop -> treat
+                            # this attempt as failed and stop retrying;
+                            # unresolved -> also abort all further staging.
+                            if not _settle_uncertain_submit(exc):
+                                ephemeral_abort = (
+                                    f"resubmission failed after the scheduler "
+                                    f"command ran ({exc}) — an accepted job "
+                                    "may be running unaccounted for"
+                                )
+                            print(f"[slurm] resubmit uncertain: {exc}")
+                            status = "FAILED"
+                            break
+                        try:
+                            status = self.slurm_executor.wait_for_job(job_id)
+                        except Exception as wait_exc:
+                            if not ephemeral:
+                                raise  # non-ephemeral: propagate as before
+                            # The resubmitted job WAS accepted (id known) but
+                            # the WAIT raised — same liveness-uncertainty
+                            # class as an unconfirmed status: settle via
+                            # cancel + confirm (R12).
+                            print(
+                                f"[slurm] resubmitted job {job_id}: "
+                                f"wait_for_job RAISED ({wait_exc}) — treating "
+                                "liveness as unconfirmed"
+                            )
+                            status = None
+                        if ephemeral and (
+                            status is None or status in unconfirmed_wait_states
+                        ):
+                            settled = _settle_unconfirmed_wait(
+                                job_id,
+                                status if status is not None else "WAIT-RAISED",
+                            )
+                            if settled is None:
+                                # Liveness unknown — abort all further
+                                # ephemeral staging (incl. later groups) and
+                                # stop retrying; treat this attempt as failed.
+                                ephemeral_abort = (
+                                    f"resubmitted job {job_id} may still be "
+                                    "alive: wait unconfirmed and cancellation "
+                                    "could not be verified"
+                                )
+                                status = "FAILED"
+                            else:
+                                status = settled
+                    finally:
+                        # Scrub on every exit path — a raising resubmit/wait
+                        # must not leave the freshly staged blobs behind.
+                        self._cleanup_staged_inputs(_staged_retry)
 
                 labels = [cmd["label"] for cmd in group_cmds]
                 outputs = self.slurm_executor.read_outputs(out_dir, labels)
@@ -3569,7 +4979,14 @@ class WorkspaceTools:
             record.update(seed_metric)
             record.update(params_col)
             self.leaderboard.add(record)
-        if len(valid_seeds) > 1:
+        # Also for a single seed: mlsbench.scoring.anchors only reads
+        # `seed == "mean"` rows, so a one-seed run that skipped this left the
+        # task with no anchor floor at all -- every later submission scores 0
+        # and the task reads "broken" rather than "measured". Harbor's own
+        # score_task.py always writes mean_metrics, one seed or many, and
+        # _aggregate_metrics on a single record returns it verbatim, so this
+        # only adds the row the rest of the pipeline already assumes exists.
+        if valid_seeds:
             record = {"model": model_name, "is_final": is_final, "seed": "mean"}
             record.update(all_metrics)
             record.update(params_col)
@@ -3920,6 +5337,97 @@ class WorkspaceTools:
         return "Undo complete:\n" + "\n".join(restored)
 
     # ------------------------------------------------------------------
+    # Tool: reset (revert ALL edits → pre-edit template)
+    # ------------------------------------------------------------------
+
+    def capture_template_state(self) -> None:
+        """Snapshot the pre-edit template state for ``reset``.
+
+        Records the current content of every editable file plus a deep copy of
+        the live protected ranges. Must be called exactly once after the
+        workspace is set up (pre_edit + mid_edit applied) and before any agent
+        or baseline edits, so the snapshot is the pristine template the agent
+        is shown. Safe to call again — a later call just re-captures the current
+        state (used by resume, which rebuilds the template before replay).
+        """
+        files: dict[str, str | None] = {}
+        for fn in self.live_protected_ranges:
+            try:
+                path = self._resolve_workspace_path(fn)
+                files[fn] = path.read_text() if path.exists() else None
+            except Exception:
+                files[fn] = None
+        self._template_files = files
+        self._template_ranges = copy.deepcopy(self.live_protected_ranges)
+
+    def reset(self, **_kw) -> str:
+        """Revert ALL edits, restoring every editable file to its template state."""
+        if not self.allow_reset:
+            return "ERROR: reset is not enabled for this run."
+        # Fallback: if the template was never captured (older call sites), undo
+        # the entire edit history, which lands on the same pre-edit state.
+        if self._template_files is None:
+            if not self._history:
+                return "Nothing to reset — no edits have been made yet."
+            return self.undo(len(self._history))
+
+        restored: list[str] = []
+        for fn, content in self._template_files.items():
+            try:
+                path = self._resolve_workspace_path(fn)
+            except Exception:
+                continue
+            if content is None:
+                # File did not exist in the template — remove it if present.
+                if path.exists():
+                    path.unlink()
+                    restored.append(f"Removed: {fn}")
+                continue
+            current = path.read_text() if path.exists() else None
+            if current != content:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+                restored.append(f"Restored: {fn}")
+
+        # Delete any files the agent created that aren't part of the template.
+        for fn in sorted(self._created_files):
+            if self._template_files and fn in self._template_files:
+                continue
+            try:
+                path = self._resolve_workspace_path(fn)
+            except Exception:
+                continue
+            if path.exists():
+                path.unlink()
+                restored.append(f"Deleted (created file): {fn}")
+
+        # Restore the initial protected ranges and clear undo history — there is
+        # nothing left to undo once everything is back to the template.
+        if self._template_ranges is not None:
+            self.live_protected_ranges = copy.deepcopy(self._template_ranges)
+        self._history.clear()
+        self._created_files.clear()
+
+        if restored:
+            result = (
+                "Reset complete — all edits reverted to the original pre-edit "
+                "template:\n" + "\n".join(restored)
+            )
+        else:
+            result = "Reset complete — workspace was already at the pre-edit template state."
+        # Always show the refreshed editable ranges for each file so the model
+        # sees the live line numbers without re-reading them — and so resume's
+        # range reconstruction (which scans tool_results for "editable: N–M")
+        # picks up the restored template ranges even on a no-op reset.
+        snapshots = [
+            snap for fn in self._template_files
+            if (snap := self._file_snapshot(fn))
+        ]
+        if snapshots:
+            result += "\n\n" + "\n...\n".join(snapshots)
+        return result
+
+    # ------------------------------------------------------------------
     # Internal: apply pre_edit.json ops (no permission check, no history)
     # ------------------------------------------------------------------
 
@@ -3936,6 +5444,21 @@ class WorkspaceTools:
             filename = op["file"]
             path = self._resolve_workspace_path(filename)
             op_type = op["op"]
+
+            if op_type == "remove_path":
+                # File-level delete, the counterpart of `create`. `delete` removes
+                # a LINE RANGE inside a file and cannot drop a directory, which
+                # left no way to keep a vendored answer key out of the agent-start
+                # workspace. Always executed, like `create`, so a reused workspace
+                # cannot resurrect it.
+                import shutil as _shutil
+                if path.is_dir():
+                    print(f"[pre_edit] Removing directory: {filename}")
+                    _shutil.rmtree(path, ignore_errors=True)
+                elif path.exists():
+                    print(f"[pre_edit] Removing file: {filename}")
+                    path.unlink()
+                continue
 
             if op_type == "create":
                 # Always (re-)create: ensures editable files are reset to template
@@ -3992,6 +5515,28 @@ class WorkspaceTools:
                     line_idx = op["line"] - 1
                     del lines[line_idx]
                     self._shift_ranges_for_pre_edit(filename, line_idx, -1)
+
+            elif op_type == "str_replace":
+                # Replace the single, unique occurrence of old_str with new_str.
+                # Carries no line numbers, so it targets support files rather than
+                # the editable span; the range shift is computed from where old_str
+                # begins so a str_replace before an editable range still shifts it.
+                old = op["old_str"]
+                new = op.get("new_str", "")
+                text = "".join(lines)
+                n = text.count(old)
+                if n != 1:
+                    raise ValueError(
+                        f"pre_edit str_replace: old_str occurs {n} times in "
+                        f"{filename} (need exactly 1)"
+                    )
+                before = text.split(old, 1)[0]
+                start_line = before.count("\n") + 1          # 1-indexed line of old_str start
+                old_lines = old.count("\n") + (0 if old.endswith("\n") else 1)
+                new_lines_n = new.count("\n") + (0 if new.endswith("\n") else 1) if new else 0
+                lines = ("".join(lines).replace(old, new, 1)).splitlines(keepends=True)
+                self._shift_ranges_for_pre_edit(
+                    filename, start_line + old_lines - 1, new_lines_n - old_lines)
 
             else:
                 raise ValueError(f"Unknown pre_edit op: {op_type}")
@@ -4204,6 +5749,8 @@ class WorkspaceTools:
                 result = self.submit(**tool_input)
             elif tool_name == "undo":
                 result = self.undo(**tool_input)
+            elif tool_name == "reset":
+                result = self.reset(**tool_input)
             elif tool_name == "web_search":
                 result = self.web_search(**tool_input)
             elif tool_name == "web_extract":

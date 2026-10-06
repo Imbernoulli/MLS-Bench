@@ -29,6 +29,23 @@ class Leaderboard:
     """Append-only leaderboard stored as CSV, with WAL protection."""
 
     META_COLS = {"timestamp", "model", "is_final", "seed"}
+
+    @staticmethod
+    def _row_key(row: dict) -> tuple[str, str, str]:
+        """Dedup key for WAL replay, normalised to strings.
+
+        Rows read back from the CSV always have a *string* seed, while a caller
+        may pass an int. Comparing them raw made every key miss, so each add()
+        "recovered" the whole WAL again and rows grew triangularly (9 adds ->
+        45 rows). That is not cosmetic: the duplicates weight the mean by
+        multiplicity -- one task read 55.67 where the equal-weight mean is
+        54.67, because seed 42 was counted three times and seed 456 once.
+        """
+        return (
+            str(row.get("timestamp", "")),
+            str(row.get("model", "")),
+            str(row.get("seed", "")),
+        )
     INFORMATIONAL_PREFIXES = ("elapsed_", "n_samples", "n_prompts")
 
     def __init__(self, path: Path):
@@ -104,12 +121,12 @@ class Leaderboard:
         # Build set of existing (timestamp, model, seed) for dedup
         existing = set()
         for r in rows:
-            key = (r.get("timestamp", ""), r.get("model", ""), r.get("seed", ""))
+            key = self._row_key(r)
             existing.add(key)
 
         recovered = 0
         for entry in wal_records:
-            key = (entry.get("timestamp", ""), entry.get("model", ""), entry.get("seed", ""))
+            key = self._row_key(entry)
             if key not in existing:
                 for k in entry:
                     if k not in fieldnames:
@@ -150,12 +167,12 @@ class Leaderboard:
         if self.path.exists():
             with open(self.path, newline="") as f:
                 for r in csv.DictReader(f):
-                    csv_keys.add((r.get("timestamp", ""), r.get("model", ""), r.get("seed", "")))
+                    csv_keys.add(self._row_key(r))
 
         kept: list[dict] = []
         dropped = 0
         for entry in wal_records:
-            key = (entry.get("timestamp", ""), entry.get("model", ""), entry.get("seed", ""))
+            key = self._row_key(entry)
             if removed_keys and key in removed_keys:
                 dropped += 1
                 continue
@@ -199,9 +216,9 @@ class Leaderboard:
                 if k not in fieldnames:
                     fieldnames.append(k)
             # Dedup: don't re-add if WAL replay already included this entry
-            entry_key = (entry.get("timestamp", ""), entry.get("model", ""), entry.get("seed", ""))
+            entry_key = self._row_key(entry)
             already_present = any(
-                (r.get("timestamp", ""), r.get("model", ""), r.get("seed", "")) == entry_key
+                self._row_key(r) == entry_key
                 for r in rows
             )
             if not already_present:

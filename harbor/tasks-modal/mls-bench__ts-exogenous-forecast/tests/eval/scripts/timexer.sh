@@ -1,6 +1,7 @@
 #!/bin/bash
 # Working directory is already /workspace (package root)
 
+source "$(dirname "${BASH_SOURCE[0]}")/_withheld.sh"
 SEED=${SEED:-42}
 # Hyperparameters aligned with official TSLib TimeXer exogenous scripts (features=MS)
 
@@ -15,6 +16,7 @@ case "${ENV}" in
     DATA=custom; ROOT=/data/electricity/; DPATH=electricity.csv; EI=321; DI=321; CO=321; MID=ECL_96_96
     EL=1; DM=512; DFF=512; BSZ=4 ;;
 esac
+ROOT="$(mlsb_eval_root "$ROOT" "$DPATH")" || exit 1
 
 python -u run.py \
   --task_name long_term_forecast --is_training 1 \

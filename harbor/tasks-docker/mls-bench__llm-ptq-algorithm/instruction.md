@@ -113,6 +113,8 @@ Constraints:
 - Your algorithm must work for both INT4 and INT3, and for different
   group sizes
 
+The test split the perplexity is scored on is withheld from your workspace and is used only by the final evaluation; in your own runs the script reports perplexity on the validation split instead.
+
 ## Your Workspace
 
 You are working inside `/workspace`. The package source tree
@@ -121,16 +123,30 @@ You are working inside `/workspace`. The package source tree
 ## Files You May Edit
 
 You may **only** modify these files, and **only within the listed line ranges
-(inclusive, 1-indexed)**. Edits that change code outside these ranges — or creating new files, or
-deleting whole files — will cause your submission to be invalid.
+(inclusive, 1-indexed)**.
 
-The line numbers mark an editable **region**, not a fixed line-count budget: you
-may add or remove lines inside it. Only code outside the editable ranges must
-stay unchanged.
+Editing outside those ranges will score your submission zero, and so will
+creating or deleting any file inside the task's own source trees
+(`/workspace/gptq/`, and anything else that was already there when
+you started). Files you write anywhere else — scratch space, caches,
+checkpoints, `$OUTPUT_DIR`, `/tmp` — are not part of your submission, so use
+them freely.
 
 - `gptq/custom_ptq.py`
 - editable lines **26–157**
 
+
+## What Your Submission Is
+
+Your task is to design and implement the algorithmic component in the editable
+region above, and your score reflects only how well that component performs
+under the task's own evaluation. Improve the algorithm — do not try to win by
+circumventing the measurement. In particular, do not obtain, reconstruct, or
+hard-code the evaluation's reference data or expected answers; do not compute,
+overwrite, or report the score yourself; and do not reach the evaluation through
+any route other than the component you implement. A submission that defeats the
+measurement instead of improving the algorithm is not a valid solution and is
+scored as a failure.
 
 
 
@@ -371,278 +387,296 @@ stay unchanged.
    229:     return trainloader
    230: 
    231: 
-   232: def get_eval_data(tokenizer, seqlen=2048):
-   233:     """Load WikiText-2 test data for perplexity evaluation."""
+   232: def _load_wikitext_split(split, cache_dir):
+   233:     """One WikiText-2 (raw) split from the local HF cache, or None if absent."""
    234:     from datasets import load_dataset
-   235: 
-   236:     cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
-   237:     try:
-   238:         testdata = load_dataset(
-   239:             "wikitext", "wikitext-2-raw-v1", split="test", cache_dir=cache_dir
-   240:         )
-   241:     except Exception:
-   242:         from datasets import Dataset
-   243:         import glob
-   244:         arrow = glob.glob(f"{cache_dir}/**/wikitext-test.arrow", recursive=True)
-   245:         if arrow:
-   246:             testdata = Dataset.from_file(arrow[0])
-   247:         else:
-   248:             raise FileNotFoundError(f"WikiText-2 test data not found in {cache_dir}")
-   249: 
-   250:     testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
-   251:     return testenc
-   252: 
-   253: 
-   254: # ── Layer-by-layer quantization ───────────────────────────────────────────────
-   255: 
-   256: @torch.no_grad()
-   257: def quantize_model(model, calibration_data, dev, num_bits=4, group_size=-1):
-   258:     """Quantize all linear layers in the model using LayerQuantizer.
-   259: 
-   260:     Processes the model layer-by-layer (transformer block by block) to
-   261:     minimize GPU memory usage. For each block:
-   262:       1. Move block to GPU
-   263:       2. Run calibration data through to collect Hessian statistics
-   264:       3. Quantize each linear sublayer using LayerQuantizer
-   265:       4. Replace weights with quantized-dequantized values
-   266:       5. Move block back to CPU
+   235:     try:
+   236:         return load_dataset(
+   237:             "wikitext", "wikitext-2-raw-v1", split=split, cache_dir=cache_dir
+   238:         )
+   239:     except Exception:
+   240:         from datasets import Dataset
+   241:         import glob
+   242:         arrow = glob.glob(f"{cache_dir}/**/wikitext-{split}.arrow", recursive=True)
+   243:         return Dataset.from_file(arrow[0]) if arrow else None
+   244: 
+   245: 
+   246: def get_eval_data(tokenizer, seqlen=2048):
+   247:     """Load WikiText-2 test data for perplexity evaluation.
+   248: 
+   249:     The test split is withheld from the agent's workspace and mounted only for
+   250:     the final evaluation. Where it is absent (your own runs), the validation
+   251:     split is used in its place and a notice says so.
+   252:     """
+   253:     cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
+   254:     testdata = _load_wikitext_split("test", cache_dir)
+   255:     if testdata is None:
+   256:         if os.environ.get("MLSB_REQUIRE_TEST_SPLIT"):
+   257:             raise FileNotFoundError(f"WikiText-2 test data not found in {cache_dir}")
+   258:         print("NOTE: the WikiText-2 test split is withheld from this workspace; "
+   259:               "the perplexities below are computed on the validation split.", flush=True)
+   260:         testdata = _load_wikitext_split("validation", cache_dir)
+   261:         if testdata is None:
+   262:             raise FileNotFoundError(f"WikiText-2 validation data not found in {cache_dir}")
+   263: 
+   264:     testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
+   265:     return testenc
+   266: 
    267: 
-   268:     Args:
-   269:         model: pretrained causal LM
-   270:         calibration_data: list of input_ids tensors for calibration
-   271:         dev: torch device (GPU)
-   272:         num_bits: target bit width
-   273:         group_size: quantization group size; -1 for per-channel
-   274: 
-   275:     Returns:
-   276:         dict mapping layer name -> quantization error (Frobenius norm)
-   277:     """
-   278:     print("Starting quantization...", flush=True)
-   279:     use_cache = model.config.use_cache
-   280:     model.config.use_cache = False
+   268: # ── Layer-by-layer quantization ───────────────────────────────────────────────
+   269: 
+   270: @torch.no_grad()
+   271: def quantize_model(model, calibration_data, dev, num_bits=4, group_size=-1):
+   272:     """Quantize all linear layers in the model using LayerQuantizer.
+   273: 
+   274:     Processes the model layer-by-layer (transformer block by block) to
+   275:     minimize GPU memory usage. For each block:
+   276:       1. Move block to GPU
+   277:       2. Run calibration data through to collect Hessian statistics
+   278:       3. Quantize each linear sublayer using LayerQuantizer
+   279:       4. Replace weights with quantized-dequantized values
+   280:       5. Move block back to CPU
    281: 
-   282:     layers = model.model.layers
-   283:     model.model.embed_tokens = model.model.embed_tokens.to(dev)
-   284:     if hasattr(model.model, "rotary_emb"):
-   285:         model.model.rotary_emb = model.model.rotary_emb.to(dev)
-   286:     layers[0] = layers[0].to(dev)
-   287: 
-   288:     dtype = next(iter(model.parameters())).dtype
-   289:     nsamples = len(calibration_data)
-   290:     seqlen = calibration_data[0].shape[1]
-   291:     hidden_size = model.config.hidden_size
-   292: 
-   293:     # Capture inputs to first layer
-   294:     inps = torch.zeros(
-   295:         (nsamples, seqlen, hidden_size), dtype=dtype, device=dev
-   296:     )
-   297:     cache = {"i": 0, "attention_mask": None, "position_ids": None}
-   298: 
-   299:     class Catcher(nn.Module):
-   300:         def __init__(self, module):
-   301:             super().__init__()
-   302:             self.module = module
-   303:         def forward(self, inp, **kwargs):
-   304:             inps[cache["i"]] = inp
-   305:             cache["i"] += 1
-   306:             cache["attention_mask"] = kwargs.get("attention_mask")
-   307:             cache["position_ids"] = kwargs.get("position_ids")
-   308:             cache["position_embeddings"] = kwargs.get("position_embeddings")
-   309:             raise ValueError
-   310: 
-   311:     layers[0] = Catcher(layers[0])
-   312:     for batch in calibration_data:
-   313:         try:
-   314:             model(batch.to(dev))
-   315:         except ValueError:
-   316:             pass
-   317:     layers[0] = layers[0].module
-   318: 
-   319:     layers[0] = layers[0].cpu()
-   320:     model.model.embed_tokens = model.model.embed_tokens.cpu()
-   321:     if hasattr(model.model, "rotary_emb"):
-   322:         model.model.rotary_emb = model.model.rotary_emb.cpu()
-   323:     torch.cuda.empty_cache()
+   282:     Args:
+   283:         model: pretrained causal LM
+   284:         calibration_data: list of input_ids tensors for calibration
+   285:         dev: torch device (GPU)
+   286:         num_bits: target bit width
+   287:         group_size: quantization group size; -1 for per-channel
+   288: 
+   289:     Returns:
+   290:         dict mapping layer name -> quantization error (Frobenius norm)
+   291:     """
+   292:     print("Starting quantization...", flush=True)
+   293:     use_cache = model.config.use_cache
+   294:     model.config.use_cache = False
+   295: 
+   296:     layers = model.model.layers
+   297:     model.model.embed_tokens = model.model.embed_tokens.to(dev)
+   298:     if hasattr(model.model, "rotary_emb"):
+   299:         model.model.rotary_emb = model.model.rotary_emb.to(dev)
+   300:     layers[0] = layers[0].to(dev)
+   301: 
+   302:     dtype = next(iter(model.parameters())).dtype
+   303:     nsamples = len(calibration_data)
+   304:     seqlen = calibration_data[0].shape[1]
+   305:     hidden_size = model.config.hidden_size
+   306: 
+   307:     # Capture inputs to first layer
+   308:     inps = torch.zeros(
+   309:         (nsamples, seqlen, hidden_size), dtype=dtype, device=dev
+   310:     )
+   311:     cache = {"i": 0, "attention_mask": None, "position_ids": None}
+   312: 
+   313:     class Catcher(nn.Module):
+   314:         def __init__(self, module):
+   315:             super().__init__()
+   316:             self.module = module
+   317:         def forward(self, inp, **kwargs):
+   318:             inps[cache["i"]] = inp
+   319:             cache["i"] += 1
+   320:             cache["attention_mask"] = kwargs.get("attention_mask")
+   321:             cache["position_ids"] = kwargs.get("position_ids")
+   322:             cache["position_embeddings"] = kwargs.get("position_embeddings")
+   323:             raise ValueError
    324: 
-   325:     outs = torch.zeros_like(inps)
-   326:     attention_mask = cache["attention_mask"]
-   327:     position_ids = cache["position_ids"]
-   328: 
-   329:     quant_errors = {}
-   330: 
-   331:     for i in range(len(layers)):
-   332:         print(f"Quantizing layer {i}/{len(layers)}...", flush=True)
-   333:         layer = layers[i].to(dev)
-   334: 
-   335:         # Find all linear sublayers in this transformer block
-   336:         subset = find_linear_layers(layer)
-   337: 
-   338:         # Create quantizers and register hooks to collect calibration stats
-   339:         quantizers = {}
-   340:         for name in subset:
-   341:             quantizers[name] = LayerQuantizer(subset[name], num_bits=num_bits, group_size=group_size)
+   325:     layers[0] = Catcher(layers[0])
+   326:     for batch in calibration_data:
+   327:         try:
+   328:             model(batch.to(dev))
+   329:         except ValueError:
+   330:             pass
+   331:     layers[0] = layers[0].module
+   332: 
+   333:     layers[0] = layers[0].cpu()
+   334:     model.model.embed_tokens = model.model.embed_tokens.cpu()
+   335:     if hasattr(model.model, "rotary_emb"):
+   336:         model.model.rotary_emb = model.model.rotary_emb.cpu()
+   337:     torch.cuda.empty_cache()
+   338: 
+   339:     outs = torch.zeros_like(inps)
+   340:     attention_mask = cache["attention_mask"]
+   341:     position_ids = cache["position_ids"]
    342: 
-   343:         def make_hook(name):
-   344:             def hook(_, inp, out):
-   345:                 quantizers[name].add_batch(inp[0].data)
-   346:             return hook
-   347: 
-   348:         handles = []
-   349:         for name in subset:
-   350:             handles.append(subset[name].register_forward_hook(make_hook(name)))
+   343:     quant_errors = {}
+   344: 
+   345:     for i in range(len(layers)):
+   346:         print(f"Quantizing layer {i}/{len(layers)}...", flush=True)
+   347:         layer = layers[i].to(dev)
+   348: 
+   349:         # Find all linear sublayers in this transformer block
+   350:         subset = find_linear_layers(layer)
    351: 
-   352:         # Run calibration data through this layer
-   353:         for j in range(nsamples):
-   354:             kwargs = {}
-   355:             if attention_mask is not None:
-   356:                 kwargs["attention_mask"] = attention_mask
-   357:             if position_ids is not None:
-   358:                 kwargs["position_ids"] = position_ids
-   359:             position_embeddings = cache.get("position_embeddings")
-   360:             if position_embeddings is not None:
-   361:                 kwargs["position_embeddings"] = position_embeddings
-   362:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
-   363: 
-   364:         for h in handles:
-   365:             h.remove()
-   366: 
-   367:         # Quantize each sublayer
-   368:         for name in subset:
-   369:             W_orig = subset[name].weight.data.clone()
-   370:             W_quant = quantizers[name].quantize()
-   371:             error = (W_orig.float() - W_quant.float()).norm().item()
-   372:             quant_errors[f"layers.{i}.{name}"] = error
-   373:             subset[name].weight.data = W_quant
-   374:             quantizers[name].free()
-   375: 
-   376:         # Re-run calibration through quantized layer to get outputs for next layer
-   377:         for j in range(nsamples):
-   378:             kwargs = {}
-   379:             if attention_mask is not None:
-   380:                 kwargs["attention_mask"] = attention_mask
-   381:             if position_ids is not None:
-   382:                 kwargs["position_ids"] = position_ids
-   383:             position_embeddings = cache.get("position_embeddings")
-   384:             if position_embeddings is not None:
-   385:                 kwargs["position_embeddings"] = position_embeddings
-   386:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
-   387: 
-   388:         layers[i] = layer.cpu()
-   389:         del layer
-   390:         del quantizers
-   391:         torch.cuda.empty_cache()
-   392: 
-   393:         inps, outs = outs, inps
-   394: 
-   395:     model.config.use_cache = use_cache
-   396:     print("Quantization complete.", flush=True)
-   397:     return quant_errors
-   398: 
-   399: 
-   400: # ── Perplexity evaluation ─────────────────────────────────────────────────────
+   352:         # Create quantizers and register hooks to collect calibration stats
+   353:         quantizers = {}
+   354:         for name in subset:
+   355:             quantizers[name] = LayerQuantizer(subset[name], num_bits=num_bits, group_size=group_size)
+   356: 
+   357:         def make_hook(name):
+   358:             def hook(_, inp, out):
+   359:                 quantizers[name].add_batch(inp[0].data)
+   360:             return hook
+   361: 
+   362:         handles = []
+   363:         for name in subset:
+   364:             handles.append(subset[name].register_forward_hook(make_hook(name)))
+   365: 
+   366:         # Run calibration data through this layer
+   367:         for j in range(nsamples):
+   368:             kwargs = {}
+   369:             if attention_mask is not None:
+   370:                 kwargs["attention_mask"] = attention_mask
+   371:             if position_ids is not None:
+   372:                 kwargs["position_ids"] = position_ids
+   373:             position_embeddings = cache.get("position_embeddings")
+   374:             if position_embeddings is not None:
+   375:                 kwargs["position_embeddings"] = position_embeddings
+   376:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
+   377: 
+   378:         for h in handles:
+   379:             h.remove()
+   380: 
+   381:         # Quantize each sublayer
+   382:         for name in subset:
+   383:             W_orig = subset[name].weight.data.clone()
+   384:             W_quant = quantizers[name].quantize()
+   385:             error = (W_orig.float() - W_quant.float()).norm().item()
+   386:             quant_errors[f"layers.{i}.{name}"] = error
+   387:             subset[name].weight.data = W_quant
+   388:             quantizers[name].free()
+   389: 
+   390:         # Re-run calibration through quantized layer to get outputs for next layer
+   391:         for j in range(nsamples):
+   392:             kwargs = {}
+   393:             if attention_mask is not None:
+   394:                 kwargs["attention_mask"] = attention_mask
+   395:             if position_ids is not None:
+   396:                 kwargs["position_ids"] = position_ids
+   397:             position_embeddings = cache.get("position_embeddings")
+   398:             if position_embeddings is not None:
+   399:                 kwargs["position_embeddings"] = position_embeddings
+   400:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
    401: 
-   402: @torch.no_grad()
-   403: def evaluate_perplexity(model, testenc, dev):
-   404:     """Evaluate perplexity on test data (layer-by-layer to save memory).
-   405: 
-   406:     Args:
-   407:         model: (possibly quantized) causal LM
-   408:         testenc: tokenized test data
-   409:         dev: torch device
-   410: 
-   411:     Returns:
-   412:         float perplexity value
-   413:     """
-   414:     print("Evaluating perplexity...", flush=True)
-   415:     testenc = testenc.input_ids
-   416:     seqlen = model.seqlen
-   417:     nsamples = testenc.numel() // seqlen
-   418: 
-   419:     use_cache = model.config.use_cache
-   420:     model.config.use_cache = False
-   421:     layers = model.model.layers
-   422: 
-   423:     model.model.embed_tokens = model.model.embed_tokens.to(dev)
-   424:     if hasattr(model.model, "rotary_emb"):
-   425:         model.model.rotary_emb = model.model.rotary_emb.to(dev)
-   426:     layers[0] = layers[0].to(dev)
-   427: 
-   428:     dtype = next(iter(model.parameters())).dtype
-   429:     hidden_size = model.config.hidden_size
-   430:     inps = torch.zeros(
-   431:         (nsamples, seqlen, hidden_size), dtype=dtype, device=dev
-   432:     )
-   433:     cache = {"i": 0, "attention_mask": None, "position_ids": None}
-   434: 
-   435:     class Catcher(nn.Module):
-   436:         def __init__(self, module):
-   437:             super().__init__()
-   438:             self.module = module
-   439:         def forward(self, inp, **kwargs):
-   440:             inps[cache["i"]] = inp
-   441:             cache["i"] += 1
-   442:             cache["attention_mask"] = kwargs.get("attention_mask")
-   443:             cache["position_ids"] = kwargs.get("position_ids")
-   444:             cache["position_embeddings"] = kwargs.get("position_embeddings")
-   445:             raise ValueError
-   446: 
-   447:     layers[0] = Catcher(layers[0])
-   448:     for i in range(nsamples):
-   449:         batch = testenc[:, (i * seqlen):((i + 1) * seqlen)].to(dev)
-   450:         try:
-   451:             model(batch)
-   452:         except ValueError:
-   453:             pass
-   454:     layers[0] = layers[0].module
-   455: 
-   456:     layers[0] = layers[0].cpu()
-   457:     model.model.embed_tokens = model.model.embed_tokens.cpu()
-   458:     if hasattr(model.model, "rotary_emb"):
-   459:         model.model.rotary_emb = model.model.rotary_emb.cpu()
-   460:     torch.cuda.empty_cache()
-   461: 
-   462:     outs = torch.zeros_like(inps)
-   463:     attention_mask = cache["attention_mask"]
-   464:     position_ids = cache["position_ids"]
-   465: 
-   466:     for i in range(len(layers)):
-   467:         layer = layers[i].to(dev)
-   468:         for j in range(nsamples):
-   469:             kwargs = {}
-   470:             if attention_mask is not None:
-   471:                 kwargs["attention_mask"] = attention_mask
-   472:             if position_ids is not None:
-   473:                 kwargs["position_ids"] = position_ids
-   474:             position_embeddings = cache.get("position_embeddings")
-   475:             if position_embeddings is not None:
-   476:                 kwargs["position_embeddings"] = position_embeddings
-   477:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
-   478:         layers[i] = layer.cpu()
-   479:         del layer
-   480:         torch.cuda.empty_cache()
-   481:         inps, outs = outs, inps
-   482: 
-   483:     if model.model.norm is not None:
-   484:         model.model.norm = model.model.norm.to(dev)
-   485:     model.lm_head = model.lm_head.to(dev)
-   486: 
-   487:     testenc = testenc.to(dev)
-   488:     nlls = []
-   489:     for i in range(nsamples):
-   490:         hidden_states = inps[i].unsqueeze(0)
-   491:         if model.model.norm is not None:
-   492:             hidden_states = model.model.norm(hidden_states)
-   493:         lm_logits = model.lm_head(hidden_states)
-   494:         shift_logits = lm_logits[:, :-1, :].contiguous()
-   495:         shift_labels = testenc[:, (i * seqlen):((i + 1) * seqlen)][:, 1:]
-   496:         loss_fct = nn.CrossEntropyLoss()
-   497:         loss = loss_fct(
-   498:             shift_logits.view(-1, shift_logits.size(-1)),
-   499:             shift_labels.view(-1)
-   500:         )
+   402:         layers[i] = layer.cpu()
+   403:         del layer
+   404:         del quantizers
+   405:         torch.cuda.empty_cache()
+   406: 
+   407:         inps, outs = outs, inps
+   408: 
+   409:     model.config.use_cache = use_cache
+   410:     print("Quantization complete.", flush=True)
+   411:     return quant_errors
+   412: 
+   413: 
+   414: # ── Perplexity evaluation ─────────────────────────────────────────────────────
+   415: 
+   416: @torch.no_grad()
+   417: def evaluate_perplexity(model, testenc, dev):
+   418:     """Evaluate perplexity on test data (layer-by-layer to save memory).
+   419: 
+   420:     Args:
+   421:         model: (possibly quantized) causal LM
+   422:         testenc: tokenized test data
+   423:         dev: torch device
+   424: 
+   425:     Returns:
+   426:         float perplexity value
+   427:     """
+   428:     print("Evaluating perplexity...", flush=True)
+   429:     testenc = testenc.input_ids
+   430:     seqlen = model.seqlen
+   431:     nsamples = testenc.numel() // seqlen
+   432: 
+   433:     use_cache = model.config.use_cache
+   434:     model.config.use_cache = False
+   435:     layers = model.model.layers
+   436: 
+   437:     model.model.embed_tokens = model.model.embed_tokens.to(dev)
+   438:     if hasattr(model.model, "rotary_emb"):
+   439:         model.model.rotary_emb = model.model.rotary_emb.to(dev)
+   440:     layers[0] = layers[0].to(dev)
+   441: 
+   442:     dtype = next(iter(model.parameters())).dtype
+   443:     hidden_size = model.config.hidden_size
+   444:     inps = torch.zeros(
+   445:         (nsamples, seqlen, hidden_size), dtype=dtype, device=dev
+   446:     )
+   447:     cache = {"i": 0, "attention_mask": None, "position_ids": None}
+   448: 
+   449:     class Catcher(nn.Module):
+   450:         def __init__(self, module):
+   451:             super().__init__()
+   452:             self.module = module
+   453:         def forward(self, inp, **kwargs):
+   454:             inps[cache["i"]] = inp
+   455:             cache["i"] += 1
+   456:             cache["attention_mask"] = kwargs.get("attention_mask")
+   457:             cache["position_ids"] = kwargs.get("position_ids")
+   458:             cache["position_embeddings"] = kwargs.get("position_embeddings")
+   459:             raise ValueError
+   460: 
+   461:     layers[0] = Catcher(layers[0])
+   462:     for i in range(nsamples):
+   463:         batch = testenc[:, (i * seqlen):((i + 1) * seqlen)].to(dev)
+   464:         try:
+   465:             model(batch)
+   466:         except ValueError:
+   467:             pass
+   468:     layers[0] = layers[0].module
+   469: 
+   470:     layers[0] = layers[0].cpu()
+   471:     model.model.embed_tokens = model.model.embed_tokens.cpu()
+   472:     if hasattr(model.model, "rotary_emb"):
+   473:         model.model.rotary_emb = model.model.rotary_emb.cpu()
+   474:     torch.cuda.empty_cache()
+   475: 
+   476:     outs = torch.zeros_like(inps)
+   477:     attention_mask = cache["attention_mask"]
+   478:     position_ids = cache["position_ids"]
+   479: 
+   480:     for i in range(len(layers)):
+   481:         layer = layers[i].to(dev)
+   482:         for j in range(nsamples):
+   483:             kwargs = {}
+   484:             if attention_mask is not None:
+   485:                 kwargs["attention_mask"] = attention_mask
+   486:             if position_ids is not None:
+   487:                 kwargs["position_ids"] = position_ids
+   488:             position_embeddings = cache.get("position_embeddings")
+   489:             if position_embeddings is not None:
+   490:                 kwargs["position_embeddings"] = position_embeddings
+   491:             outs[j] = layer(inps[j].unsqueeze(0), **kwargs)[0]
+   492:         layers[i] = layer.cpu()
+   493:         del layer
+   494:         torch.cuda.empty_cache()
+   495:         inps, outs = outs, inps
+   496: 
+   497:     if model.model.norm is not None:
+   498:         model.model.norm = model.model.norm.to(dev)
+   499:     model.lm_head = model.lm_head.to(dev)
+   500: 
 
 [truncated: showing at most 500 lines / 60000 bytes from gptq/custom_ptq.py]
 ```
+
+
+
+
+## How You Will Be Evaluated
+
+After you finish, evaluation runs a fixed set of scripts and aggregates the
+metrics they emit into one score, the same way the leaderboard does. Those
+scripts are **not** in your workspace: you cannot read or modify them.
+
+Which settings you are scored on is deliberately **not** disclosed, and some
+of them never run where you can see them. In Harbor you can re-run the
+evaluation, so naming the settings and their budgets would turn this into a
+targeting exercise; what is being measured is whether the change you submit
+is a *general* improvement to the algorithm, not whether it was tuned to a
+configuration you were handed.
+
+
 
 ## Reference Baselines
 

@@ -1,0 +1,5 @@
+fire
+requests
+pandas
+lxml
+loguru

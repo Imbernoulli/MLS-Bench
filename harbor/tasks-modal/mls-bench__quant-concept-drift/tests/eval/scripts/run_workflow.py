@@ -43,6 +43,12 @@ def parse_args():
     parser.add_argument("--test-start", default=None)
     parser.add_argument("--test-end", default=None)
     parser.add_argument("--experiment-name", default="concept_drift")
+    parser.add_argument("--handler-start", default=None,
+                        help="Override the data handler's start_time")
+    parser.add_argument("--handler-end", default=None,
+                        help="Override the data handler's end_time")
+    parser.add_argument("--provider-uri", default=None,
+                        help="Override qlib_init.provider_uri (the rebuilt cn_data under Harbor)")
     return parser.parse_args()
 
 
@@ -51,6 +57,10 @@ def apply_overrides(config, args):
     handler_kwargs = config["task"]["dataset"]["kwargs"]["handler"]["kwargs"]
     segments = config["task"]["dataset"]["kwargs"]["segments"]
 
+    if args.handler_start:
+        handler_kwargs["start_time"] = args.handler_start
+    if args.handler_end:
+        handler_kwargs["end_time"] = args.handler_end
     if args.fit_start:
         handler_kwargs["fit_start_time"] = args.fit_start
     if args.fit_end:
@@ -95,6 +105,8 @@ def main():
     # Initialize qlib
     qlib_init_cfg = config.get("qlib_init", {})
     provider_uri = os.path.expanduser(qlib_init_cfg.get("provider_uri", "~/.qlib/qlib_data/cn_data"))
+    if args.provider_uri:
+        provider_uri = args.provider_uri
     region_str = qlib_init_cfg.get("region", "cn")
     region = REG_CN if region_str == "cn" else REG_CN
     qlib.init(provider_uri=provider_uri, region=region, kernels=1)

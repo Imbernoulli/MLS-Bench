@@ -7,7 +7,7 @@
       "label": "PDBbind2013",
       "group": 1,
       "compute": 1.0,
-      "time": "1:00:00",
+      "time": "00:59:00",
       "package": "EHIGN_PLA"
     },
     {
@@ -15,7 +15,7 @@
       "label": "PDBbind2016",
       "group": 1,
       "compute": 1.0,
-      "time": "1:00:00",
+      "time": "00:59:00",
       "package": "EHIGN_PLA"
     },
     {
@@ -23,7 +23,7 @@
       "label": "PDBbind2019",
       "group": 1,
       "compute": 1.0,
-      "time": "1:00:00",
+      "time": "00:59:00",
       "package": "EHIGN_PLA",
       "hidden": true
     }
@@ -61,5 +61,10 @@
   ],
   "seeds": [
     42
-  ]
+  ],
+  "harbor_extra_docker_steps": [
+    "python3 -c \"import hashlib, os, torch; pt = {\\\"test2013_data.pt\\\": \\\"31a3986a3ea2d6c251dd2fdffd2973e84aa23210e8613c463a746a7aaf0cd88a\\\", \\\"test2016_data.pt\\\": \\\"ae88ad3d270953738008319d3f16414ee9755cfd98d393b915a976eee9c96b46\\\", \\\"test2019_data.pt\\\": \\\"00d8a3c0213b77c311e535206e5f079d00b9d86a5f3faf77e44a675386729cd0\\\"}; csv = {\\\"test2013.csv\\\": \\\"79404f55a435d3d885ab526cd369549018fc3036c4e29f7337f0ce09f6dc9f33\\\", \\\"test2016.csv\\\": \\\"731302829895b598a65390c97d56e28b1ddf29886ffe8d2349f30fa070f788e8\\\", \\\"test2019.csv\\\": \\\"693c6072cc5e04584ffcbed40a2cee4aeac5965f63483fee80b7fd16976db65f\\\"}; exec('hits = [os.path.join(d, f) for d, _, fs in os.walk(\\\"/\\\") if not d.startswith((\\\"/proc\\\", \\\"/sys\\\", \\\"/dev\\\")) for f in fs if f in pt or f in csv]\\ndone = set()\\nfor h in hits:\\n rp = os.path.realpath(h)\\n if rp in done:\\n  continue\\n done.add(rp); name = os.path.basename(h); digest = hashlib.sha256(open(h, \\\"rb\\\").read()).hexdigest()\\n if digest != (pt.get(name) or csv.get(name)) and name in pt and not any(\\\"label\\\" in it for it in torch.load(h, weights_only=False)):\\n  print(\\\"already label-free (hard link of a processed copy):\\\", h); continue\\n assert digest == (pt.get(name) or csv.get(name)), \\\"unexpected source data: \\\" + h\\n if name in csv:\\n  os.remove(h)\\n else:\\n  items = torch.load(h, weights_only=False); [it.pop(\\\"label\\\") for it in items]; torch.save(items, h)\\n open(os.path.join(os.path.dirname(h), \\\".mlsb_test_withheld\\\"), \\\"w\\\").write(\\\"The PDBbind test labels are withheld from the workspace and mounted only for the final evaluation.\\\")\\n print(\\\"withheld test labels:\\\", h)\\nassert all(os.path.realpath(\\\"/data/\\\" + n) in done for n in pt), \\\"a test set is missing under /data\\\"\\n')\"",
+    "python3 -c \"import os, torch; names = [\\\"test2013.csv\\\", \\\"test2013_data.pt\\\", \\\"test2016.csv\\\", \\\"test2016_data.pt\\\", \\\"test2019.csv\\\", \\\"test2019_data.pt\\\"]; hits = [os.path.join(d, f) for d, _, fs in os.walk(\\\"/\\\") if not d.startswith((\\\"/proc\\\", \\\"/sys\\\", \\\"/dev\\\")) for f in fs if f in names]; assert not [h for h in hits if h.endswith(\\\".csv\\\")], hits; assert all(not any(\\\"label\\\" in it for it in torch.load(h, weights_only=False)) for h in hits), hits; print(\\\"label-free test sets:\\\", hits)\""
+  ],
+  "_harbor_extra_docker_steps_note": "The PDBbind test labels are withheld from the agent-visible image: these steps find every copy of test{2013,2016,2019}_data.pt / test{2013,2016,2019}.csv (the base image's /data and the published-base data bake's /mlsb_data_root), assert each by sha256, remove the per-complex `label` key from the .pt files, delete the CSVs (pdbid + label), leave a .mlsb_test_withheld marker, and prove no labelled copy remains. The labels live in holdout/<task>/data/withheld/ (tests/meta/ in the bundle, mounted only at verification); scripts/_withheld_pla.py checks the stripped file's features against the original's fingerprint, re-inserts the labels into a per-setting copy under $OUTPUT_DIR and the eval scripts pass that as --data-dir. In the agent's own runs custom_pla.py skips the unlabelled test set and says so."
 }

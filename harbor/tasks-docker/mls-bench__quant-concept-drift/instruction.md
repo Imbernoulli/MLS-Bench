@@ -31,6 +31,7 @@ Three reference models ship with qlib's `examples/benchmarks/`:
 - **AdaRNN** — Du et al., "AdaRNN: Adaptive Learning and Forecasting of Time Series", CIKM 2021 (arXiv 2108.04443). Splits the training window into segments by Temporal Distribution Characterization, then aligns segment representations with Temporal Distribution Matching. qlib defaults: `d_feat=6`, `hidden_size=64`, `num_layers=2`, `dropout=0.0`, `n_epochs=200`. Source: https://github.com/jindongwang/transferlearning (`code/deep/adarnn`).
 - **LightGBM** — Ke et al., NeurIPS 2017. Standard non-adaptive reference; qlib CSI300 defaults as in the other quant tasks.
 
+Market data from the evaluation's test periods are withheld from your workspace and are used only by the final evaluation, so the default dates in `workflow_config.yaml` cover only what is available here; the evaluation sets its own.
 
 ## Your Workspace
 
@@ -40,12 +41,14 @@ You are working inside `/workspace`. The package source tree
 ## Files You May Edit
 
 You may **only** modify these files, and **only within the listed line ranges
-(inclusive, 1-indexed)**. Edits that change code outside these ranges — or creating new files, or
-deleting whole files — will cause your submission to be invalid.
+(inclusive, 1-indexed)**.
 
-The line numbers mark an editable **region**, not a fixed line-count budget: you
-may add or remove lines inside it. Only code outside the editable ranges must
-stay unchanged.
+Editing outside those ranges will score your submission zero, and so will
+creating or deleting any file inside the task's own source trees
+(`/workspace/qlib/`, and anything else that was already there when
+you started). Files you write anywhere else — scratch space, caches,
+checkpoints, `$OUTPUT_DIR`, `/tmp` — are not part of your submission, so use
+them freely.
 
 - `qlib/custom_model.py`
 - editable lines **16–103**
@@ -53,6 +56,18 @@ stay unchanged.
 - editable lines **13–26**
 - editable lines **32–45**
 
+
+## What Your Submission Is
+
+Your task is to design and implement the algorithmic component in the editable
+region above, and your score reflects only how well that component performs
+under the task's own evaluation. Improve the algorithm — do not try to win by
+circumventing the measurement. In particular, do not obtain, reconstruct, or
+hard-code the evaluation's reference data or expected answers; do not compute,
+overwrite, or report the score yourself; and do not reach the evaluation through
+any route other than the component you implement. A submission that defeats the
+measurement instead of improving the algorithm is not a valid solution and is
+scored as a failure.
 
 Other files you may **read** for context (do not modify):
 - `qlib/qlib/model/base.py`
@@ -173,8 +188,8 @@ Other files you may **read** for context (do not modify):
 
 ```yaml
      1: # Qlib workflow configuration for CSI300 concept drift adaptation benchmark.
-     2: # Used by run_workflow.py — default Alpha158/CSI300/DatasetH pipeline.
-     3: # Alpha158: 158 engineered features per stock per day.
+     2: # Used by run_workflow.py — default Alpha158/CSI300/DatasetH pipeline. Data after 2015-12-31 are withheld
+     3: # from this workspace; the dates below fit what is here, and the evaluation sets its own. Alpha158: 158 features.
      4: 
      5: qlib_init:
      6:   provider_uri: "~/.qlib/qlib_data/cn_data"
@@ -199,9 +214,9 @@ Other files you may **read** for context (do not modify):
     25:         module_path: qlib.contrib.data.handler
     26:         kwargs:
     27:           start_time: "2008-01-01"
-    28:           end_time: "2020-08-01"
+    28:           end_time: "2015-12-31"
     29:           fit_start_time: "2008-01-01"
-    30:           fit_end_time: "2014-12-31"
+    30:           fit_end_time: "2012-12-31"
     31:           instruments: csi300
     32:           infer_processors:
     33:             - class: RobustZScoreNorm
@@ -218,9 +233,9 @@ Other files you may **read** for context (do not modify):
     44:                 fields_group: label
     45:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
     46:       segments:
-    47:         train: ["2008-01-01", "2014-12-31"]
-    48:         valid: ["2015-01-01", "2016-12-31"]
-    49:         test: ["2017-01-01", "2020-08-01"]
+    47:         train: ["2008-01-01", "2012-12-31"]
+    48:         valid: ["2013-01-01", "2013-12-31"]
+    49:         test: ["2014-01-01", "2015-12-31"]
     50: 
     51:   record:
     52:     - class: SignalRecord
@@ -245,8 +260,8 @@ Other files you may **read** for context (do not modify):
     71:               topk: 50
     72:               n_drop: 5
     73:           backtest:
-    74:             start_time: "2017-01-01"
-    75:             end_time: "2020-08-01"
+    74:             start_time: "2014-01-01"
+    75:             end_time: "2015-12-31"
     76:             account: 100000000
     77:             benchmark: SH000300
     78:             exchange_kwargs:
@@ -256,6 +271,22 @@ Other files you may **read** for context (do not modify):
     82:               close_cost: 0.0015
     83:               min_cost: 5
 ```
+
+
+
+
+## How You Will Be Evaluated
+
+After you finish, evaluation runs a fixed set of scripts and aggregates the
+metrics they emit into one score, the same way the leaderboard does. Those
+scripts are **not** in your workspace: you cannot read or modify them.
+
+Which settings you are scored on is deliberately **not** disclosed, and some
+of them never run where you can see them. In Harbor you can re-run the
+evaluation, so naming the settings and their budgets would turn this into a
+targeting exercise; what is being measured is whether the change you submit
+is a *general* improvement to the algorithm, not whether it was tuned to a
+configuration you were handed.
 
 ## Parameter Budget
 
@@ -1937,12 +1968,12 @@ Lines 13–26:
     25:         module_path: qlib.contrib.data.handler
     26:         kwargs:
     27:           start_time: "2008-01-01"
-    28:           end_time: "2020-08-01"
+    28:           end_time: "2015-12-31"
     29:           fit_start_time: "2008-01-01"
 
 Lines 32–73:
     29:           fit_start_time: "2008-01-01"
-    30:           fit_end_time: "2014-12-31"
+    30:           fit_end_time: "2012-12-31"
     31:           instruments: csi300
     32:           infer_processors:
     33:             - class: FilterCol
@@ -1987,8 +2018,8 @@ Lines 32–73:
     72:       memory_mode: "sample"
     73:       drop_last: true
     74:       segments:
-    75:         train: ["2008-01-01", "2014-12-31"]
-    76:         valid: ["2015-01-01", "2016-12-31"]
+    75:         train: ["2008-01-01", "2012-12-31"]
+    76:         valid: ["2013-01-01", "2013-12-31"]
 ```
 
 ### `lgbm` baseline — editable region  [READ-ONLY — reference implementation]
@@ -2015,12 +2046,12 @@ Lines 13–26:
     25:         module_path: qlib.contrib.data.handler
     26:         kwargs:
     27:           start_time: "2008-01-01"
-    28:           end_time: "2020-08-01"
+    28:           end_time: "2015-12-31"
     29:           fit_start_time: "2008-01-01"
 
 Lines 32–38:
     29:           fit_start_time: "2008-01-01"
-    30:           fit_end_time: "2014-12-31"
+    30:           fit_end_time: "2012-12-31"
     31:           instruments: csi300
     32:           infer_processors: []
     33:           learn_processors:
@@ -2030,8 +2061,8 @@ Lines 32–38:
     37:                 fields_group: label
     38:           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
     39:       segments:
-    40:         train: ["2008-01-01", "2014-12-31"]
-    41:         valid: ["2015-01-01", "2016-12-31"]
+    40:         train: ["2008-01-01", "2012-12-31"]
+    41:         valid: ["2013-01-01", "2013-12-31"]
 ```
 
 

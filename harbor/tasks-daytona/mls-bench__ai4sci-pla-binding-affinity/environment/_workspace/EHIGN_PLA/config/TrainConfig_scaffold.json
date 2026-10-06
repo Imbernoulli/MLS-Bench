@@ -1,0 +1,16 @@
+{
+    "train":
+    {
+        "model": "EHIGN_scaffold", 
+        "data_root" : "./data",
+        "save_dir" : "./model",
+        "graph_type" : "Graph_EHIGN",
+        "epochs" : 1000,
+        "batch_size" : 128,
+        "early_stop_epoch" : 50,
+        "repeat" : 3,
+        "save_model": true, 
+        "create" : true,
+        "mark": null
+    }
+}

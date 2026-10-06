@@ -1,0 +1,6 @@
+exclude tests/*
+include qlib/*
+include qlib/*/*
+include qlib/*/*/*
+include qlib/*/*/*/*
+include qlib/*/*/*/*/*

@@ -1,14 +1,16 @@
 #!/bin/bash
 # Working directory is already /workspace (package root)
 
+source "$(dirname "${BASH_SOURCE[0]}")/_withheld.sh"
 SEED=${SEED:-42}
+ROOT="$(mlsb_eval_root /data/ETT-small/ ETTh1.csv)" || exit 1
 
 python -u run.py \
   --task_name imputation \
   --is_training 1 \
   --model Custom \
   --data ETTh1 \
-  --root_path /data/ETT-small/ \
+  --root_path "$ROOT" \
   --data_path ETTh1.csv \
   --model_id ETTh1_mask_0.25 \
   --features M \

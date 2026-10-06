@@ -396,6 +396,12 @@ def train_and_evaluate(args):
                              collate_fn=collate_pla, num_workers=4)
 
     print(f"Train: {len(train_ds)}, Valid: {len(valid_ds)}, Test ({args.test_set}): {len(test_ds)}")
+    # The test labels are withheld from the agent's workspace and mounted only
+    # for the final evaluation; without them the test set is not scored here.
+    test_has_labels = len(test_ds.data) > 0 and 'label' in test_ds.data[0]
+    if not test_has_labels:
+        print(f"NOTE: the {args.test_set} labels are withheld from this workspace; "
+              "the test set is not scored in this run (see the validation metrics).", flush=True)
 
     # Model
     model = AffinityModel(
@@ -433,8 +439,9 @@ def train_and_evaluate(args):
 
     # Load best model and evaluate on test set
     model.load_state_dict(torch.load(os.path.join(args.output_dir, 'best_model.pt'), weights_only=True))
-    test_rmse, test_rp = evaluate(model, test_loader, device)
-    print(f"TEST_METRICS rmse={test_rmse:.6f} rp={test_rp:.6f}")
+    if test_has_labels:
+        test_rmse, test_rp = evaluate(model, test_loader, device)
+        print(f"TEST_METRICS rmse={test_rmse:.6f} rp={test_rp:.6f}")
     print(f"Best val RMSE: {best_val_rmse:.4f} at epoch {best_epoch}")
 
 

@@ -615,5 +615,5 @@
   "qlib/tests/test_register_ops.py": "9e5260c5214383aa3db0602f7a37c8fab3c6aa8d56f2792ae35bcb1b327bd5ae",
   "qlib/tests/test_structured_cov_estimator.py": "2599f938249aff7600771a8a23259e7d4728c398986018124150b969853aed65",
   "qlib/tests/test_workflow.py": "c3c8836b825d472f174bb54d4c24ae274c6f7033a26f9c91669514b0f01b02f9",
-  "qlib/workflow_config.yaml": "ecc494bb55e628bd2144274fffbbffa72d38591d10d925139b866dd937cee555"
+  "qlib/workflow_config.yaml": "e28dc03af0b644b98da04c6416bfb236f9019f4554a5a08bcabc9d76650122fa"
 }

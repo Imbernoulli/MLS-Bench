@@ -41,6 +41,7 @@ Three reference models from `models/`:
 - **TimesNet** — Wu et al., ICLR 2023 (arXiv 2210.02186). FFT-based period discovery + 2D conv. TS-Lib imputation defaults: `e_layers=2`, `d_model=64`, `d_ff=64`, `top_k=3`, `num_kernels=6`. Source: https://github.com/thuml/Time-Series-Library.
 - **PatchTST** — Nie et al., ICLR 2023 (arXiv 2211.14730). Channel-independent Transformer over patches. TS-Lib imputation defaults: `e_layers=3`, `n_heads=4`, `d_model=128`, `d_ff=256`, `patch_len=16`, `stride=8`. Source: https://github.com/yuqinie98/PatchTST.
 
+The test rows of each dataset are withheld from your workspace and are used only by the final evaluation; in your own runs the pipeline reports the validation split in the test split's place.
 
 ## Your Workspace
 
@@ -50,16 +51,30 @@ You are working inside `/workspace`. The package source tree
 ## Files You May Edit
 
 You may **only** modify these files, and **only within the listed line ranges
-(inclusive, 1-indexed)**. Edits that change code outside these ranges — or creating new files, or
-deleting whole files — will cause your submission to be invalid.
+(inclusive, 1-indexed)**.
 
-The line numbers mark an editable **region**, not a fixed line-count budget: you
-may add or remove lines inside it. Only code outside the editable ranges must
-stay unchanged.
+Editing outside those ranges will score your submission zero, and so will
+creating or deleting any file inside the task's own source trees
+(`/workspace/Time-Series-Library/`, and anything else that was already there when
+you started). Files you write anywhere else — scratch space, caches,
+checkpoints, `$OUTPUT_DIR`, `/tmp` — are not part of your submission, so use
+them freely.
 
 - `Time-Series-Library/models/Custom.py`
 - editable: **entire file**
 
+
+## What Your Submission Is
+
+Your task is to design and implement the algorithmic component in the editable
+region above, and your score reflects only how well that component performs
+under the task's own evaluation. Improve the algorithm — do not try to win by
+circumventing the measurement. In particular, do not obtain, reconstruct, or
+hard-code the evaluation's reference data or expected answers; do not compute,
+overwrite, or report the score yourself; and do not reach the evaluation through
+any route other than the component you implement. A submission that defeats the
+measurement instead of improving the algorithm is not a valid solution and is
+scored as a failure.
 
 Other files you may **read** for context (do not modify):
 - `Time-Series-Library/models/DLinear.py`
@@ -2151,9 +2166,27 @@ Other files you may **read** for context (do not modify):
    135:         return x
 ```
 
+
+
+
+## How You Will Be Evaluated
+
+After you finish, evaluation runs a fixed set of scripts and aggregates the
+metrics they emit into one score, the same way the leaderboard does. Those
+scripts are **not** in your workspace: you cannot read or modify them.
+
+Which settings you are scored on is deliberately **not** disclosed, and some
+of them never run where you can see them. In Harbor you can re-run the
+evaluation, so naming the settings and their budgets would turn this into a
+targeting exercise; what is being measured is whether the change you submit
+is a *general* improvement to the algorithm, not whether it was tuned to a
+configuration you were handed.
+
 ## Parameter Budget
 
 Keep your model's total parameter count at or below the strongest reference baseline's. A check runs automatically — you don't need to invoke it — and a materially larger model makes the run invalid. The contribution must be algorithmic, not extra capacity.
+
+
 
 ## Tips
 

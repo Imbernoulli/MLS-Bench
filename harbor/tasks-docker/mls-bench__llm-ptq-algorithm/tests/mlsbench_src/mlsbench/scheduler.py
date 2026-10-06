@@ -504,8 +504,23 @@ def _load_run_config(config_path: str | None) -> dict:
 
 @lru_cache(maxsize=None)
 def _load_package_config(package_name: str) -> dict:
-    config_path = PROJECT_ROOT / "vendor" / "pkg_configs" / package_name / "config.json"
-    if not config_path.exists():
+    # Task configs historically use a mixture of package-name casing
+    # (e.g. ``MeshCNN``) while pkg_configs directories are not guaranteed to
+    # preserve it (``meshcnn``).  Match the same normalized identity used by
+    # the CLI/agent loaders instead of silently falling back to defaults.
+    config_root = PROJECT_ROOT / "vendor" / "pkg_configs"
+    direct = config_root / package_name / "config.json"
+    config_path = direct if direct.exists() else None
+    if config_path is None:
+        norm = package_name.lower().replace("-", "").replace("_", "")
+        for d in config_root.iterdir():
+            candidate = d / "config.json"
+            if d.is_dir() and candidate.is_file():
+                d_norm = d.name.lower().replace("-", "").replace("_", "")
+                if d_norm == norm:
+                    config_path = candidate
+                    break
+    if config_path is None:
         return {}
     return json.loads(config_path.read_text())
 
@@ -579,10 +594,31 @@ def _filter_test_cmds(
     return filtered
 
 
+def _scaled_compute(entry: dict, compute_scale: float) -> float:
+    """Effective GPU count for an entry under the host `compute_scale`.
+
+    Mirrors ``scale_test_cmd_entries`` in agent/tools.py (kept independent so the
+    scheduler stays dependency-light): an `h200` override (the llm-pretrain /
+    llm-rl tasks) sets the count directly; otherwise sub-1 (fractional) entries
+    scale for denser packing while multi-GPU entries without an override are left
+    untouched (cutting their GPU count alone would change a data-parallel job's
+    global batch / result).
+    """
+    scale = float(compute_scale or 1.0)
+    base = float(entry.get("compute", 1) or 1)
+    if scale == 1.0:
+        return base
+    override = entry.get("h200")
+    if override:
+        return float(override.get("compute", base * scale))
+    return base * scale if base <= 1.0 else base
+
+
 def infer_gpus_needed(
     task_name: str,
     groups: list[int] | None = None,
     labels: list[str] | None = None,
+    compute_scale: float = 1.0,
 ) -> int:
     """Infer the peak concurrent GPU count for a task after group/label filters."""
     task_config = _load_task_config(task_name)
@@ -608,7 +644,7 @@ def infer_gpus_needed(
         for entry in entries:
             if not _test_cmd_uses_gpu(entry, task_config):
                 continue
-            compute = float(entry.get("compute", 1) or 1)
+            compute = _scaled_compute(entry, compute_scale)
             if compute >= 1.0:
                 whole_gpu_jobs += max(1, math.ceil(compute))
             else:
@@ -622,6 +658,7 @@ def infer_min_gpus_needed(
     task_name: str,
     groups: list[int] | None = None,
     labels: list[str] | None = None,
+    compute_scale: float = 1.0,
 ) -> int:
     """Infer the minimum GPU count required to make progress on a task.
 
@@ -639,7 +676,7 @@ def infer_min_gpus_needed(
     for entry in test_cmds:
         if not _test_cmd_uses_gpu(entry, task_config):
             continue
-        compute = float(entry.get("compute", 1) or 1)
+        compute = _scaled_compute(entry, compute_scale)
         min_gpus = max(min_gpus, max(1, math.ceil(compute)))
     return max(1, min_gpus)
 
@@ -686,12 +723,18 @@ def _baseline_names(task_config: dict, requested_name: str | None) -> list[str |
 
 def _build_job_specs(args) -> list[dict]:
     """Expand one scheduler add request into one or more concrete jobs."""
+    # Host GPU scaler (1.0 = H100; 0.5 = H200). Mirrors what the spawned
+    # `mlsbench` process applies internally, so the queue's GPU reservation
+    # matches the job's actual demand instead of over-reserving.
+    compute_scale = float(
+        (_load_run_config(getattr(args, "config", None)) or {}).get("compute_scale", 1.0) or 1.0
+    )
     if args.subcmd != "baseline":
         extra_args = _build_extra_args(args, args.subcmd)
         gpus_needed = args.gpus_needed
         if gpus_needed is None:
-            gpus_needed = infer_gpus_needed(args.task, groups=args.group, labels=args.label)
-        min_gpus_needed = infer_min_gpus_needed(args.task, groups=args.group, labels=args.label)
+            gpus_needed = infer_gpus_needed(args.task, groups=args.group, labels=args.label, compute_scale=compute_scale)
+        min_gpus_needed = infer_min_gpus_needed(args.task, groups=args.group, labels=args.label, compute_scale=compute_scale)
         return [{
             "task": args.task,
             "args": extra_args,
@@ -709,8 +752,8 @@ def _build_job_specs(args) -> list[dict]:
         extra_args = _build_extra_args(args, args.subcmd)
         gpus_needed = args.gpus_needed
         if gpus_needed is None:
-            gpus_needed = infer_gpus_needed(args.task, groups=args.group, labels=args.label)
-        min_gpus_needed = infer_min_gpus_needed(args.task, groups=args.group, labels=args.label)
+            gpus_needed = infer_gpus_needed(args.task, groups=args.group, labels=args.label, compute_scale=compute_scale)
+        min_gpus_needed = infer_min_gpus_needed(args.task, groups=args.group, labels=args.label, compute_scale=compute_scale)
         return [{
             "task": args.task,
             "args": extra_args,
@@ -752,8 +795,8 @@ def _build_job_specs(args) -> list[dict]:
                 label_filter = [label] if label else None
                 gpus_needed = args.gpus_needed
                 if gpus_needed is None:
-                    gpus_needed = infer_gpus_needed(args.task, groups=args.group, labels=label_filter)
-                min_gpus_needed = infer_min_gpus_needed(args.task, groups=args.group, labels=label_filter)
+                    gpus_needed = infer_gpus_needed(args.task, groups=args.group, labels=label_filter, compute_scale=compute_scale)
+                min_gpus_needed = infer_min_gpus_needed(args.task, groups=args.group, labels=label_filter, compute_scale=compute_scale)
                 specs.append({
                     "task": args.task,
                     "args": extra_args,

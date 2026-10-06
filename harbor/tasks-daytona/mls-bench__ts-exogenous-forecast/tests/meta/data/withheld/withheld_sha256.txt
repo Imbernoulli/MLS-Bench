@@ -1,0 +1,3 @@
+f18de3ad269cef59bb07b5438d79bb3042d3be49bdeecf01c1cd6d29695ee066  ETTh1.csv
+34ee981d07313e51da2a50bb600072c8ae4a69cb4b0651f4cb93a069d7a2ba63  weather.csv
+7e45845d54c5219bad0ae6bc1b5316cf8ff9cead5d33fa998a5a51c2e4a497ad  electricity.csv

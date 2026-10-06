@@ -1,6 +1,6 @@
 # Qlib workflow configuration for CSI300 concept drift adaptation benchmark.
-# Used by run_workflow.py — default Alpha158/CSI300/DatasetH pipeline.
-# Alpha158: 158 engineered features per stock per day.
+# Used by run_workflow.py — default Alpha158/CSI300/DatasetH pipeline. Data after 2015-12-31 are withheld
+# from this workspace; the dates below fit what is here, and the evaluation sets its own. Alpha158: 158 features.
 
 qlib_init:
   provider_uri: "~/.qlib/qlib_data/cn_data"
@@ -25,9 +25,9 @@ task:
         module_path: qlib.contrib.data.handler
         kwargs:
           start_time: "2008-01-01"
-          end_time: "2020-08-01"
+          end_time: "2015-12-31"
           fit_start_time: "2008-01-01"
-          fit_end_time: "2014-12-31"
+          fit_end_time: "2012-12-31"
           instruments: csi300
           infer_processors:
             - class: RobustZScoreNorm
@@ -44,9 +44,9 @@ task:
                 fields_group: label
           label: ["Ref($close, -2) / Ref($close, -1) - 1"]
       segments:
-        train: ["2008-01-01", "2014-12-31"]
-        valid: ["2015-01-01", "2016-12-31"]
-        test: ["2017-01-01", "2020-08-01"]
+        train: ["2008-01-01", "2012-12-31"]
+        valid: ["2013-01-01", "2013-12-31"]
+        test: ["2014-01-01", "2015-12-31"]
 
   record:
     - class: SignalRecord
@@ -71,8 +71,8 @@ task:
               topk: 50
               n_drop: 5
           backtest:
-            start_time: "2017-01-01"
-            end_time: "2020-08-01"
+            start_time: "2014-01-01"
+            end_time: "2015-12-31"
             account: 100000000
             benchmark: SH000300
             exchange_kwargs:

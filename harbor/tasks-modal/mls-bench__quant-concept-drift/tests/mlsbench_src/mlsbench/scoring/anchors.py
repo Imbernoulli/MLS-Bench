@@ -37,12 +37,18 @@ def _metric_count(record: dict) -> int:
     return count
 
 
-def _baseline_row_priority(record: dict) -> tuple[int, bool, bool, str]:
+def _baseline_row_priority(record: dict) -> tuple[int, bool, str, bool]:
+    # Timestamp outranks is_final: a RE-MEASUREMENT supersedes an older run.
+    # With is_final first, a stale single-seed row marked final beat a newer
+    # 3-seed sweep that happened not to be flagged, so the sweep and the README
+    # read the new data while score normalisation silently kept anchoring on
+    # the old. is_final stays as the tie-break for two rows of the same age,
+    # which is what it was really for.
     return (
         _metric_count(record),
         record.get("seed") == "mean",
-        _is_final(record),
         str(record.get("timestamp", "")),
+        _is_final(record),
     )
 
 
@@ -156,8 +162,30 @@ class BaselineAnchors:
         baseline_rows: list[tuple[str, dict]] = []
         for name, rows_for_baseline in baseline_groups.items():
             rows_with_metrics = [r for r in rows_for_baseline if _metric_count(r) > 0]
-            if rows_with_metrics:
-                baseline_rows.append((name, max(rows_with_metrics, key=_baseline_row_priority)))
+            if not rows_with_metrics:
+                continue
+            # A baseline's settings are not guaranteed to share one row: a run
+            # that covers a subset of labels writes its own seed=mean row with
+            # only those columns. Taking the single richest row therefore drops
+            # every setting measured in a different run -- cv-dbm-sampler lost
+            # its whole fid_edges2handbags anchor that way, so that setting
+            # scored every submission against nothing.
+            #
+            # Merge instead, highest-priority row first, with lower-priority
+            # rows only FILLING GAPS. That keeps the previous winner's values
+            # authoritative where they exist (so a re-measurement still wins
+            # over a stale row) and recovers the columns it simply lacked.
+            ordered = sorted(rows_with_metrics, key=_baseline_row_priority, reverse=True)
+            merged = dict(ordered[0])
+            for row in ordered[1:]:
+                for key, value in row.items():
+                    if key in META_COLS:
+                        continue
+                    if _is_real_metric_value(merged.get(key)):
+                        continue
+                    if _is_real_metric_value(value):
+                        merged[key] = value
+            baseline_rows.append((name, merged))
 
         if not baseline_rows:
             return

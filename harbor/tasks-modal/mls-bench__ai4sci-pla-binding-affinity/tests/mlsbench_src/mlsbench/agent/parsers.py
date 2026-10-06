@@ -11,6 +11,7 @@ The base OutputParser provides pass-through behavior (raw output, no metrics).
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import re
 from pathlib import Path
 
 
@@ -58,6 +59,71 @@ class OutputParser:
             ParseResult with feedback (shown to model) and metrics (for leaderboard).
         """
         return ParseResult(feedback=raw_output, metrics={})
+
+
+_FAILTAIL_RE = re.compile(r"^--- .*failed; last lines of its log:", re.MULTILINE)
+
+
+def extract_failure_tail(raw_output: str, max_chars: int = 2000) -> str:
+    """The block a hardened run script prints when a stage dies.
+
+    ``scripts/_run.sh`` in the hardened task family ends a failed run with::
+
+        failtail() { echo "--- $1 failed; last lines of its log:"; \
+                     grep -v -E '^(FINAL|EVAL)_METRICS' "$2" | tail -n 25; }
+
+    i.e. it already prints the cause, with metric markers stripped, before it emits
+    ``FINAL_METRICS[...]: INVALID ...``. Task parsers build their feedback from a
+    whitelist of progress prefixes (``SETUP:``, ``TRAIN_METRICS:`` ...), which this
+    block matches none of, so the diagnosis is dropped and the caller sees only
+    ``INVALID train_rc=1``.
+
+    Returns the block, or "" if the output holds none.
+    """
+    m = _FAILTAIL_RE.search(raw_output or "")
+    if not m:
+        return ""
+    block = []
+    for line in raw_output[m.start():].splitlines():
+        # Stop at the terminal marker: the diagnosis is what precedes it, and the
+        # caller already reports the INVALID reason itself.
+        if line.startswith(("FINAL_METRICS", "EVAL_METRICS")):
+            break
+        block.append(line)
+    return "\n".join(block)[:max_chars].rstrip()
+
+
+class _WithFailureDiagnostics(OutputParser):
+    """Delegate to a task parser, but never swallow the run script's own diagnosis.
+
+    Only fires when the parse produced NO metrics -- a successful run's feedback is
+    left exactly as the task wrote it. The appended text is the run script's output,
+    already scrubbed of ``FINAL_METRICS``/``EVAL_METRICS`` lines by ``failtail``
+    itself, so this discloses nothing the script did not already print.
+    """
+
+    def __init__(self, inner: OutputParser):
+        self._inner = inner
+
+    def __getattr__(self, name):  # keep any task-specific attributes reachable
+        return getattr(self._inner, name)
+
+    def parse(self, cmd_label: str, raw_output: str) -> ParseResult:
+        result = self._inner.parse(cmd_label, raw_output)
+        if result.metrics:
+            return result
+        tail = extract_failure_tail(raw_output)
+        if not tail or tail[:60] in (result.feedback or ""):
+            return result
+        return ParseResult(feedback=((result.feedback or "").rstrip() + "\n" + tail).strip(),
+                           metrics=result.metrics)
+
+
+def with_failure_diagnostics(parser: OutputParser) -> OutputParser:
+    """Wrap a parser so a failed run reports why it failed."""
+    if isinstance(parser, _WithFailureDiagnostics):
+        return parser
+    return _WithFailureDiagnostics(parser)
 
 
 def load_parser(task_name: str, project_root: Path) -> OutputParser:

@@ -3,7 +3,7 @@
   "gptq/LICENSE": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
   "gptq/README.md": "c67e5fe08d7cceb1f2bd0b5c2ad4055c3b4fd87e1def15b949844d31c8e51686",
   "gptq/bloom.py": "ae35eb083893fe049b234b7406b291be93c7eb6962bbea90d3ef38ce446e41c7",
-  "gptq/custom_ptq.py": "5aad750cbab268f2e7d25481c4e92dc09d867f94ab6e61c5facaa200cf4f9f24",
+  "gptq/custom_ptq.py": "4ff34597ddcd87a47d6bc999eb30a437b21890b5d4805e8a7ed92334839f5281",
   "gptq/datautils.py": "e1e32aac037b0080aac946adb44a254f59692923ea514609ddad9242f1695a3b",
   "gptq/gptq.py": "bb47468cc2c788577562751de414d76eeb9968ff1c6098e21153557ef3d154c7",
   "gptq/llama.py": "f011982054dfa4eeaa0de9aa9af33afca3fc033e209ee02c0c29ff62d638d167",

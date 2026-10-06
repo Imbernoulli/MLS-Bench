@@ -70,6 +70,7 @@ The training and evaluation pipeline (data, feature extraction, model wiring, op
 ## Editable Region
 The section between `EDITABLE SECTION START` and `EDITABLE SECTION END` markers in `custom_pla.py` is editable. You may define helper classes, layers, or functions within this region. The region must contain an `AffinityModel` class with the specified interface.
 
+The test-set affinity labels are withheld from your workspace and are used only by the final evaluation; in your own runs the script trains and validates as usual and skips the unlabelled test sets.
 
 ## Your Workspace
 
@@ -79,16 +80,30 @@ You are working inside `/workspace`. The package source tree
 ## Files You May Edit
 
 You may **only** modify these files, and **only within the listed line ranges
-(inclusive, 1-indexed)**. Edits that change code outside these ranges — or creating new files, or
-deleting whole files — will cause your submission to be invalid.
+(inclusive, 1-indexed)**.
 
-The line numbers mark an editable **region**, not a fixed line-count budget: you
-may add or remove lines inside it. Only code outside the editable ranges must
-stay unchanged.
+Editing outside those ranges will score your submission zero, and so will
+creating or deleting any file inside the task's own source trees
+(`/workspace/EHIGN_PLA/`, and anything else that was already there when
+you started). Files you write anywhere else — scratch space, caches,
+checkpoints, `$OUTPUT_DIR`, `/tmp` — are not part of your submission, so use
+them freely.
 
 - `EHIGN_PLA/custom_pla.py`
 - editable lines **101–191**
 
+
+## What Your Submission Is
+
+Your task is to design and implement the algorithmic component in the editable
+region above, and your score reflects only how well that component performs
+under the task's own evaluation. Improve the algorithm — do not try to win by
+circumventing the measurement. In particular, do not obtain, reconstruct, or
+hard-code the evaluation's reference data or expected answers; do not compute,
+overwrite, or report the score yourself; and do not reach the evaluation through
+any route other than the component you implement. A submission that defeats the
+measurement instead of improving the algorithm is not a valid solution and is
+scored as a failure.
 
 
 
@@ -115,7 +130,7 @@ stay unchanged.
     15: import warnings
     16: import numpy as np
     17: import pandas as pd
-    18: from dataclasses import dataclass
+    18: from dataclasses import dataclass, replace
     19: from typing import Optional, Dict, List, Tuple
     20: 
     21: import torch
@@ -459,104 +474,133 @@ stay unchanged.
    359: 
    360:     for batch in loader:
    361:         batch = batch_to_device(batch, device)
-   362:         pred = model(batch)
-   363:         all_preds.append(pred.cpu().numpy())
-   364:         all_labels.append(batch.labels.cpu().numpy())
-   365: 
-   366:     preds = np.concatenate(all_preds)
-   367:     labels = np.concatenate(all_labels)
-   368: 
-   369:     rmse = float(np.sqrt(mean_squared_error(labels, preds)))
-   370:     rp = float(pearsonr(preds, labels)[0])
+   362:         # Withhold the held-out targets from the model at evaluation: it must
+   363:         # score on features only. The true labels are kept here (fixed harness
+   364:         # scope) for the metric and are never placed in the batch the model's
+   365:         # forward() receives — so a model cannot read off the answer.
+   366:         true_labels = batch.labels
+   367:         batch = replace(batch, labels=torch.zeros_like(batch.labels))
+   368:         pred = model(batch)
+   369:         all_preds.append(pred.cpu().numpy())
+   370:         all_labels.append(true_labels.cpu().numpy())
    371: 
-   372:     return rmse, rp
-   373: 
+   372:     preds = np.concatenate(all_preds)
+   373:     labels = np.concatenate(all_labels)
    374: 
-   375: def train_and_evaluate(args):
-   376:     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-   377:     print(f"Using device: {device}")
-   378: 
-   379:     # Load data
-   380:     data_dir = args.data_dir
-   381:     train_ds = PLADataset(os.path.join(data_dir, 'train_data.pt'))
-   382:     valid_ds = PLADataset(os.path.join(data_dir, 'valid_data.pt'))
-   383:     test_ds = PLADataset(os.path.join(data_dir, f'{args.test_set}_data.pt'))
+   375:     rmse = float(np.sqrt(mean_squared_error(labels, preds)))
+   376:     rp = float(pearsonr(preds, labels)[0])
+   377: 
+   378:     return rmse, rp
+   379: 
+   380: 
+   381: def train_and_evaluate(args):
+   382:     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+   383:     print(f"Using device: {device}")
    384: 
-   385:     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
-   386:                               collate_fn=collate_pla, num_workers=4, drop_last=True)
-   387:     valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=False,
-   388:                               collate_fn=collate_pla, num_workers=4)
-   389:     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
-   390:                              collate_fn=collate_pla, num_workers=4)
-   391: 
-   392:     print(f"Train: {len(train_ds)}, Valid: {len(valid_ds)}, Test ({args.test_set}): {len(test_ds)}")
-   393: 
-   394:     # Model
-   395:     model = AffinityModel(
-   396:         lig_dim=LIGAND_ATOM_DIM,
-   397:         poc_dim=POCKET_ATOM_DIM,
-   398:         intra_edge_dim=INTRA_EDGE_DIM,
-   399:         inter_edge_dim=INTER_EDGE_DIM,
-   400:     ).to(device)
-   401:     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
-   402: 
-   403:     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-6)
-   404: 
-   405:     # Training with early stopping
-   406:     best_val_rmse = float('inf')
-   407:     best_epoch = 0
-   408:     patience_counter = 0
-   409: 
-   410:     for epoch in range(1, args.epochs + 1):
-   411:         train_loss = train_epoch(model, train_loader, optimizer, device)
-   412:         val_rmse, val_rp = evaluate(model, valid_loader, device)
-   413: 
-   414:         print(f"TRAIN_METRICS epoch={epoch} loss={train_loss:.6f} val_rmse={val_rmse:.4f} val_rp={val_rp:.4f}")
-   415: 
-   416:         if val_rmse < best_val_rmse:
-   417:             best_val_rmse = val_rmse
-   418:             best_epoch = epoch
-   419:             patience_counter = 0
-   420:             os.makedirs(args.output_dir, exist_ok=True)
-   421:             torch.save(model.state_dict(), os.path.join(args.output_dir, 'best_model.pt'))
-   422:         else:
-   423:             patience_counter += 1
-   424:             if patience_counter >= args.patience:
-   425:                 print(f"Early stopping at epoch {epoch}. Best epoch: {best_epoch}")
-   426:                 break
+   385:     # Load data
+   386:     data_dir = args.data_dir
+   387:     train_ds = PLADataset(os.path.join(data_dir, 'train_data.pt'))
+   388:     valid_ds = PLADataset(os.path.join(data_dir, 'valid_data.pt'))
+   389:     test_ds = PLADataset(os.path.join(data_dir, f'{args.test_set}_data.pt'))
+   390: 
+   391:     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True,
+   392:                               collate_fn=collate_pla, num_workers=4, drop_last=True)
+   393:     valid_loader = DataLoader(valid_ds, batch_size=args.batch_size, shuffle=False,
+   394:                               collate_fn=collate_pla, num_workers=4)
+   395:     test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False,
+   396:                              collate_fn=collate_pla, num_workers=4)
+   397: 
+   398:     print(f"Train: {len(train_ds)}, Valid: {len(valid_ds)}, Test ({args.test_set}): {len(test_ds)}")
+   399:     # The test labels are withheld from the agent's workspace and mounted only
+   400:     # for the final evaluation; without them the test set is not scored here.
+   401:     test_has_labels = len(test_ds.data) > 0 and 'label' in test_ds.data[0]
+   402:     if not test_has_labels:
+   403:         print(f"NOTE: the {args.test_set} labels are withheld from this workspace; "
+   404:               "the test set is not scored in this run (see the validation metrics).", flush=True)
+   405: 
+   406:     # Model
+   407:     model = AffinityModel(
+   408:         lig_dim=LIGAND_ATOM_DIM,
+   409:         poc_dim=POCKET_ATOM_DIM,
+   410:         intra_edge_dim=INTRA_EDGE_DIM,
+   411:         inter_edge_dim=INTER_EDGE_DIM,
+   412:     ).to(device)
+   413:     print(f"Model parameters: {sum(p.numel() for p in model.parameters()):,}")
+   414: 
+   415:     optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-6)
+   416: 
+   417:     # Training with early stopping
+   418:     best_val_rmse = float('inf')
+   419:     best_epoch = 0
+   420:     patience_counter = 0
+   421: 
+   422:     for epoch in range(1, args.epochs + 1):
+   423:         train_loss = train_epoch(model, train_loader, optimizer, device)
+   424:         val_rmse, val_rp = evaluate(model, valid_loader, device)
+   425: 
+   426:         print(f"TRAIN_METRICS epoch={epoch} loss={train_loss:.6f} val_rmse={val_rmse:.4f} val_rp={val_rp:.4f}")
    427: 
-   428:     # Load best model and evaluate on test set
-   429:     model.load_state_dict(torch.load(os.path.join(args.output_dir, 'best_model.pt'), weights_only=True))
-   430:     test_rmse, test_rp = evaluate(model, test_loader, device)
-   431:     print(f"TEST_METRICS rmse={test_rmse:.6f} rp={test_rp:.6f}")
-   432:     print(f"Best val RMSE: {best_val_rmse:.4f} at epoch {best_epoch}")
-   433: 
-   434: 
-   435: def main():
-   436:     parser = argparse.ArgumentParser(description="Protein-Ligand Binding Affinity Prediction")
-   437:     parser.add_argument('--test-set', type=str, required=True,
-   438:                         choices=['test2013', 'test2016', 'test2019'])
-   439:     parser.add_argument('--data-dir', type=str, required=True)
-   440:     parser.add_argument('--epochs', type=int, default=800)
-   441:     parser.add_argument('--batch-size', type=int, default=128)
-   442:     parser.add_argument('--lr', type=float, default=1e-4)
-   443:     parser.add_argument('--patience', type=int, default=50)
-   444:     parser.add_argument('--seed', type=int, default=42)
-   445:     parser.add_argument('--output-dir', type=str, default='./output')
-   446:     args = parser.parse_args()
+   428:         if val_rmse < best_val_rmse:
+   429:             best_val_rmse = val_rmse
+   430:             best_epoch = epoch
+   431:             patience_counter = 0
+   432:             os.makedirs(args.output_dir, exist_ok=True)
+   433:             torch.save(model.state_dict(), os.path.join(args.output_dir, 'best_model.pt'))
+   434:         else:
+   435:             patience_counter += 1
+   436:             if patience_counter >= args.patience:
+   437:                 print(f"Early stopping at epoch {epoch}. Best epoch: {best_epoch}")
+   438:                 break
+   439: 
+   440:     # Load best model and evaluate on test set
+   441:     model.load_state_dict(torch.load(os.path.join(args.output_dir, 'best_model.pt'), weights_only=True))
+   442:     if test_has_labels:
+   443:         test_rmse, test_rp = evaluate(model, test_loader, device)
+   444:         print(f"TEST_METRICS rmse={test_rmse:.6f} rp={test_rp:.6f}")
+   445:     print(f"Best val RMSE: {best_val_rmse:.4f} at epoch {best_epoch}")
+   446: 
    447: 
-   448:     # Set seeds
-   449:     torch.manual_seed(args.seed)
-   450:     np.random.seed(args.seed)
-   451:     if torch.cuda.is_available():
-   452:         torch.cuda.manual_seed_all(args.seed)
-   453: 
-   454:     train_and_evaluate(args)
-   455: 
-   456: 
-   457: if __name__ == '__main__':
-   458:     main()
+   448: def main():
+   449:     parser = argparse.ArgumentParser(description="Protein-Ligand Binding Affinity Prediction")
+   450:     parser.add_argument('--test-set', type=str, required=True,
+   451:                         choices=['test2013', 'test2016', 'test2019'])
+   452:     parser.add_argument('--data-dir', type=str, required=True)
+   453:     parser.add_argument('--epochs', type=int, default=800)
+   454:     parser.add_argument('--batch-size', type=int, default=128)
+   455:     parser.add_argument('--lr', type=float, default=1e-4)
+   456:     parser.add_argument('--patience', type=int, default=50)
+   457:     parser.add_argument('--seed', type=int, default=42)
+   458:     parser.add_argument('--output-dir', type=str, default='./output')
+   459:     args = parser.parse_args()
+   460: 
+   461:     # Set seeds
+   462:     torch.manual_seed(args.seed)
+   463:     np.random.seed(args.seed)
+   464:     if torch.cuda.is_available():
+   465:         torch.cuda.manual_seed_all(args.seed)
+   466: 
+   467:     train_and_evaluate(args)
+   468: 
+   469: 
+   470: if __name__ == '__main__':
+   471:     main()
 ```
+
+
+
+
+## How You Will Be Evaluated
+
+After you finish, evaluation runs a fixed set of scripts and aggregates the
+metrics they emit into one score, the same way the leaderboard does. Those
+scripts are **not** in your workspace: you cannot read or modify them.
+
+Which settings you are scored on is deliberately **not** disclosed, and some
+of them never run where you can see them. In Harbor you can re-run the
+evaluation, so naming the settings and their budgets would turn this into a
+targeting exercise; what is being measured is whether the change you submit
+is a *general* improvement to the algorithm, not whether it was tuned to a
+configuration you were handed.
 
 ## Parameter Budget
 
