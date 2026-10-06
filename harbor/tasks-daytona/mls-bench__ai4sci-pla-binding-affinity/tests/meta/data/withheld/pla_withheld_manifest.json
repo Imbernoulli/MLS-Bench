@@ -1,0 +1,20 @@
+{
+ "test2013": {
+  "n": 107,
+  "sha256_original_pt": "31a3986a3ea2d6c251dd2fdffd2973e84aa23210e8613c463a746a7aaf0cd88a",
+  "feature_fingerprint": "f0e56328d949fac122ba0f5e2a85adcdc64f7d5bc1cbc0aedd03f81fad2e3f5b",
+  "sha256_original_csv": "79404f55a435d3d885ab526cd369549018fc3036c4e29f7337f0ce09f6dc9f33"
+ },
+ "test2016": {
+  "n": 285,
+  "sha256_original_pt": "ae88ad3d270953738008319d3f16414ee9755cfd98d393b915a976eee9c96b46",
+  "feature_fingerprint": "604ad400e37431784cbee35a9b84ba44d0f6b8012ef521707662b464d0513a60",
+  "sha256_original_csv": "731302829895b598a65390c97d56e28b1ddf29886ffe8d2349f30fa070f788e8"
+ },
+ "test2019": {
+  "n": 4366,
+  "sha256_original_pt": "00d8a3c0213b77c311e535206e5f079d00b9d86a5f3faf77e44a675386729cd0",
+  "feature_fingerprint": "1cf396214fd3eb9083ce16632f7b1f236bd0118bc97017861d66e3f576e43444",
+  "sha256_original_csv": "693c6072cc5e04584ffcbed40a2cee4aeac5965f63483fee80b7fd16976db65f"
+ }
+}

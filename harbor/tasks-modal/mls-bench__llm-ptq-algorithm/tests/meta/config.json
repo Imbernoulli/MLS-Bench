@@ -58,5 +58,10 @@
         }
       ]
     }
-  ]
+  ],
+  "harbor_extra_docker_steps": [
+    "python3 -c \"import hashlib, json, pathlib; t = pathlib.Path(\\\"/data/wikitext2/wikitext/wikitext-2-raw-v1/0.0.0/b08601e04326c79dfdd32d625aee71d232d685c3/wikitext-test.arrow\\\"); assert hashlib.sha256(t.read_bytes()).hexdigest() == \\\"2b8a3efac7b468cbe6432edba5f55c21e435d93873acc6727431f08d5ed328ea\\\", \\\"unexpected wikitext-test.arrow\\\"; q = pathlib.Path(\\\"/data/wikitext2/downloads/5e548f01091b2f01906ea7be35b8a1a6aa74842629dc550b7a02ca0821f1002d\\\"); assert \\\"test-00000-of-00001.parquet\\\" in json.loads(pathlib.Path(str(q) + \\\".json\\\").read_text())[\\\"url\\\"]; [p.unlink() for p in (t, q, pathlib.Path(str(q) + \\\".json\\\"))]; pathlib.Path(\\\"/data/wikitext2/.mlsb_test_withheld\\\").write_text(\\\"The WikiText-2 test split is withheld from the workspace and mounted only for the final evaluation.\\\"); print(\\\"withheld: WikiText-2 test split\\\")\"",
+    "test -z \"$(find / -xdev \\( -name 'wikitext-test*' -o -name 'test-00000-of-00001.parquet' \\) -not -path '/proc/*' 2>/dev/null)\" && ! grep -rlq --include='*.json' 'wikitext-2-raw-v1/test' /data/wikitext2/downloads"
+  ],
+  "_harbor_extra_docker_steps_note": "The WikiText-2 test split (the scored perplexity) is withheld from the agent-visible image: the first step asserts the cached test arrow by sha256 and deletes it together with the downloaded test parquet, leaving a .mlsb_test_withheld marker; the second proves no copy is left. The split lives in holdout/<task>/data/withheld/ (tests/meta/ in the bundle, mounted only at verification); scripts/_withheld.sh rebuilds a complete cache under $OUTPUT_DIR, checks the restored file's sha256 and points HF_DATASETS_CACHE at it, and the eval scripts set MLSB_REQUIRE_TEST_SPLIT=1 so get_eval_data can never fall back. In the agent's own runs get_eval_data uses the validation split and says so."
 }

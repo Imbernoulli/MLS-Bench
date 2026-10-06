@@ -229,23 +229,37 @@ def get_calibration_data(tokenizer, nsamples=128, seqlen=2048, seed=0):
     return trainloader
 
 
-def get_eval_data(tokenizer, seqlen=2048):
-    """Load WikiText-2 test data for perplexity evaluation."""
+def _load_wikitext_split(split, cache_dir):
+    """One WikiText-2 (raw) split from the local HF cache, or None if absent."""
     from datasets import load_dataset
-
-    cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
     try:
-        testdata = load_dataset(
-            "wikitext", "wikitext-2-raw-v1", split="test", cache_dir=cache_dir
+        return load_dataset(
+            "wikitext", "wikitext-2-raw-v1", split=split, cache_dir=cache_dir
         )
     except Exception:
         from datasets import Dataset
         import glob
-        arrow = glob.glob(f"{cache_dir}/**/wikitext-test.arrow", recursive=True)
-        if arrow:
-            testdata = Dataset.from_file(arrow[0])
-        else:
+        arrow = glob.glob(f"{cache_dir}/**/wikitext-{split}.arrow", recursive=True)
+        return Dataset.from_file(arrow[0]) if arrow else None
+
+
+def get_eval_data(tokenizer, seqlen=2048):
+    """Load WikiText-2 test data for perplexity evaluation.
+
+    The test split is withheld from the agent's workspace and mounted only for
+    the final evaluation. Where it is absent (your own runs), the validation
+    split is used in its place and a notice says so.
+    """
+    cache_dir = os.environ.get("HF_DATASETS_CACHE", "/data/wikitext2")
+    testdata = _load_wikitext_split("test", cache_dir)
+    if testdata is None:
+        if os.environ.get("MLSB_REQUIRE_TEST_SPLIT"):
             raise FileNotFoundError(f"WikiText-2 test data not found in {cache_dir}")
+        print("NOTE: the WikiText-2 test split is withheld from this workspace; "
+              "the perplexities below are computed on the validation split.", flush=True)
+        testdata = _load_wikitext_split("validation", cache_dir)
+        if testdata is None:
+            raise FileNotFoundError(f"WikiText-2 validation data not found in {cache_dir}")
 
     testenc = tokenizer("\n\n".join(testdata["text"]), return_tensors="pt")
     return testenc

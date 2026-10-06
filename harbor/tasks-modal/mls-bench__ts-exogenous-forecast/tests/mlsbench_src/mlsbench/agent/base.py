@@ -82,6 +82,7 @@ class BaseAgent(ABC):
             tavily_api_key=(global_config.get("providers", {}).get("tavily", {}) or {}).get("api_key", ""),
             max_web_credits=global_config.get("max_web_credits", 20),
             hide_hidden=global_config.get("hide_hidden", False),
+            allow_reset=global_config.get("allow_reset", False),
         )
 
         # Resolve --extra-context. If requested, the matching context file MUST
@@ -762,6 +763,8 @@ class BaseAgent(ABC):
         elif tool_name == "undo":
             n = tool_input.get("n", 1)
             print(f"  {Y}Reverting last {n} edit(s){RST}")
+        elif tool_name == "reset":
+            print(f"  {Y}Resetting all edits to the pre-edit template{RST}")
         elif tool_name == "web_search":
             q = tool_input.get("query", "")
             n = tool_input.get("max_results", 5)
@@ -830,6 +833,14 @@ class BaseAgent(ABC):
             print(f"{B}new file: {fname}{RST}")
             print(f"{C}@@ +1,{len(new_lines)} @@{RST}")
             self._print_lines(new_lines, f"{G}+{{num:4d}} | {{line}}{RST}", 1, limit, D, RST)
+
+        elif op == "str_replace":
+            old_l = (tool_input.get("old_str", "") or "").splitlines()
+            new_l = (tool_input.get("new_str", "") or "").splitlines()
+            print(f"{B}diff --agent a/{fname} b/{fname}{RST}")
+            print(f"{C}@@ str_replace: -{len(old_l)} +{len(new_l)} @@{RST}")
+            self._print_lines(old_l, f"{R}-{{num:4d}} | {{line}}{RST}", 1, limit, D, RST)
+            self._print_lines(new_l, f"{G}+{{num:4d}} | {{line}}{RST}", 1, limit, D, RST)
 
         else:
             print(f"  {Y}op={op}{RST}  file={fname}")
@@ -1260,11 +1271,12 @@ class BaseAgent(ABC):
                     current_lines = len(path.read_text().splitlines())
                     # Re-derive: we can't perfectly reconstruct, but the ranges
                     # logged in the last tool_result snapshot give us the info.
-                    # Parse the last edit result for this file to get current range.
-                    last_range = self._extract_range_from_results(records, fn)
-                    if last_range:
+                    # Parse the last edit/reset result for this file to get the
+                    # current editable range(s) — multi-region files included.
+                    last_ranges = self._extract_range_from_results(records, fn)
+                    if last_ranges:
                         self.tools.live_protected_ranges[fn] = self.tools._allowed_to_protected(
-                            [last_range]
+                            last_ranges
                         )
             except Exception:
                 pass
@@ -1274,24 +1286,33 @@ class BaseAgent(ABC):
         return messages, True
 
     @staticmethod
-    def _extract_range_from_results(records: list[dict], filename: str) -> list[int] | None:
-        """Extract the latest editable range for a file from tool_result messages.
+    def _extract_range_from_results(records: list[dict], filename: str) -> list[list[int]] | None:
+        """Extract the latest editable range(s) for a file from tool_result messages.
 
-        Looks for patterns like 'editable: 214–413' in results.
+        Parses the per-file snapshot header emitted by ``_file_snapshot`` after
+        edit/reset — ``[Current file: <fn> | editable: a–b, c–d | total: N lines]``
+        — scoped to ``filename`` so a reset result (which appends a header for
+        *every* editable file) does not cross-contaminate ranges between files.
+        Returns the list of ``[start, end]`` ranges (multi-region files keep all
+        of them), or ``None`` when no header for this file is found.
         """
         import re
-        last_range = None
+        header_re = re.compile(
+            r"\[Current file:\s*" + re.escape(filename) + r"\s*\|\s*editable:\s*([^|\n]+)"
+        )
+        pair_re = re.compile(r"(\d+)\s*[–\-]\s*(\d+)")
+        last_ranges = None
         for rec in records:
             if rec.get("role") != "tool_result":
                 continue
             result = str(rec.get("result", ""))
-            if filename not in result:
+            m = header_re.search(result)
+            if not m:
                 continue
-            # Match "editable: N–M" or "editable: N-M"
-            m = re.search(r"editable:\s*(\d+)[–\-](\d+)", result)
-            if m:
-                last_range = [int(m.group(1)), int(m.group(2))]
-        return last_range
+            pairs = pair_re.findall(m.group(1))
+            if pairs:
+                last_ranges = [[int(a), int(b)] for a, b in pairs]
+        return last_ranges
 
     # ------------------------------------------------------------------
     # Per-run structured summary (raw metrics for downstream analysis)
@@ -1361,6 +1382,10 @@ class BaseAgent(ABC):
     def run(self, resume: bool = False) -> dict:
         """Run the agent loop: setup → prompt → modify→test loop → summary."""
         self.setup_workspace()
+        # Snapshot the pristine template (pre_edit + mid_edit applied, no agent
+        # edits) so the `reset` tool can restore it later. On resume this runs
+        # before resume_from_log() replays edits, so the snapshot stays pristine.
+        self.tools.capture_template_state()
 
         if resume and not self.logger.has_messages():
             print("[agent] --resume specified but no messages.jsonl found, starting fresh")
@@ -1516,16 +1541,15 @@ class BaseAgent(ABC):
             # Execute the tool (also increments step_count)
             result = self.tools.dispatch(tool_name, tool_input)
 
-            # Log the result
             self._log_result(result)
-            meta = None
-            if tool_name == "test":
-                entry = self.tools.latest_test_history_entry()
-                if entry is not None:
-                    meta = {"test_history_entry": copy.deepcopy(entry)}
-            self.logger.log_tool_result(step_num, str(result), meta=meta)
 
-            # Snapshot file after edit
+            # Snapshot files BEFORE logging the tool_result, so resume can never
+            # see a tool_result without its matching file snapshot. If the
+            # process dies between the two writes, the snapshot wins and the
+            # result-less assistant message is rolled back + re-attempted on
+            # resume — whereas the reverse order could leave the transcript
+            # saying "reset/edit done" while the stale pre-action snapshot is
+            # replayed over the workspace.
             if tool_name == "edit":
                 fname = tool_input.get("filename", "")
                 try:
@@ -1534,6 +1558,29 @@ class BaseAgent(ABC):
                         self.logger.log_file_snapshot(step_num, fname, fpath.read_text())
                 except Exception:
                     pass
+            # Snapshot ALL editable files after a reset so resume restores the
+            # pristine template state, not the last pre-reset edit's stale
+            # snapshot. Without this, get_latest_snapshots() would replay the
+            # old edited content over the reset workspace on resume.
+            elif tool_name == "reset":
+                for entry in self.config_edit:
+                    if "edit" not in entry:
+                        continue
+                    fn = entry["filename"]
+                    try:
+                        fpath = self.tools._resolve_workspace_path(fn)
+                        if fpath.exists():
+                            self.logger.log_file_snapshot(step_num, fn, fpath.read_text())
+                    except Exception:
+                        pass
+
+            # Log the result (after the file snapshot, see above).
+            meta = None
+            if tool_name == "test":
+                entry = self.tools.latest_test_history_entry()
+                if entry is not None:
+                    meta = {"test_history_entry": copy.deepcopy(entry)}
+            self.logger.log_tool_result(step_num, str(result), meta=meta)
 
             # Build a unique ID for this tool call
             tool_id = f"tool_{self.tools.step_count}"

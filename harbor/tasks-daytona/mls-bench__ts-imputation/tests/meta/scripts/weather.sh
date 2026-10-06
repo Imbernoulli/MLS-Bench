@@ -1,14 +1,16 @@
 #!/bin/bash
 # Working directory is already /workspace (package root)
 
+source "$(dirname "${BASH_SOURCE[0]}")/_withheld.sh"
 SEED=${SEED:-42}
+ROOT="$(mlsb_eval_root /data/weather/ weather.csv)" || exit 1
 
 python -u run.py \
   --task_name imputation \
   --is_training 1 \
   --model Custom \
   --data custom \
-  --root_path /data/weather/ \
+  --root_path "$ROOT" \
   --data_path weather.csv \
   --model_id Weather_mask_0.25 \
   --features M \

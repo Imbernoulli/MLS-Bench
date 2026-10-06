@@ -633,6 +633,7 @@ class DiscoverAgent(BaseAgent):
                 use_cuda=use_cuda_override,
                 platform=self.global_config.get("platform", ""),
                 gpu_devices=self.global_config.get("gpu_devices", ""),
+                compute_scale=self.global_config.get("compute_scale", 1.0),
                 global_config=self.global_config,
             )
             self._setup_tools_workspace(tools, assets)

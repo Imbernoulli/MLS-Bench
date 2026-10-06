@@ -1,0 +1,1 @@
+{"model": "EHIGN", "data_root": "./data", "save_dir": "./model", "graph_type": "Graph_EHIGN", "epochs": 800, "batch_size": 128, "early_stop_epoch": 50, "repeat": 2, "save_model": true, "create": true, "mark": null}

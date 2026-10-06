@@ -1,6 +1,7 @@
 #!/bin/bash
 # Working directory is already /workspace (package root)
 
+source "$(dirname "${BASH_SOURCE[0]}")/_withheld.sh"
 SEED=${SEED:-42}
 # No official TSLib PatchTST imputation script; aligned with DLinear imputation style
 
@@ -12,6 +13,7 @@ case "${ENV}" in
   ECL)
     DATA=custom; ROOT=/data/electricity/; DPATH=electricity.csv; EI=321; DI=321; CO=321; MID=ECL_mask_0.25 ;;
 esac
+ROOT="$(mlsb_eval_root "$ROOT" "$DPATH")" || exit 1
 
 python -u run.py \
   --task_name imputation \

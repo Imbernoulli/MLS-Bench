@@ -12,7 +12,7 @@ import tempfile
 
 import torch
 
-TASK_DIR = "/workspace/_task"
+TASK_DIR = os.environ.get("MLSBENCH_TASK_DIR") or "/workspace/_task"
 WORKSPACE_FILE = "/workspace/EHIGN_PLA/custom_pla.py"
 
 # -- Hardcoded dimensions from template --

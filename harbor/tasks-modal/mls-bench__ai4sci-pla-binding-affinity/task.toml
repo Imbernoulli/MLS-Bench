@@ -1,9 +1,16 @@
 schema_version = "1.1"
 
+# reward_type is one of binary | bounded_continuous | unbounded_continuous.
+# Every MLS-Bench trial reward is a geometric mean of per-setting scores, each
+# normalised into [0, 1] by tests/meta/score_spec.py (bounded_power / sigmoid,
+# both clipped to [0, 1]) and floored at 0.01, so the trial reward lies in
+# [0, 1] -> bounded_continuous. 0.0 is reserved for an unscored run.
+reward_type = "bounded_continuous"
+
 [task]
 name = "mls-bench/ai4sci-pla-binding-affinity"
 description = "MLS-Bench: ai4sci-pla-binding-affinity"
-authors = [{ name = "MLS-Bench authors", email = "bohan22@stanford.edu" }]
+authors = [{ name = "MLS-Bench authors" }]
 keywords = ["ml-research", "science"]
 
 [metadata]
@@ -17,7 +24,7 @@ mls_bench_package = "EHIGN_PLA"
 timeout_sec = 18000
 
 [verifier]
-timeout_sec = 8400
+timeout_sec = 13080
 
 [environment]
 # Build the per-task image from environment/Dockerfile (which FROMs the
@@ -26,11 +33,14 @@ timeout_sec = 8400
 # also skip the per-task mid_edit scaffolding the Dockerfile applies.
 os = "linux"
 build_timeout_sec = 7200
-cpus = 36
-memory_mb = 65536
+cpus = 24
+memory_mb = 98304
 storage_mb = 61440
 gpus = 3
-# The images pin CUDA wheels built for Hopper (sm_90); a provider that
-# also offers Blackwell cards (Daytona does) must not place the task there.
-gpu_types = ["h100"]
+# The trial has egress by default. A task that wants its trial sealed declares
+# "harbor_allow_internet": false in its config.json -- nothing in a trial needs
+# the network, since every dataset, weight, package and cache is baked in the
+# image BUILD (a separate Docker phase, unaffected by this flag). Sealing costs
+# the in-container-agent case (network_mode: none covers the AGENT phase too)
+# and any GPU provider that needs egress; see mls_bench.adapter._allow_internet.
 allow_internet = true

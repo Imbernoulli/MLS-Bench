@@ -38,6 +38,7 @@ HIGH_NEAR_WORST_FRAC = 0.05
 LOW_BOUND_ATOL = 1e-9
 PATHOLOGICAL_BOUNDED_POWER_EDGE = 0.05
 _PATHOLOGICAL_BOUNDED_POWER_WARNED: set[tuple[str, str]] = set()
+_UNANCHORED_TERM_WARNED: set[tuple[str, str]] = set()
 
 
 # ---------------------------------------------------------------------------
@@ -230,6 +231,18 @@ def _is_pathological_bounded_power_ref(r_ref: float | None) -> bool:
     )
 
 
+def _gamma_out_of_range(r_ref: float | None, ref_score: float) -> bool:
+    """True when solve_gamma would have to clip its gamma, i.e. the power
+    curve cannot place the reference at ref_score."""
+    if r_ref is None or r_ref <= 0.0 or r_ref >= 1.0:
+        return False
+    from mlsbench.scoring.primitives import GAMMA_MAX, GAMMA_MIN
+
+    rs = max(1e-9, min(1.0 - 1e-9, ref_score))
+    gamma = math.log(rs) / math.log(r_ref)
+    return gamma < GAMMA_MIN or gamma > GAMMA_MAX
+
+
 def _warn_pathological_bounded_power(
     anchors: BaselineAnchors,
     term_name: str,
@@ -246,6 +259,23 @@ def _warn_pathological_bounded_power(
         "reference baseline maps to ref_score.",
         stacklevel=2,
     )
+
+def _warn_unanchored_term(anchors: BaselineAnchors, tspec: TermSpec) -> None:
+    task_name = _task_name_from_anchors(anchors)
+    key = (task_name, tspec.name)
+    if key in _UNANCHORED_TERM_WARNED:
+        return
+    _UNANCHORED_TERM_WARNED.add(key)
+    known = anchors.baseline_names()
+    warnings.warn(
+        f"Task {task_name}, term {tspec.name}: no baseline anchor for metric "
+        f"{tspec.metric!r} (leaderboard baselines seen: {known or 'none'}). "
+        f"The floor falls back to the submission's own value, so this term "
+        f"scores exactly 0 no matter what was submitted. A reward of 0.0 from "
+        f"this run means UNANCHORED, not 'worst possible'.",
+        stacklevel=2,
+    )
+
 
 def _score_term(
     tspec: TermSpec,
@@ -270,6 +300,14 @@ def _score_term(
     if floor_raw is not None:
         y_floor = apply_direction_and_transform(float(floor_raw), tspec.direction, tspec.transform)
     else:
+        # No baseline anchor for this metric: the floor collapses onto the
+        # submission's own value, so the term scores exactly 0 whatever the
+        # submission did. That is indistinguishable, in the reward alone, from
+        # a real bottom-of-the-range result -- so say it out loud. The usual
+        # cause is a Harbor bundle rendered before its baselines were measured,
+        # which ships without tests/meta/leaderboard.csv; the adapter now
+        # refuses to render one (_assert_bundle_is_anchored).
+        _warn_unanchored_term(anchors, tspec)
         y_floor = y  # no floor info; score will be 0
 
     if tspec.role == "constraint":
@@ -311,11 +349,16 @@ def _score_term(
         if ref_resolved is not None:
             y_ref = apply_direction_and_transform(float(ref_resolved), tspec.direction, tspec.transform)
             r_ref = _bounded_power_ref_ratio(y_floor, y_bound, y_ref)
-            if _is_pathological_bounded_power_ref(r_ref):
+            if _is_pathological_bounded_power_ref(r_ref) or _gamma_out_of_range(
+                r_ref, tspec.ref_score
+            ):
                 # When the best baseline is nearly at a bounded theoretical
-                # limit, the gamma needed to keep score(ref)=0.5 can be far
-                # outside the clipped [0.1, 10] range. A sigmoid calibration
-                # preserves the ref_score anchor instead of inflating Human SOTA.
+                # limit -- or whenever the gamma that would put score(ref) at
+                # ref_score falls outside solve_gamma's [GAMMA_MIN, GAMMA_MAX]
+                # clip (any reference past ref_score**(1/GAMMA_MAX) of the way
+                # to the bound) -- a sigmoid calibration keeps the ref_score
+                # anchor exact instead of letting a clipped power curve drift
+                # it upward.
                 _warn_pathological_bounded_power(anchors, tspec.name, r_ref)
                 sc = solve_scale(y_floor, y_ref, tspec.ref_score)
                 score = sigmoid_score(y, y_floor, sc)
@@ -532,10 +575,32 @@ def _score_setting(
 
 
 def _gmean(values: list[float], eps: float = GMEAN_EPS) -> float:
-    """Geometric mean with epsilon floor to avoid zero-collapse."""
+    """Geometric mean with an epsilon floor, so a scored record never reads
+    as a failed one.
+
+    The floor exists because a geometric mean collapses to zero on a single
+    zero term, which would erase every other setting's result. It used to be
+    skipped when *every* term was zero (``all(v <= 0) -> 0.0``), and that
+    exception cost more than it bought: a submission at or below the worst
+    anchor on every setting scored exactly 0.0, which is also what the harness
+    writes when it never scored anything at all -- a guard violation, a missing
+    eval_summary, "no metrics extracted from logs", an invalid record. So the
+    reward could not distinguish "measured, and worse than every baseline"
+    from "the verifier is broken", and reading a Harbor smoke meant opening
+    four more files to find out which had happened.
+
+    Now the floor applies uniformly: anything the scorer actually scored comes
+    back >= eps, and **0.0 is reserved for a run that was not scored**. That
+    contract holds end to end, because every failure path in the bundle's
+    tests/score_task.py writes a literal ``0`` alongside a score_error.txt, and
+    score_record_details forces 0.0 for an invalid record.
+
+    An empty ``values`` (a spec with no settings) is such a failure, and stays
+    0.0. Note the worst baseline in any task now scores eps rather than 0,
+    since the floor anchor *is* that baseline -- the relative ordering, which
+    is all the score means, is unchanged.
+    """
     if not values:
-        return 0.0
-    if all(v <= 0.0 for v in values):
         return 0.0
     log_sum = sum(math.log(max(v, eps)) for v in values)
     return math.exp(log_sum / len(values))

@@ -8,7 +8,9 @@ from __future__ import annotations
 
 from mlsbench.agent.base import BaseAgent
 from mlsbench.agent.models import build_client
-from mlsbench.agent.tools import TOOL_SCHEMAS, WEB_SEARCH_SCHEMA, WEB_EXTRACT_SCHEMA
+from mlsbench.agent.tools import (
+    TOOL_SCHEMAS, WEB_SEARCH_SCHEMA, WEB_EXTRACT_SCHEMA, RESET_SCHEMA, EDIT_REPLACE_SCHEMA,
+)
 
 SYSTEM_PROMPT_SCI = """\
 You are an ML scientist. Your goal is to propose and implement a novel algorithmic \
@@ -78,7 +80,44 @@ class InteractiveAgent(BaseAgent):
         self.client = build_client(global_config)
         self.system_prompt = SYSTEM_PROMPT_SCI
         self.allow_web_search = bool(global_config.get("allow_web_search", False))
+        self.allow_reset = bool(global_config.get("allow_reset", False))
+        self.use_replace = bool(global_config.get("use_replace", False))
         self._tool_schemas = list(TOOL_SCHEMAS)
+        if self.use_replace:
+            # Swap the line-range `edit` schema for the exact-string-replacement one
+            # (same tool name, so dispatch/logging/counters are unaffected).
+            self._tool_schemas = [
+                EDIT_REPLACE_SCHEMA if s.get("name") == "edit" else s
+                for s in self._tool_schemas
+            ]
+            edit_block = (
+                "- edit(op, filename, content, ...): Modify files in the workspace.\n"
+                "  - op='replace': replace lines start_line..end_line with content\n"
+                "  - op='insert': insert content after after_line\n"
+                "  - op='create': create a new file (only if allow_create=true)\n"
+            )
+            replace_block = (
+                "- edit(op, filename, ...): Modify files in the workspace by exact string match.\n"
+                "  - op='str_replace': replace the single, unique occurrence of old_str with new_str\n"
+                "    (old_str must match exactly — whitespace included — and be unique; an empty\n"
+                "    new_str deletes it)\n"
+                "  - op='create': create a new file (only if allow_create=true)\n"
+            )
+            if edit_block in self.system_prompt:
+                self.system_prompt = self.system_prompt.replace(edit_block, replace_block, 1)
+        if self.allow_reset:
+            self._tool_schemas.append(RESET_SCHEMA)
+            # Document reset() right after undo() so it reads as a peer tool.
+            reset_anchor = "- undo(n=1): Revert the last n edit operations.\n"
+            reset_line = (
+                reset_anchor
+                + "- reset(): Discard ALL your edits and restore every editable file "
+                "to its original pre-edit template state, so you can start over. "
+                "Reverts files only — it does not undo test() calls or refund your "
+                "test budget.\n"
+            )
+            if reset_anchor in self.system_prompt:
+                self.system_prompt = self.system_prompt.replace(reset_anchor, reset_line, 1)
         if self.allow_web_search:
             self._tool_schemas.append(WEB_SEARCH_SCHEMA)
             self._tool_schemas.append(WEB_EXTRACT_SCHEMA)
@@ -107,15 +146,12 @@ class InteractiveAgent(BaseAgent):
                 "— the error message tells you the cost and what's left, so adjust depth or "
                 "url count and retry. Each call also counts against your step budget.\n"
             )
-            # Insert web tools INTO the existing Available tools list (between
-            # undo() and the Constraints block) so the model sees them as
-            # peer tools, not a separate aside.
-            anchor = "- undo(n=1): Revert the last n edit operations.\n\nConstraints:"
-            replacement = (
-                "- undo(n=1): Revert the last n edit operations.\n"
-                + web_tools_block
-                + "\nConstraints:"
-            )
+            # Insert web tools INTO the existing Available tools list, right
+            # before the Constraints block, so the model sees them as peer tools
+            # rather than a separate aside. Anchoring on "Constraints:" keeps
+            # this robust even when the optional reset() line was inserted above.
+            anchor = "\nConstraints:"
+            replacement = "\n" + web_tools_block + "\nConstraints:"
             if anchor in self.system_prompt:
                 self.system_prompt = self.system_prompt.replace(anchor, replacement, 1)
             else:

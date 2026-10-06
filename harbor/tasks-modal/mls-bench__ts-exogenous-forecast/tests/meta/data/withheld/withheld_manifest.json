@@ -1,0 +1,29 @@
+{
+ "ETTh1.csv": {
+  "data_rows": 17420,
+  "visible_rows": 11520,
+  "withheld_rows": 5900,
+  "sha256_full": "f18de3ad269cef59bb07b5438d79bb3042d3be49bdeecf01c1cd6d29695ee066",
+  "sha256_visible": "0ac0ce309049e14728c529a0fa98e682edecf8650331c5b977e5a8dc3636b3b0",
+  "bytes_full": 2589657,
+  "bytes_visible": 1711301
+ },
+ "weather.csv": {
+  "data_rows": 52696,
+  "visible_rows": 42157,
+  "withheld_rows": 10539,
+  "sha256_full": "34ee981d07313e51da2a50bb600072c8ae4a69cb4b0651f4cb93a069d7a2ba63",
+  "sha256_visible": "5761af96e2c79ebce25e12ad2e942cdcf85c28c7eeed6bc5c884e67308ec45af",
+  "bytes_full": 7235425,
+  "bytes_visible": 5819186
+ },
+ "electricity.csv": {
+  "data_rows": 26304,
+  "visible_rows": 21044,
+  "withheld_rows": 5260,
+  "sha256_full": "7e45845d54c5219bad0ae6bc1b5316cf8ff9cead5d33fa998a5a51c2e4a497ad",
+  "sha256_visible": "2c9f85931626ab87ceb30ea28174907e7a2252444aa214f5444d51b5d7e261aa",
+  "bytes_full": 95581762,
+  "bytes_visible": 76460635
+ }
+}

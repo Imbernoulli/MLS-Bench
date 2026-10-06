@@ -409,6 +409,8 @@ class OpenAIClient(ModelClient):
         # like "openai/", "anthropic/", "vertex_ai/" are also used for plain
         # LiteLLM routing and don't imply OpenRouter.
         is_openrouter = "openrouter" in self.base_url
+        is_poe = "poe" in self.base_url
+        is_dashscope = "dashscope" in self.base_url
         # `bare_model` is used for downstream provider detection
         # (startswith("gpt-"), startswith("claude"), …). Any prefix-routed
         # model name (`<provider>/<model>` or `<router>/<vendor>/<model>`)
@@ -626,11 +628,17 @@ class OpenAIClient(ModelClient):
         # - Kimi k2 thinking: no tool_choice support at all.
         # - Claude via OpenRouter + thinking: only "auto" allowed.
         # - OpenRouter + thinking (Qwen, etc.): upstream rejects required in thinking mode.
+        # - Poe's Qwen3.7-Max is served in thinking mode by default and also
+        #   rejects tool_choice=required.
+        # - DashScope-hosted Qwen (including qwen3.7-max) also rejects
+        #   tool_choice=required and defaults to tool-use via extra_body.
         skip_tool_choice = (
             is_deepseek_thinking
             or is_kimi_thinking
             or (is_openrouter and thinking_enabled)
             or (is_qwen and thinking_enabled)
+            or (is_poe and is_qwen)
+            or (is_dashscope and is_qwen)
         )
         if not skip_tool_choice:
             create_kwargs["tool_choice"] = "required"
@@ -866,9 +874,14 @@ def build_client(global_config: dict) -> ModelClient:
         # OpenAI SDK expects /v1 suffix.
         if not base_url.endswith("/v1"):
             base_url = base_url + "/v1"
+        # Prefix-routed model names like "dashscope/qwen3.7-max" or
+        # "openrouter/qwen/qwen3.6-plus" must have the routing prefix removed
+        # before being sent to the upstream API (the upstream only sees the
+        # provider/model slug it understands).
+        api_model = model.split("/", 1)[1] if "/" in model else model
         provider_config = {k: v for k, v in cfg.items() if k not in {"api_key", "base_url"}}
         return OpenAIClient(
-            model=model,
+            model=api_model,
             api_key=api_key,
             base_url=base_url,
             thinking_config=thinking_config,

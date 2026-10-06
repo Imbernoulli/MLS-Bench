@@ -23,7 +23,14 @@ from pathlib import Path
 
 # Allow importing from mlsbench package when run standalone
 PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
+# Only reach for the repo checkout when mlsbench is genuinely absent.
+# Under Harbor this parser is exec'd from /tmp/mlsbench-verifier.XXXXXX/meta/,
+# so a __file__-derived root is /tmp and this would put an agent-writable
+# directory at the front of the verifier's sys.path.
+try:  # noqa: E402
+    import mlsbench  # noqa: F401
+except ModuleNotFoundError:  # pragma: no cover - native checkout, no install
+    sys.path.insert(0, str(PROJECT_ROOT / "src"))
 
 from mlsbench.agent.parsers import OutputParser, ParseResult
 

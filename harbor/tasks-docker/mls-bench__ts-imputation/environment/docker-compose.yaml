@@ -1,6 +1,6 @@
 services:
   main:
-    shm_size: 16gb
+    shm_size: 16384m
     deploy:
       resources:
         reservations:

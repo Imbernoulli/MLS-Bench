@@ -18,8 +18,8 @@ from pathlib import Path
 
 import torch
 
-TASK_DIR = Path("/workspace/_task")
-PKG_DIR = Path("/workspace/Time-Series-Library")
+TASK_DIR = Path(os.environ.get("MLSBENCH_TASK_DIR", "/workspace/_task"))
+PKG_DIR = Path(os.environ.get("MLSBENCH_PKG_DIR") or "/workspace/Time-Series-Library")
 WORKSPACE_FILE = PKG_DIR / "models" / "Custom.py"
 
 sys.path.insert(0, str(PKG_DIR))

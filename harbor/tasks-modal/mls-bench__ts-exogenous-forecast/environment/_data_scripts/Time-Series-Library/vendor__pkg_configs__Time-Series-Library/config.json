@@ -1,0 +1,33 @@
+{
+  "base_image": "pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel",
+  "install_cmds": [
+    "apt-get update && apt-get install -y git wget && rm -rf /var/lib/apt/lists/*",
+    "cd /workspace/Time-Series-Library",
+    "pip install -r requirements.txt",
+    "pip install --no-build-isolation 'mamba-ssm<2.0' || (echo 'mamba-ssm install failed; continuing without it (only Mamba-based baselines need it)' && true)",
+    "pip install uni2ts --no-deps",
+    "pip install huggingface_hub",
+    "python -c \"from huggingface_hub import snapshot_download; snapshot_download('thuml/Time-Series-Library', repo_type='dataset', local_dir='/data')\"",
+    "python -c \"import os; checks = ['/data/ETT-small/ETTh1.csv', '/data/weather/weather.csv', '/data/electricity/electricity.csv', '/data/traffic/traffic.csv', '/data/m4/Monthly-train.csv', '/data/m4/Quarterly-train.csv', '/data/m4/Yearly-train.csv', '/data/PSM/train.csv', '/data/MSL/MSL_train.npy', '/data/SMAP/SMAP_train.npy', '/data/EthanolConcentration/EthanolConcentration_TRAIN.ts', '/data/FaceDetection/FaceDetection_TRAIN.ts', '/data/Handwriting/Handwriting_TRAIN.ts']; missing = [f for f in checks if not os.path.exists(f)]; assert not missing, f'Missing datasets: {missing}'; print('All 13 dataset files verified')\""
+  ],
+  "env": {
+    "PYTHONPATH": "/workspace/Time-Series-Library:${PYTHONPATH}",
+    "HOME": "/root"
+  },
+  "use_cuda": true,
+  "writable_tmpfs": true,
+  "no_home": true,
+  "workdir": "/workspace",
+  "host_data_prepare_requirements": [
+    "huggingface_hub<1.0"
+  ],
+  "data_deps": [
+    {
+      "name": "tslib_datasets",
+      "host_path": "{data_root}",
+      "container_path": "/data",
+      "prepare": "vendor/pkg_configs/Time-Series-Library/prepare_data.py",
+      "description": "Time-Series-Library benchmark datasets (ETT, weather, electricity, traffic, m4, PSM, MSL, SMAP, EthanolConcentration, FaceDetection, Handwriting)"
+    }
+  ]
+}
