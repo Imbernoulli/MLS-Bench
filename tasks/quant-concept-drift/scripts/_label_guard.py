@@ -113,8 +113,13 @@ def _build_label_free_dataset(real_ds):
         except Exception:
             pass
 
-    new_ds = copy.copy(real_ds)
+    # qlib's Serializable.__getstate__ drops "_"-prefixed attributes, so
+    # copy.copy would strip state such as MTSDatasetH._index; copy __dict__.
+    new_ds = object.__new__(type(real_ds))
+    new_ds.__dict__.update(real_ds.__dict__)
     new_ds.handler = new_handler
+    if isinstance(getattr(real_ds, "_label", None), np.ndarray):
+        new_ds._label = np.full_like(real_ds._label, np.nan)
     return new_ds
 
 
